@@ -1,0 +1,23 @@
+frontend/src/pages/doc-bar.tsx
+  a9f1f10 11-12,49-50,60-61,113-125
+frontend/src/pages/doc-page.tsx
+  a9f1f10 13-15,38-39,76-97,121-122,128-139
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "base_commit_sha": "a993abe5127dd804b10a739b7a0ab0582503d996",
+  "tracker_version": "1.0.0",
+  "prompts": {
+    "a9f1f10": {
+      "agent_id": {
+        "tool": "claude",
+        "model": "claude-sonnet-4-6",
+        "id": "c8da0fff-40bf-4134-b479-251490491eb8"
+      },
+      "total_additions": 6912,
+      "total_deletions": 0,
+      "accepted_lines": 74,
+      "overriden_lines": 0
+    }
+  }
+}
