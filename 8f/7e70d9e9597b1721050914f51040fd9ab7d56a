@@ -1,0 +1,23 @@
+frontend/src/pages/doc-context.tsx
+  s_2f831aa37dcb0d::t_eeac80953bcb74 22
+frontend/src/pages/doc-render-frame.tsx
+  s_2f831aa37dcb0d::t_eeac80953bcb74 14-21,98-99,112
+frontend/src/pages/doc-page.tsx
+  s_2f831aa37dcb0d::t_eeac80953bcb74 2,63-67,70-71,86,97-98,111-113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.7",
+  "base_commit_sha": "8f7e70d9e9597b1721050914f51040fd9ab7d56a",
+  "prompts": {},
+  "sessions": {
+    "s_2f831aa37dcb0d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ecce7-507b-7462-9a02-c86418bfb5ce",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Parichay Agrawal <parichay.agrawal@razorpay.com>"
+    }
+  }
+}
