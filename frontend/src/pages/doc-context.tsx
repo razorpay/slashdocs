@@ -8,6 +8,14 @@ export type PendingSelection = {
   anchor?: Partial<Anchor>;
 };
 
+export type CommentNavigationSource = "document" | "panel";
+
+export type CommentNavigationRequest = {
+  id: string;
+  seq: number;
+  source: CommentNavigationSource;
+};
+
 export type DocContextValue = {
   docId: string;
   version: string;
@@ -18,7 +26,8 @@ export type DocContextValue = {
   selection: PendingSelection | null;
   setSelection: (s: PendingSelection | null) => void;
   activeComment?: string;
-  setActiveComment: (id?: string) => void;
+  commentNavigation?: CommentNavigationRequest;
+  navigateToComment: (id: string) => void;
   handleDocCommentClick: (id: string) => void;
 };
 

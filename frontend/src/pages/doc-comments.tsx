@@ -38,7 +38,6 @@ export function Comments() {
     commentsError,
     selection,
     setSelection,
-    setActiveComment,
   } = useDoc();
   const q = useQueryClient();
   const [filter, setFilter] = useState<CommentFilter>(DEFAULT_COMMENT_FILTER);
@@ -159,13 +158,17 @@ export function Comments() {
 
 function CommentCard({ c, docId }: { c: Comment; docId: string }) {
   const q = useQueryClient();
-  const { activeComment, setActiveComment, principal } = useDoc();
+  const { activeComment, commentNavigation, navigateToComment, principal } = useDoc();
   const cardRef = useRef<HTMLElement>(null);
   const active = activeComment === c.id;
+  const documentNavigationSeq =
+    commentNavigation?.id === c.id && commentNavigation.source === "document"
+      ? commentNavigation.seq
+      : undefined;
   useEffect(() => {
-    if (active)
-      cardRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
-  }, [active]);
+    if (!active || !documentNavigationSeq) return;
+    cardRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [active, documentNavigationSeq]);
   const reply = useMutation({
     mutationFn: (body: string) => api.createCommentReply(docId, c.id, body),
     onSuccess: () => q.invalidateQueries({ queryKey: queryKeys.comments(docId) }),
@@ -181,7 +184,7 @@ function CommentCard({ c, docId }: { c: Comment; docId: string }) {
     <article
       ref={cardRef}
       className={`group cursor-pointer rounded-[12px] border bg-[var(--color-surface)] p-3 transition-colors hover:border-[var(--color-border-strong)] ${active ? "border-[var(--color-border-strong)] ring-1 ring-[var(--color-border-strong)]" : "border-[var(--color-border)]"} ${resolved ? "opacity-70" : ""}`}
-      onClick={() => setActiveComment(active ? undefined : c.id)}
+      onClick={() => navigateToComment(c.id)}
     >
       <div className="mb-1 flex items-center justify-between">
         <span className="text-xs font-semibold">
@@ -282,6 +285,7 @@ function ReplyComposer({
   return (
     <form
       className="mt-3 flex gap-2"
+      onClick={(e) => e.stopPropagation()}
       onSubmit={(e) => {
         e.preventDefault();
         if (!body.trim() || pending) return;

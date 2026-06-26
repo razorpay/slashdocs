@@ -4,6 +4,7 @@
   "description": "",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
+    "mock": "node mock-server.mjs",
     "build": "tsc -b && vite build && node scripts/sync-dist.mjs",
     "preview": "vite preview"
   },

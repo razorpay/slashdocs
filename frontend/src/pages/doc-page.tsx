@@ -1,11 +1,16 @@
 import { useTitle } from "@/lib/use-title";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api, APIError, currentVersionID, docTitle, versionID } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { Center, Skeleton } from "@/components/ui/misc";
-import { DocProvider, type PendingSelection } from "./doc-context";
+import {
+  DocProvider,
+  type CommentNavigationRequest,
+  type CommentNavigationSource,
+  type PendingSelection,
+} from "./doc-context";
 import { DocBar } from "./doc-bar";
 import { RenderFrame } from "./doc-render-frame";
 import { Comments } from "./doc-comments";
@@ -55,15 +60,41 @@ export function DocumentPage() {
   });
   const [selection, setSelection] = useState<PendingSelection | null>(null);
   const [activeComment, setActiveComment] = useState<string>();
+  const [commentNavigation, setCommentNavigation] =
+    useState<CommentNavigationRequest>();
+  const commentNavigationSeq = useRef(0);
   const [selectedVersion, setSelectedVersion] = useState<string>();
   const [panelOpen, setPanelOpen] = useState(true);
   const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH);
   useTitle(doc.data ? docTitle(doc.data) : undefined);
 
-  const handleDocCommentClick = useCallback((commentId: string) => {
-    setActiveComment(commentId);
-    setPanelOpen(true);
-  }, []);
+  const requestCommentNavigation = useCallback(
+    (commentId: string, source: CommentNavigationSource) => {
+      setActiveComment(commentId);
+      setPanelOpen(true);
+      commentNavigationSeq.current += 1;
+      setCommentNavigation({
+        id: commentId,
+        seq: commentNavigationSeq.current,
+        source,
+      });
+    },
+    [],
+  );
+
+  const handleDocCommentClick = useCallback(
+    (commentId: string) => {
+      requestCommentNavigation(commentId, "document");
+    },
+    [requestCommentNavigation],
+  );
+
+  const navigateToComment = useCallback(
+    (commentId: string) => {
+      requestCommentNavigation(commentId, "panel");
+    },
+    [requestCommentNavigation],
+  );
 
   const versionItems = versions.data?.items || [];
   const latest =
@@ -82,7 +113,8 @@ export function DocumentPage() {
       selection,
       setSelection,
       activeComment,
-      setActiveComment,
+      commentNavigation,
+      navigateToComment,
       handleDocCommentClick,
     }),
     [
@@ -94,7 +126,8 @@ export function DocumentPage() {
       me.data,
       selection,
       activeComment,
-      setActiveComment,
+      commentNavigation,
+      navigateToComment,
       handleDocCommentClick,
     ],
   );

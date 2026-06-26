@@ -16,6 +16,7 @@ export function RenderFrame() {
     version,
     comments,
     activeComment,
+    commentNavigation,
     setSelection,
     handleDocCommentClick,
   } = useDoc();
@@ -115,6 +116,11 @@ export function RenderFrame() {
   useEffect(() => {
     paint();
   }, [paint]);
+
+  useEffect(() => {
+    if (commentNavigation?.source !== "panel") return;
+    paint();
+  }, [commentNavigation, paint]);
 
   // The parent (DocPage) only mounts RenderFrame when a current version
   // exists, so version is always set here.
