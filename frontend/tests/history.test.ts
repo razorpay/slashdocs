@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { canPopHistory, isFullscreenEntry } from "../src/lib/history.ts";
+import {
+  canPopHistory,
+  isCommentsSheetEntry,
+  isFullscreenEntry,
+} from "../src/lib/history.ts";
 
 test("canPopHistory pops only past the first router entry", () => {
   assert.equal(canPopHistory({ idx: 1, key: "abc" }), true);
@@ -35,4 +39,11 @@ test("isFullscreenEntry detects only our tagged fullscreen push", () => {
   assert.equal(isFullscreenEntry({ idx: 2 }), false);
   assert.equal(isFullscreenEntry(null), false);
   assert.equal(isFullscreenEntry(undefined), false);
+});
+
+test("isCommentsSheetEntry detects only our tagged sheet push", () => {
+  assert.equal(isCommentsSheetEntry({ idx: 2, aidocsCommentsSheet: true }), true);
+  assert.equal(isCommentsSheetEntry({ idx: 2 }), false);
+  assert.equal(isCommentsSheetEntry(null), false);
+  assert.equal(isCommentsSheetEntry(undefined), false);
 });

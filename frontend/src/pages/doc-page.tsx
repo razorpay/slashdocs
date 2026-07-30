@@ -8,7 +8,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import { Center, Skeleton } from "@/components/ui/misc";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useIsMobile } from "@/lib/use-media-query";
-import { canPopHistory, isFullscreenEntry } from "@/lib/history";
+import { canPopHistory, isCommentsSheetEntry, isFullscreenEntry } from "@/lib/history";
 import { DocProvider, type PendingSelection } from "./doc-context";
 import { DocBar } from "./doc-bar";
 import { RenderFrame } from "./doc-render-frame";
@@ -133,10 +133,12 @@ export function DocumentPage() {
     return () => {
       window.removeEventListener("popstate", onPop);
       // If the sheet closed via the UI (not via Back), remove the entry we
-      // pushed so the next Back returns to the documents list as expected.
+      // pushed so the next Back returns to the documents list as expected —
+      // but only if our entry is still on top. A later navigation (e.g.
+      // document deleted) buries it, and popping would clobber that.
       if (sheetHistoryRef.current) {
         sheetHistoryRef.current = false;
-        window.history.back();
+        if (isCommentsSheetEntry(window.history.state)) window.history.back();
       }
     };
   }, [mobilePanelOpen]);

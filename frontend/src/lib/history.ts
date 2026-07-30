@@ -15,3 +15,13 @@ export function isFullscreenEntry(state: unknown): boolean {
     (usr as { aidocsFullscreen?: unknown }).aidocsFullscreen === true
   );
 }
+
+// The mobile comments sheet merges its marker into the current state,
+// so the tag lives at the top level, not under usr.
+export function isCommentsSheetEntry(state: unknown): boolean {
+  return (
+    !!state &&
+    typeof state === "object" &&
+    (state as { aidocsCommentsSheet?: unknown }).aidocsCommentsSheet === true
+  );
+}
