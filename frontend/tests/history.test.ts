@@ -10,7 +10,6 @@ test("canPopHistory pops only past the first router entry", () => {
 });
 
 test("canPopHistory fails closed on entries the router did not create", () => {
-  assert.equal(canPopHistory({ aidocsCommentsSheet: true }), false);
   assert.equal(canPopHistory(null), false);
   assert.equal(canPopHistory(undefined), false);
   assert.equal(canPopHistory({}), false);

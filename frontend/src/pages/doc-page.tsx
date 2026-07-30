@@ -119,7 +119,11 @@ export function DocumentPage() {
   const sheetHistoryRef = useRef(false);
   useEffect(() => {
     if (!mobilePanelOpen) return;
-    window.history.pushState({ aidocsCommentsSheet: true }, "");
+    // Spread keeps the router's idx so its internal index never desyncs.
+    window.history.pushState(
+      { ...window.history.state, aidocsCommentsSheet: true },
+      "",
+    );
     sheetHistoryRef.current = true;
     const onPop = () => {
       sheetHistoryRef.current = false;
