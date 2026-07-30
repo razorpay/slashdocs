@@ -135,7 +135,10 @@ export function DocBar({
         onSelectVersion={onSelectVersion}
       />
       <Button asChild variant="outline" size="sm" className="hidden sm:inline-flex">
-        <Link to={`/app/d/${docId}?fullscreen=1&version=${current}`}>
+        <Link
+          to={`/app/d/${docId}?fullscreen=1&version=${current}`}
+          state={{ aidocsFullscreen: true }}
+        >
           <Maximize2 className="h-4 w-4" /> Full screen
         </Link>
       </Button>
@@ -175,7 +178,11 @@ export function DocBar({
         <DropdownContent>
           <DropdownItem
             className="sm:hidden"
-            onSelect={() => nav(`/app/d/${docId}?fullscreen=1&version=${current}`)}
+            onSelect={() =>
+              nav(`/app/d/${docId}?fullscreen=1&version=${current}`, {
+                state: { aidocsFullscreen: true },
+              })
+            }
           >
             <Maximize2 className="h-4 w-4" /> Full screen
           </DropdownItem>

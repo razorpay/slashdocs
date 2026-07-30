@@ -8,7 +8,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import { Center, Skeleton } from "@/components/ui/misc";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useIsMobile } from "@/lib/use-media-query";
-import { canPopHistory } from "@/lib/history";
+import { canPopHistory, isFullscreenEntry } from "@/lib/history";
 import { DocProvider, type PendingSelection } from "./doc-context";
 import { DocBar } from "./doc-bar";
 import { RenderFrame } from "./doc-render-frame";
@@ -168,9 +168,11 @@ export function DocumentPage() {
     versionID(versionItems[versionItems.length - 1] || {});
   const current = selectedVersion || queryVersion || latest;
 
-  // Entering full screen pushes an entry, so exit by popping it, not replacing it.
+  // Entering full screen pushes a tagged entry; exit pops only when the top
+  // entry is provably that push, otherwise drops the param in place.
   const exitFullscreen = useCallback(() => {
-    if (canPopHistory(window.history.state)) {
+    const state = window.history.state;
+    if (isFullscreenEntry(state) && canPopHistory(state)) {
       nav(-1);
       return;
     }
