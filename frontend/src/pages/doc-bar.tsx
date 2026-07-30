@@ -97,7 +97,10 @@ export function DocBar({
   return (
     <div className="flex h-16 items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-2 sm:gap-3 sm:px-4">
       <Button asChild variant="ghost" size="icon" className="shrink-0">
-        <Link to="/app/documents" aria-label="Back to documents">
+        <Link
+          to={parentFolder ? `/app/folders/${parentFolder.id}` : "/app/documents"}
+          aria-label={parentFolder ? "Back to folder" : "Back to documents"}
+        >
           <ArrowLeft className="h-4 w-4" />
         </Link>
       </Button>
