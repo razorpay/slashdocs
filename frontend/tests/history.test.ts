@@ -1,0 +1,21 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { canPopHistory } from "../src/lib/history.ts";
+
+test("canPopHistory pops only past the first router entry", () => {
+  assert.equal(canPopHistory({ idx: 1, key: "abc" }), true);
+  assert.equal(canPopHistory({ idx: 7, key: "abc" }), true);
+  assert.equal(canPopHistory({ idx: 0, key: "abc" }), false);
+});
+
+test("canPopHistory fails closed on entries the router did not create", () => {
+  assert.equal(canPopHistory({ aidocsCommentsSheet: true }), false);
+  assert.equal(canPopHistory(null), false);
+  assert.equal(canPopHistory(undefined), false);
+  assert.equal(canPopHistory({}), false);
+  assert.equal(canPopHistory({ idx: NaN }), false);
+  assert.equal(canPopHistory({ idx: "2" }), false);
+  assert.equal(canPopHistory({ idx: 1.5 }), false);
+  assert.equal(canPopHistory({ idx: -1 }), false);
+});

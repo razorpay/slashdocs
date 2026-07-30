@@ -27,6 +27,7 @@ import { api, type Principal, type Version } from "@/api";
 import { canManageSharing } from "@/lib/constants";
 import { queryKeys } from "@/lib/queryKeys";
 import { samePrincipal } from "@/lib/principals";
+import { canPopHistory } from "@/lib/history";
 import { ShareSheet } from "./doc-share-sheet";
 import { UploadVersionItem } from "./doc-upload-version";
 import { VersionHistoryDialog } from "./doc-version-history";
@@ -83,7 +84,17 @@ export function DocBar({
   return (
     <div className="flex h-16 items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-2 sm:gap-3 sm:px-4">
       <Button asChild variant="ghost" size="icon" className="shrink-0">
-        <Link to="/app/documents" aria-label="Back to documents">
+        <Link
+          to={parentFolder ? `/app/folders/${parentFolder.id}` : "/app/documents"}
+          aria-label="Go back"
+          onClick={(e) => {
+            if (e.defaultPrevented || e.button !== 0) return;
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+            if (!canPopHistory(window.history.state)) return;
+            e.preventDefault();
+            nav(-1);
+          }}
+        >
           <ArrowLeft className="h-4 w-4" />
         </Link>
       </Button>
