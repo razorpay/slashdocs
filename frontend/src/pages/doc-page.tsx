@@ -1,6 +1,6 @@
 import { useTitle } from "@/lib/use-title";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams, useParams } from "react-router-dom";
+import { useNavigate, useSearchParams, useParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
 import { api, APIError, currentVersionID, docTitle, versionID } from "@/api";
@@ -8,6 +8,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import { Center, Skeleton } from "@/components/ui/misc";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useIsMobile } from "@/lib/use-media-query";
+import { canPopHistory } from "@/lib/history";
 import { DocProvider, type PendingSelection } from "./doc-context";
 import { DocBar } from "./doc-bar";
 import { RenderFrame } from "./doc-render-frame";
@@ -56,6 +57,7 @@ function DocumentErrorState({
 
 export function DocumentPage() {
   const { id = "" } = useParams();
+  const nav = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const fullscreen = searchParams.get("fullscreen") === "1";
   const queryVersion = searchParams.get("version") || undefined;
@@ -162,7 +164,12 @@ export function DocumentPage() {
     versionID(versionItems[versionItems.length - 1] || {});
   const current = selectedVersion || queryVersion || latest;
 
+  // Entering full screen pushes an entry, so exit by popping it, not replacing it.
   const exitFullscreen = useCallback(() => {
+    if (canPopHistory(window.history.state)) {
+      nav(-1);
+      return;
+    }
     setSearchParams(
       (params) => {
         const next = new URLSearchParams(params);
@@ -171,7 +178,7 @@ export function DocumentPage() {
       },
       { replace: true },
     );
-  }, [setSearchParams]);
+  }, [nav, setSearchParams]);
 
   useEffect(() => {
     if (!fullscreen) return;
