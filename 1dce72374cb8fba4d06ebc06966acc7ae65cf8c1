@@ -1,0 +1,21 @@
+api/internal/server/handlers_documents.go
+  01db519 97-99,127-160
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "base_commit_sha": "1dce72374cb8fba4d06ebc06966acc7ae65cf8c1",
+  "tracker_version": "1.0.0",
+  "prompts": {
+    "01db519": {
+      "agent_id": {
+        "tool": "claude",
+        "model": "<synthetic>",
+        "id": "80bbc26a-a88d-4a6c-ba6b-162b7f751906"
+      },
+      "total_additions": 1505060,
+      "total_deletions": 0,
+      "accepted_lines": 189,
+      "overriden_lines": 0
+    }
+  }
+}
