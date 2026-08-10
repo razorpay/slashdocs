@@ -1,0 +1,23 @@
+frontend/src/components/browse/upload-backup.tsx
+  01db519 23,56-70
+frontend/src/pages/folder.tsx
+  01db519 54,306
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "base_commit_sha": "740da56aaae4b0eba4c178bc6f8bd8ec25ffef38",
+  "tracker_version": "1.0.0",
+  "prompts": {
+    "01db519": {
+      "agent_id": {
+        "tool": "claude",
+        "model": "<synthetic>",
+        "id": "80bbc26a-a88d-4a6c-ba6b-162b7f751906"
+      },
+      "total_additions": 1911,
+      "total_deletions": 0,
+      "accepted_lines": 28,
+      "overriden_lines": 0
+    }
+  }
+}
