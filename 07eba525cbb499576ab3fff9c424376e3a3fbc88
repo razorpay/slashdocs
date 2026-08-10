@@ -1,0 +1,21 @@
+api/internal/server/server_documents_test.go
+  01db519 250-252,283-320,323-328,345-356,362,368-373,446-448,470-482,488
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "base_commit_sha": "07eba525cbb499576ab3fff9c424376e3a3fbc88",
+  "tracker_version": "1.0.0",
+  "prompts": {
+    "01db519": {
+      "agent_id": {
+        "tool": "claude",
+        "model": "<synthetic>",
+        "id": "80bbc26a-a88d-4a6c-ba6b-162b7f751906"
+      },
+      "total_additions": 3001315,
+      "total_deletions": 0,
+      "accepted_lines": 4243,
+      "overriden_lines": 0
+    }
+  }
+}
