@@ -1,0 +1,21 @@
+api/internal/repo/postgres/folders.go
+  01db519 413-421,424
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "base_commit_sha": "f96009e4a67822aa2d90dffaa882794ea6cbe109",
+  "tracker_version": "1.0.0",
+  "prompts": {
+    "01db519": {
+      "agent_id": {
+        "tool": "claude",
+        "model": "<synthetic>",
+        "id": "80bbc26a-a88d-4a6c-ba6b-162b7f751906"
+      },
+      "total_additions": 3001315,
+      "total_deletions": 0,
+      "accepted_lines": 12,
+      "overriden_lines": 0
+    }
+  }
+}
