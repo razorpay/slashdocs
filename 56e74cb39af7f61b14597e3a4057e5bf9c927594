@@ -1,0 +1,23 @@
+frontend/src/lib/constants.ts
+  01db519 30-35
+frontend/tests/permissions.test.ts
+  01db519 1-23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "base_commit_sha": "56e74cb39af7f61b14597e3a4057e5bf9c927594",
+  "tracker_version": "1.0.0",
+  "prompts": {
+    "01db519": {
+      "agent_id": {
+        "tool": "claude",
+        "model": "<synthetic>",
+        "id": "80bbc26a-a88d-4a6c-ba6b-162b7f751906"
+      },
+      "total_additions": 889,
+      "total_deletions": 0,
+      "accepted_lines": 26,
+      "overriden_lines": 0
+    }
+  }
+}
