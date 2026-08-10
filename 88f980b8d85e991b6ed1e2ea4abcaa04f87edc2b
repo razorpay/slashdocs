@@ -1,0 +1,23 @@
+docs/superpowers/plans/2026-08-10-folder-html-upload.md
+  01db519 1-713
+docs/superpowers/specs/2026-08-10-folder-html-upload-design.md
+  01db519 32-40,128-130,132-137
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "base_commit_sha": "88f980b8d85e991b6ed1e2ea4abcaa04f87edc2b",
+  "tracker_version": "1.0.0",
+  "prompts": {
+    "01db519": {
+      "agent_id": {
+        "tool": "claude",
+        "model": "<synthetic>",
+        "id": "80bbc26a-a88d-4a6c-ba6b-162b7f751906"
+      },
+      "total_additions": 1451,
+      "total_deletions": 0,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    }
+  }
+}
