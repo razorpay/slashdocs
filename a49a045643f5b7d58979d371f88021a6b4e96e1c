@@ -1,0 +1,34 @@
+api/internal/server/handlers_documents.go
+  01db519 69-77
+frontend/src/components/browse/upload-backup.tsx
+  01db519 56-69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "base_commit_sha": "a49a045643f5b7d58979d371f88021a6b4e96e1c",
+  "tracker_version": "1.0.0",
+  "prompts": {
+    "01db519": {
+      "agent_id": {
+        "tool": "claude",
+        "model": "<synthetic>",
+        "id": "80bbc26a-a88d-4a6c-ba6b-162b7f751906"
+      },
+      "total_additions": 2967802,
+      "total_deletions": 0,
+      "accepted_lines": 10493,
+      "overriden_lines": 0
+    },
+    "85b7e71": {
+      "agent_id": {
+        "tool": "claude",
+        "model": "unknown",
+        "id": ""
+      },
+      "total_additions": 1,
+      "total_deletions": 0,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    }
+  }
+}
