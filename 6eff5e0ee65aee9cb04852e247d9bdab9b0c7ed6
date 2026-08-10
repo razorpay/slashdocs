@@ -1,0 +1,29 @@
+api/internal/server/docs/docs.go
+  01db519 418-422,1874-1876,1879-1886,2199-2209
+api/internal/server/docs/swagger.json
+  01db519 411-415,1867-1869,1872-1879,2192-2202
+api/internal/server/docs/swagger.yaml
+  01db519 302-303,306-311,512-516,823-827
+api/internal/server/handlers_documents.go
+  01db519 19,21-23,47,66-71,94-107,123-129
+api/internal/server/server_documents_test.go
+  01db519 249-388
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "base_commit_sha": "6eff5e0ee65aee9cb04852e247d9bdab9b0c7ed6",
+  "tracker_version": "1.0.0",
+  "prompts": {
+    "01db519": {
+      "agent_id": {
+        "tool": "claude",
+        "model": "<synthetic>",
+        "id": "80bbc26a-a88d-4a6c-ba6b-162b7f751906"
+      },
+      "total_additions": 306,
+      "total_deletions": 0,
+      "accepted_lines": 27,
+      "overriden_lines": 0
+    }
+  }
+}
