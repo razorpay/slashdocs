@@ -1,0 +1,21 @@
+frontend/e2e/aidocs.spec.ts
+  01db519 281-331
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "base_commit_sha": "22b5f3e93ab68cf4c316e752d60100a4605949a8",
+  "tracker_version": "1.0.0",
+  "prompts": {
+    "01db519": {
+      "agent_id": {
+        "tool": "claude",
+        "model": "<synthetic>",
+        "id": "80bbc26a-a88d-4a6c-ba6b-162b7f751906"
+      },
+      "total_additions": 2608,
+      "total_deletions": 0,
+      "accepted_lines": 25,
+      "overriden_lines": 0
+    }
+  }
+}
