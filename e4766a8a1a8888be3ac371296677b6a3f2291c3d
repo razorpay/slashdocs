@@ -1,0 +1,23 @@
+docs/superpowers/specs/2026-08-10-folder-html-upload-design.md
+  01db519 34-40,65-75,116-117,119-128,153-154
+frontend/src/components/browse/upload-backup.tsx
+  01db519 23,58-59,70-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "base_commit_sha": "e4766a8a1a8888be3ac371296677b6a3f2291c3d",
+  "tracker_version": "1.0.0",
+  "prompts": {
+    "01db519": {
+      "agent_id": {
+        "tool": "claude",
+        "model": "<synthetic>",
+        "id": "80bbc26a-a88d-4a6c-ba6b-162b7f751906"
+      },
+      "total_additions": 1494669,
+      "total_deletions": 0,
+      "accepted_lines": 38,
+      "overriden_lines": 0
+    }
+  }
+}
