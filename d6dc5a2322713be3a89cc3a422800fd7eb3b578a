@@ -1,0 +1,21 @@
+.hash/specs/2026-08-15-docs-by-me-design.md
+  f083b0b 1-144
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "base_commit_sha": "d6dc5a2322713be3a89cc3a422800fd7eb3b578a",
+  "tracker_version": "1.0.0",
+  "prompts": {
+    "f083b0b": {
+      "agent_id": {
+        "tool": "claude",
+        "model": "claude-opus-5",
+        "id": "64dfc840-f5e4-4c17-86a1-06b71cfd8280"
+      },
+      "total_additions": 1053,
+      "total_deletions": 0,
+      "accepted_lines": 20,
+      "overriden_lines": 0
+    }
+  }
+}
