@@ -1,0 +1,35 @@
+api/internal/server/page_params_internal_test.go
+  s_5bf2bb2b7d4cbb::t_8006c77bb48a43 1-56
+api/internal/db/queries/documents.sql
+  s_5bf2bb2b7d4cbb::t_03e18cce7750a3 148
+api/internal/db/sqlc/documents.sql.go
+  s_5bf2bb2b7d4cbb::t_12bc26f076f876 385,397,422
+api/internal/repo/postgres/postgres.go
+  s_5bf2bb2b7d4cbb::t_e8376daffa26ad 729,739-740,743-749,756,760
+api/internal/repo/postgres/postgres_test.go
+  s_5bf2bb2b7d4cbb::t_5b1e73aa8560cc 230,246,251,269
+api/internal/repo/repo.go
+  s_5bf2bb2b7d4cbb::t_9ce8a3e88388ab 318
+api/internal/server/handlers_documents.go
+  s_5bf2bb2b7d4cbb::t_60fd6939247d55 7,102-132,141-142,167-171,173,178
+api/internal/server/response_types.go
+  s_5bf2bb2b7d4cbb::t_b2a61a16cd88fb 7-9
+cli/internal/cli/cmd_docs.go
+  s_5bf2bb2b7d4cbb::t_ea4ced02a27cbe 10,43,65,67-75,84-85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.24",
+  "base_commit_sha": "45a3fd955544e7f8eeef215f0b8c465abcb641f8",
+  "prompts": {},
+  "sessions": {
+    "s_5bf2bb2b7d4cbb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a92b2dcc-92ab-4b6a-9642-f052832c6804",
+        "model": "claude-opus-5"
+      },
+      "human_author": "kaushikb9 <kaushik.bhat@razorpay.com>"
+    }
+  }
+}
