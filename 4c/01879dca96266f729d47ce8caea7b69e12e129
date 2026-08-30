@@ -1,0 +1,27 @@
+frontend/src/api.ts
+  s_eb7b943beea99d::t_9c6d91042e9a12 324-327
+api/internal/server/handlers_comments.go
+  s_eb7b943beea99d::t_32f858fefe8d84 4
+  s_eb7b943beea99d::t_217418cae589a7 361-363
+  s_eb7b943beea99d::t_f1f52cf9a119fd 376-383,387
+  s_eb7b943beea99d::t_f6799812cf82da 403
+frontend/src/pages/doc-comments.tsx
+  s_eb7b943beea99d::t_1a65f89ec0fd5b 321-325,335
+  s_eb7b943beea99d::t_5ba9014547720e 35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "4c01879dca96266f729d47ce8caea7b69e12e129",
+  "prompts": {},
+  "sessions": {
+    "s_eb7b943beea99d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e66b6649-3875-4c8f-b27b-68abcb010db4",
+        "model": "claude-opus-5"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
