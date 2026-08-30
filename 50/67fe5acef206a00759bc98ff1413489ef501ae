@@ -1,0 +1,80 @@
+cli/internal/cli/cmd_docs.go
+  s_eb7b943beea99d::t_16e3a3936fa4ea 570-575
+  s_eb7b943beea99d::t_7165d614cc89c4 583-593
+api/internal/server/docs/docs.go
+  s_eb7b943beea99d::t_a2014cc0937aac 712-819,1978-1991,2022-2027
+api/internal/server/docs/swagger.yaml
+  s_eb7b943beea99d::t_a2014cc0937aac 240-248,269-272,1068-1142
+frontend/src/api.ts
+  s_eb7b943beea99d::t_dd22d78582bf82 325-328
+  s_eb7b943beea99d::t_a8483699be946d 96-97
+  s_eb7b943beea99d::t_afb8a94c9ac2b8 66-83
+  s_eb7b943beea99d::t_662d9198136f7a 324
+api/internal/db/migrate_test.go
+  s_eb7b943beea99d::t_bad3fcdc5bebab 99-100
+api/internal/server/mcp_documents.go
+  s_eb7b943beea99d::t_64dc4af894e511 10
+  s_eb7b943beea99d::t_eda46310716df6 393-425
+api/internal/server/handlers_comments.go
+  s_eb7b943beea99d::t_05e2ca4b98a148 320-389,393-406
+  s_eb7b943beea99d::t_42896fe3ff1475 390-392
+  s_eb7b943beea99d::t_a5fd9427c1f0d1 106,140,186,238
+frontend/src/pages/doc-comments.tsx
+  s_eb7b943beea99d::t_d3660e18ef6cb5 909
+  s_eb7b943beea99d::t_b0e3c2cf3100ec 30-37
+  s_eb7b943beea99d::t_519bc053905b4d 318-337,339-394,396-408
+  s_eb7b943beea99d::t_08f10338e63662 851
+  s_eb7b943beea99d::t_662d9198136f7a 338,395
+api/internal/db/sqlc/models.go
+  s_eb7b943beea99d::t_09fc79ab9c5352 63-72
+api/internal/repo/postgres/postgres.go
+  s_eb7b943beea99d::t_6c5e8185ab6bd8 1105-1108,1111
+  s_eb7b943beea99d::t_b57e822c6e42f5 1153-1157
+  s_eb7b943beea99d::t_842f1caa5e57d6 1074-1078
+  s_eb7b943beea99d::t_b010441095f0f3 691-730
+api/internal/db/queries/comment_reactions.sql
+  s_eb7b943beea99d::t_dc225d293873e0 1-19
+api/internal/server/server_mcp_test.go
+  s_eb7b943beea99d::t_74af93373c3798 51,63
+api/internal/server/server_comment_reactions_test.go
+  s_eb7b943beea99d::t_dbc003a5a9fd58 1-224
+api/internal/server/server_comments_test.go
+  s_eb7b943beea99d::t_5452c00aa04ec9 34,76,92,103
+api/internal/server/docs/swagger.json
+  s_eb7b943beea99d::t_a2014cc0937aac 705-812,1971-1984,2015-2020
+api/internal/repo/repo.go
+  s_eb7b943beea99d::t_0fa39653b560c4 230-240,242
+  s_eb7b943beea99d::t_80ef6956a33035 241,243-252
+  s_eb7b943beea99d::t_305e513efa9225 378-379
+api/internal/server/server.go
+  s_eb7b943beea99d::t_225a7e593dc941 260-261
+api/internal/server/json.go
+  s_eb7b943beea99d::t_6ea64054994618 161,170
+  s_eb7b943beea99d::t_331dd3ec97bdb5 139-140
+  s_eb7b943beea99d::t_66a1b257fae134 67,74-80
+  s_eb7b943beea99d::t_24a2b77e496bd4 83
+  s_eb7b943beea99d::t_c55f0fb77c6761 154
+  s_eb7b943beea99d::t_a1ed5497f86ea9 81,198-224,227
+  s_eb7b943beea99d::t_b0ec0d94d6775c 111
+  s_eb7b943beea99d::t_442f5b5201a159 82
+api/internal/db/migrations/00022_comment_reactions.sql
+  s_eb7b943beea99d::t_8b7d65b973fe88 1-20
+api/internal/db/sqlc/comment_reactions.sql.go
+  s_eb7b943beea99d::t_09fc79ab9c5352 1-99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "5067fe5acef206a00759bc98ff1413489ef501ae",
+  "prompts": {},
+  "sessions": {
+    "s_eb7b943beea99d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e66b6649-3875-4c8f-b27b-68abcb010db4",
+        "model": "claude-opus-5"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
