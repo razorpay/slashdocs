@@ -1,0 +1,22 @@
+frontend/src/pages/doc-comments.tsx
+  s_eb7b943beea99d::t_23db2c8e5996a2 412-413
+  s_eb7b943beea99d::t_b75ba671e43086 374-394
+  s_eb7b943beea99d::t_d526fbd54ea425 396-411
+  s_eb7b943beea99d::t_aaa6c3e4dc11e2 352
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "ef3f6c45fbaf6cb73564daa254f317627562e66d",
+  "prompts": {},
+  "sessions": {
+    "s_eb7b943beea99d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e66b6649-3875-4c8f-b27b-68abcb010db4",
+        "model": "claude-opus-5"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
