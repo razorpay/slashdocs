@@ -1,0 +1,40 @@
+api/internal/server/docs/swagger.json
+  s_eb7b943beea99d::t_7f3213050fed61 744-745,798-799
+api/internal/server/handlers_comments.go
+  s_eb7b943beea99d::t_f312c18e93a51f 331
+  s_eb7b943beea99d::t_8222cdbe5b8184 359,374
+api/internal/server/docs/docs.go
+  s_eb7b943beea99d::t_7f3213050fed61 751-752,805-806
+frontend/src/api.ts
+  s_eb7b943beea99d::t_da3464bb74ff79 77
+api/internal/server/docs/swagger.yaml
+  s_eb7b943beea99d::t_7f3213050fed61 1093,1131
+api/internal/db/migrations/00023_comment_reactions_plus.sql
+  s_eb7b943beea99d::t_d6a31cc2662ddd 1-12
+api/internal/server/mcp_documents.go
+  s_eb7b943beea99d::t_8222cdbe5b8184 409
+api/internal/server/server_comment_reactions_test.go
+  s_eb7b943beea99d::t_30ab3fb1a57f36 151-171
+cli/internal/cli/cmd_docs.go
+  s_eb7b943beea99d::t_8222cdbe5b8184 585
+frontend/src/pages/doc-comments.tsx
+  s_eb7b943beea99d::t_da3464bb74ff79 335
+api/internal/db/migrate_test.go
+  s_eb7b943beea99d::t_da3464bb74ff79 99-100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "e36fb129dafa678d1089f7b26a9ec8c0544f88e2",
+  "prompts": {},
+  "sessions": {
+    "s_eb7b943beea99d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e66b6649-3875-4c8f-b27b-68abcb010db4",
+        "model": "claude-opus-5"
+      },
+      "human_author": "unknown"
+    }
+  }
+}
