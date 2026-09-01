@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -98,6 +99,41 @@ func (h handlers) createDocument(c *gin.Context) {
 	c.JSON(http.StatusCreated, createDocumentResponse{ID: d.ID, CurrentVersionID: d.CurrentVersionID, DefaultGrant: granted})
 }
 
+// Page sizes for document search. Named for search specifically so this composes with the
+// list-path pagination in #32 instead of colliding with it.
+const (
+	searchPageDefault = 25
+	searchPageMax     = 200
+)
+
+// pageParams reads limit/offset. A malformed value is rejected rather than silently ignored —
+// a client that asks for limit=abc has a bug, and returning page 1 hides it.
+//
+// ParseInt with a bitSize of 32 does the range check for us: anything outside int32 is a
+// syntax/range error here rather than a silent wrap. Converting a plain Atoi result would
+// turn offset=3000000000 into -1294967296, which Postgres then rejects as a negative OFFSET.
+func pageParams(c *gin.Context) (limit, offset int32, err error) {
+	limit, offset = searchPageDefault, 0
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		n, convErr := strconv.ParseInt(raw, 10, 32)
+		if convErr != nil || n <= 0 {
+			return 0, 0, errors.New("limit must be a positive integer")
+		}
+		if n > searchPageMax {
+			n = searchPageMax
+		}
+		limit = int32(n)
+	}
+	if raw := strings.TrimSpace(c.Query("offset")); raw != "" {
+		n, convErr := strconv.ParseInt(raw, 10, 32)
+		if convErr != nil || n < 0 {
+			return 0, 0, errors.New("offset must be a non-negative integer")
+		}
+		offset = int32(n)
+	}
+	return limit, offset, nil
+}
+
 // ListDocuments godoc
 // @Summary List documents
 // @Tags documents
@@ -106,6 +142,8 @@ func (h handlers) createDocument(c *gin.Context) {
 // @Produce json
 // @Param q query string false "Search query; supports author:, labels:, in:, and /regex/ values"
 // @Param label query string false "Deprecated exact label filter; use q=labels:<label>"
+// @Param limit query int false "Page size for search results (default 25, max 200)"
+// @Param offset query int false "Row offset for search results"
 // @Success 200 {object} listResponse[repo.Document]
 // @Router /v1/documents [get]
 func (h handlers) listDocuments(c *gin.Context) {
@@ -130,13 +168,18 @@ func (h handlers) listDocuments(c *gin.Context) {
 		search.LabelPatterns = append(search.LabelPatterns, "^"+escapePostgresRegex(label)+"$")
 	}
 	if q != "" || len(search.LabelPatterns) > 0 {
+		limit, offset, err := pageParams(c)
+		if err != nil {
+			badRequest(c, err.Error())
+			return
+		}
 		includeOrgWide := h.deps.deployment == DeploymentOrg
-		items, err := h.deps.repository.SearchDocuments(c.Request.Context(), *current(c), search, includeOrgWide, 25)
+		items, hasMore, err := h.deps.repository.SearchDocuments(c.Request.Context(), *current(c), search, includeOrgWide, limit, offset)
 		if err != nil {
 			internalErr(c, err)
 			return
 		}
-		c.JSON(http.StatusOK, listResponse[repo.Document]{Items: items})
+		c.JSON(http.StatusOK, listResponse[repo.Document]{Items: items, HasMore: hasMore})
 		return
 	}
 	items, err := h.deps.repository.ListDocuments(c.Request.Context(), *current(c))

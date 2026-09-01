@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -39,6 +40,7 @@ func docsCmd(g *globals, out io.Writer) *cobra.Command {
 
 func documentListCmd(g *globals, out io.Writer) *cobra.Command {
 	var query string
+	var limit, offset int
 	cmd := &cobra.Command{
 		Use:   "list [query]",
 		Short: "List or search documents",
@@ -60,8 +62,17 @@ func documentListCmd(g *globals, out io.Writer) *cobra.Command {
 				query = args[0]
 			}
 			path := "/v1/documents"
+			params := url.Values{}
 			if strings.TrimSpace(query) != "" {
-				params := url.Values{"q": []string{query}}
+				params.Set("q", query)
+			}
+			if limit > 0 {
+				params.Set("limit", strconv.Itoa(limit))
+			}
+			if offset > 0 {
+				params.Set("offset", strconv.Itoa(offset))
+			}
+			if len(params) > 0 {
 				path += "?" + params.Encode()
 			}
 			return run(g, out, func(c *Client) ([]byte, error) {
@@ -70,6 +81,8 @@ func documentListCmd(g *globals, out io.Writer) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&query, "query", "", "search query")
+	cmd.Flags().IntVar(&limit, "limit", 0, "page size for search results (server default 25, max 200)")
+	cmd.Flags().IntVar(&offset, "offset", 0, "row offset for search results; use with --limit to page")
 	return cmd
 }
 

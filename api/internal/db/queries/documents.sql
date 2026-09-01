@@ -145,7 +145,7 @@ WHERE (@title_pattern::text = '' OR d.title ~* @title_pattern::text)
     OR d.id IN (SELECT doc_id FROM docs_via_folder)
   )
 ORDER BY d.updated_at DESC, d.title
-LIMIT @row_limit;
+LIMIT @row_limit OFFSET @row_offset;
 
 -- name: DeleteDocument :execrows
 DELETE FROM documents WHERE id=$1;

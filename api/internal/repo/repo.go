@@ -326,7 +326,7 @@ type Repository interface {
 	FolderAccessChain(ctx context.Context, principal auth.Principal, folderID string) ([]FolderAccess, error)
 	CreateDocument(ctx context.Context, owner auth.Principal, title string, html []byte) (Document, Version, error)
 	ListDocuments(ctx context.Context, principal auth.Principal) ([]Document, error)
-	SearchDocuments(ctx context.Context, principal auth.Principal, search DocumentSearch, includeOrgWide bool, limit int32) ([]Document, error)
+	SearchDocuments(ctx context.Context, principal auth.Principal, search DocumentSearch, includeOrgWide bool, limit, offset int32) ([]Document, bool, error)
 	// RecordDocumentOpened notes that a principal opened a document, so a
 	// broadly-shared ("anyone") document joins their workspace listing after
 	// first open. Idempotent.

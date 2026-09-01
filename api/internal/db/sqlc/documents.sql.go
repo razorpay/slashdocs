@@ -382,7 +382,7 @@ WHERE ($1::text = '' OR d.title ~* $1::text)
     OR d.id IN (SELECT doc_id FROM docs_via_folder)
   )
 ORDER BY d.updated_at DESC, d.title
-LIMIT $9
+LIMIT $10 OFFSET $9
 `
 
 type SearchDocumentsParams struct {
@@ -394,6 +394,7 @@ type SearchDocumentsParams struct {
 	OwnerID        string
 	GoogleGroupIds []string
 	IncludeOrgWide bool
+	RowOffset      int32
 	RowLimit       int32
 }
 
@@ -418,6 +419,7 @@ func (q *Queries) SearchDocuments(ctx context.Context, arg SearchDocumentsParams
 		arg.OwnerID,
 		arg.GoogleGroupIds,
 		arg.IncludeOrgWide,
+		arg.RowOffset,
 		arg.RowLimit,
 	)
 	if err != nil {

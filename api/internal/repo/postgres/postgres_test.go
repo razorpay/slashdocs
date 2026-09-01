@@ -227,7 +227,7 @@ func TestPostgresSearchDocumentsViaFolderGrant(t *testing.T) {
 	}
 
 	// Before granting folder access, viewer cannot find the doc
-	results, err := store.SearchDocuments(ctx, viewer, repo.DocumentSearch{TitlePattern: "SearchableInFolder"}, false, 25)
+	results, _, err := store.SearchDocuments(ctx, viewer, repo.DocumentSearch{TitlePattern: "SearchableInFolder"}, false, 25, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,12 +243,12 @@ func TestPostgresSearchDocumentsViaFolderGrant(t *testing.T) {
 	}
 
 	// Now the viewer can find the doc via folder inheritance
-	results, err = store.SearchDocuments(ctx, viewer, repo.DocumentSearch{
+	results, _, err = store.SearchDocuments(ctx, viewer, repo.DocumentSearch{
 		TitlePattern:  "Searchable.*Folder",
 		AuthorPattern: `search-folder-owner@test\.com$`,
 		LabelPatterns: []string{"^api-", "payments"},
 		FolderPattern: "Payments|Checkout",
-	}, false, 25)
+	}, false, 25, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +266,7 @@ func TestPostgresSearchDocumentsViaFolderGrant(t *testing.T) {
 		t.Fatalf("combined search results = %+v, want one result with labels", results)
 	}
 
-	results, err = store.SearchDocuments(ctx, viewer, repo.DocumentSearch{LabelPatterns: []string{"missing"}}, false, 25)
+	results, _, err = store.SearchDocuments(ctx, viewer, repo.DocumentSearch{LabelPatterns: []string{"missing"}}, false, 25, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

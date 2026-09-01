@@ -766,7 +766,7 @@ func (s *Store) ListDocuments(ctx context.Context, p auth.Principal) ([]repo.Doc
 	}
 	return out, nil
 }
-func (s *Store) SearchDocuments(ctx context.Context, p auth.Principal, search repo.DocumentSearch, includeOrgWide bool, limit int32) ([]repo.Document, error) {
+func (s *Store) SearchDocuments(ctx context.Context, p auth.Principal, search repo.DocumentSearch, includeOrgWide bool, limit, offset int32) ([]repo.Document, bool, error) {
 	rows, err := s.q.SearchDocuments(ctx, dbsqlc.SearchDocumentsParams{
 		TitlePattern:   search.TitlePattern,
 		AuthorPattern:  search.AuthorPattern,
@@ -776,21 +776,28 @@ func (s *Store) SearchDocuments(ctx context.Context, p auth.Principal, search re
 		OwnerType:      string(p.Type),
 		GoogleGroupIds: p.GoogleGroupIDs,
 		IncludeOrgWide: includeOrgWide,
-		RowLimit:       limit,
+		RowLimit:       limit + 1,
+		RowOffset:      offset,
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
+	}
+	// One extra row was requested; its presence is the has_more signal. Trim it before
+	// enriching so we never do label lookups for a row we are about to discard.
+	hasMore := int32(len(rows)) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]repo.Document, 0, len(rows))
 	for _, r := range rows {
 		d := docFromSearch(r)
 		d.Labels, err = s.q.ListDocumentLabels(ctx, r.ID)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		out = append(out, d)
 	}
-	return out, nil
+	return out, hasMore, nil
 }
 func (s *Store) RecordDocumentOpened(ctx context.Context, documentID string, p auth.Principal) error {
 	return s.q.RecordWorkspaceEntry(ctx, dbsqlc.RecordWorkspaceEntryParams{
