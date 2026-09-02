@@ -117,6 +117,9 @@ func TestMoveDocumentSameDestinationIsNoOp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := e.store.CreateGrant(context.Background(), "folder", folderID, fixtureStranger, repo.RoleViewer, fixtureOwner); err != nil {
+		t.Fatal(err)
+	}
 	second := move()
 	if second["moved"] != false {
 		t.Fatalf("same-destination move=%v, want moved=false", second)
@@ -127,6 +130,9 @@ func TestMoveDocumentSameDestinationIsNoOp(t *testing.T) {
 	}
 	if after.ParentFolderID != folderID || after.UpdatedAt != before.UpdatedAt {
 		t.Fatalf("same-destination changed document: before=%+v after=%+v", before, after)
+	}
+	if _, ok := second["permission_warning"]; ok {
+		t.Fatalf("same-destination move returned permission warning: %v", second["permission_warning"])
 	}
 }
 
