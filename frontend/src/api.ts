@@ -269,6 +269,13 @@ export type Folder = {
   owner?: Principal;
   parent_folder_id?: string;
   ancestors?: FolderBreadcrumb[];
+  ancestors_truncated?: boolean;
+};
+export type ExpectedSource = { kind: "root" } | { kind: "folder"; folder_id: string };
+export type MoveDocumentResponse = {
+  document_id: string;
+  moved: boolean;
+  permission_warning?: { message: string };
 };
 export type FolderEntry = {
   type: "folder" | "document";
@@ -833,13 +840,18 @@ export const api = {
       method: "DELETE",
     }),
   // Folders
-  // A q or a minRole searches every folder, and minRole keeps only the
-  // folders where the reader has at least that role.
-  listFolders: (folderId?: string, path?: string, q?: string, minRole?: string) => {
+  // An explicit q (including the empty string) or a minimum role uses the
+  // global folder-search contract rather than workspace browsing.
+  listFolders: (
+    folderId?: string,
+    path?: string,
+    q?: string,
+    minRole?: "viewer" | "commenter" | "editor" | "owner",
+  ) => {
     const params = new URLSearchParams();
     if (folderId) params.set("folder_id", folderId);
     if (path) params.set("path", path);
-    if (q) params.set("q", q);
+    if (q !== undefined) params.set("q", q);
     if (minRole) params.set("min_role", minRole);
     const qs = params.toString();
     return request<{ folder?: Folder; items: FolderEntry[]; has_more: boolean }>(
@@ -894,14 +906,17 @@ export const api = {
     }),
   listFolderDocuments: (id: string) =>
     request<{ items: Document[] }>(`/v1/folders/${id}/documents`),
-  moveDocumentToFolder: (folderId: string, documentId: string) =>
-    request<{
-      document_id: string;
-      moved: boolean;
-      permission_warning?: { message: string };
-    }>(`/v1/folders/${folderId}/documents`, {
+  moveDocumentToFolder: (
+    folderId: string,
+    documentId: string,
+    expectedSource?: ExpectedSource,
+  ) =>
+    request<MoveDocumentResponse>(`/v1/folders/${folderId}/documents`, {
       method: "POST",
-      body: JSON.stringify({ document_id: documentId }),
+      body: JSON.stringify({
+        document_id: documentId,
+        ...(expectedSource ? { expected_source: expectedSource } : {}),
+      }),
     }),
   moveDocumentToRoot: (folderId: string, documentId: string) =>
     request<void>(`/v1/folders/${folderId}/documents/${documentId}`, {

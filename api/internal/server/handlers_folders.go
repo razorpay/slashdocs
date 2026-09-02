@@ -204,9 +204,10 @@ func (h handlers) listFolders(c *gin.Context) {
 	// An explicitly supplied q (including q=) is the autocomplete/search
 	// contract. A request without q retains the workspace browsing behavior.
 	q, hasQuery := c.GetQuery("q")
-	if hasQuery {
+	minRoleRaw := c.Query("min_role")
+	if hasQuery || minRoleRaw != "" {
 		includeOrgWide := h.deps.deployment == DeploymentOrg
-		minRole, ok := parseFolderSearchRole(c.Query("min_role"))
+		minRole, ok := parseFolderSearchRole(minRoleRaw)
 		if !ok {
 			badRequest(c, "invalid min_role")
 			return
