@@ -290,8 +290,8 @@ func (s *Store) RevokeCLICredential(ctx context.Context, userID, credentialID st
 }
 
 func (s *Store) RoleForDocument(ctx context.Context, p auth.Principal, documentID string) (repo.Role, error) {
-	owner, err := s.q.GetDocumentOwner(ctx, documentID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	role, err := roleForDocumentQ(ctx, s.q, p, documentID)
+	if errors.Is(err, repo.ErrNotFound) {
 		// A missing document and an unshared one are the same permission
 		// verdict (RoleNone), not an error; errors are reserved for lookup
 		// faults so callers can map them to a 500 rather than a 403.
@@ -300,20 +300,7 @@ func (s *Store) RoleForDocument(ctx context.Context, p auth.Principal, documentI
 	if err != nil {
 		return "", err
 	}
-	best := repo.RoleNone
-	if string(p.Type) == owner.OwnerType && p.ID == owner.OwnerID {
-		best = repo.RoleOwner
-	}
-	inherited, err := s.q.ListDocumentInheritedRoles(ctx, documentID)
-	if err != nil {
-		return "", err
-	}
-	for _, g := range inherited {
-		if principalHasGrant(p, g.PrincipalType, g.PrincipalID) {
-			best = repo.MaxRole(best, repo.Role(g.Role))
-		}
-	}
-	return best, nil
+	return role, nil
 }
 
 func principalHasGrant(p auth.Principal, principalType, principalID string) bool {

@@ -253,7 +253,15 @@ DELETE FROM documents WHERE id=$1;
 UPDATE documents SET parent_folder_id= @folder_id::text, updated_at=now() WHERE id= @document_id
 RETURNING owner_type, owner_id;
 
--- name: MoveDocumentToRoot :exec
+-- name: LockDocumentForMove :one
+-- Lock the document after the folder-tree advisory lock. The caller derives
+-- the actual source from this row before checking expected_source and roles.
+SELECT id, COALESCE(parent_folder_id,'') AS parent_folder_id, owner_type, owner_id
+FROM documents
+WHERE id=$1
+FOR UPDATE;
+
+-- name: MoveDocumentToRoot :execrows
 UPDATE documents SET parent_folder_id=NULL, updated_at=now() WHERE id= @document_id AND parent_folder_id= @folder_id::text;
 
 -- name: ListFolderDocuments :many

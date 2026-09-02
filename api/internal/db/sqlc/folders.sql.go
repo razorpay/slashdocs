@@ -737,42 +737,88 @@ func (q *Queries) RootFolderTitleTaken(ctx context.Context, arg RootFolderTitleT
 }
 
 const searchFoldersByTitle = `-- name: SearchFoldersByTitle :many
-WITH RECURSIVE ranks(role, rank) AS (
-  VALUES ('viewer', 1), ('commenter', 2), ('editor', 3), ('owner', 4)
-), accessible(id, rank, listed, depth) AS (
-  SELECT f.id, 4, true, 1 FROM folders f WHERE f.owner_type= $4 AND f.owner_id= $5
-  UNION
-  SELECT g.resource_id, r.rank, g.principal_type <> 'anyone' OR $6::boolean, 1
-  FROM resource_grants g JOIN ranks r ON r.role=g.role
-  WHERE g.resource_type='folder' AND g.revoked_at IS NULL
-    AND ((g.principal_type= $4 AND g.principal_id= $5)
-      OR (g.principal_type='google_group' AND g.principal_id=ANY($7::text[]))
-      OR g.principal_type='anyone')
+WITH RECURSIVE ancestors(folder_id, ancestor_id, depth) AS (
+  SELECT f.id, f.id, 0
+  FROM folders f
   UNION ALL
-  SELECT c.id, LEAST(a.rank, 3), a.listed, a.depth+1 FROM folders c JOIN accessible a ON c.parent_folder_id = a.id WHERE a.depth < 20
+  SELECT a.folder_id, p.parent_folder_id, a.depth+1
+  FROM ancestors a
+  JOIN folders p ON p.id=a.ancestor_id
+  WHERE p.parent_folder_id IS NOT NULL AND a.depth < 64
+), effective_roles AS (
+  SELECT f.id,
+         GREATEST(
+           CASE WHEN f.owner_type= $5 AND f.owner_id= $6 THEN 4 ELSE 0 END,
+           COALESCE(MAX(CASE
+             WHEN a.depth > 0
+               AND ancestor_folder.owner_type= $5
+               AND ancestor_folder.owner_id= $6
+             THEN 3
+             ELSE 0
+           END), 0),
+           COALESCE(MAX(CASE
+             WHEN (g.principal_type= $5 AND g.principal_id= $6)
+               OR (g.principal_type='google_group' AND g.principal_id=ANY($7::text[]))
+               OR g.principal_type='anyone'
+             THEN CASE g.role
+               WHEN 'owner' THEN 4
+               WHEN 'editor' THEN 3
+               WHEN 'commenter' THEN 2
+               WHEN 'viewer' THEN 1
+               ELSE 0
+             END
+             ELSE 0
+           END), 0)
+         )::int AS role_rank,
+         (f.owner_type= $5 AND f.owner_id= $6)
+           OR COALESCE(BOOL_OR(
+             a.depth > 0
+             AND ancestor_folder.owner_type= $5
+             AND ancestor_folder.owner_id= $6
+           ), false)
+           OR COALESCE(BOOL_OR(
+             (g.principal_type= $5 AND g.principal_id= $6)
+             OR (g.principal_type='google_group' AND g.principal_id=ANY($7::text[]))
+           ), false) AS has_private_access,
+         COALESCE(BOOL_OR(g.principal_type='anyone'), false) AS has_anyone_access
+  FROM folders f
+  JOIN ancestors a ON a.folder_id=f.id
+  JOIN folders ancestor_folder ON ancestor_folder.id=a.ancestor_id
+  LEFT JOIN resource_grants g
+    ON g.resource_type='folder'
+   AND g.resource_id=a.ancestor_id
+   AND g.revoked_at IS NULL
+  GROUP BY f.id, f.owner_type, f.owner_id
 )
 SELECT f.id, f.title, f.owner_type, f.owner_id,
        COALESCE(f.parent_folder_id,'') AS parent_folder_id,
        COALESCE(u.name,sa.name,'') AS owner_name, COALESCE(u.email,'') AS owner_email
 FROM folders f
-JOIN (SELECT id, max(rank) AS rank FROM accessible GROUP BY id HAVING bool_or(listed)) a ON f.id = a.id
+JOIN effective_roles er ON er.id = f.id
 LEFT JOIN users u ON f.owner_type='user' AND f.owner_id=u.id
 LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
   -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
   ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE f.title ILIKE '%' || $1::text || '%'
-  AND a.rank >= COALESCE((SELECT rank FROM ranks WHERE role= $2::text), 0)
+  AND er.role_rank > 0
+  AND er.role_rank >= $2::int
+  -- Anyone-only folders are link-addressable but must not appear in the
+  -- public search index. In org deployment, anyone grants are workspace-wide
+  -- discovery grants. Private access and effective role are intentionally
+  -- separate: a direct viewer plus an inherited anyone editor is discoverable
+  -- and qualifies for min_role=editor.
+  AND (er.has_private_access OR ($3::boolean AND er.has_anyone_access))
 ORDER BY f.title, f.id
-LIMIT $3
+LIMIT $4
 `
 
 type SearchFoldersByTitleParams struct {
 	Query          string
-	MinRole        string
+	MinRoleRank    int32
+	IncludeOrgWide bool
 	RowLimit       int32
 	PrincipalType  string
 	PrincipalID    string
-	IncludeOrgWide bool
 	GoogleGroupIds []string
 }
 
@@ -786,20 +832,20 @@ type SearchFoldersByTitleRow struct {
 	OwnerEmail     string
 }
 
-// The folders whose title matches, where the principal has at least min_role
-// (” is any role). The role is the one of ListFolderAccessChain: a role on a
-// folder cascades to its subfolders, ownership cascades as editor, and a grant
-// to anyone counts. But a folder that only anyone can open is listed in an org
-// deployment only, as it is not shared with the principal.
+// Compute the effective role for every folder before applying the result cap.
+// A grant on a folder is inherited by all descendants, so each candidate's
+// ancestor chain is folded into one maximum role. This is deliberately
+// set-wise: filtering after LIMIT would allow low-role rows to hide eligible
+// destinations from the move picker.
 // nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) SearchFoldersByTitle(ctx context.Context, arg SearchFoldersByTitleParams) ([]SearchFoldersByTitleRow, error) {
 	rows, err := q.db.Query(ctx, searchFoldersByTitle,
 		arg.Query,
-		arg.MinRole,
+		arg.MinRoleRank,
+		arg.IncludeOrgWide,
 		arg.RowLimit,
 		arg.PrincipalType,
 		arg.PrincipalID,
-		arg.IncludeOrgWide,
 		arg.GoogleGroupIds,
 	)
 	if err != nil {

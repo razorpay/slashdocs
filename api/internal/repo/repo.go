@@ -37,6 +37,11 @@ func MaxRole(a, b Role) Role {
 var ErrNotFound = fmt.Errorf("not found: %w", auth.ErrNotFound)
 var ErrConflict = errors.New("conflict")
 var ErrForbidden = errors.New("forbidden")
+
+// ErrSourceChanged means the document's current parent no longer matches the
+// source supplied by a caller. It is intentionally distinct from a generic
+// conflict so HTTP/MCP callers can ask the user to refresh and retry.
+var ErrSourceChanged = errors.New("source_changed")
 var ErrInvalidCommentBody = errors.New("invalid comment body")
 var ErrInvalidCommentMention = errors.New("invalid comment mention")
 
@@ -241,11 +246,27 @@ type FolderBreadcrumb struct {
 }
 
 type Folder struct {
-	ID             string             `json:"id"`
-	Title          string             `json:"title"`
-	Owner          auth.Principal     `json:"owner"`
-	ParentFolderID string             `json:"parent_folder_id,omitempty"`
-	Ancestors      []FolderBreadcrumb `json:"ancestors,omitempty"`
+	ID                 string             `json:"id"`
+	Title              string             `json:"title"`
+	Owner              auth.Principal     `json:"owner"`
+	ParentFolderID     string             `json:"parent_folder_id,omitempty"`
+	Ancestors          []FolderBreadcrumb `json:"ancestors,omitempty"`
+	AncestorsTruncated bool               `json:"ancestors_truncated,omitempty"`
+}
+
+// MoveSource is the canonical source expectation accepted by the move-to-
+// folder endpoint. A nil expectation preserves legacy request compatibility;
+// the repository still derives and authorizes the actual source transactionally.
+type MoveSource struct {
+	Kind     string
+	FolderID string
+}
+
+// MoveResult describes the committed move and whether the destination's
+// active grants warrant the existing permission warning.
+type MoveResult struct {
+	Moved             bool
+	PermissionWarning bool
 }
 
 // FolderAccess is one element of a folder's ancestor chain annotated with a
@@ -873,9 +894,8 @@ type Repository interface {
 	// FolderMayBroadenAccess reports whether content of owner placed in the
 	// folder may become visible to others.
 	FolderMayBroadenAccess(ctx context.Context, folderID string, owner auth.Principal) (bool, error)
-	// MoveDocumentToFolder reports whether the move may broaden access.
-	MoveDocumentToFolder(ctx context.Context, principal auth.Principal, folderID, documentID string) (bool, error)
-	MoveDocumentToRoot(ctx context.Context, folderID, documentID string) error
+	MoveDocumentToFolder(ctx context.Context, principal auth.Principal, folderID, documentID string, expectedSource ...*MoveSource) (MoveResult, error)
+	MoveDocumentToRoot(ctx context.Context, principal auth.Principal, folderID, documentID string) (MoveResult, error)
 	ListFolderDocuments(ctx context.Context, principal auth.Principal, folderID string) ([]Document, error)
 	ListEffectiveAccess(ctx context.Context, resourceType, resourceID string) ([]EffectiveAccessItem, error)
 	ListPins(ctx context.Context, principal auth.Principal) ([]Pin, error)
