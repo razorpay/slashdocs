@@ -235,6 +235,44 @@ func TestMoveDocumentFolderSourceRequiresSourceEditor(t *testing.T) {
 	}
 }
 
+func TestMoveDocumentFolderLegacyOmittedSourceStillRequiresSourceEditor(t *testing.T) {
+	e := newTestEnv(t)
+	source := createFolder(t, e, `{"title":"Legacy source"}`, principalHeader(fixtureOwner))
+	destination := createFolder(t, e, `{"title":"Legacy destination"}`, principalHeader(fixtureOwner))
+	docID, _ := e.createDocument("Legacy folder move", "<p>doc</p>", fixtureOwner)
+	stranger := principalHeader(fixtureStranger)
+
+	rr := do(t, e.h, http.MethodPost, "/v1/documents/"+docID+"/grants", `{"address":"`+fixtureStranger.Email+`","role":"editor"}`, map[string]string{
+		"X-Test-Principal": principalHeader(fixtureOwner), "Content-Type": "application/json",
+	})
+	assertStatus(t, rr, http.StatusCreated)
+	rr = do(t, e.h, http.MethodPost, "/v1/folders/"+source+"/grants", `{"address":"`+fixtureStranger.Email+`","role":"viewer"}`, map[string]string{
+		"X-Test-Principal": principalHeader(fixtureOwner), "Content-Type": "application/json",
+	})
+	assertStatus(t, rr, http.StatusCreated)
+	rr = do(t, e.h, http.MethodPost, "/v1/folders/"+destination+"/grants", `{"address":"`+fixtureStranger.Email+`","role":"editor"}`, map[string]string{
+		"X-Test-Principal": principalHeader(fixtureOwner), "Content-Type": "application/json",
+	})
+	assertStatus(t, rr, http.StatusCreated)
+
+	rr = do(t, e.h, http.MethodPost, "/v1/folders/"+source+"/documents", `{"document_id":"`+docID+`"}`, map[string]string{
+		"X-Test-Principal": principalHeader(fixtureOwner), "Content-Type": "application/json",
+	})
+	assertStatus(t, rr, http.StatusOK)
+	rr = do(t, e.h, http.MethodPost, "/v1/folders/"+destination+"/documents", `{"document_id":"`+docID+`"}`, map[string]string{
+		"X-Test-Principal": stranger, "Content-Type": "application/json",
+	})
+	assertStatus(t, rr, http.StatusForbidden)
+
+	got, err := e.store.GetDocument(context.Background(), docID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ParentFolderID != source {
+		t.Fatalf("legacy move changed parent to %q, want %q", got.ParentFolderID, source)
+	}
+}
+
 func TestMoveDocumentToRootRequiresSourceEditorAndRejectsWrongPath(t *testing.T) {
 	e := newTestEnv(t)
 	source := createFolder(t, e, `{"title":"Root source"}`, principalHeader(fixtureOwner))
