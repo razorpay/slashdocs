@@ -209,7 +209,7 @@ func (s *Store) RequestDocumentAccess(ctx context.Context, requester auth.Princi
 	), recipient AS (
 		SELECT CASE WHEN d.owner_type='user' THEN d.owner_id ELSE sa.owner_user_id END AS user_id
 		FROM requested r JOIN documents d ON d.id=r.document_id
-		LEFT JOIN service_accounts sa ON d.owner_type='service_account' AND sa.id=d.owner_id
+		LEFT JOIN service_accounts sa ON d.owner_type='service_account' AND sa.id=d.owner_id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
 	)
 	INSERT INTO document_access_request_notification_outbox
 		(document_id,requester_type,requester_id,requester_label,recipient_id)
