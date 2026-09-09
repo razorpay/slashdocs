@@ -42,6 +42,7 @@ type Worker struct {
 	Sender           Sender
 	AppOrigin        string
 	ResolvePrincipal func(context.Context, *auth.Principal) *auth.Principal
+	nextFailureLog   time.Time
 }
 
 func (w *Worker) Run(ctx context.Context) {
@@ -54,12 +55,21 @@ func (w *Worker) Run(ctx context.Context) {
 		case <-ticker.C:
 		}
 		if err := w.DeliverNext(ctx); err != nil {
-			slog.Error("comment notification processing failed")
+			w.logProcessingFailure("comment")
 		}
 		if err := w.DeliverNextDocumentAccess(ctx); err != nil {
-			slog.Error("document access notification processing failed")
+			w.logProcessingFailure("document_access")
 		}
 	}
+}
+
+func (w *Worker) logProcessingFailure(kind string) {
+	now := time.Now()
+	if now.Before(w.nextFailureLog) {
+		return
+	}
+	w.nextFailureLog = now.Add(time.Minute)
+	slog.Error("notification processing failed", "kind", kind)
 }
 
 func (w *Worker) DeliverNextDocumentAccess(ctx context.Context) error {
