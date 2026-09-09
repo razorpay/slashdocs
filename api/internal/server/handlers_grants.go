@@ -295,7 +295,7 @@ func (h handlers) patchGrant(c *gin.Context) {
 	if !h.requireCanonicalOwnerForOwnerGroupChange(c, "document", c.Param("id"), existing, repo.Grant{Principal: existing.Principal, Role: in.Role}) {
 		return
 	}
-	g, err := h.deps.repository.UpdateGrant(c.Request.Context(), c.Param("id"), c.Param("grant_id"), in.Role)
+	g, err := h.deps.repository.UpdateGrant(c.Request.Context(), c.Param("id"), c.Param("grant_id"), in.Role, *current(c))
 	if err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
 			notFound(c)
@@ -329,7 +329,7 @@ func (h handlers) deleteGrant(c *gin.Context) {
 	if !h.requireCanonicalOwnerForOwnerGroupChange(c, "document", c.Param("id"), existing, repo.Grant{}) {
 		return
 	}
-	if err := h.deps.repository.DeleteGrant(c.Request.Context(), c.Param("id"), c.Param("grant_id")); err != nil {
+	if err := h.deps.repository.DeleteGrant(c.Request.Context(), c.Param("id"), c.Param("grant_id"), *current(c)); err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
 			notFound(c)
 			return

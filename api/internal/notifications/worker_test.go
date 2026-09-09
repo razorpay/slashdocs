@@ -35,7 +35,7 @@ func TestOutboxDeliveryPreferencesAndAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	store.SetCommentNotificationsEnabled(true)
+	store.SetNotificationsEnabled(true)
 	owner, err := store.UpsertGoogleUser(ctx, "owner", "owner@example.com", "Owner", "owner-sub", "")
 	if err != nil {
 		t.Fatal(err)
@@ -50,6 +50,9 @@ func TestOutboxDeliveryPreferencesAndAccess(t *testing.T) {
 	}
 	doc, v, err := store.CreateDocument(ctx, owner, "Private", []byte("<p>Review</p>"))
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateGrant(ctx, "document", doc.ID, author, repo.RoleCommenter, owner); err != nil {
 		t.Fatal(err)
 	}
 	sender := &recordingSender{}
@@ -232,5 +235,177 @@ func TestOutboxDeliveryPreferencesAndAccess(t *testing.T) {
 	}
 	if got := sender.messages[len(sender.messages)-1]; got.Highlight != "Review" || got.Body != "Reply" || !got.Reply {
 		t.Fatalf("reply must include root highlight and reply body: %+v", got)
+	}
+
+	// The author of the parent comment subscribes to replies, even when they
+	// are not the document owner. A document mute clears that reply too.
+	reply, err = store.CreateCommentReply(ctx, doc.ID, c.ID, "Owner reply", owner, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resetGate()
+	if err := w.DeliverNext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if sender.emails[len(sender.emails)-1] != author.Email || sender.reasons[len(sender.reasons)-1] != "reply" || !strings.Contains(sender.links[len(sender.links)-1], reply.ID) {
+		t.Fatal("parent comment author did not receive the reply notification")
+	}
+	if _, err := store.CreateCommentReply(ctx, doc.ID, c.ID, "@Author", owner, []repo.CommentMention{mention(author, "@Author")}); err != nil {
+		t.Fatal(err)
+	}
+	resetGate()
+	if err := w.DeliverNext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if sender.emails[len(sender.emails)-1] != author.Email || sender.reasons[len(sender.reasons)-1] != "mention" {
+		t.Fatal("mention subscription must replace the duplicate reply subscription")
+	}
+	if _, err := store.CreateCommentReply(ctx, doc.ID, c.ID, "Muted owner reply", owner, nil); err != nil {
+		t.Fatal(err)
+	}
+	if count() != 1 {
+		t.Fatal("reply notification was not queued")
+	}
+	if _, err := store.SetNotificationPreferences(ctx, author, doc.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if count() != 0 {
+		t.Fatal("document mute must discard queued reply notifications")
+	}
+}
+
+func TestDocumentAccessNotifications(t *testing.T) {
+	ctx := context.Background()
+	store, err := pgrepo.Connect(ctx, testdb.New(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.SetNotificationsEnabled(true)
+
+	owner, err := store.UpsertGoogleUser(ctx, "access-owner", "access-owner@example.com", "Owner", "access-owner-sub", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	direct, err := store.UpsertGoogleUser(ctx, "access-direct", "access-direct@example.com", "Direct", "access-direct-sub", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened, err := store.UpsertGoogleUser(ctx, "access-opened", "access-opened@example.com", "Opened", "access-opened-sub", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unopened, err := store.UpsertGoogleUser(ctx, "access-unopened", "access-unopened@example.com", "Unopened", "access-unopened-sub", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, _, err := store.CreateDocument(ctx, owner, "Access review", []byte("<p>Review</p>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender := &recordingSender{}
+	w := Worker{Store: store, Sender: sender, AppOrigin: "https://aidocs.example.com"}
+	count := func() int {
+		t.Helper()
+		var n int
+		if err := store.Pool().QueryRow(ctx, "SELECT count(*) FROM document_access_notification_outbox").Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	resetGate := func() {
+		t.Helper()
+		if _, err := store.Pool().Exec(ctx, "UPDATE users SET next_notification_at=now()"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deliver := func() Message {
+		t.Helper()
+		resetGate()
+		before := len(sender.messages)
+		if err := w.DeliverNextDocumentAccess(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if len(sender.messages) != before+1 {
+			t.Fatalf("delivered messages=%d, want %d", len(sender.messages), before+1)
+		}
+		return sender.messages[len(sender.messages)-1]
+	}
+
+	grant, err := store.CreateGrant(ctx, "document", doc.ID, direct, repo.RoleViewer, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpdateGrant(ctx, doc.ID, grant.ID, repo.RoleEditor, owner); err != nil {
+		t.Fatal(err)
+	}
+	if count() != 1 {
+		t.Fatal("rapid direct access changes must coalesce")
+	}
+	got := deliver()
+	if got.Reason != "access_shared" || got.Role != repo.RoleEditor || got.PreviousRole != repo.RoleNone || !got.DirectAccess || sender.emails[len(sender.emails)-1] != direct.Email {
+		t.Fatalf("wrong direct share notification: %+v", got)
+	}
+	if err := store.DeleteGrant(ctx, doc.ID, grant.ID, owner); err != nil {
+		t.Fatal(err)
+	}
+	got = deliver()
+	if got.Reason != "access_removed" || got.PreviousRole != repo.RoleEditor || got.Role != repo.RoleNone || !got.DirectAccess {
+		t.Fatalf("wrong direct removal notification: %+v", got)
+	}
+
+	anyoneGrant, err := store.CreateGrant(ctx, "document", doc.ID, auth.Principal{Type: auth.PrincipalAnyone}, repo.RoleViewer, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count() != 0 {
+		t.Fatal("org-wide share must not notify users who have not opened the document")
+	}
+	grant, err = store.CreateGrant(ctx, "document", doc.ID, direct, repo.RoleViewer, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = deliver()
+	if got.Reason != "access_shared" || !got.DirectAccess {
+		t.Fatalf("direct share must notify even when org-wide access is equivalent: %+v", got)
+	}
+
+	if err := store.RecordDocumentOpened(ctx, doc.ID, opened); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpdateGrant(ctx, doc.ID, anyoneGrant.ID, repo.RoleCommenter, owner); err != nil {
+		t.Fatal(err)
+	}
+	if count() != 1 {
+		t.Fatalf("org-wide update queued %d notifications, want one for the prior opener", count())
+	}
+	got = deliver()
+	if got.Reason != "access_updated" || got.PreviousRole != repo.RoleViewer || got.Role != repo.RoleCommenter || got.DirectAccess || sender.emails[len(sender.emails)-1] != opened.Email {
+		t.Fatalf("wrong prior-opener notification: %+v", got)
+	}
+	for _, email := range sender.emails {
+		if email == unopened.Email {
+			t.Fatal("org-wide access change notified a user who never opened the document")
+		}
+	}
+
+	if _, err := store.UpdateGrant(ctx, doc.ID, grant.ID, repo.RoleEditor, owner); err != nil {
+		t.Fatal(err)
+	}
+	if count() != 1 {
+		t.Fatal("direct role update must be queued")
+	}
+	got = deliver()
+	if got.Reason != "access_updated" || got.PreviousRole != repo.RoleViewer || got.Role != repo.RoleEditor || !got.DirectAccess {
+		t.Fatalf("wrong direct access update notification: %+v", got)
+	}
+	if _, err := store.UpdateGrant(ctx, doc.ID, grant.ID, repo.RoleCommenter, owner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetNotificationPreferences(ctx, direct, doc.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if count() != 0 {
+		t.Fatal("document mute must discard queued access notifications")
 	}
 }

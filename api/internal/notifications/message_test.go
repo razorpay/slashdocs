@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/razorpay/aidocs/api/internal/repo"
 )
 
 func TestSlackMessageContent(t *testing.T) {
@@ -66,6 +68,45 @@ func TestSlackMessageContent(t *testing.T) {
 	}
 	if len(decoded.Blocks[1].Elements) != 2 {
 		t.Fatal("missing highlight must not create an empty block")
+	}
+}
+
+func TestSlackAccessMessageContent(t *testing.T) {
+	message := Message{
+		Reason: "access_shared", DocumentTitle: "Roadmap <draft>", Link: "https://aidocs.example.com/app/d/doc_1",
+		Role: repo.RoleCommenter, DirectAccess: true,
+	}
+	payload := slackMessage("D1", message)
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(encoded)
+	for _, want := range []string{"shared directly with you", "Direct access: Commenter", message.Link, "Open document"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("access notification missing %q", want)
+		}
+	}
+	if fallback, ok := payload["text"].(string); !ok || !strings.Contains(fallback, message.DocumentTitle) {
+		t.Fatal("access notification must preserve the literal document title")
+	}
+	if payload["parse"] != "none" || payload["mrkdwn"] != false || payload["link_names"] != false {
+		t.Fatal("access notification content must remain literal")
+	}
+
+	message.Reason = "access_removed"
+	message.PreviousRole = repo.RoleCommenter
+	message.Role = repo.RoleNone
+	encoded, err = json.Marshal(slackMessage("D1", message))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content = string(encoded)
+	if !strings.Contains(content, "direct document access was removed") || !strings.Contains(content, "Previous direct access: Commenter") {
+		t.Fatal("direct removal notification has the wrong content")
+	}
+	if strings.Contains(content, "Open document") {
+		t.Fatal("removed access must not offer a document button")
 	}
 }
 

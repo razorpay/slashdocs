@@ -12,9 +12,20 @@ import (
 
 type Store interface {
 	repo.Repository
+	commentNotificationStore
+	documentAccessNotificationStore
+}
+
+type commentNotificationStore interface {
 	ClaimCommentNotification(context.Context) (*repo.CommentNotification, error)
 	FinishCommentNotification(context.Context, repo.CommentNotification, time.Duration) error
 	ReserveNotificationDelivery(context.Context, string) (bool, error)
+}
+
+type documentAccessNotificationStore interface {
+	ClaimDocumentAccessNotification(context.Context) (*repo.DocumentAccessNotification, error)
+	FinishDocumentAccessNotification(context.Context, repo.DocumentAccessNotification, time.Duration) error
+	DirectDocumentGrantRole(context.Context, string, string) (repo.Role, error)
 }
 type Sender interface {
 	Send(ctx context.Context, email string, message Message) error
@@ -22,6 +33,8 @@ type Sender interface {
 
 type Message struct {
 	Reason, Link, DocumentTitle, Highlight, Body string
+	PreviousRole, Role                           repo.Role
+	DirectAccess                                 bool
 	Reply                                        bool
 }
 type Worker struct {
@@ -43,7 +56,35 @@ func (w *Worker) Run(ctx context.Context) {
 		if err := w.DeliverNext(ctx); err != nil {
 			slog.Error("comment notification processing failed")
 		}
+		if err := w.DeliverNextDocumentAccess(ctx); err != nil {
+			slog.Error("document access notification processing failed")
+		}
 	}
+}
+
+func (w *Worker) DeliverNextDocumentAccess(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	n, err := w.Store.ClaimDocumentAccessNotification(ctx)
+	if err != nil || n == nil {
+		return err
+	}
+	retryAfter, err := w.deliverDocumentAccess(ctx, *n)
+	if err != nil {
+		retryAfter = time.Duration(1<<min(n.Attempts, 8)) * time.Second
+		var delivery *DeliveryError
+		deliveryCode := "internal"
+		if errors.As(err, &delivery) {
+			deliveryCode = delivery.Code
+			if delivery.Permanent {
+				retryAfter = 0
+			} else {
+				retryAfter = max(retryAfter, delivery.RetryAfter)
+			}
+		}
+		slog.Warn("document access notification delivery failed", "delivery_code", deliveryCode, "will_retry", retryAfter > 0)
+	}
+	return w.Store.FinishDocumentAccessNotification(ctx, *n, retryAfter)
 }
 
 func (w *Worker) DeliverNext(ctx context.Context) error {
@@ -107,6 +148,58 @@ func (w *Worker) deliver(ctx context.Context, n repo.CommentNotification) (time.
 		return 6 * time.Second, nil
 	}
 	return 0, w.sendComment(ctx, p.Email, n, c)
+}
+
+func (w *Worker) deliverDocumentAccess(ctx context.Context, n repo.DocumentAccessNotification) (time.Duration, error) {
+	p, err := w.Store.ResolveUser(ctx, n.RecipientID)
+	if errors.Is(err, repo.ErrNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if p.Email == "" {
+		return 0, nil
+	}
+	prefs, err := w.Store.NotificationPreferences(ctx, p, n.DocumentID)
+	if err != nil || !prefs.EffectiveEnabled {
+		return 0, err
+	}
+	var currentRole repo.Role
+	if n.Source == "direct" {
+		currentRole, err = w.Store.DirectDocumentGrantRole(ctx, n.DocumentID, p.ID)
+	} else {
+		if w.ResolvePrincipal != nil {
+			p = *w.ResolvePrincipal(ctx, &p)
+		}
+		currentRole, err = w.Store.RoleForDocument(ctx, p, n.DocumentID)
+	}
+	if err != nil {
+		return 0, err
+	}
+	// A newer grant or membership change supersedes this claimed event. Its
+	// transaction either queued the current state or made this message stale.
+	if currentRole != n.Role {
+		return 0, nil
+	}
+	doc, err := w.Store.GetDocument(ctx, n.DocumentID)
+	if errors.Is(err, repo.ErrNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	allowed, err := w.Store.ReserveNotificationDelivery(ctx, p.ID)
+	if err != nil {
+		return 0, err
+	}
+	if !allowed {
+		return 6 * time.Second, nil
+	}
+	return 0, w.Sender.Send(ctx, p.Email, Message{
+		Reason: n.Reason, Link: DocumentURL(w.AppOrigin, n.DocumentID), DocumentTitle: doc.Title,
+		PreviousRole: n.PreviousRole, Role: n.Role, DirectAccess: n.Source == "direct",
+	})
 }
 
 func (w *Worker) sendComment(ctx context.Context, email string, n repo.CommentNotification, c repo.Comment) error {

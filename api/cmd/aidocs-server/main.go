@@ -282,7 +282,7 @@ func newApplicationServer(ctx context.Context, store *pgrepo.Store, blobs blob.S
 		return nil, err
 	}
 	sender := loadSlackSender(os.Getenv("AIDOCS_SLACK_BOT_TOKEN"))
-	store.SetCommentNotificationsEnabled(sender != nil)
+	store.SetNotificationsEnabled(sender != nil)
 	options := []server.Option{
 		server.WithCommentNotificationSender(sender),
 		server.WithRepository(store),

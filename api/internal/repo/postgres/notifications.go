@@ -11,7 +11,143 @@ import (
 	"github.com/razorpay/aidocs/api/internal/repo"
 )
 
-func (s *Store) SetCommentNotificationsEnabled(enabled bool) { s.commentNotifications = enabled }
+func (s *Store) SetNotificationsEnabled(enabled bool) { s.notificationsEnabled = enabled }
+
+type documentAccessSnapshot map[string]repo.Role
+
+func accessNotificationSource(principal auth.Principal) string {
+	if principal.Type == auth.PrincipalUser {
+		return "direct"
+	}
+	return "opened"
+}
+
+func documentGrantAccessSnapshot(ctx context.Context, tx pgx.Tx, resourceType, resourceID string, principal auth.Principal) (documentAccessSnapshot, error) {
+	if resourceType != "document" {
+		return nil, nil
+	}
+	var recipientIDs []string
+	switch principal.Type {
+	case auth.PrincipalUser:
+		var role repo.Role
+		if err := tx.QueryRow(ctx, `SELECT COALESCE((SELECT role FROM resource_grants
+			WHERE resource_type='document' AND resource_id=$1 AND principal_type='user'
+			AND principal_id=$2 AND revoked_at IS NULL), '')`, resourceID, principal.ID).Scan(&role); err != nil {
+			return nil, err
+		}
+		return documentAccessSnapshot{principal.ID: role}, nil
+	case auth.PrincipalAnyone:
+		rows, err := tx.Query(ctx, `SELECT w.principal_id
+			FROM document_workspace_entries w JOIN users u ON u.id=w.principal_id
+			WHERE w.document_id=$1 AND w.principal_type='user'`, resourceID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return nil, err
+			}
+			recipientIDs = append(recipientIDs, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, nil
+	}
+	if len(recipientIDs) == 0 {
+		return documentAccessSnapshot{}, nil
+	}
+	rows, err := tx.Query(ctx, `WITH RECURSIVE ancestors(resource_id, resource_type, depth) AS (
+		SELECT $1::text, 'document'::text, 0
+		UNION ALL
+		SELECT f.id, 'folder'::text, a.depth+1
+		FROM ancestors a
+		JOIN LATERAL (
+			SELECT CASE WHEN a.resource_type='document' THEN (SELECT parent_folder_id FROM documents WHERE id=a.resource_id)
+				ELSE (SELECT parent_folder_id FROM folders WHERE id=a.resource_id) END AS parent_id
+		) parent ON parent.parent_id IS NOT NULL
+		JOIN folders f ON f.id=parent.parent_id
+		WHERE a.depth < 64
+	)
+	SELECT recipient.id,
+		CASE WHEN d.owner_type='user' AND d.owner_id=recipient.id THEN 'owner'
+		ELSE COALESCE((
+			SELECT g.role FROM resource_grants g
+			WHERE g.revoked_at IS NULL
+			  AND g.resource_id IN (SELECT resource_id FROM ancestors)
+			  AND (g.principal_type='anyone'
+			    OR (g.principal_type='user' AND g.principal_id=recipient.id)
+			    OR (g.principal_type='google_group' AND EXISTS (
+			      SELECT 1 FROM google_group_memberships gm
+			      WHERE gm.user_id=recipient.id AND gm.group_id=g.principal_id)))
+			ORDER BY CASE g.role WHEN 'owner' THEN 4 WHEN 'editor' THEN 3 WHEN 'commenter' THEN 2 WHEN 'viewer' THEN 1 ELSE 0 END DESC
+			LIMIT 1
+		), '') END AS role
+	FROM unnest($2::text[]) AS recipient(id)
+	CROSS JOIN documents d
+	WHERE d.id=$1`, resourceID, recipientIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make(documentAccessSnapshot, len(recipientIDs))
+	for rows.Next() {
+		var id string
+		var role repo.Role
+		if err := rows.Scan(&id, &role); err != nil {
+			return nil, err
+		}
+		result[id] = role
+	}
+	return result, rows.Err()
+}
+
+func accessNotificationReason(previous, next repo.Role) string {
+	switch {
+	case previous == repo.RoleNone:
+		return "access_shared"
+	case next == repo.RoleNone:
+		return "access_removed"
+	default:
+		return "access_updated"
+	}
+}
+
+func (s *Store) enqueueDocumentAccessChanges(ctx context.Context, tx pgx.Tx, documentID, source string, actor auth.Principal, before, after documentAccessSnapshot) error {
+	if !s.notificationsEnabled {
+		return nil
+	}
+	for recipientID, previousRole := range before {
+		nextRole := after[recipientID]
+		if previousRole == nextRole || (actor.Type == auth.PrincipalUser && actor.ID == recipientID) {
+			continue
+		}
+		_, err := tx.Exec(ctx, `INSERT INTO document_access_notification_outbox AS queued
+			(document_id,recipient_id,source,reason,previous_role,role)
+			SELECT $1,$2,$3,$4,$5,$6
+			WHERE EXISTS(SELECT 1 FROM users WHERE id=$2)
+			AND NOT EXISTS(SELECT 1 FROM notification_preferences p WHERE p.principal_type='user' AND p.principal_id=$2 AND NOT p.enabled)
+			AND NOT EXISTS(SELECT 1 FROM document_notification_mutes m WHERE m.principal_type='user' AND m.principal_id=$2 AND m.document_id=$1)
+			ON CONFLICT(document_id,recipient_id,source) DO UPDATE SET
+				reason=CASE
+					WHEN queued.previous_role='' AND EXCLUDED.role<>'' THEN 'access_shared'
+					WHEN queued.previous_role<>'' AND EXCLUDED.role='' THEN 'access_removed'
+					ELSE 'access_updated' END,
+				role=EXCLUDED.role,attempts=0,available_at=now(),created_at=now()`,
+			documentID, recipientID, source, accessNotificationReason(previousRole, nextRole), previousRole, nextRole)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM document_access_notification_outbox
+			WHERE document_id=$1 AND recipient_id=$2 AND source=$3 AND previous_role=role`, documentID, recipientID, source); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func (s *Store) NotificationPreferences(ctx context.Context, p auth.Principal, documentID string) (repo.NotificationPreferences, error) {
 	var global, muted bool
@@ -50,6 +186,10 @@ func (s *Store) SetNotificationPreferences(ctx context.Context, p auth.Principal
 		if err != nil {
 			return repo.NotificationPreferences{}, err
 		}
+		_, err = tx.Exec(ctx, `DELETE FROM document_access_notification_outbox WHERE recipient_id=$1 AND ($2='' OR document_id=$2)`, p.ID, documentID)
+		if err != nil {
+			return repo.NotificationPreferences{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return repo.NotificationPreferences{}, err
@@ -57,30 +197,48 @@ func (s *Store) SetNotificationPreferences(ctx context.Context, p auth.Principal
 	return s.NotificationPreferences(ctx, p, documentID)
 }
 
-// The comment and its recipients commit together. Metadata comes from canonical
-// persisted mentions, never from email strings supplied by the client.
+// The comment and its subscriptions commit together. Each event source proposes
+// a recipient and reason; the priority step selects one message per recipient.
+// Mentions override replies, and replies override ordinary owner activity.
+// All recipients then pass through the same self, preference, and mute policy.
 func (s *Store) enqueueCommentNotifications(ctx context.Context, tx pgx.Tx, commentID string) error {
-	if !s.commentNotifications {
+	if !s.notificationsEnabled {
 		return nil
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO comment_notification_outbox(comment_id,recipient_id,reason)
-		SELECT c.id, recipients.id, CASE WHEN bool_or(recipients.mentioned) THEN 'mention' ELSE 'owner' END
-		FROM comments c JOIN documents d ON d.id=c.document_id
-		CROSS JOIN LATERAL (
-			SELECT cm.principal_id AS id, true AS mentioned FROM comment_mentions cm WHERE cm.comment_id=c.id AND cm.principal_type='user'
-			UNION ALL SELECT d.owner_id, false WHERE d.owner_type='user'
-		) recipients
-		WHERE c.id=$1 AND NOT (c.author_type='user' AND c.author_id=recipients.id)
-		AND NOT EXISTS(SELECT 1 FROM notification_preferences p WHERE p.principal_type='user' AND p.principal_id=recipients.id AND NOT p.enabled)
-		AND NOT EXISTS(SELECT 1 FROM document_notification_mutes m WHERE m.principal_type='user' AND m.principal_id=recipients.id AND m.document_id=d.id)
-		GROUP BY c.id, recipients.id ON CONFLICT DO NOTHING`, commentID)
+	_, err := tx.Exec(ctx, `WITH notification_subscriptions AS (
+		SELECT c.id AS comment_id, cm.principal_id AS recipient_id, 'mention'::text AS reason, 3 AS priority
+		FROM comments c JOIN comment_mentions cm ON cm.comment_id=c.id AND cm.principal_type='user'
+		WHERE c.id=$1
+		UNION ALL
+		SELECT c.id, parent.author_id, 'reply', 2
+		FROM comments c JOIN comments parent ON parent.id=c.parent_comment_id AND parent.author_type='user'
+		WHERE c.id=$1
+		UNION ALL
+		SELECT c.id, d.owner_id, 'owner', 1
+		FROM comments c JOIN documents d ON d.id=c.document_id AND d.owner_type='user'
+		WHERE c.id=$1
+	), resolved_subscriptions AS (
+		SELECT DISTINCT ON (comment_id,recipient_id) comment_id,recipient_id,reason
+		FROM notification_subscriptions
+		ORDER BY comment_id,recipient_id,priority DESC
+	)
+	INSERT INTO comment_notification_outbox(comment_id,recipient_id,reason)
+	SELECT c.id, subscription.recipient_id, subscription.reason
+	FROM comments c
+	JOIN documents d ON d.id=c.document_id
+	JOIN resolved_subscriptions subscription ON subscription.comment_id=c.id
+	WHERE c.id=$1 AND NOT (c.author_type='user' AND c.author_id=subscription.recipient_id)
+	AND EXISTS(SELECT 1 FROM users WHERE id=subscription.recipient_id)
+	AND NOT EXISTS(SELECT 1 FROM notification_preferences p WHERE p.principal_type='user' AND p.principal_id=subscription.recipient_id AND NOT p.enabled)
+	AND NOT EXISTS(SELECT 1 FROM document_notification_mutes m WHERE m.principal_type='user' AND m.principal_id=subscription.recipient_id AND m.document_id=d.id)
+	ON CONFLICT DO NOTHING`, commentID)
 	return err
 }
 
 // Editing a comment only notifies users added by that edit. Existing mentions,
 // the document owner, and service accounts do not receive another message.
 func (s *Store) enqueueNewCommentMentionNotifications(ctx context.Context, tx pgx.Tx, commentID string, recipientIDs []string) error {
-	if !s.commentNotifications || len(recipientIDs) == 0 {
+	if !s.notificationsEnabled || len(recipientIDs) == 0 {
 		return nil
 	}
 	_, err := tx.Exec(ctx, `INSERT INTO comment_notification_outbox AS queued(comment_id,recipient_id,reason)
@@ -118,6 +276,40 @@ func (s *Store) FinishCommentNotification(ctx context.Context, n repo.CommentNot
 		return err
 	}
 	_, err := s.db.Exec(ctx, `UPDATE comment_notification_outbox SET available_at=now()+$4*interval '1 second' WHERE comment_id=$1 AND recipient_id=$2 AND attempts=$3`, n.CommentID, n.RecipientID, n.Attempts, retryAfter.Seconds())
+	return err
+}
+
+func (s *Store) ClaimDocumentAccessNotification(ctx context.Context) (*repo.DocumentAccessNotification, error) {
+	if _, err := s.db.Exec(ctx, `DELETE FROM document_access_notification_outbox WHERE created_at < now()-interval '24 hours'`); err != nil {
+		return nil, err
+	}
+	var n repo.DocumentAccessNotification
+	err := s.db.QueryRow(ctx, `UPDATE document_access_notification_outbox o SET available_at=now()+interval '1 minute', attempts=o.attempts+1
+		FROM (SELECT document_id, recipient_id, source FROM document_access_notification_outbox WHERE available_at<=now()
+		ORDER BY available_at FOR UPDATE SKIP LOCKED LIMIT 1) pending
+		WHERE o.document_id=pending.document_id AND o.recipient_id=pending.recipient_id AND o.source=pending.source
+		RETURNING o.document_id,o.recipient_id,o.source,o.reason,o.previous_role,o.role,o.attempts`).Scan(
+		&n.DocumentID, &n.RecipientID, &n.Source, &n.Reason, &n.PreviousRole, &n.Role, &n.Attempts)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return &n, err
+}
+
+func (s *Store) DirectDocumentGrantRole(ctx context.Context, documentID, userID string) (repo.Role, error) {
+	var role repo.Role
+	err := s.db.QueryRow(ctx, `SELECT COALESCE((SELECT role FROM resource_grants
+		WHERE resource_type='document' AND resource_id=$1 AND principal_type='user'
+		AND principal_id=$2 AND revoked_at IS NULL), '')`, documentID, userID).Scan(&role)
+	return role, err
+}
+
+func (s *Store) FinishDocumentAccessNotification(ctx context.Context, n repo.DocumentAccessNotification, retryAfter time.Duration) error {
+	if retryAfter <= 0 {
+		_, err := s.db.Exec(ctx, `DELETE FROM document_access_notification_outbox WHERE document_id=$1 AND recipient_id=$2 AND source=$3 AND attempts=$4`, n.DocumentID, n.RecipientID, n.Source, n.Attempts)
+		return err
+	}
+	_, err := s.db.Exec(ctx, `UPDATE document_access_notification_outbox SET available_at=now()+$5*interval '1 second' WHERE document_id=$1 AND recipient_id=$2 AND source=$3 AND attempts=$4`, n.DocumentID, n.RecipientID, n.Source, n.Attempts, retryAfter.Seconds())
 	return err
 }
 

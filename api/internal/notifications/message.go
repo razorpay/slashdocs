@@ -3,6 +3,8 @@ package notifications
 import (
 	"regexp"
 	"strings"
+
+	"github.com/razorpay/aidocs/api/internal/repo"
 )
 
 // Mask recognizable sensitive fields before truncating, including in fallback
@@ -43,6 +45,9 @@ func slackMessage(channel string, message Message) map[string]any {
 	title := notificationPreview(message.DocumentTitle, 150)
 	if title == "" {
 		title = "Untitled document"
+	}
+	if strings.HasPrefix(message.Reason, "access_") {
+		return slackAccessMessage(channel, title, message)
 	}
 	highlight := notificationPreview(message.Highlight, 600)
 	body := notificationPreview(message.Body, 2200)
@@ -87,5 +92,71 @@ func slackMessage(channel string, message Message) map[string]any {
 		"blocks": blocks,
 		"mrkdwn": false, "parse": "none", "link_names": false,
 		"unfurl_links": false, "unfurl_media": false,
+	}
+}
+
+func slackAccessMessage(channel, title string, message Message) map[string]any {
+	activity := "🔐 Your document access changed"
+	accessLabel := "Access"
+	if message.DirectAccess {
+		accessLabel = "Direct access"
+	}
+	detail := accessLabel + ": " + roleLabel(message.PreviousRole) + " → " + roleLabel(message.Role)
+	switch message.Reason {
+	case "access_shared":
+		activity = "📄 A document was shared with you"
+		if message.DirectAccess {
+			activity = "📄 A document was shared directly with you"
+		}
+		detail = accessLabel + ": " + roleLabel(message.Role)
+	case "access_removed":
+		activity = "🔒 Your document access was removed"
+		if message.DirectAccess {
+			activity = "🔒 Your direct document access was removed"
+		}
+		detail = "Previous " + strings.ToLower(accessLabel) + ": " + roleLabel(message.PreviousRole)
+	}
+	text := func(value string) map[string]any {
+		return map[string]any{"type": "text", "text": value}
+	}
+	bold := func(value string) map[string]any {
+		return map[string]any{"type": "text", "text": value, "style": map[string]bool{"bold": true}}
+	}
+	blocks := []any{
+		map[string]any{"type": "rich_text", "elements": []any{
+			map[string]any{"type": "rich_text_section", "elements": []any{bold(activity)}},
+		}},
+		map[string]any{"type": "rich_text", "elements": []any{
+			map[string]any{"type": "rich_text_section", "elements": []any{
+				text("Document: "), map[string]any{"type": "link", "url": message.Link, "text": title, "style": map[string]bool{"bold": true}},
+				text("\n\n" + detail),
+			}},
+		}},
+	}
+	if message.Reason != "access_removed" {
+		blocks = append(blocks, map[string]any{"type": "actions", "elements": []any{
+			map[string]any{"type": "button", "text": map[string]any{"type": "plain_text", "text": "Open document", "emoji": false}, "url": message.Link, "style": "primary"},
+		}})
+	}
+	return map[string]any{
+		"channel": channel, "text": strings.Join([]string{activity, "Document: " + title, detail, message.Link}, "\n\n"),
+		"blocks": blocks,
+		"mrkdwn": false, "parse": "none", "link_names": false,
+		"unfurl_links": false, "unfurl_media": false,
+	}
+}
+
+func roleLabel(role repo.Role) string {
+	switch string(role) {
+	case "viewer":
+		return "Viewer"
+	case "commenter":
+		return "Commenter"
+	case "editor":
+		return "Editor"
+	case "owner":
+		return "Owner"
+	default:
+		return "None"
 	}
 }

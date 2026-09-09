@@ -370,8 +370,8 @@ type Repository interface {
 	CreateGrant(ctx context.Context, resourceType, resourceID string, principal auth.Principal, role Role, grantedBy auth.Principal) (Grant, error)
 	ListGrants(ctx context.Context, documentID string) ([]Grant, error)
 	GetGrant(ctx context.Context, resourceID, grantID string) (Grant, error)
-	UpdateGrant(ctx context.Context, documentID, grantID string, role Role) (Grant, error)
-	DeleteGrant(ctx context.Context, documentID, grantID string) error
+	UpdateGrant(ctx context.Context, documentID, grantID string, role Role, updatedBy auth.Principal) (Grant, error)
+	DeleteGrant(ctx context.Context, documentID, grantID string, deletedBy auth.Principal) error
 	CreateVersion(ctx context.Context, documentID, baseVersionID, changeSummary string, html []byte, createdBy auth.Principal) (Version, error)
 	ListVersions(ctx context.Context, documentID string) ([]Version, error)
 	GetVersion(ctx context.Context, id string) (Version, error)

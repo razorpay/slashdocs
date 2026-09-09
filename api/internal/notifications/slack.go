@@ -118,3 +118,7 @@ func (s *Slack) Send(ctx context.Context, email string, message Message) error {
 func CommentURL(origin, documentID, commentID string) string {
 	return strings.TrimRight(origin, "/") + "/app/d/" + url.PathEscape(documentID) + "?" + url.Values{"comment": {commentID}}.Encode()
 }
+
+func DocumentURL(origin, documentID string) string {
+	return strings.TrimRight(origin, "/") + "/app/d/" + url.PathEscape(documentID)
+}

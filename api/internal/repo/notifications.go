@@ -13,3 +13,13 @@ type CommentNotification struct {
 	Reason      string
 	Attempts    int
 }
+
+type DocumentAccessNotification struct {
+	DocumentID   string
+	RecipientID  string
+	Source       string
+	Reason       string
+	PreviousRole Role
+	Role         Role
+	Attempts     int
+}
