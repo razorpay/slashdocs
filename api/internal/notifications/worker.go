@@ -14,6 +14,7 @@ type Store interface {
 	repo.Repository
 	commentNotificationStore
 	documentAccessNotificationStore
+	documentAccessRequestNotificationStore
 }
 
 type commentNotificationStore interface {
@@ -27,15 +28,19 @@ type documentAccessNotificationStore interface {
 	FinishDocumentAccessNotification(context.Context, repo.DocumentAccessNotification, time.Duration) error
 	DirectDocumentGrantRole(context.Context, string, string) (repo.Role, error)
 }
+type documentAccessRequestNotificationStore interface {
+	ClaimDocumentAccessRequestNotification(context.Context) (*repo.DocumentAccessRequestNotification, error)
+	FinishDocumentAccessRequestNotification(context.Context, repo.DocumentAccessRequestNotification, time.Duration) error
+}
 type Sender interface {
 	Send(ctx context.Context, email string, message Message) error
 }
 
 type Message struct {
-	Reason, Link, DocumentTitle, Highlight, Body string
-	PreviousRole, Role                           repo.Role
-	DirectAccess                                 bool
-	Reply                                        bool
+	Reason, Link, DocumentTitle, Highlight, Body, Requester string
+	PreviousRole, Role                                      repo.Role
+	DirectAccess                                            bool
+	Reply                                                   bool
 }
 type Worker struct {
 	Store            Store
@@ -60,7 +65,33 @@ func (w *Worker) Run(ctx context.Context) {
 		if err := w.DeliverNextDocumentAccess(ctx); err != nil {
 			w.logProcessingFailure("document_access")
 		}
+		if err := w.DeliverNextDocumentAccessRequest(ctx); err != nil {
+			w.logProcessingFailure("document_access_request")
+		}
 	}
+}
+
+func (w *Worker) DeliverNextDocumentAccessRequest(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	n, err := w.Store.ClaimDocumentAccessRequestNotification(ctx)
+	if err != nil || n == nil {
+		return err
+	}
+	retryAfter, err := w.deliverDocumentAccessRequest(ctx, *n)
+	if err != nil {
+		retryAfter = time.Duration(1<<min(n.Attempts, 8)) * time.Second
+		var delivery *DeliveryError
+		if errors.As(err, &delivery) {
+			if delivery.Permanent {
+				retryAfter = 0
+			} else {
+				retryAfter = max(retryAfter, delivery.RetryAfter)
+			}
+		}
+		slog.Warn("document access request notification delivery failed", "will_retry", retryAfter > 0)
+	}
+	return w.Store.FinishDocumentAccessRequestNotification(ctx, *n, retryAfter)
 }
 
 func (w *Worker) logProcessingFailure(kind string) {
@@ -210,6 +241,75 @@ func (w *Worker) deliverDocumentAccess(ctx context.Context, n repo.DocumentAcces
 		Reason: n.Reason, Link: DocumentURL(w.AppOrigin, n.DocumentID), DocumentTitle: doc.Title,
 		PreviousRole: n.PreviousRole, Role: n.Role, DirectAccess: n.Source == "direct",
 	})
+}
+
+func (w *Worker) deliverDocumentAccessRequest(ctx context.Context, n repo.DocumentAccessRequestNotification) (time.Duration, error) {
+	recipient, err := w.Store.ResolveUser(ctx, n.RecipientID)
+	if errors.Is(err, repo.ErrNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	doc, err := w.Store.GetDocument(ctx, n.DocumentID)
+	if errors.Is(err, repo.ErrNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	ownerID, err := w.documentNotificationOwner(ctx, doc)
+	if errors.Is(err, repo.ErrNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if recipient.ID != ownerID || recipient.Email == "" {
+		return 0, nil
+	}
+	prefs, err := w.Store.NotificationPreferences(ctx, recipient, n.DocumentID)
+	if err != nil || !prefs.EffectiveEnabled {
+		return 0, err
+	}
+	denied, err := w.requesterStillDenied(ctx, n)
+	if err != nil {
+		return 0, err
+	}
+	if !denied {
+		return 0, nil
+	}
+	allowed, err := w.Store.ReserveNotificationDelivery(ctx, recipient.ID)
+	if err != nil {
+		return 0, err
+	}
+	if !allowed {
+		return 6 * time.Second, nil
+	}
+	return 0, w.Sender.Send(ctx, recipient.Email, Message{
+		Reason: "access_requested", Link: DocumentURL(w.AppOrigin, n.DocumentID) + "?share=1",
+		DocumentTitle: doc.Title, Requester: n.RequesterLabel,
+	})
+}
+
+func (w *Worker) requesterStillDenied(ctx context.Context, n repo.DocumentAccessRequestNotification) (bool, error) {
+	requester := auth.Principal{Type: auth.PrincipalType(n.RequesterType), ID: n.RequesterID}
+	if w.ResolvePrincipal != nil && requester.Type == auth.PrincipalUser {
+		requester = *w.ResolvePrincipal(ctx, &requester)
+	}
+	role, err := w.Store.RoleForDocument(ctx, requester, n.DocumentID)
+	return role == repo.RoleNone, err
+}
+
+func (w *Worker) documentNotificationOwner(ctx context.Context, doc repo.Document) (string, error) {
+	if doc.Owner.Type != auth.PrincipalServiceAccount {
+		return doc.Owner.ID, nil
+	}
+	sa, err := w.Store.GetServiceAccount(ctx, doc.Owner.ID)
+	if err != nil {
+		return "", err
+	}
+	return sa.Owner.ID, nil
 }
 
 func (w *Worker) sendComment(ctx context.Context, email string, n repo.CommentNotification, c repo.Comment) error {

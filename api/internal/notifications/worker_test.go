@@ -409,3 +409,47 @@ func TestDocumentAccessNotifications(t *testing.T) {
 		t.Fatal("document mute must discard queued access notifications")
 	}
 }
+
+func TestDocumentAccessRequestNotification(t *testing.T) {
+	ctx := context.Background()
+	store, err := pgrepo.Connect(ctx, testdb.New(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.SetNotificationsEnabled(true)
+	owner, err := store.UpsertGoogleUser(ctx, "request-owner", "request-owner@example.com", "Owner", "request-owner-sub", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	requester, err := store.UpsertGoogleUser(ctx, "request-reader", "reader@example.com", "Reader", "request-reader-sub", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, _, err := store.CreateDocument(ctx, owner, "Request review", []byte("<p>Private</p>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RequestDocumentAccess(ctx, requester, doc.ID); err != nil {
+		t.Fatal(err)
+	}
+	var queued int
+	if err := store.Pool().QueryRow(ctx, "SELECT count(*) FROM document_access_request_notification_outbox").Scan(&queued); err != nil || queued != 1 {
+		t.Fatalf("queued=%d err=%v, want one owner notification", queued, err)
+	}
+	sender := &recordingSender{}
+	w := Worker{Store: store, Sender: sender, AppOrigin: "https://aidocs.example.com"}
+	if err := w.DeliverNextDocumentAccessRequest(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(sender.messages) != 1 || sender.emails[0] != owner.Email || sender.messages[0].Reason != "access_requested" ||
+		sender.messages[0].Requester != "Reader (reader@example.com)" || sender.messages[0].DocumentTitle != doc.Title {
+		t.Fatalf("wrong access request notification: emails=%v messages=%+v", sender.emails, sender.messages)
+	}
+	if err := store.RequestDocumentAccess(ctx, requester, doc.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Pool().QueryRow(ctx, "SELECT count(*) FROM document_access_request_notification_outbox").Scan(&queued); err != nil || queued != 0 {
+		t.Fatalf("repeat request queued=%d err=%v, want 24-hour coalescing", queued, err)
+	}
+}

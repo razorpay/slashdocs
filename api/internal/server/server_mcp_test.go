@@ -53,6 +53,7 @@ var expectedMCPTools = []string{
 	"rename_folder",
 	"reopen_comment",
 	"reply_comment",
+	"request_document_access",
 	"resolve_comment",
 	"revoke_document_grant",
 	"revoke_folder_grant",

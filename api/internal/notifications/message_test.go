@@ -110,6 +110,24 @@ func TestSlackAccessMessageContent(t *testing.T) {
 	}
 }
 
+func TestSlackAccessRequestMessageContent(t *testing.T) {
+	message := Message{
+		Reason: "access_requested", DocumentTitle: "Private roadmap", Requester: "Reader (reader@example.com)",
+		Link: "https://aidocs.example.com/app/d/doc_1",
+	}
+	payload := slackMessage("D1", message)
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(encoded)
+	for _, want := range []string{"requested access", message.DocumentTitle, message.Requester, "Review access", message.Link} {
+		if !strings.Contains(content, want) {
+			t.Errorf("access request notification missing %q", want)
+		}
+	}
+}
+
 func TestNotificationPreviewBoundsAndSensitiveFields(t *testing.T) {
 	long := notificationPreview(strings.Repeat("界", 3000), 150)
 	if utf8.RuneCountInString(long) != 150 || !utf8.ValidString(long) || !strings.HasSuffix(long, "…") {

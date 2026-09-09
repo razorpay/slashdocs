@@ -523,6 +523,43 @@
                 }
             }
         },
+        "/v1/documents/{id}/access-requests": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Notifies the current owner without revealing whether the document or owner exists. Repeated requests are coalesced.",
+                "tags": [
+                    "documents"
+                ],
+                "summary": "Request access to a document",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/documents/{id}/comments": {
             "get": {
                 "security": [

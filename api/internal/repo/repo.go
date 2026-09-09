@@ -315,6 +315,7 @@ type DocumentKVEvent struct {
 type Repository interface {
 	NotificationPreferences(ctx context.Context, principal auth.Principal, documentID string) (NotificationPreferences, error)
 	SetNotificationPreferences(ctx context.Context, principal auth.Principal, documentID string, enabled bool) (NotificationPreferences, error)
+	RequestDocumentAccess(ctx context.Context, principal auth.Principal, documentID string) error
 	ResolveBearerToken(ctx context.Context, tokenHash string) (auth.Principal, error)
 	ResolveUser(ctx context.Context, id string) (auth.Principal, error)
 	UpsertGoogleUser(ctx context.Context, id, email, name, googleSub, pictureURL string) (auth.Principal, error)

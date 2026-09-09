@@ -22,6 +22,7 @@ func docsCmd(g *globals, out io.Writer) *cobra.Command {
 	del := mutate(g, out, "delete <doc_id>", "Delete a document", "DELETE", "/v1/documents/%s", 1, func(a []string) string { return "Deleted document " + a[0] + "." })
 	c.AddCommand(
 		documentListCmd(g, out),
+		documentRequestAccessCmd(g, out),
 		notificationsCmd(g, out, true),
 		documentHeadingsCmd(g, out),
 		documentLinkCmd(g, out),
@@ -38,6 +39,19 @@ func docsCmd(g *globals, out io.Writer) *cobra.Command {
 		grantsCmd(g, out),
 	)
 	return c
+}
+
+func documentRequestAccessCmd(g *globals, out io.Writer) *cobra.Command {
+	return &cobra.Command{
+		Use:   "request-access <doc_id>",
+		Short: "Ask the document owner for access",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return action(g, out, func(c *Client) ([]byte, error) {
+				return c.doJSON("POST", apiPath("/v1/documents/%s/access-requests", args[0]), map[string]any{})
+			}, func(map[string]any) string { return "Access request sent for " + args[0] + "." })
+		},
+	}
 }
 
 func documentListCmd(g *globals, out io.Writer) *cobra.Command {

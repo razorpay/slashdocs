@@ -83,3 +83,22 @@ func (h handlers) documentNotificationPreferences(c *gin.Context) { h.notificati
 // @Success 200 {object} repo.NotificationPreferences
 // @Router /v1/documents/{id}/notifications [put]
 func (h handlers) setDocumentNotificationPreferences(c *gin.Context) { h.setNotificationPreferences(c) }
+
+// requestDocumentAccess godoc
+// @Summary Request access to a document
+// @Description Notifies the current owner without revealing whether the document or owner exists. Repeated requests are coalesced.
+// @Tags documents
+// @Security bearerAuth
+// @Security cookieAuth
+// @Param id path string true "Document ID"
+// @Success 202 {object} map[string]string
+// @Router /v1/documents/{id}/access-requests [post]
+func (h handlers) requestDocumentAccess(c *gin.Context) {
+	if err := h.deps.repository.RequestDocumentAccess(c.Request.Context(), *current(c), c.Param("id")); err != nil {
+		internalErr(c, err)
+		return
+	}
+	// Keep the same response for missing, already-accessible, and recently
+	// requested documents so this endpoint cannot be used for enumeration.
+	c.JSON(http.StatusAccepted, gin.H{"status": "sent"})
+}

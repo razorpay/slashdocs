@@ -1,8 +1,16 @@
 import { useTitle } from "@/lib/use-title";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useNavigate, useSearchParams, useParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { Check, KeyRound, Send } from "lucide-react";
 import { api, APIError, currentVersionID, docTitle, versionID } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { Center, Skeleton } from "@/components/ui/misc";
@@ -26,6 +34,7 @@ import {
   type CommentFilter,
 } from "@/lib/constants";
 import { Keycast } from "./doc-keycast";
+import { Button } from "@/components/ui/button";
 
 const THEME_LABELS = { light: "Light", dark: "Dark", system: "System" } as const;
 
@@ -52,17 +61,71 @@ const contentFade = {
 function DocumentErrorState({
   title,
   description,
+  children,
 }: {
   title: string;
   description: string;
+  children?: ReactNode;
 }) {
   return (
     <Center>
       <div className="max-w-md text-center">
         <h1 className="text-lg font-semibold text-[var(--color-fg)]">{title}</h1>
         <p className="mt-2 text-sm text-[var(--color-fg-muted)]">{description}</p>
+        {children}
       </div>
     </Center>
+  );
+}
+
+function AccessDeniedState({ documentID }: { documentID: string }) {
+  const requestAccess = useMutation({
+    mutationFn: () => api.requestDocumentAccess(documentID),
+  });
+  const sent = requestAccess.isSuccess;
+  return (
+    <DocumentErrorState
+      title="You don't have access to this document"
+      description={
+        sent
+          ? "The owner has been notified."
+          : "Send the owner a request to grant you access."
+      }
+    >
+      <div className="mt-5 flex flex-col items-center gap-2">
+        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--color-surface-muted)] text-[var(--color-fg-muted)]">
+          <KeyRound aria-hidden="true" className="h-5 w-5" />
+        </div>
+        <Button
+          className="mt-1"
+          disabled={requestAccess.isPending || sent}
+          onClick={() => requestAccess.mutate()}
+        >
+          <AnimatePresence initial={false} mode="wait">
+            <motion.span
+              key={sent ? "sent" : requestAccess.isPending ? "sending" : "request"}
+              className="inline-flex items-center gap-2"
+              initial={{ opacity: 0, y: 3 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -3 }}
+              transition={{ type: "spring", duration: 0.3, bounce: 0 }}
+            >
+              {sent ? <Check className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+              {sent
+                ? "Request sent"
+                : requestAccess.isPending
+                  ? "Sending…"
+                  : "Request access"}
+            </motion.span>
+          </AnimatePresence>
+        </Button>
+        {requestAccess.isError ? (
+          <p className="text-sm text-[var(--color-danger)]" role="alert">
+            Could not send the request. Please try again.
+          </p>
+        ) : null}
+      </div>
+    </DocumentErrorState>
   );
 }
 
@@ -135,7 +198,7 @@ export function DocumentPage() {
   const [selectedVersion, setSelectedVersion] = useState<string>();
   const isMobile = useIsMobile();
   const [commentsOpen, setCommentsOpen] = useState(true);
-  const [shareOpen, setShareOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(searchParams.get("share") === "1");
   const [mobilePanelOpen, setMobilePanelOpen] = useState(false);
   const [showFullscreenHint, setShowFullscreenHint] = useState(false);
   const [chordLabel, setChordLabel] = useState<string>();
@@ -402,12 +465,7 @@ export function DocumentPage() {
   if (doc.error) {
     if (doc.error instanceof APIError) {
       if (doc.error.status === 403) {
-        return (
-          <DocumentErrorState
-            title="You don't have access to this document"
-            description="Please ask the document owner to grant you access."
-          />
-        );
+        return <AccessDeniedState documentID={id} />;
       }
       if (doc.error.status === 404) {
         return (

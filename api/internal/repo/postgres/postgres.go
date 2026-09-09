@@ -451,10 +451,34 @@ func (s *Store) CreateGrant(ctx context.Context, resourceType, resourceID string
 	if err := s.enqueueDocumentAccessChanges(ctx, tx, resourceID, accessNotificationSource(principal), grantedBy, before, after); err != nil {
 		return repo.Grant{}, err
 	}
+	if err := clearGrantedAccessRequests(ctx, tx, resourceType, resourceID, principal); err != nil {
+		return repo.Grant{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return repo.Grant{}, err
 	}
 	return repo.Grant{ID: persistedID, DocumentID: resourceID, ResourceType: resourceType, ResourceID: resourceID, Principal: principal, Role: role, GrantedBy: grantedBy}, nil
+}
+
+func clearGrantedAccessRequests(ctx context.Context, tx pgx.Tx, resourceType, resourceID string, principal auth.Principal) error {
+	if resourceType != "document" {
+		return nil
+	}
+	if principal.Type == auth.PrincipalAnyone {
+		if _, err := tx.Exec(ctx, `DELETE FROM document_access_request_notification_outbox WHERE document_id=$1`, resourceID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `DELETE FROM document_access_requests WHERE document_id=$1`, resourceID)
+		return err
+	}
+	if principal.Type != auth.PrincipalUser && principal.Type != auth.PrincipalServiceAccount {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM document_access_request_notification_outbox WHERE document_id=$1 AND requester_type=$2 AND requester_id=$3`, resourceID, principal.Type, principal.ID); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `DELETE FROM document_access_requests WHERE document_id=$1 AND requester_type=$2 AND requester_id=$3`, resourceID, principal.Type, principal.ID)
+	return err
 }
 
 func (s *Store) CreateVersion(ctx context.Context, documentID, baseVersionID, changeSummary string, html []byte, createdBy auth.Principal) (repo.Version, error) {

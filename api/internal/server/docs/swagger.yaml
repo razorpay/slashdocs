@@ -998,6 +998,29 @@ paths:
       summary: Update document
       tags:
       - documents
+  /v1/documents/{id}/access-requests:
+    post:
+      description: Notifies the current owner without revealing whether the document
+        or owner exists. Repeated requests are coalesced.
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Request access to a document
+      tags:
+      - documents
   /v1/documents/{id}/comments:
     get:
       parameters:

@@ -120,33 +120,110 @@ func (s *Store) enqueueDocumentAccessChanges(ctx context.Context, tx pgx.Tx, doc
 	if !s.notificationsEnabled {
 		return nil
 	}
+	recipientIDs := make([]string, 0, len(before))
+	previousRoles := make([]string, 0, len(before))
+	nextRoles := make([]string, 0, len(before))
+	reasons := make([]string, 0, len(before))
 	for recipientID, previousRole := range before {
 		nextRole := after[recipientID]
 		if previousRole == nextRole || (actor.Type == auth.PrincipalUser && actor.ID == recipientID) {
 			continue
 		}
-		_, err := tx.Exec(ctx, `INSERT INTO document_access_notification_outbox AS queued
+		recipientIDs = append(recipientIDs, recipientID)
+		previousRoles = append(previousRoles, string(previousRole))
+		nextRoles = append(nextRoles, string(nextRole))
+		reasons = append(reasons, accessNotificationReason(previousRole, nextRole))
+	}
+	if len(recipientIDs) == 0 {
+		return nil
+	}
+	// The workspace-entry primary key bounds an org-wide snapshot to users who
+	// opened this document. Batch the changed subset so enqueueing always takes
+	// one database round trip rather than two per viewer.
+	_, err := tx.Exec(ctx, `WITH changes AS (
+		SELECT recipient_id,previous_role,role,reason
+		FROM unnest($2::text[],$3::text[],$4::text[],$5::text[])
+			AS changed(recipient_id,previous_role,role,reason)
+	), upserted AS (
+		INSERT INTO document_access_notification_outbox AS queued
 			(document_id,recipient_id,source,reason,previous_role,role)
-			SELECT $1,$2,$3,$4,$5,$6
-			WHERE EXISTS(SELECT 1 FROM users WHERE id=$2)
-			AND NOT EXISTS(SELECT 1 FROM notification_preferences p WHERE p.principal_type='user' AND p.principal_id=$2 AND NOT p.enabled)
-			AND NOT EXISTS(SELECT 1 FROM document_notification_mutes m WHERE m.principal_type='user' AND m.principal_id=$2 AND m.document_id=$1)
-			ON CONFLICT(document_id,recipient_id,source) DO UPDATE SET
-				reason=CASE
-					WHEN queued.previous_role='' AND EXCLUDED.role<>'' THEN 'access_shared'
-					WHEN queued.previous_role<>'' AND EXCLUDED.role='' THEN 'access_removed'
-					ELSE 'access_updated' END,
-				role=EXCLUDED.role,attempts=0,available_at=now(),created_at=now()`,
-			documentID, recipientID, source, accessNotificationReason(previousRole, nextRole), previousRole, nextRole)
-		if err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `DELETE FROM document_access_notification_outbox
-			WHERE document_id=$1 AND recipient_id=$2 AND source=$3 AND previous_role=role`, documentID, recipientID, source); err != nil {
-			return err
+		SELECT $1,changed.recipient_id,$6,changed.reason,changed.previous_role,changed.role
+		FROM changes changed
+		JOIN users u ON u.id=changed.recipient_id
+		WHERE NOT EXISTS(SELECT 1 FROM notification_preferences p WHERE p.principal_type='user' AND p.principal_id=changed.recipient_id AND NOT p.enabled)
+		AND NOT EXISTS(SELECT 1 FROM document_notification_mutes m WHERE m.principal_type='user' AND m.principal_id=changed.recipient_id AND m.document_id=$1)
+		ON CONFLICT(document_id,recipient_id,source) DO UPDATE SET
+			reason=CASE
+				WHEN queued.previous_role='' AND EXCLUDED.role<>'' THEN 'access_shared'
+				WHEN queued.previous_role<>'' AND EXCLUDED.role='' THEN 'access_removed'
+				ELSE 'access_updated' END,
+			role=EXCLUDED.role,attempts=0,available_at=now(),created_at=now()
+		RETURNING document_id,recipient_id,source
+	)
+	DELETE FROM document_access_notification_outbox queued
+	USING upserted
+	WHERE queued.document_id=upserted.document_id AND queued.recipient_id=upserted.recipient_id
+	AND queued.source=upserted.source AND queued.previous_role=queued.role`,
+		documentID, recipientIDs, previousRoles, nextRoles, reasons, source)
+	return err
+}
+
+// RequestDocumentAccess deliberately returns no existence or owner detail. A
+// repeated request within 24 hours is accepted but does not notify again.
+func (s *Store) RequestDocumentAccess(ctx context.Context, requester auth.Principal, documentID string) error {
+	if requester.Type != auth.PrincipalUser && requester.Type != auth.PrincipalServiceAccount {
+		return nil
+	}
+	role, err := s.RoleForDocument(ctx, requester, documentID)
+	if err != nil || role != repo.RoleNone || !s.notificationsEnabled {
+		return err
+	}
+	label := requester.Name
+	if requester.Email != "" {
+		label = requester.Email
+		if requester.Name != "" {
+			label = requester.Name + " (" + requester.Email + ")"
 		}
 	}
-	return nil
+	if requester.Type == auth.PrincipalServiceAccount {
+		sa, lookupErr := s.GetServiceAccount(ctx, requester.ID)
+		if lookupErr != nil {
+			if errors.Is(lookupErr, repo.ErrNotFound) {
+				return nil
+			}
+			return lookupErr
+		}
+		label = sa.Name
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer rollback(ctx, tx)
+	_, err = tx.Exec(ctx, `WITH requested AS (
+		INSERT INTO document_access_requests(document_id,requester_type,requester_id)
+		SELECT d.id,$2,$3 FROM documents d WHERE d.id=$1
+		ON CONFLICT(document_id,requester_type,requester_id) DO UPDATE SET requested_at=now()
+		WHERE document_access_requests.requested_at <= now()-interval '24 hours'
+		RETURNING document_id
+	), recipient AS (
+		SELECT CASE WHEN d.owner_type='user' THEN d.owner_id ELSE sa.owner_user_id END AS user_id
+		FROM requested r JOIN documents d ON d.id=r.document_id
+		LEFT JOIN service_accounts sa ON d.owner_type='service_account' AND sa.id=d.owner_id
+	)
+	INSERT INTO document_access_request_notification_outbox
+		(document_id,requester_type,requester_id,requester_label,recipient_id)
+	SELECT $1,$2,$3,$4,recipient.user_id FROM recipient
+	WHERE recipient.user_id IS NOT NULL AND NOT ($2='user' AND recipient.user_id=$3)
+	AND NOT EXISTS(SELECT 1 FROM notification_preferences p WHERE p.principal_type='user' AND p.principal_id=recipient.user_id AND NOT p.enabled)
+	AND NOT EXISTS(SELECT 1 FROM document_notification_mutes m WHERE m.principal_type='user' AND m.principal_id=recipient.user_id AND m.document_id=$1)
+	ON CONFLICT(document_id,requester_type,requester_id) DO UPDATE SET
+		requester_label=excluded.requester_label,recipient_id=excluded.recipient_id,
+		attempts=0,available_at=now(),created_at=now()`, documentID, requester.Type, requester.ID, label)
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) NotificationPreferences(ctx context.Context, p auth.Principal, documentID string) (repo.NotificationPreferences, error) {
@@ -187,6 +264,10 @@ func (s *Store) SetNotificationPreferences(ctx context.Context, p auth.Principal
 			return repo.NotificationPreferences{}, err
 		}
 		_, err = tx.Exec(ctx, `DELETE FROM document_access_notification_outbox WHERE recipient_id=$1 AND ($2='' OR document_id=$2)`, p.ID, documentID)
+		if err != nil {
+			return repo.NotificationPreferences{}, err
+		}
+		_, err = tx.Exec(ctx, `DELETE FROM document_access_request_notification_outbox WHERE recipient_id=$1 AND ($2='' OR document_id=$2)`, p.ID, documentID)
 		if err != nil {
 			return repo.NotificationPreferences{}, err
 		}
@@ -310,6 +391,34 @@ func (s *Store) FinishDocumentAccessNotification(ctx context.Context, n repo.Doc
 		return err
 	}
 	_, err := s.db.Exec(ctx, `UPDATE document_access_notification_outbox SET available_at=now()+$5*interval '1 second' WHERE document_id=$1 AND recipient_id=$2 AND source=$3 AND attempts=$4`, n.DocumentID, n.RecipientID, n.Source, n.Attempts, retryAfter.Seconds())
+	return err
+}
+
+func (s *Store) ClaimDocumentAccessRequestNotification(ctx context.Context) (*repo.DocumentAccessRequestNotification, error) {
+	if _, err := s.db.Exec(ctx, `DELETE FROM document_access_request_notification_outbox WHERE created_at < now()-interval '24 hours'`); err != nil {
+		return nil, err
+	}
+	var n repo.DocumentAccessRequestNotification
+	err := s.db.QueryRow(ctx, `UPDATE document_access_request_notification_outbox o SET available_at=now()+interval '1 minute',attempts=o.attempts+1
+		FROM (SELECT document_id,requester_type,requester_id FROM document_access_request_notification_outbox
+			WHERE available_at<=now() ORDER BY available_at FOR UPDATE SKIP LOCKED LIMIT 1) pending
+		WHERE o.document_id=pending.document_id AND o.requester_type=pending.requester_type AND o.requester_id=pending.requester_id
+		RETURNING o.document_id,o.requester_type,o.requester_id,o.requester_label,o.recipient_id,o.attempts`).Scan(
+		&n.DocumentID, &n.RequesterType, &n.RequesterID, &n.RequesterLabel, &n.RecipientID, &n.Attempts)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return &n, err
+}
+
+func (s *Store) FinishDocumentAccessRequestNotification(ctx context.Context, n repo.DocumentAccessRequestNotification, retryAfter time.Duration) error {
+	if retryAfter <= 0 {
+		_, err := s.db.Exec(ctx, `DELETE FROM document_access_request_notification_outbox
+			WHERE document_id=$1 AND requester_type=$2 AND requester_id=$3 AND attempts=$4`, n.DocumentID, n.RequesterType, n.RequesterID, n.Attempts)
+		return err
+	}
+	_, err := s.db.Exec(ctx, `UPDATE document_access_request_notification_outbox SET available_at=now()+$5*interval '1 second'
+		WHERE document_id=$1 AND requester_type=$2 AND requester_id=$3 AND attempts=$4`, n.DocumentID, n.RequesterType, n.RequesterID, n.Attempts, retryAfter.Seconds())
 	return err
 }
 

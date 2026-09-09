@@ -23,3 +23,12 @@ type DocumentAccessNotification struct {
 	Role         Role
 	Attempts     int
 }
+
+type DocumentAccessRequestNotification struct {
+	DocumentID     string
+	RequesterType  string
+	RequesterID    string
+	RequesterLabel string
+	RecipientID    string
+	Attempts       int
+}

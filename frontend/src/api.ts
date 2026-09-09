@@ -275,6 +275,14 @@ export const api = {
     return request<{ items: Document[] }>(`/v1/documents${qs ? `?${qs}` : ""}`);
   },
   getDocument: (id: string) => request<Document>(`/v1/documents/${id}`),
+  requestDocumentAccess: (id: string) =>
+    request<{ status: "sent" }>(
+      `/v1/documents/${encodeURIComponent(id)}/access-requests`,
+      {
+        method: "POST",
+        body: JSON.stringify({}),
+      },
+    ),
   getConfig: () => request<ServerConfig>("/v1/config"),
   searchUsers: (q: string) =>
     request<{ items: UserPrincipal[] }>(`/v1/users?q=${encodeURIComponent(q)}`),

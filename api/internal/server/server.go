@@ -251,6 +251,7 @@ func (s *Server) routes(deps dependencies) {
 
 	// Every route below requires authentication.
 	authed := v1.Group("", requireAuth(deps.authenticator, deps.appOrigin, deps.googleGroupResolver))
+	activityLimit := activityRateLimit()
 	authed.GET("/me", h.me)
 	authed.GET("/users", h.searchUsers)
 	authed.GET("/google-groups", h.searchGoogleGroups)
@@ -269,6 +270,7 @@ func (s *Server) routes(deps dependencies) {
 	authed.POST("/documents", h.createDocument)
 	authed.GET("/documents", h.listDocuments)
 	authed.GET("/documents/:id", h.getDocument)
+	authed.POST("/documents/:id/access-requests", activityLimit, h.requestDocumentAccess)
 	authed.GET("/documents/:id/access", h.documentAccess)
 	authed.PATCH("/documents/:id", h.patchDocument)
 	authed.DELETE("/documents/:id", h.deleteDocument)
@@ -286,7 +288,6 @@ func (s *Server) routes(deps dependencies) {
 	authed.POST("/documents/:id/github/raw", h.githubRawContent)
 	authed.POST("/documents/:id/comments", h.createComment)
 	authed.GET("/documents/:id/comments", h.listComments)
-	activityLimit := activityRateLimit()
 	authed.GET("/me/notifications", activityLimit, h.notificationPreferences)
 	authed.PUT("/me/notifications", activityLimit, h.setNotificationPreferences)
 	authed.GET("/documents/:id/notifications", activityLimit, h.documentNotificationPreferences)

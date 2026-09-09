@@ -102,7 +102,12 @@ func slackAccessMessage(channel, title string, message Message) map[string]any {
 		accessLabel = "Direct access"
 	}
 	detail := accessLabel + ": " + roleLabel(message.PreviousRole) + " → " + roleLabel(message.Role)
+	buttonLabel := "Open document"
 	switch message.Reason {
+	case "access_requested":
+		activity = "🔑 Someone requested access to your document"
+		detail = "Requested by: " + notificationPreview(message.Requester, 300)
+		buttonLabel = "Review access"
 	case "access_shared":
 		activity = "📄 A document was shared with you"
 		if message.DirectAccess {
@@ -135,7 +140,7 @@ func slackAccessMessage(channel, title string, message Message) map[string]any {
 	}
 	if message.Reason != "access_removed" {
 		blocks = append(blocks, map[string]any{"type": "actions", "elements": []any{
-			map[string]any{"type": "button", "text": map[string]any{"type": "plain_text", "text": "Open document", "emoji": false}, "url": message.Link, "style": "primary"},
+			map[string]any{"type": "button", "text": map[string]any{"type": "plain_text", "text": buttonLabel, "emoji": false}, "url": message.Link, "style": "primary"},
 		}})
 	}
 	return map[string]any{
