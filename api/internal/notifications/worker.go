@@ -80,16 +80,9 @@ func (w *Worker) DeliverNextDocumentAccessRequest(ctx context.Context) error {
 	}
 	retryAfter, err := w.deliverDocumentAccessRequest(ctx, *n)
 	if err != nil {
-		retryAfter = time.Duration(1<<min(n.Attempts, 8)) * time.Second
-		var delivery *DeliveryError
-		if errors.As(err, &delivery) {
-			if delivery.Permanent {
-				retryAfter = 0
-			} else {
-				retryAfter = max(retryAfter, delivery.RetryAfter)
-			}
-		}
-		slog.Warn("document access request notification delivery failed", "will_retry", retryAfter > 0)
+		var deliveryCode string
+		retryAfter, deliveryCode = notificationRetry(n.Attempts, err)
+		slog.Warn("document access request notification delivery failed", "delivery_code", deliveryCode, "will_retry", retryAfter > 0)
 	}
 	return w.Store.FinishDocumentAccessRequestNotification(ctx, *n, retryAfter)
 }
@@ -112,17 +105,8 @@ func (w *Worker) DeliverNextDocumentAccess(ctx context.Context) error {
 	}
 	retryAfter, err := w.deliverDocumentAccess(ctx, *n)
 	if err != nil {
-		retryAfter = time.Duration(1<<min(n.Attempts, 8)) * time.Second
-		var delivery *DeliveryError
-		deliveryCode := "internal"
-		if errors.As(err, &delivery) {
-			deliveryCode = delivery.Code
-			if delivery.Permanent {
-				retryAfter = 0
-			} else {
-				retryAfter = max(retryAfter, delivery.RetryAfter)
-			}
-		}
+		var deliveryCode string
+		retryAfter, deliveryCode = notificationRetry(n.Attempts, err)
 		slog.Warn("document access notification delivery failed", "delivery_code", deliveryCode, "will_retry", retryAfter > 0)
 	}
 	return w.Store.FinishDocumentAccessNotification(ctx, *n, retryAfter)
@@ -137,20 +121,25 @@ func (w *Worker) DeliverNext(ctx context.Context) error {
 	}
 	retryAfter, err := w.deliver(ctx, *n)
 	if err != nil {
-		retryAfter = time.Duration(1<<min(n.Attempts, 8)) * time.Second
-		var delivery *DeliveryError
-		deliveryCode := "internal"
-		if errors.As(err, &delivery) {
-			deliveryCode = delivery.Code
-			if delivery.Permanent {
-				retryAfter = 0
-			} else {
-				retryAfter = max(retryAfter, delivery.RetryAfter)
-			}
-		}
+		var deliveryCode string
+		retryAfter, deliveryCode = notificationRetry(n.Attempts, err)
 		slog.Warn("comment notification delivery failed", "delivery_code", deliveryCode, "will_retry", retryAfter > 0)
 	}
 	return w.Store.FinishCommentNotification(ctx, *n, retryAfter)
+}
+
+func notificationRetry(attempts int, err error) (time.Duration, string) {
+	delay := time.Duration(1<<min(attempts, 8)) * time.Second
+	code := "internal"
+	var delivery *DeliveryError
+	if !errors.As(err, &delivery) {
+		return delay, code
+	}
+	code = delivery.Code
+	if delivery.Permanent {
+		return 0, code
+	}
+	return max(delay, delivery.RetryAfter), code
 }
 
 func (w *Worker) deliver(ctx context.Context, n repo.CommentNotification) (time.Duration, error) {
