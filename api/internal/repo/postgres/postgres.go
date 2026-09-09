@@ -1149,12 +1149,22 @@ func (s *Store) UpdateComment(ctx context.Context, id string, update repo.Commen
 	if err != nil {
 		return repo.Comment{}, err
 	}
-	nextMentions, replaceMentions, err := prepareCommentMentionUpdate(ctx, q, id, effectiveBody, bodyChanged, update.Mentions)
+	previousMentionsByID, err := commentMentionsByID(ctx, q, []string{id})
+	if err != nil {
+		return repo.Comment{}, err
+	}
+	previousMentions := previousMentionsByID[id]
+	nextMentions, replaceMentions, err := prepareCommentMentionUpdate(ctx, q, effectiveBody, bodyChanged, update.Mentions, previousMentions)
 	if err != nil {
 		return repo.Comment{}, err
 	}
 	if err := applyCommentUpdate(ctx, q, id, effectiveBody, bodyChanged, update.Status, nextMentions, replaceMentions); err != nil {
 		return repo.Comment{}, err
+	}
+	if replaceMentions {
+		if err := s.enqueueNewCommentMentionNotifications(ctx, tx, id, newlyMentionedUserIDs(previousMentions, nextMentions)); err != nil {
+			return repo.Comment{}, err
+		}
 	}
 	comment.Body = effectiveBody
 	if update.Status != "" {
@@ -1191,7 +1201,7 @@ func commentBodyForUpdate(current string, requested *string) (string, bool, erro
 	return normalized, normalized != current, nil
 }
 
-func prepareCommentMentionUpdate(ctx context.Context, q *dbsqlc.Queries, commentID, body string, bodyChanged bool, requested *[]repo.CommentMention) ([]repo.CommentMention, bool, error) {
+func prepareCommentMentionUpdate(ctx context.Context, q *dbsqlc.Queries, body string, bodyChanged bool, requested *[]repo.CommentMention, historical []repo.CommentMention) ([]repo.CommentMention, bool, error) {
 	if requested == nil {
 		if bodyChanged {
 			return []repo.CommentMention{}, true, nil
@@ -1202,12 +1212,29 @@ func prepareCommentMentionUpdate(ctx context.Context, q *dbsqlc.Queries, comment
 	if err != nil {
 		return nil, false, err
 	}
-	historicalByID, err := commentMentionsByID(ctx, q, []string{commentID})
-	if err != nil {
-		return nil, false, err
-	}
-	next, err := resolveCanonicalCommentMentions(ctx, q, prepared, historicalByID[commentID])
+	next, err := resolveCanonicalCommentMentions(ctx, q, prepared, historical)
 	return next, true, err
+}
+
+func newlyMentionedUserIDs(previous, next []repo.CommentMention) []string {
+	seen := make(map[string]struct{}, len(previous))
+	for _, mention := range previous {
+		if mention.Principal.Type == auth.PrincipalUser {
+			seen[mention.Principal.ID] = struct{}{}
+		}
+	}
+	added := make([]string, 0, len(next))
+	for _, mention := range next {
+		if mention.Principal.Type != auth.PrincipalUser {
+			continue
+		}
+		if _, exists := seen[mention.Principal.ID]; exists {
+			continue
+		}
+		seen[mention.Principal.ID] = struct{}{}
+		added = append(added, mention.Principal.ID)
+	}
+	return added
 }
 
 func applyCommentUpdate(ctx context.Context, q *dbsqlc.Queries, commentID, body string, bodyChanged bool, status string, mentions []repo.CommentMention, replaceMentions bool) error {

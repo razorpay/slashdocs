@@ -57,14 +57,16 @@ func (w *Worker) DeliverNext(ctx context.Context) error {
 	if err != nil {
 		retryAfter = time.Duration(1<<min(n.Attempts, 8)) * time.Second
 		var delivery *DeliveryError
+		deliveryCode := "internal"
 		if errors.As(err, &delivery) {
+			deliveryCode = delivery.Code
 			if delivery.Permanent {
 				retryAfter = 0
 			} else {
 				retryAfter = max(retryAfter, delivery.RetryAfter)
 			}
 		}
-		slog.Warn("comment notification delivery failed", "will_retry", retryAfter > 0)
+		slog.Warn("comment notification delivery failed", "delivery_code", deliveryCode, "will_retry", retryAfter > 0)
 	}
 	return w.Store.FinishCommentNotification(ctx, *n, retryAfter)
 }

@@ -77,6 +77,23 @@ func (s *Store) enqueueCommentNotifications(ctx context.Context, tx pgx.Tx, comm
 	return err
 }
 
+// Editing a comment only notifies users added by that edit. Existing mentions,
+// the document owner, and service accounts do not receive another message.
+func (s *Store) enqueueNewCommentMentionNotifications(ctx context.Context, tx pgx.Tx, commentID string, recipientIDs []string) error {
+	if !s.commentNotifications || len(recipientIDs) == 0 {
+		return nil
+	}
+	_, err := tx.Exec(ctx, `INSERT INTO comment_notification_outbox AS queued(comment_id,recipient_id,reason)
+		SELECT c.id, recipient.id, 'mention'
+		FROM comments c JOIN documents d ON d.id=c.document_id
+		CROSS JOIN unnest($2::text[]) AS recipient(id)
+		WHERE c.id=$1 AND NOT (c.author_type='user' AND c.author_id=recipient.id)
+		AND NOT EXISTS(SELECT 1 FROM notification_preferences p WHERE p.principal_type='user' AND p.principal_id=recipient.id AND NOT p.enabled)
+		AND NOT EXISTS(SELECT 1 FROM document_notification_mutes m WHERE m.principal_type='user' AND m.principal_id=recipient.id AND m.document_id=d.id)
+		ON CONFLICT(comment_id,recipient_id) DO UPDATE SET reason='mention', available_at=LEAST(queued.available_at, now())`, commentID, recipientIDs)
+	return err
+}
+
 // A lease outlives the sender's deadline and lets another process recover work
 // after a crash. Successful delivery deletes the row immediately.
 func (s *Store) ClaimCommentNotification(ctx context.Context) (*repo.CommentNotification, error) {

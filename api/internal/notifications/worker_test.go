@@ -94,6 +94,34 @@ func TestOutboxDeliveryPreferencesAndAccess(t *testing.T) {
 		t.Fatalf("wrong comment context: %+v", got)
 	}
 
+	emptyMentions := []repo.CommentMention{}
+	if _, err := store.UpdateComment(ctx, c.ID, repo.CommentUpdate{Mentions: &emptyMentions}); err != nil {
+		t.Fatal(err)
+	}
+	if count() != 0 {
+		t.Fatal("removing a mention must not queue a notification")
+	}
+	ownerMention := []repo.CommentMention{mention(owner, "@Owner")}
+	if _, err := store.UpdateComment(ctx, c.ID, repo.CommentUpdate{Mentions: &ownerMention}); err != nil {
+		t.Fatal(err)
+	}
+	if count() != 1 {
+		t.Fatal("adding a mention while editing must queue a notification")
+	}
+	resetGate()
+	if err := w.DeliverNext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if count() != 0 || sender.reasons[len(sender.reasons)-1] != "mention" {
+		t.Fatal("edited mention notification was not delivered")
+	}
+	if _, err := store.UpdateComment(ctx, c.ID, repo.CommentUpdate{Mentions: &ownerMention}); err != nil {
+		t.Fatal(err)
+	}
+	if count() != 0 {
+		t.Fatal("preserving an existing mention must not notify again")
+	}
+
 	create("@Author", []repo.CommentMention{mention(author, "@Author")})
 	if count() != 1 {
 		t.Fatal("author must not receive their own mention")
@@ -126,6 +154,7 @@ func TestOutboxDeliveryPreferencesAndAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	deliveredBefore := len(sender.emails)
 	create("@Stranger", []repo.CommentMention{mention(stranger, "@Stranger")})
 	resetGate()
 	for i := 0; i < 2; i++ {
@@ -133,7 +162,7 @@ func TestOutboxDeliveryPreferencesAndAccess(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if count() != 0 || len(sender.emails) != 2 || sender.emails[1] != owner.Email {
+	if count() != 0 || len(sender.emails) != deliveredBefore+1 || sender.emails[len(sender.emails)-1] != owner.Email {
 		t.Fatal("mention must not disclose a private document to a stranger")
 	}
 
