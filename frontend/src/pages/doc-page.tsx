@@ -58,6 +58,13 @@ const contentFade = {
   },
 };
 
+function retryDocumentLoad(failureCount: number, error: Error) {
+  if (error instanceof APIError && (error.status === 403 || error.status === 404)) {
+    return false;
+  }
+  return failureCount < 3;
+}
+
 function DocumentErrorState({
   title,
   description,
@@ -137,6 +144,7 @@ export function DocumentPage() {
   const doc = useQuery({
     queryKey: queryKeys.document(id),
     queryFn: () => api.getDocument(id),
+    retry: retryDocumentLoad,
     meta: { suppressGlobalError: true },
   });
   const me = useQuery({ queryKey: queryKeys.me(), queryFn: api.me });
