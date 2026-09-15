@@ -10,7 +10,7 @@ import (
 )
 
 func TestSlackMessageContent(t *testing.T) {
-	message := Message{DocumentTitle: "Launch <review>", Highlight: "Ship on Friday", Body: "Please review <!here> & <@U123>", Link: "https://aidocs.example.com/app/d/doc_1?comment=cmt_1", Reply: true}
+	message := Message{DocumentTitle: "Launch <review>", Highlight: "Ship on Friday", Body: "Please review <!here> & <@U123>", Actor: "Reviewer <!here> & <@U123>", Link: "https://aidocs.example.com/app/d/doc_1?comment=cmt_1", Reply: true}
 	payload := slackMessage("D1", message)
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -32,7 +32,7 @@ func TestSlackMessageContent(t *testing.T) {
 		t.Fatal(err)
 	}
 	fallback := decoded.Text
-	for _, want := range []string{message.DocumentTitle, message.Highlight, message.Body, "Someone replied", message.Link} {
+	for _, want := range []string{message.DocumentTitle, message.Highlight, message.Body, message.Actor + " replied", message.Link} {
 		if !strings.Contains(fallback, want) {
 			t.Errorf("fallback missing %q", want)
 		}
@@ -42,6 +42,9 @@ func TestSlackMessageContent(t *testing.T) {
 	}
 	if len(decoded.Blocks) != 3 || len(decoded.Attachments) != 0 {
 		t.Fatal("message must use native rich text followed by the action button")
+	}
+	if got := decoded.Blocks[0].Elements[0].Elements[0].Text; got != "💬 "+message.Actor+" replied to a comment on your doc" {
+		t.Fatalf("activity heading = %q", got)
 	}
 	parts := decoded.Blocks[1].Elements
 	if len(parts) != 3 || parts[1].Type != "rich_text_quote" || parts[1].Elements[0].Text != message.Highlight {
@@ -68,6 +71,28 @@ func TestSlackMessageContent(t *testing.T) {
 	}
 	if len(decoded.Blocks[1].Elements) != 2 {
 		t.Fatal("missing highlight must not create an empty block")
+	}
+}
+
+func TestSlackCommentActivityHeadings(t *testing.T) {
+	tests := []struct {
+		name    string
+		message Message
+		want    string
+	}{
+		{name: "comment", message: Message{Actor: "Asha"}, want: "💬 Asha commented on your doc"},
+		{name: "reply", message: Message{Actor: "Asha", Reply: true}, want: "💬 Asha replied to a comment on your doc"},
+		{name: "mention", message: Message{Actor: "Asha", Reason: "mention"}, want: "🔔 Asha mentioned you in a comment"},
+		{name: "missing actor", message: Message{}, want: "💬 Someone commented on your doc"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload := slackMessage("D1", tt.message)
+			fallback, ok := payload["text"].(string)
+			if !ok || !strings.HasPrefix(fallback, tt.want) {
+				t.Fatalf("fallback = %q, want prefix %q", fallback, tt.want)
+			}
+		})
 	}
 }
 

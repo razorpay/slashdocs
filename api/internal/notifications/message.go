@@ -51,12 +51,16 @@ func slackMessage(channel string, message Message) map[string]any {
 	}
 	highlight := notificationPreview(message.Highlight, 600)
 	body := notificationPreview(message.Body, 2200)
-	activity := "💬 Someone commented on your doc"
+	actor := notificationPreview(message.Actor, 150)
+	if actor == "" {
+		actor = "Someone"
+	}
+	activity := "💬 " + actor + " commented on your doc"
 	if message.Reply {
-		activity = "💬 Someone replied to a comment on your doc"
+		activity = "💬 " + actor + " replied to a comment on your doc"
 	}
 	if message.Reason == "mention" {
-		activity = "🔔 Someone mentioned you in a comment"
+		activity = "🔔 " + actor + " mentioned you in a comment"
 	}
 	text := func(value string) map[string]any {
 		return map[string]any{"type": "text", "text": value}
