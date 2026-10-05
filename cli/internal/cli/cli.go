@@ -36,15 +36,30 @@ var errSADisabled = errors.New("service account commands are disabled by AIDOCS_
 
 func Execute(args []string) (string, error) {
 	var out bytes.Buffer
-	root := NewRoot(&out)
-	root.SetArgs(args)
-	err := root.Execute()
+	err := Run(&out, args)
 	return out.String(), err
 }
 
-func NewRoot(out io.Writer) *cobra.Command {
+// Run parses args and runs the CLI, writing command output to out. A failure is
+// also reported on out as the single JSON value --json promises; the error is
+// returned unchanged so callers keep the existing exit-code mapping.
+func Run(out io.Writer, args []string) error {
 	g := &globals{}
-	root := &cobra.Command{Use: "aidocs", Short: "CLI for aidocs HTML document review", Long: "CLI for aidocs HTML document review.\n\nAgents: before authoring or publishing an aidocs document, run `aidocs guidelines` and follow that output.\n\nDefault output is compact, agent-friendly key=value text. Use --json for machine-readable JSON.", SilenceUsage: true, SilenceErrors: true}
+	root := newRoot(g, out)
+	root.SetArgs(args)
+	err := root.Execute()
+	if err != nil {
+		reportError(out, g, err)
+	}
+	return err
+}
+
+// NewRoot builds the command tree writing to out. Prefer Run, which also
+// applies the --json error contract to a failed command.
+func NewRoot(out io.Writer) *cobra.Command { return newRoot(&globals{}, out) }
+
+func newRoot(g *globals, out io.Writer) *cobra.Command {
+	root := &cobra.Command{Use: "aidocs", Short: "CLI for aidocs HTML document review", Long: "CLI for aidocs HTML document review.\n\nAgents: before authoring or publishing an aidocs document, run `aidocs guidelines` and follow that output.\n\nDefault output is compact, agent-friendly key=value text. Use --json for machine-readable JSON.\n\nWith --json, stdout carries exactly one JSON value: the API payload on success, {\"ok\": true} when the server returns no body, and {\"error\": {code, message, status, details}} on failure. Failures keep the server's code and details (a 409 version_conflict names current_version_id) and do not change the exit code. Codes for failures that never reached the API: usage, network, local. Commands taking several ids answer with one value listing each id's outcome. Help and usage text is not a result and stays plain text; -q suppresses the JSON value, leaving only the exit code.", SilenceUsage: true, SilenceErrors: true}
 	// The root command has no action of its own, so any leftover positional
 	// argument is an unknown subcommand. Classifying it here as a typed
 	// usageError keeps the usage exit code reliable without string-matching
@@ -85,7 +100,7 @@ func NewRoot(out io.Writer) *cobra.Command {
 	root.PersistentFlags().BoolVar(&g.json, "json", false, "JSON output")
 	root.PersistentFlags().BoolVarP(&g.quiet, "quiet", "q", false, "quiet")
 	root.PersistentFlags().BoolVarP(&g.verbose, "verbose", "v", false, "verbose")
-	root.AddCommand(notificationsCmd(g, out, false), authCmd(g, out), contextCmd(g, out), docsCmd(g, out), foldersCmd(g, out), saRoot(g, out), openCmd(g, out), guidelinesCmd(g, out), configCmd(g, out), versionCmd(out), updateCmd(g, out), skillsCmd(g, out))
+	root.AddCommand(notificationsCmd(g, out, false), authCmd(g, out), contextCmd(g, out), docsCmd(g, out), foldersCmd(g, out), saRoot(g, out), openCmd(g, out), guidelinesCmd(g, out), configCmd(g, out), versionCmd(g, out), updateCmd(g, out), skillsCmd(g, out))
 	return root
 }
 

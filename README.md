@@ -157,6 +157,21 @@ Use `--json` for structured output:
 aidocs --json docs list
 ```
 
+With `--json`, stdout always carries exactly one JSON value:
+
+- the API payload on success, or `{"ok": true}` when the server returns no body;
+- `{"error": {"code", "message", "status", "details"}}` on failure, carrying the
+  server's `details` verbatim — a 409 `version_conflict` names
+  `current_version_id`. Failures that never reached the API use the codes
+  `usage`, `network`, and `local`;
+- one value listing every id's outcome for commands that take several ids, such
+  as `aidocs docs comments resolve <doc_id> <comment_id>...`, so a partial
+  failure still reports which ids were applied.
+
+Exit codes are unaffected by `--json`. Help and usage text is not a command
+result and stays plain text, and `-q` suppresses the JSON value so only the exit
+code reports the outcome.
+
 ## Development
 
 ```bash

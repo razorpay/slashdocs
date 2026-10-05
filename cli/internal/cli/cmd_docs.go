@@ -479,8 +479,7 @@ func pullCmd(g *globals, out io.Writer) *cobra.Command {
 			}
 			return confirm(out, g, "Pulled version "+v+" of "+args[0]+" to "+outp+".")
 		}
-		_, err = out.Write(b)
-		return err
+		return renderContent(out, g, b)
 	}}
 	cmd.Flags().StringVar(&ver, "version", "", "specific version ID to pull (defaults to the current version)")
 	cmd.Flags().StringVar(&outp, "out", "", "write HTML to this file instead of stdout")
@@ -625,22 +624,38 @@ func resolveCmd(g *globals, out io.Writer, name, status string) *cobra.Command {
 			return err
 		}
 		docID := args[0]
+		items := make([]any, 0, len(args)-1)
+		var failures []error
 		for _, id := range args[1:] {
 			b, err := cl.doJSON("PATCH", apiPath("/v1/documents/%s/comments/%s", docID, id), map[string]any{"status": status})
 			if err != nil {
-				return err
-			}
-			if g.json {
-				if err := render(out, g, b); err != nil {
-					return err
-				}
+				// The ids are independent, so keep going: a caller needs to
+				// know which ones were applied, not only where we stopped.
+				failures = append(failures, fmt.Errorf("%s: %w", id, err))
+				items = append(items, map[string]any{"id": id, "ok": false, "error": errorPayload(err)})
 				continue
 			}
-			if err := confirm(out, g, verb+" comment "+id+"."); err != nil {
+			items = append(items, map[string]any{"id": id, "ok": true, "result": decodedJSON(b)})
+			if !g.json {
+				if err := confirm(out, g, verb+" comment "+id+"."); err != nil {
+					return err
+				}
+			}
+		}
+		if g.json {
+			// One value for the whole command, listing every id's outcome.
+			if err := renderValue(out, g, map[string]any{"ok": len(failures) == 0, "items": items}); err != nil {
 				return err
 			}
 		}
-		return nil
+		if len(failures) == 0 {
+			return nil
+		}
+		joined := errors.Join(failures...)
+		if g.json {
+			return renderedError{joined}
+		}
+		return joined
 	}}
 }
 

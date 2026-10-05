@@ -26,6 +26,9 @@ func updateCmd(g *globals, out io.Writer) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if g.json {
+				return renderValue(out, g, map[string]any{"ok": true, "updated": binaryChanged, "skill_refreshed": skillRefreshed, "version": v.Version})
+			}
 			if binaryChanged {
 				_, _ = fmt.Fprintf(out, "Updated aidocs to %s.\n", v.Version)
 				if skillRefreshed {

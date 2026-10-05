@@ -114,7 +114,7 @@ func loginCmd(g *globals, out io.Writer) *cobra.Command {
 			_ = srvHTTP.Shutdown(sdCtx)
 		}()
 		loginURL := srv + "/v1/auth/google/start?mode=cli&state=" + url.QueryEscape(state) + "&cli_redirect=" + url.QueryEscape(redirect) + "&code_challenge=" + url.QueryEscape(challenge)
-		if err := message(out, g, "Opening "+loginURL); err != nil {
+		if err := notice(out, cmd.ErrOrStderr(), g, "Opening "+loginURL); err != nil {
 			return err
 		}
 		openBrowser(loginURL)

@@ -10,7 +10,7 @@ import (
 	"github.com/razorpay/aidocs/internal/guidelines"
 )
 
-func guidelinesCmd(_ *globals, out io.Writer) *cobra.Command {
+func guidelinesCmd(g *globals, out io.Writer) *cobra.Command {
 	return &cobra.Command{
 		Use:   "guidelines [section] [sub-section...]",
 		Short: "Print HTML authoring guidelines",
@@ -20,6 +20,9 @@ func guidelinesCmd(_ *globals, out io.Writer) *cobra.Command {
 			text, err := guidelineText(args)
 			if err != nil {
 				return err
+			}
+			if g.json {
+				return renderValue(out, g, okValue("content", text))
 			}
 			_, err = fmt.Fprint(out, text)
 			return err

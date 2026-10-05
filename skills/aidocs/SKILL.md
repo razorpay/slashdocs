@@ -81,6 +81,16 @@ aidocs docs labels set doc_123 api review-ready
 aidocs docs labels clear doc_123
 ```
 
+## JSON output
+
+Pass `--json` when you need to parse the result. Stdout then carries exactly one
+JSON value: the payload on success, `{"ok": true}` when the server returns no
+body, and `{"error": {"code", "message", "status", "details"}}` on failure.
+Read `error.details` to recover — a 409 `version_conflict` names
+`current_version_id`. Commands taking several ids answer with one value listing
+each id's outcome, so a partial failure still says which ids were applied. The
+exit code reports the failure either way.
+
 ## MCP server (optional)
 
 The aidocs application server exposes MCP directly over Streamable HTTP at:

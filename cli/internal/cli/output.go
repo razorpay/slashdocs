@@ -38,8 +38,60 @@ func renderHint(out io.Writer, g *globals, b []byte, hint string) error {
 		_, err := fmt.Fprintln(out, humanize(hint, x))
 		return err
 	}
+	if g.json {
+		// --json promises exactly one JSON value, so a body that is not JSON
+		// becomes one: an empty 204 turns into the ok marker, and any other
+		// payload (document HTML) rides along as content.
+		return renderValue(out, g, okValue("content", string(b)))
+	}
 	_, err := out.Write(append(bytes.TrimSpace(b), '\n'))
 	return err
+}
+
+// renderValue writes v as the command's single JSON value, through the same
+// output path as an API payload so --quiet and formatting stay consistent.
+func renderValue(out io.Writer, g *globals, v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	return render(out, g, b)
+}
+
+// renderContent writes a raw response body (document HTML) to out. Under
+// --json the contract needs a single JSON value, so the bytes are carried
+// inside one; otherwise they are written through byte for byte.
+func renderContent(out io.Writer, g *globals, b []byte) error {
+	if g.json {
+		if g.quiet {
+			return nil
+		}
+		return renderValue(out, g, okValue("content", string(b)))
+	}
+	_, err := out.Write(b)
+	return err
+}
+
+// okValue is the JSON value for a result that is not an API payload: an empty
+// response, a status line, or raw bytes. The bare {"ok": true} form matches
+// what the server's MCP adapter returns for an empty result; key names the
+// extra text ("message" for a status line, "content" for a body).
+func okValue(key, text string) map[string]any {
+	v := map[string]any{"ok": true}
+	if text != "" {
+		v[key] = text
+	}
+	return v
+}
+
+// decodedJSON turns a response body into a value that can be embedded in a
+// larger JSON document, falling back to the raw text when it is not JSON.
+func decodedJSON(b []byte) any {
+	var v any
+	if json.Unmarshal(b, &v) != nil {
+		return string(b)
+	}
+	return v
 }
 
 // message writes a plain human-facing status line, honoring --quiet. It is the
@@ -48,16 +100,37 @@ func message(out io.Writer, g *globals, text string) error {
 	if g.quiet {
 		return nil
 	}
+	if g.json {
+		return renderValue(out, g, okValue("message", text))
+	}
 	_, err := fmt.Fprintln(out, text)
 	return err
 }
 
+// notice writes an informational line that is not the command's result, such
+// as the login URL printed while the browser flow runs. Under --json it goes
+// to errOut so stdout keeps exactly one JSON value.
+func notice(out, errOut io.Writer, g *globals, text string) error {
+	if g.quiet {
+		return nil
+	}
+	if g.json {
+		_, err := fmt.Fprintln(errOut, text)
+		return err
+	}
+	return message(out, g, text)
+}
+
 // confirm writes a conversational, action-indicative status line (prefixed with
 // a check mark) so the caller can see what just happened rather than an
-// API-shaped payload. Honors --quiet.
+// API-shaped payload. Honors --quiet; under --json it is the single JSON value
+// the command emits instead.
 func confirm(out io.Writer, g *globals, text string) error {
 	if g.quiet {
 		return nil
+	}
+	if g.json {
+		return renderValue(out, g, okValue("message", text))
 	}
 	_, err := fmt.Fprintln(out, "\u2713 "+text)
 	return err

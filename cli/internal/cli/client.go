@@ -75,19 +75,44 @@ func client(g *globals) (*Client, error) {
 	return &Client{Base: normalizeServer(srv), Token: tok, HTTP: apiHTTPClient}, nil
 }
 
-// APIError represents a non-2xx response from the API.
+// APIError represents a non-2xx response from the API. Details carries the
+// server's structured "details" object verbatim; it is what a caller acts on
+// (current_version_id on a 409 version_conflict), so it is never dropped.
 type APIError struct {
 	Status  int
 	Code    string
 	Message string
+	Details any
 	Body    string
 }
 
 func (e *APIError) Error() string {
-	if e.Code != "" {
-		return fmt.Sprintf("api %d %s: %s", e.Status, e.Code, e.Message)
+	msg := e.Message
+	if hint := e.hint(); hint != "" {
+		msg += " (" + hint + ")"
 	}
-	return fmt.Sprintf("api %d: %s", e.Status, e.Message)
+	if e.Code != "" {
+		return fmt.Sprintf("api %d %s: %s", e.Status, e.Code, msg)
+	}
+	return fmt.Sprintf("api %d: %s", e.Status, msg)
+}
+
+// hint turns the server's details into an actionable sentence, so a caller who
+// is not using --json still learns how to recover from the human text alone.
+func (e *APIError) hint() string {
+	if e.Code == "version_conflict" {
+		if id := detailString(e.Details, "current_version_id"); id != "" {
+			return "the current version is " + id + "; rebase on it and retry with --base-version " + id
+		}
+	}
+	return ""
+}
+
+// detailString reads a string off the server's details object.
+func detailString(details any, key string) string {
+	m, _ := details.(map[string]any)
+	s, _ := m[key].(string)
+	return s
 }
 
 func (c *Client) do(method, path string, body io.Reader, ct string) ([]byte, error) {
@@ -118,11 +143,13 @@ func (c *Client) do(method, path string, body io.Reader, ct string) ([]byte, err
 			Error struct {
 				Code    string `json:"code"`
 				Message string `json:"message"`
+				Details any    `json:"details"`
 			} `json:"error"`
 		}
 		if json.Unmarshal(b, &payload) == nil && payload.Error.Message != "" {
 			ae.Code = payload.Error.Code
 			ae.Message = payload.Error.Message
+			ae.Details = payload.Error.Details
 		}
 		return nil, ae
 	}

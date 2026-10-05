@@ -52,6 +52,11 @@ func foldersCmd(g *globals, out io.Writer) *cobra.Command {
 		if err != nil {
 			var ae *APIError
 			if errors.As(err, &ae) && ae.Code == "ambiguous_path" {
+				// A disambiguation prompt, not a failure: it succeeds, and the
+				// server body is already exactly one JSON value.
+				if g.quiet {
+					return nil
+				}
 				if g.json {
 					_, writeErr := fmt.Fprintln(out, ae.Body)
 					return writeErr
