@@ -1,0 +1,19 @@
+.github/workflows/rcore-integration.yml
+  s_b068f83afdb9c2::t_72c9953d118088 32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "88c8c183f919b77c56388f6f2c37b43cd9dceb65",
+  "prompts": {},
+  "sessions": {
+    "s_b068f83afdb9c2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1fc0284d-f1c0-45d9-a86d-fdd830942881",
+        "model": "unknown"
+      },
+      "human_author": "Nehal Kumar Singh <nehalksingh@outlook.com>"
+    }
+  }
+}
