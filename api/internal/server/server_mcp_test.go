@@ -14,6 +14,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/googlegroups"
 	"github.com/razorpay/slashdocs/api/internal/repo"
 	"github.com/razorpay/slashdocs/api/internal/server"
 )
@@ -765,4 +766,44 @@ func TestMCPGuidelinesProgressiveDisclosure(t *testing.T) {
 	assertMCPToolError(t, callMCPToolHTTP(t, e, token, "get_authoring_guidelines", map[string]any{
 		"section": "no such section",
 	}), "unknown guidelines section")
+}
+
+// MCP authenticates its own requests and puts the principal straight into the
+// context, bypassing requireAuth -- the only place Google Group membership is
+// resolved. A caller whose access comes from a group is therefore invisible to
+// every MCP tool, which matters most now that sharing requires owner and an
+// owner-level group grant is one way to hold it.
+func TestMCPResolvesGoogleGroupMembership(t *testing.T) {
+	group := googlegroups.GoogleGroup{ID: "groups/platform", CustomerID: "C123", Email: "platform@example.com", Name: "Platform"}
+	directory := &postgresGroupDirectory{
+		group:       group,
+		memberships: map[string][]googlegroups.GoogleGroup{fixtureUser.Email: {group}},
+	}
+	e := newMCPOAuthTestEnvConfig(t, func(cfg *server.Config) {
+		cfg.Deployment = server.DeploymentOrg
+		cfg.GoogleGroupsEnabled = true
+		cfg.GoogleGroupsMembershipTTL = time.Minute
+	}, server.WithGoogleGroupDirectory(directory))
+
+	doc, _, err := e.store.CreateDocument(t.Context(), fixtureOwner, "group shared", []byte("<html><body>x</body></html>"))
+	if err != nil {
+		t.Fatalf("seed document: %v", err)
+	}
+	if err := e.store.UpsertGoogleGroup(t.Context(), repo.GoogleGroup{
+		ID: group.ID, CustomerID: group.CustomerID, Email: group.Email,
+		Name: group.Name, LastVerifiedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("seed group: %v", err)
+	}
+	if _, err := e.store.CreateGrant(t.Context(), "document", doc.ID,
+		auth.Principal{Type: auth.PrincipalGoogleGroup, ID: group.ID}, repo.RoleViewer, fixtureOwner); err != nil {
+		t.Fatalf("seed group grant: %v", err)
+	}
+
+	// fixtureUser's only route to this document is their group membership.
+	token := auth.NewMCPAccessToken(fixtureUser.ID, e.resource, oauthTestSigningMaterial, time.Minute)
+	result := callMCPToolHTTP(t, e, token, "get_document", map[string]any{"document_id": doc.ID})
+	if result.IsError {
+		t.Fatalf("get_document for a group member failed: %s", result.Text)
+	}
 }

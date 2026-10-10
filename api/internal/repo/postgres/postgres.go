@@ -266,7 +266,11 @@ func (s *Store) RoleForDocument(ctx context.Context, p auth.Principal, documentI
 		return "", err
 	}
 	best := repo.RoleNone
-	if string(p.Type) == owner.OwnerType && p.ID == owner.OwnerID {
+	owns, err := s.principalOwns(ctx, p, owner.OwnerType, owner.OwnerID)
+	if err != nil {
+		return "", err
+	}
+	if owns {
 		best = repo.RoleOwner
 	}
 	grants, err := s.q.ListDocumentInheritedGrants(ctx, documentID)
@@ -279,6 +283,35 @@ func (s *Store) RoleForDocument(ctx context.Context, p auth.Principal, documentI
 		}
 	}
 	return best, nil
+}
+
+// principalOwns reports whether p owns a resource recorded as owned by
+// (ownerType, ownerID).
+//
+// A resource created by a service account records only the bot, but a bot
+// cannot answer a share request, approve access, or be asked to hand a
+// document on. The human who owns the service account owns what it creates --
+// the same resolution the access-request outbox already performs when it
+// routes "X wants access" to sa.owner_user_id.
+//
+// Only a user can own a service account, so a service-account caller costs no
+// extra query here.
+func (s *Store) principalOwns(ctx context.Context, p auth.Principal, ownerType, ownerID string) (bool, error) {
+	if string(p.Type) == ownerType && p.ID == ownerID {
+		return true, nil
+	}
+	if ownerType != string(auth.PrincipalServiceAccount) || p.Type != auth.PrincipalUser || p.ID == "" {
+		return false, nil
+	}
+	sa, err := s.q.GetServiceAccount(ctx, ownerID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		// A lookup fault is not a permission verdict; let the caller 500.
+		return false, err
+	}
+	return sa.OwnerID == p.ID, nil
 }
 
 func principalHasGrant(p auth.Principal, principalType, principalID string) bool {

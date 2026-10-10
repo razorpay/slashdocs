@@ -125,7 +125,7 @@ func registerMCPFolderAccessTools(server *mcpserver.MCPServer, api mcpAPIAdapter
 	})
 
 	server.AddTool(mcp.NewTool("share_folder", mutationOptions(false, false,
-		mcp.WithDescription("Grant folder access to an email/bot address or to everyone. Pass exactly one of address or everyone=true."),
+		mcp.WithDescription("Grant folder access to an email/bot address or to everyone. Requires the owner role. Pass exactly one of address or everyone=true."),
 		mcpFolderID(),
 		mcp.WithString("address", mcp.Description("User email or bot address.")),
 		mcp.WithBoolean("everyone", mcp.Description("Grant access to everyone who can reach the server.")),
@@ -143,7 +143,7 @@ func registerMCPFolderAccessTools(server *mcpserver.MCPServer, api mcpAPIAdapter
 	})
 
 	server.AddTool(mcp.NewTool("update_folder_grant", mutationOptions(true, true,
-		mcp.WithDescription("Change an existing folder grant's role."),
+		mcp.WithDescription("Change an existing folder grant's role. Requires the owner role."),
 		mcpFolderID(),
 		mcp.WithString("grant_id", mcp.Required(), mcp.Description("Grant ID.")),
 		mcp.WithString("role", mcp.Required(), mcp.Enum("viewer", "commenter", "editor")),
@@ -164,7 +164,7 @@ func registerMCPFolderAccessTools(server *mcpserver.MCPServer, api mcpAPIAdapter
 	})
 
 	server.AddTool(mcp.NewTool("revoke_folder_grant", mutationOptions(true, true,
-		mcp.WithDescription("Revoke an existing folder grant."),
+		mcp.WithDescription("Revoke an existing folder grant. Requires the owner role, except for the caller's own grant, which they may always revoke to leave the folder."),
 		mcpFolderID(), mcp.WithString("grant_id", mcp.Required(), mcp.Description("Grant ID.")),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		folder, invalid := mcpRequired(request, "folder_id")

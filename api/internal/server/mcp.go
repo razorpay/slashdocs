@@ -108,6 +108,14 @@ func newMCPHTTPHandler(deps dependencies) http.Handler {
 		if principal == nil {
 			return
 		}
+		// This transport authenticates its own requests and never passes
+		// through requireAuth, which is the only other place group membership
+		// is resolved. Without this, a caller whose access to a document comes
+		// from a Google Group is invisible to every MCP tool -- they cannot
+		// even read it.
+		if deps.googleGroupResolver != nil {
+			principal = deps.googleGroupResolver.Resolve(r.Context(), principal)
+		}
 		var requestBody *mcpRequestBody
 		if r.Method == http.MethodPost {
 			if message := mcpTransportHeaderError(r); message != "" {

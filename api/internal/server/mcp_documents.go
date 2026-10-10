@@ -466,7 +466,7 @@ func registerMCPDocumentAccessTools(server *mcpserver.MCPServer, api mcpAPIAdapt
 	})
 
 	server.AddTool(mcp.NewTool("share_document", mutationOptions(false, false,
-		mcp.WithDescription("Grant document access to an email/bot address or to everyone. Pass exactly one of address or everyone=true."),
+		mcp.WithDescription("Grant document access to an email/bot address or to everyone. Requires the owner role. Pass exactly one of address or everyone=true."),
 		mcpDocumentID(),
 		mcp.WithString("address", mcp.Description("User email or bot address.")),
 		mcp.WithBoolean("everyone", mcp.Description("Grant access to everyone who can reach the server.")),
@@ -484,7 +484,7 @@ func registerMCPDocumentAccessTools(server *mcpserver.MCPServer, api mcpAPIAdapt
 	})
 
 	server.AddTool(mcp.NewTool("update_document_grant", mutationOptions(true, true,
-		mcp.WithDescription("Change an existing document grant's role."),
+		mcp.WithDescription("Change an existing document grant's role. Requires the owner role."),
 		mcpDocumentID(),
 		mcp.WithString("grant_id", mcp.Required(), mcp.Description("Grant ID.")),
 		mcp.WithString("role", mcp.Required(), mcp.Enum("viewer", "commenter", "editor")),
@@ -505,7 +505,7 @@ func registerMCPDocumentAccessTools(server *mcpserver.MCPServer, api mcpAPIAdapt
 	})
 
 	server.AddTool(mcp.NewTool("revoke_document_grant", mutationOptions(true, true,
-		mcp.WithDescription("Revoke an existing document grant."),
+		mcp.WithDescription("Revoke an existing document grant. Requires the owner role, except for the caller's own grant, which they may always revoke to leave the document."),
 		mcpDocumentID(), mcp.WithString("grant_id", mcp.Required(), mcp.Description("Grant ID.")),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		doc, invalid := mcpRequired(request, "document_id")

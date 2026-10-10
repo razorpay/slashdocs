@@ -346,8 +346,21 @@ func documentMoveCmd(g *globals, out io.Writer) *cobra.Command {
 	return cmd
 }
 
+// grantOwnerRule is the sharing policy, repeated on every grant subcommand
+// because cobra prints a command's own Long and never its parent's.
+const grantOwnerRule = "Adding, changing, and revoking grants requires the owner role.\n" +
+	"The one exception is your own grant: you may always revoke that to leave\n" +
+	"something you no longer want access to."
+
 func grantsCmd(g *globals, out io.Writer) *cobra.Command {
-	c := &cobra.Command{Use: "grants", Short: "Manage document grants"}
+	c := &cobra.Command{
+		Use:   "grants",
+		Short: "Manage document grants",
+		Long: "Manage who can reach a document.\n\n" +
+			"Adding, changing, and revoking grants requires the owner role. The one\n" +
+			"exception is your own grant: you may always revoke that to leave a\n" +
+			"document you no longer want access to.",
+	}
 	var principal, address, group, role string
 	var everyone bool
 	add := &cobra.Command{
@@ -408,10 +421,14 @@ func grantsCmd(g *globals, out io.Writer) *cobra.Command {
 			return c.doJSON("PATCH", apiPath("/v1/documents/%s/grants/%s", args[0], args[1]), map[string]any{"role": r})
 		}, func(map[string]any) string { return "Changed grant " + args[1] + " on " + args[0] + " to " + r + "." })
 	}}
-	upd.Flags().StringVar(&r, "role", "viewer", "new grant role: viewer, commenter, editor, or owner")
+	upd.Flags().StringVar(&r, "role", "viewer", "viewer, commenter, editor, or owner (groups only)")
 	revoke := mutate(g, out, "revoke <doc_id> <grant_id>", "Revoke a document grant", "DELETE", "/v1/documents/%s/grants/%s", 2, func(a []string) string { return "Revoked grant " + a[1] + " on " + a[0] + "." })
 	list := simplePath(g, out, "list", "GET", "/v1/documents/%s/access")
 	list.Short = "List effective document access"
+	// Cobra prints a subcommand's own Long and never its parent's, so the rule
+	// has to sit on each command a user can actually run.
+	add.Long += "\n\n" + grantOwnerRule
+	upd.Long, revoke.Long = grantOwnerRule, grantOwnerRule
 	c.AddCommand(list, add, upd, revoke)
 	return c
 }

@@ -42,7 +42,7 @@ func newMCPOAuthTestEnv(t *testing.T) *mcpOAuthTestEnv {
 
 // newMCPOAuthTestEnvConfig lets a test adjust the server configuration (e.g.
 // DefaultDocPermission) before the handler is built.
-func newMCPOAuthTestEnvConfig(t *testing.T, mutate func(*server.Config)) *mcpOAuthTestEnv {
+func newMCPOAuthTestEnvConfig(t *testing.T, mutate func(*server.Config), extraOptions ...server.Option) *mcpOAuthTestEnv {
 	t.Helper()
 	store := newTestStore(t)
 	for _, p := range []auth.Principal{fixtureOwner, fixtureUser} {
@@ -60,11 +60,12 @@ func newMCPOAuthTestEnvConfig(t *testing.T, mutate func(*server.Config)) *mcpOAu
 	if mutate != nil {
 		mutate(&cfg)
 	}
-	h := server.New(cfg,
+	options := append([]server.Option{
 		server.WithRepository(store),
 		server.WithAuthenticator(auth.DBAuthenticator{Resolver: store, SessionSecret: oauthTestSigningMaterial}),
 		server.WithStateStore(stateStore),
-	).Handler()
+	}, extraOptions...)
+	h := server.New(cfg, options...).Handler()
 	session := (auth.SessionCodec{Secret: []byte(oauthTestSigningMaterial)}).Sign(fixtureUser.ID)
 	//nolint:gosec // G124: this test-only cookie is injected directly into httptest requests; no network transport is used.
 	cookie := (&http.Cookie{Name: "slashdocs_session", Value: session}).String()

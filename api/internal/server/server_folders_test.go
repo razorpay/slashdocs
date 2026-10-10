@@ -4,7 +4,26 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+
+	"github.com/razorpay/slashdocs/api/internal/auth"
 )
+
+// A bot can create folders too, and folders.owner_id names only the bot, so
+// the human who owns the bot must still be able to share what it created.
+func TestServiceAccountOwnedFolderIsShareableByItsHumanOwner(t *testing.T) {
+	e := newTestEnv(t)
+	bot := principalHeader(auth.Principal{Type: auth.PrincipalServiceAccount, ID: e.sa.ID})
+	folderID := createFolder(t, e, `{"title":"Bot output"}`, bot)
+
+	// fixtureOwner owns the service account that owns this folder.
+	rr := do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/grants",
+		`{"address":"`+fixtureViewer.Email+`","role":"viewer"}`,
+		map[string]string{
+			"X-Test-Principal": principalHeader(fixtureOwner),
+			"Content-Type":     "application/json",
+		})
+	assertStatus(t, rr, http.StatusCreated)
+}
 
 func TestFolderAccessControl(t *testing.T) {
 	owner := principalHeader(fixtureOwner)
@@ -68,7 +87,7 @@ func TestFolderAccessControl(t *testing.T) {
 		assertStatus(t, rr, http.StatusOK)
 	})
 
-	t.Run("commenter can manage folder grants", func(t *testing.T) {
+	t.Run("commenter cannot manage folder grants", func(t *testing.T) {
 		e := newTestEnv(t)
 		folderID := createFolder(t, e, `{"title":"Shared"}`, owner)
 
@@ -79,17 +98,57 @@ func TestFolderAccessControl(t *testing.T) {
 
 		rr = do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/grants",
 			`{"address":"`+thirdEmail+`","role":"viewer"}`,
-			map[string]string{"X-Test-Principal": other, "Content-Type": "application/json"})
+			map[string]string{"X-Test-Principal": owner, "Content-Type": "application/json"})
 		assertStatus(t, rr, http.StatusCreated)
 		grantID := jsonField(t, rr.Body.Bytes(), "id")
+
+		rr = do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/grants",
+			`{"address":"`+thirdEmail+`","role":"editor"}`,
+			map[string]string{"X-Test-Principal": other, "Content-Type": "application/json"})
+		assertStatus(t, rr, http.StatusForbidden)
 
 		rr = do(t, e.h, http.MethodPatch, "/v1/folders/"+folderID+"/grants/"+grantID,
 			`{"role":"editor"}`,
 			map[string]string{"X-Test-Principal": other, "Content-Type": "application/json"})
-		assertStatus(t, rr, http.StatusOK)
+		assertStatus(t, rr, http.StatusForbidden)
+
+		rr = do(t, e.h, http.MethodDelete, "/v1/folders/"+folderID+"/grants/"+grantID, "", map[string]string{"X-Test-Principal": other})
+		assertStatus(t, rr, http.StatusForbidden)
+	})
+
+	t.Run("principal can remove their own folder grant", func(t *testing.T) {
+		e := newTestEnv(t)
+		folderID := createFolder(t, e, `{"title":"Shared"}`, owner)
+
+		rr := do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/grants",
+			`{"address":"`+otherEmail+`","role":"viewer"}`,
+			map[string]string{"X-Test-Principal": owner, "Content-Type": "application/json"})
+		assertStatus(t, rr, http.StatusCreated)
+		grantID := jsonField(t, rr.Body.Bytes(), "id")
 
 		rr = do(t, e.h, http.MethodDelete, "/v1/folders/"+folderID+"/grants/"+grantID, "", map[string]string{"X-Test-Principal": other})
 		assertStatus(t, rr, http.StatusNoContent)
+
+		rr = do(t, e.h, http.MethodGet, "/v1/folders/"+folderID, "", map[string]string{"X-Test-Principal": other})
+		assertStatus(t, rr, http.StatusForbidden)
+	})
+
+	t.Run("non-owner cannot remove folder general access", func(t *testing.T) {
+		e := newTestEnv(t)
+		folderID := createFolder(t, e, `{"title":"Shared"}`, owner)
+
+		rr := do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/grants",
+			`{"principal":{"type":"anyone"},"role":"commenter"}`,
+			map[string]string{"X-Test-Principal": owner, "Content-Type": "application/json"})
+		assertStatus(t, rr, http.StatusCreated)
+		anyoneGrantID := jsonField(t, rr.Body.Bytes(), "id")
+
+		rr = do(t, e.h, http.MethodDelete, "/v1/folders/"+folderID+"/grants/"+anyoneGrantID, "", map[string]string{"X-Test-Principal": other})
+		assertStatus(t, rr, http.StatusForbidden)
+
+		// Everyone who reached the folder through that grant still can.
+		rr = do(t, e.h, http.MethodGet, "/v1/folders/"+folderID, "", map[string]string{"X-Test-Principal": principalHeader(fixtureAttacker)})
+		assertStatus(t, rr, http.StatusOK)
 	})
 
 	t.Run("viewer cannot manage folder grants", func(t *testing.T) {

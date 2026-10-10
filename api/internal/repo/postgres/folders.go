@@ -81,7 +81,29 @@ func (s *Store) RoleForFolder(ctx context.Context, p auth.Principal, folderID st
 	if err != nil {
 		return "", err
 	}
-	return chain[len(chain)-1].Role, nil
+	role := chain[len(chain)-1].Role
+	if role == repo.RoleOwner || p.Type != auth.PrincipalUser {
+		return role, nil
+	}
+	// ListFolderAccessChain matches ownership against the caller's own
+	// identity, so it cannot see that a bot-owned folder belongs to the human
+	// who owns the bot. Only a user can own a service account, so this costs
+	// nothing for service-account callers.
+	f, err := s.q.GetFolder(ctx, folderID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return role, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	owns, err := s.principalOwns(ctx, p, f.OwnerType, f.OwnerID)
+	if err != nil {
+		return "", err
+	}
+	if owns {
+		return repo.RoleOwner, nil
+	}
+	return role, nil
 }
 
 func (s *Store) CreateFolder(ctx context.Context, owner auth.Principal, title, parent string) (repo.Folder, error) {

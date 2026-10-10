@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
 func TestGrantDocumentAccessToServiceAccount(t *testing.T) {
@@ -88,25 +90,153 @@ func TestPatchGrantRejectsOwnerRole(t *testing.T) {
 	assertStatus(t, rr, http.StatusBadRequest)
 }
 
-func TestCommenterCanManageDocumentGrants(t *testing.T) {
+// seedDocumentGrant creates (or resurrects) a grant on the fixture document and
+// returns it, so a test can address one specific grant by id.
+func seedDocumentGrant(t *testing.T, e *testEnv, p auth.Principal, role repo.Role) repo.Grant {
+	t.Helper()
+	g, err := e.store.CreateGrant(context.Background(), "document", e.doc.ID, p, role, fixtureOwner)
+	if err != nil {
+		t.Fatalf("seed document grant: %v", err)
+	}
+	return g
+}
+
+// Agents publish most documents here, so a bot-created document must stay
+// shareable by a human. documents.owner_id holds the service account, and
+// RoleForDocument compares the caller against it directly, so no user is ever
+// the canonical owner of a bot-created document.
+func TestServiceAccountOwnedDocumentIsShareableByItsHumanOwner(t *testing.T) {
+	e := newTestEnv(t)
+	bot := auth.Principal{Type: auth.PrincipalServiceAccount, ID: e.sa.ID}
+	docID, _ := e.createDocument("bot report", "<html><body>hi</body></html>", bot)
+
+	// fixtureOwner owns the service account that owns this document.
+	rr := do(t, e.h, http.MethodPost, "/v1/documents/"+docID+"/grants", `{
+	  "principal": { "type": "user", "email": "viewer@example.com" },
+	  "role": "viewer"
+	}`, map[string]string{
+		"Content-Type":     "application/json",
+		"X-Test-Principal": principalHeader(fixtureOwner),
+	})
+	assertStatus(t, rr, http.StatusCreated)
+}
+
+// Managing sharing is owner-only. This replaces the previous policy, under
+// which any commenter could create, change, and revoke grants.
+func TestCommenterCannotManageDocumentGrants(t *testing.T) {
 	e := newTestEnv(t)
 	commenter := map[string]string{
 		"Content-Type":     "application/json",
 		"X-Test-Principal": principalHeader(fixtureCommenter),
 	}
+	viewerGrant := seedDocumentGrant(t, e, fixtureViewer, repo.RoleViewer)
 
 	rr := do(t, e.h, http.MethodPost, "/v1/documents/"+e.doc.ID+"/grants", fmt.Sprintf(`{
 	  "principal": { "type": "service_account", "id": %q },
 	  "role": "viewer"
 	}`, e.sa.ID), commenter)
-	assertStatus(t, rr, http.StatusCreated)
-	grantID := jsonField(t, rr.Body.Bytes(), "id")
+	assertStatus(t, rr, http.StatusForbidden)
 
-	rr = do(t, e.h, http.MethodPatch, "/v1/documents/"+e.doc.ID+"/grants/"+grantID, `{"role":"editor"}`, commenter)
+	rr = do(t, e.h, http.MethodPatch, "/v1/documents/"+e.doc.ID+"/grants/"+viewerGrant.ID, `{"role":"editor"}`, commenter)
+	assertStatus(t, rr, http.StatusForbidden)
+
+	rr = do(t, e.h, http.MethodDelete, "/v1/documents/"+e.doc.ID+"/grants/"+viewerGrant.ID, "", commenter)
+	assertStatus(t, rr, http.StatusForbidden)
+}
+
+// The escalation this policy exists to stop: a commenter minting themselves a
+// higher role through the grant API.
+func TestCommenterCannotGrantThemselvesEditor(t *testing.T) {
+	e := newTestEnv(t)
+
+	rr := do(t, e.h, http.MethodPost, "/v1/documents/"+e.doc.ID+"/grants", fmt.Sprintf(`{
+	  "principal": { "type": "user", "id": %q },
+	  "role": "editor"
+	}`, fixtureCommenter.ID), map[string]string{
+		"Content-Type":     "application/json",
+		"X-Test-Principal": principalHeader(fixtureCommenter),
+	})
+	assertStatus(t, rr, http.StatusForbidden)
+
+	// The commenter must still be a commenter.
+	role, err := e.store.RoleForDocument(context.Background(), fixtureCommenter, e.doc.ID)
+	if err != nil {
+		t.Fatalf("role lookup: %v", err)
+	}
+	if role != repo.RoleCommenter {
+		t.Fatalf("role after refused self-grant = %q, want %q", role, repo.RoleCommenter)
+	}
+}
+
+// Editors write document content; they do not decide who else gets in.
+func TestEditorCannotManageDocumentGrants(t *testing.T) {
+	e := newTestEnv(t)
+
+	rr := do(t, e.h, http.MethodPost, "/v1/documents/"+e.doc.ID+"/grants", fmt.Sprintf(`{
+	  "principal": { "type": "service_account", "id": %q },
+	  "role": "viewer"
+	}`, e.sa.ID), map[string]string{
+		"Content-Type":     "application/json",
+		"X-Test-Principal": principalHeader(fixtureEditor),
+	})
+	assertStatus(t, rr, http.StatusForbidden)
+}
+
+// The general-access grant belongs to everyone, not to whoever happens to be
+// reading. A non-owner must not be able to revoke it and strip access from
+// every other principal who reaches the document through it.
+func TestNonOwnerCannotRemoveGeneralAccessGrant(t *testing.T) {
+	e := newTestEnv(t)
+	anyoneGrant := seedDocumentGrant(t, e, auth.Principal{Type: auth.PrincipalAnyone}, repo.RoleCommenter)
+
+	rr := do(t, e.h, http.MethodDelete, "/v1/documents/"+e.doc.ID+"/grants/"+anyoneGrant.ID, "", map[string]string{
+		"X-Test-Principal": principalHeader(fixtureCommenter),
+	})
+	assertStatus(t, rr, http.StatusForbidden)
+
+	// A principal whose only access is the general-access grant still has it.
+	rr = do(t, e.h, http.MethodGet, "/v1/documents/"+e.doc.ID, "", map[string]string{
+		"X-Test-Principal": principalHeader(fixtureStranger),
+	})
 	assertStatus(t, rr, http.StatusOK)
+}
 
-	rr = do(t, e.h, http.MethodDelete, "/v1/documents/"+e.doc.ID+"/grants/"+grantID, "", commenter)
+// Leaving a document is the one grant operation a non-owner may perform. The
+// actor is a viewer, who holds no grant-management role at all: that is what
+// makes this a test of the self-removal exception rather than of some wider
+// revoke permission the caller happens to have.
+func TestPrincipalCanRemoveOwnDocumentGrant(t *testing.T) {
+	e := newTestEnv(t)
+	ownGrant := seedDocumentGrant(t, e, fixtureViewer, repo.RoleViewer)
+
+	rr := do(t, e.h, http.MethodDelete, "/v1/documents/"+e.doc.ID+"/grants/"+ownGrant.ID, "", map[string]string{
+		"X-Test-Principal": principalHeader(fixtureViewer),
+	})
 	assertStatus(t, rr, http.StatusNoContent)
+
+	rr = do(t, e.h, http.MethodGet, "/v1/documents/"+e.doc.ID, "", map[string]string{
+		"X-Test-Principal": principalHeader(fixtureViewer),
+	})
+	assertStatus(t, rr, http.StatusForbidden)
+}
+
+// Self-removal is scoped to your own grant: it is not a general revoke verb.
+func TestPrincipalCannotRemoveAnotherPrincipalsGrant(t *testing.T) {
+	e := newTestEnv(t)
+	viewerGrant := seedDocumentGrant(t, e, fixtureViewer, repo.RoleViewer)
+
+	rr := do(t, e.h, http.MethodDelete, "/v1/documents/"+e.doc.ID+"/grants/"+viewerGrant.ID, "", map[string]string{
+		"X-Test-Principal": principalHeader(fixtureCommenter),
+	})
+	assertStatus(t, rr, http.StatusForbidden)
+
+	role, err := e.store.RoleForDocument(context.Background(), fixtureViewer, e.doc.ID)
+	if err != nil {
+		t.Fatalf("role lookup: %v", err)
+	}
+	if role != repo.RoleViewer {
+		t.Fatalf("viewer role after refused revoke = %q, want %q", role, repo.RoleViewer)
+	}
 }
 
 // TestGrantReAddAfterRevokeReturnsPersistedID locks in that re-granting a

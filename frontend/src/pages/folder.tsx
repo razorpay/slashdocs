@@ -309,6 +309,9 @@ export function FolderPage() {
                 resourceId={id}
                 canManageAccess={canManageAccess}
                 isCanonicalOwner={isOwner}
+                // The caller just revoked their own access, so this page can
+                // no longer load. Leave before it starts 403ing.
+                onLeft={() => nav("/app/documents")}
               />
             </Sheet>
             <Dropdown>

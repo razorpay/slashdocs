@@ -154,6 +154,20 @@ func validGrantRoleForPrincipal(principalType auth.PrincipalType, role repo.Role
 	return validGrantRole(role)
 }
 
+// isSelfGrant reports whether grant targets exactly the caller. Removing that
+// grant is leaving the resource, which is the one grant operation a non-owner
+// may perform; every other grant change is sharing management and belongs to
+// the owner.
+//
+// A grant that covers other people can never match: "anyone" and google_group
+// principals carry a type no authenticated caller holds, and "anyone" also
+// carries an empty id. Both halves are checked so that neither alone is
+// load-bearing.
+func isSelfGrant(grant repo.Grant, p *auth.Principal) bool {
+	return p != nil && p.ID != "" &&
+		grant.Principal.Type == p.Type && grant.Principal.ID == p.ID
+}
+
 func (h handlers) isCanonicalOwner(c *gin.Context, resourceType, resourceID string) bool {
 	p := current(c)
 	if p == nil {
@@ -215,7 +229,14 @@ type grantGrantedBy struct {
 // @Success 201 {object} createGrantResponse
 // @Router /v1/documents/{id}/grants [post]
 func (h handlers) createGrant(c *gin.Context) {
-	if !h.needDocRole(c, c.Param("id"), repo.RoleCommenter) {
+	// Owner-gate before resolveGrantPrincipal, which calls the Google
+	// Directory and writes the group row for a google_group principal: a
+	// caller without the role must not reach either.
+	//
+	// Note this only keeps out non-owners. An owner who is not the CANONICAL
+	// owner still pays that lookup before
+	// requireCanonicalOwnerForOwnerGroupChange refuses them below.
+	if !h.needDocRole(c, c.Param("id"), repo.RoleOwner) {
 		return
 	}
 	p := current(c)
@@ -270,7 +291,9 @@ func (h handlers) createGrant(c *gin.Context) {
 // @Success 200 {object} repo.Grant
 // @Router /v1/documents/{id}/grants/{grant_id} [patch]
 func (h handlers) patchGrant(c *gin.Context) {
-	if !h.needDocRole(c, c.Param("id"), repo.RoleCommenter) {
+	// Changing a role is sharing management, including on your own grant:
+	// leaving is a revoke, not a downgrade.
+	if !h.needDocRole(c, c.Param("id"), repo.RoleOwner) {
 		return
 	}
 	var in struct {
@@ -318,12 +341,21 @@ func (h handlers) patchGrant(c *gin.Context) {
 // @Success 204
 // @Router /v1/documents/{id}/grants/{grant_id} [delete]
 func (h handlers) deleteGrant(c *gin.Context) {
-	if !h.needDocRole(c, c.Param("id"), repo.RoleCommenter) {
+	// Viewer floor: be on the document before naming one of its grants.
+	role, ok := h.documentRole(c, c.Param("id"))
+	if !ok {
 		return
 	}
 	existing, err := h.deps.repository.GetGrant(c.Request.Context(), c.Param("id"), c.Param("grant_id"))
 	if err != nil {
 		notFound(c)
+		return
+	}
+	// Revoking your own grant is leaving the document. Revoking anyone else's
+	// -- including the "anyone" grant that others reach the document through --
+	// is sharing management and requires the owner.
+	if !isSelfGrant(existing, current(c)) && !atLeast(role, repo.RoleOwner) {
+		forbidden(c, string(repo.RoleOwner)+" role required")
 		return
 	}
 	if !h.requireCanonicalOwnerForOwnerGroupChange(c, "document", c.Param("id"), existing, repo.Grant{}) {

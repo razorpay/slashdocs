@@ -358,6 +358,47 @@ func (h handlers) needDocRole(c *gin.Context, docID string, need repo.Role) bool
 	return true
 }
 
+// documentRole resolves the caller's role on a document once and answers the
+// client itself on a lookup fault, an unresolved group membership, or no
+// access at all. A handler that gates on two different roles uses this rather
+// than calling needDocRole twice: a second resolution doubles the recursive
+// ancestry query and can disagree with the first in kind, returning a
+// retryable 503 where the first already produced a permanent verdict.
+func (h handlers) documentRole(c *gin.Context, docID string) (repo.Role, bool) {
+	role, err := h.deps.repository.RoleForDocument(c.Request.Context(), *current(c), docID)
+	if err != nil {
+		internalErr(c, err)
+		return repo.RoleNone, false
+	}
+	if !atLeast(role, repo.RoleViewer) {
+		if groupMembershipUnavailable(current(c)) {
+			groupMembershipUnavailableResponse(c)
+			return repo.RoleNone, false
+		}
+		forbidden(c, string(repo.RoleViewer)+" role required")
+		return repo.RoleNone, false
+	}
+	return role, true
+}
+
+// folderRole is documentRole's folder twin; see that comment.
+func (h handlers) folderRole(c *gin.Context, folderID string) (repo.Role, bool) {
+	role, err := h.deps.repository.RoleForFolder(c.Request.Context(), *current(c), folderID)
+	if err != nil {
+		internalErr(c, err)
+		return repo.RoleNone, false
+	}
+	if !atLeast(role, repo.RoleViewer) {
+		if groupMembershipUnavailable(current(c)) {
+			groupMembershipUnavailableResponse(c)
+			return repo.RoleNone, false
+		}
+		forbidden(c, string(repo.RoleViewer)+" role required")
+		return repo.RoleNone, false
+	}
+	return role, true
+}
+
 func requireAuth(a auth.Authenticator, appOrigin string, groups *googlegroups.Resolver) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		p, err := a.Authenticate(c.Request)

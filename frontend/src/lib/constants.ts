@@ -30,8 +30,11 @@ export const ROLE_RANK: Record<string, number> = {
   owner: 4,
 };
 
+// Managing sharing -- adding, changing, and revoking grants, including general
+// access -- belongs to the owner. A non-owner's only grant action is removing
+// their own, which is leaving the resource and is gated per row, not by this.
 export function canManageSharing(role?: string) {
-  return (ROLE_RANK[role || ""] || 0) >= ROLE_RANK.commenter;
+  return (ROLE_RANK[role || ""] || 0) >= ROLE_RANK.owner;
 }
 
 // GENERAL_ACCESS_NONE is the sentinel role for "no general access" (the

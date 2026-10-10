@@ -416,7 +416,9 @@ func (h handlers) moveDocToRoot(c *gin.Context) {
 // @Success 201 {object} repo.Grant
 // @Router /v1/folders/{id}/grants [post]
 func (h handlers) createFolderGrant(c *gin.Context) {
-	if !h.needFolderRole(c, c.Param("id"), repo.RoleCommenter) {
+	// Owner-gate before resolveGrantPrincipal, which calls the Google
+	// Directory and writes the group row for a google_group principal.
+	if !h.needFolderRole(c, c.Param("id"), repo.RoleOwner) {
 		return
 	}
 	var in grantInput
@@ -448,7 +450,9 @@ func (h handlers) createFolderGrant(c *gin.Context) {
 	c.JSON(http.StatusCreated, g)
 }
 func (h handlers) patchFolderGrant(c *gin.Context) {
-	if !h.needFolderRole(c, c.Param("id"), repo.RoleCommenter) {
+	// Changing a role is sharing management, including on your own grant:
+	// leaving is a revoke, not a downgrade.
+	if !h.needFolderRole(c, c.Param("id"), repo.RoleOwner) {
 		return
 	}
 	var in struct {
@@ -485,12 +489,21 @@ func (h handlers) patchFolderGrant(c *gin.Context) {
 	c.JSON(http.StatusOK, g)
 }
 func (h handlers) deleteFolderGrant(c *gin.Context) {
-	if !h.needFolderRole(c, c.Param("id"), repo.RoleCommenter) {
+	// Viewer floor: be on the folder before naming one of its grants.
+	role, ok := h.folderRole(c, c.Param("id"))
+	if !ok {
 		return
 	}
 	existing, err := h.deps.repository.GetGrant(c.Request.Context(), c.Param("id"), c.Param("grant_id"))
 	if err != nil {
 		notFound(c)
+		return
+	}
+	// Revoking your own grant is leaving the folder. Revoking anyone else's --
+	// including the "anyone" grant that others reach the folder through -- is
+	// sharing management and requires the owner.
+	if !isSelfGrant(existing, current(c)) && !atLeast(role, repo.RoleOwner) {
+		forbidden(c, string(repo.RoleOwner)+" role required")
 		return
 	}
 	if !h.requireCanonicalOwnerForOwnerGroupChange(c, "folder", c.Param("id"), existing, repo.Grant{}) {

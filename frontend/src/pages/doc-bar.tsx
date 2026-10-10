@@ -239,6 +239,9 @@ export function DocBar({
           docId={docId}
           canManageAccess={canManageAccess}
           isCanonicalOwner={canManage}
+          // The caller just revoked their own access, so this page can no
+          // longer load. Leave before it starts 403ing.
+          onLeft={() => nav(backTo)}
           onOpenAutoFocus={(event) => {
             const frame = shareFrameFocusRef.current;
             shareFrameFocusRef.current = null;
