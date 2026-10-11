@@ -43,7 +43,7 @@ jobs:
           test -n "$SLASHDOCS_CLI_SIGNING_PUBLIC_KEY" || { echo "::error::The SLASHDOCS_CLI_SIGNING_PUBLIC_KEY variable is not set; see docs/releasing.md"; exit 1; }
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -108,7 +108,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
