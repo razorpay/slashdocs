@@ -166,8 +166,7 @@ export function FolderPage() {
       qc.invalidateQueries({ queryKey: queryKeys.documents() });
       qc.invalidateQueries({ queryKey: queryKeys.pins() });
       const warning = (data as Record<string, unknown>)?.permission_warning as
-        | { message?: string }
-        | undefined;
+        { message?: string } | undefined;
       if (warning?.message) {
         setAccessWarning(warning.message);
       } else {

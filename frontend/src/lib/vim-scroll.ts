@@ -1,10 +1,5 @@
 export type VimScrollAction =
-  | "line-down"
-  | "line-up"
-  | "half-page-down"
-  | "half-page-up"
-  | "top"
-  | "bottom";
+  "line-down" | "line-up" | "half-page-down" | "half-page-up" | "top" | "bottom";
 
 export interface VimScrollInput {
   key: string;

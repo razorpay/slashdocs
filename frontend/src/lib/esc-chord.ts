@@ -16,9 +16,7 @@ export const CHORD_KEYS: ReadonlyArray<{ key: ChordKey; hint: string }> = [
 const KEYS: ReadonlySet<string> = new Set(CHORD_KEYS.map((item) => item.key));
 
 export type ChordState =
-  | { phase: "idle" }
-  | { phase: "armed" }
-  | { phase: "resolved"; key: ChordKey };
+  { phase: "idle" } | { phase: "armed" } | { phase: "resolved"; key: ChordKey };
 
 export const IDLE: ChordState = { phase: "idle" };
 
