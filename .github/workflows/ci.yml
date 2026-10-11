@@ -131,7 +131,7 @@ jobs:
       # stack reuses these layers instead of rebuilding the frontend and Go
       # stages from scratch.
       - name: Build stack image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
@@ -191,7 +191,7 @@ jobs:
       # change. Nothing is pushed here; publishing happens only from
       # release.yml when a maintainer pushes a `v*` tag.
       - name: Build multi-arch image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
