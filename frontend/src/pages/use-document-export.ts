@@ -6,6 +6,7 @@ import {
   MAX_PRINT_CHARACTERS,
   openPrintPreview,
 } from "@/lib/document-export";
+import { randomId } from "@/lib/uuid";
 
 export function useDocumentExport(
   frame: RefObject<HTMLIFrameElement | null>,
@@ -27,7 +28,7 @@ export function useDocumentExport(
     if (pending.current) return;
     try {
       const preview = openPrintPreview();
-      const id = crypto.randomUUID();
+      const id = randomId();
       const timer = setTimeout(() => {
         if (pending.current?.id !== id) return;
         preview.close();
