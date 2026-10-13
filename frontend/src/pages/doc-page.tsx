@@ -37,6 +37,7 @@ import {
   type PendingSelection,
 } from "./doc-context";
 import { DocBar } from "./doc-bar";
+import { OlderVersionBanner } from "./doc-older-version-banner";
 import { RenderFrame } from "./doc-render-frame";
 import { Comments } from "./doc-comments";
 import {
@@ -653,6 +654,13 @@ export function DocumentPage() {
             </div>
           ) : null}
           {current ? <RenderFrame /> : <Center>No version available.</Center>}
+          <OlderVersionBanner
+            current={current}
+            latest={latest}
+            versions={versionItems}
+            onViewLatest={() => setSelectedVersion(latest)}
+            className="absolute bottom-6 left-1/2 z-20 w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 rounded-md border shadow-xl"
+          />
           <Keycast state={chord} available={chordKeys} label={chordLabel} />
         </div>
       ) : (
@@ -682,6 +690,13 @@ export function DocumentPage() {
               onShowShortcuts={() => setShortcutsOpen(true)}
               shareOpen={shareOpen}
               onShareOpenChange={setShareOpen}
+            />
+            <OlderVersionBanner
+              current={current}
+              latest={latest}
+              versions={versionItems}
+              onViewLatest={() => setSelectedVersion(latest)}
+              className="border-b"
             />
           </motion.div>
           <motion.div variants={contentFade} className="flex flex-1 overflow-hidden">
