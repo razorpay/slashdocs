@@ -122,7 +122,7 @@ jobs:
           npm run build --prefix frontend
 
       - name: Set up Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5
 
       # The chart's version and appVersion follow the git tag, so the packaged
       # chart always points at the image this run just pushed.
