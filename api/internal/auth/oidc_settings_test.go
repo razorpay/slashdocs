@@ -96,3 +96,51 @@ func TestResolveOIDCSettingsRejectsPartialConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveOIDCSettingsAcceptMissingEmailVerified(t *testing.T) {
+	generic := map[string]string{
+		"SLASHDOCS_OIDC_ISSUER_URL":    "https://sso.example",
+		"SLASHDOCS_OIDC_CLIENT_ID":     "id",
+		"SLASHDOCS_OIDC_CLIENT_SECRET": "secret",
+	}
+	for _, tc := range []struct {
+		name    string
+		env     map[string]string
+		want    bool
+		wantErr bool
+	}{
+		{name: "default is fail-closed", env: generic},
+		{name: "true", env: with(generic, "SLASHDOCS_OIDC_ACCEPT_MISSING_EMAIL_VERIFIED", "true"), want: true},
+		{name: "false", env: with(generic, "SLASHDOCS_OIDC_ACCEPT_MISSING_EMAIL_VERIFIED", "false")},
+		{name: "invalid value", env: with(generic, "SLASHDOCS_OIDC_ACCEPT_MISSING_EMAIL_VERIFIED", "maybe"), wantErr: true},
+		{name: "not allowed with Google through the generic variables", env: with(map[string]string{
+			"SLASHDOCS_OIDC_ISSUER_URL":    "https://accounts.google.com",
+			"SLASHDOCS_OIDC_CLIENT_ID":     "id",
+			"SLASHDOCS_OIDC_CLIENT_SECRET": "secret",
+		}, "SLASHDOCS_OIDC_ACCEPT_MISSING_EMAIL_VERIFIED", "true"), wantErr: true},
+		{name: "not allowed with Google", env: map[string]string{
+			"GOOGLE_OAUTH_CLIENT_ID":                       "id",
+			"GOOGLE_OAUTH_CLIENT_SECRET":                   "secret",
+			"SLASHDOCS_OIDC_ACCEPT_MISSING_EMAIL_VERIFIED": "true",
+		}, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := auth.ResolveOIDCSettings(func(k string) string { return tc.env[k] })
+			if gotErr := err != nil; gotErr != tc.wantErr {
+				t.Fatalf("error = %v, want error = %t", err, tc.wantErr)
+			}
+			if err == nil && got.AcceptMissingEmailVerified != tc.want {
+				t.Fatalf("AcceptMissingEmailVerified = %t, want %t", got.AcceptMissingEmailVerified, tc.want)
+			}
+		})
+	}
+}
+
+func with(base map[string]string, k, v string) map[string]string {
+	out := make(map[string]string, len(base)+1)
+	for bk, bv := range base {
+		out[bk] = bv
+	}
+	out[k] = v
+	return out
+}

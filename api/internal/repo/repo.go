@@ -39,6 +39,11 @@ var ErrForbidden = errors.New("forbidden")
 var ErrInvalidCommentBody = errors.New("invalid comment body")
 var ErrInvalidCommentMention = errors.New("invalid comment mention")
 
+// ErrEmailInUse reports a sign-in whose email already belongs to a user with
+// a different identity-provider subject. Emails are unique, so the second
+// identity cannot sign in until an operator resolves the conflict.
+var ErrEmailInUse = errors.New("email is linked to a different sign-in identity")
+
 // Ownership-transfer state errors, shared by all repository implementations so
 // handlers can map them to responses without matching on message text.
 var (

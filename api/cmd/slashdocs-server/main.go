@@ -258,12 +258,16 @@ func loadOIDC(ctx context.Context, appOrigin string) (auth.OIDC, string, error) 
 	if settings.IssuerURL == auth.GoogleIssuer {
 		callbackPath = "/v1/auth/google/callback"
 	}
+	if settings.AcceptMissingEmailVerified {
+		slog.Warn("SLASHDOCS_OIDC_ACCEPT_MISSING_EMAIL_VERIFIED=true: ID tokens without email_verified are trusted; use only with a provider that issues tokens solely for email addresses it controls")
+	}
 	provider, err := auth.NewOIDC(ctx, auth.OIDCConfig{
-		IssuerURL:         settings.IssuerURL,
-		InternalIssuerURL: settings.InternalIssuerURL,
-		ClientID:          settings.ClientID,
-		ClientSecret:      settings.ClientSecret,
-		RedirectURL:       appOrigin + callbackPath,
+		IssuerURL:                  settings.IssuerURL,
+		InternalIssuerURL:          settings.InternalIssuerURL,
+		ClientID:                   settings.ClientID,
+		ClientSecret:               settings.ClientSecret,
+		RedirectURL:                appOrigin + callbackPath,
+		AcceptMissingEmailVerified: settings.AcceptMissingEmailVerified,
 	})
 	return provider, settings.ProviderName, err
 }

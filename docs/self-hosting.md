@@ -123,9 +123,126 @@ SLASHDOCS_OIDC_PROVIDER_NAME=Okta
 
 The server discovers the provider's endpoints from the issuer at startup,
 requests the `openid email profile` scopes, and verifies ID tokens against the
-issuer's JWKS. The ID token must include non-empty `sub` and `email` claims;
-`name` and `picture` fill in the optional profile fields. When the provider
-includes `email_verified`, it must be true.
+issuer's JWKS. Every login sends a fresh `nonce` and a PKCE (S256) challenge;
+the ID token must return the same nonce, and the token exchange proves the
+matching PKCE verifier. The ID token must include non-empty `sub` and `email`
+claims; `name` and `picture` fill in the optional profile fields.
+
+#### Verified email is required
+
+> **Changed in v0.2.0.** Earlier releases accepted an ID token without an
+> `email_verified` claim, so Microsoft Entra ID worked with no extra setup.
+> That also let any provider that omits the claim vouch for an address it never
+> verified. Entra deployments upgrading from v0.1.x must add `xms_edov` (below)
+> or set the opt-in before upgrading, or every login fails with
+> `email_not_verified`. See also [Upgrading a deployment that ran without
+> verified emails](#upgrading-a-deployment-that-ran-without-verified-emails).
+
+The email in the ID token decides who passes the org login gate and who
+receives documents shared to that address, so slashdocs only trusts an email
+the provider says is verified:
+
+- `email_verified: true` is accepted. Google, Okta, Keycloak, and Auth0 send
+  it, and so does Dex, though for upstream connectors Dex passes on whatever
+  that connector asserts (for example with `insecureSkipEmailVerified`).
+- `email_verified: false` is always rejected.
+- No `email_verified` claim is rejected by default.
+
+A rejected login returns 403 `email_not_verified`, counts as
+`slashdocs_auth_attempts_total{outcome="email_not_verified"}`, and logs a
+warning whose `reason` is `email_verified_false`, `xms_edov_false`, or
+`claim_missing`. Only `claim_missing` can be fixed with the opt-in below.
+
+**Microsoft Entra ID** never sends `email_verified`. Its documented equivalent
+is the optional claim `xms_edov` ("email domain owner verified"). Add it to the
+app registration as an **ID** token claim: **Token configuration**, then **Add
+optional claim**, then **ID**, then `xms_edov`. If the portal does not list it,
+open **Manifest** and add it under `optionalClaims.idToken`:
+
+```json
+"optionalClaims": {
+  "idToken": [
+    { "name": "email", "essential": false },
+    { "name": "xms_edov", "essential": false }
+  ]
+}
+```
+
+Entra sets the claim to true (as a boolean or as the string `"1"`) when the
+email's domain belongs to the tenant where the account lives and the tenant
+admin has verified it, or when the email comes from a Microsoft account, a
+Google account, or the email one-time-passcode flow. slashdocs accepts it in
+place of `email_verified`. Microsoft documents that Facebook and SAML/WS-Fed
+accounts do not have verified domains, and that `xms_edov` is returned only
+together with the `email` claim. Test a sign-in for each kind of account you
+expect, including guests. Register new apps as **single tenant** with the
+tenant-specific issuer, `https://login.microsoftonline.com/<tenant-id>/v2.0`. On an existing
+deployment, keep the issuer URL you already have: user identities are derived
+from it, and changing it makes every user look new.
+
+For a provider that can send neither claim and only issues tokens for email
+addresses it controls, opt in explicitly:
+
+```text
+SLASHDOCS_OIDC_ACCEPT_MISSING_EMAIL_VERIFIED=true
+```
+
+Do not set it for a multi-tenant or self-service provider: anyone able to
+choose the email on their own account could then sign in as that address.
+An explicit `email_verified: false` stays rejected even with the opt-in.
+
+#### Email already linked to another account
+
+A login that reports 403 `email_in_use` (metric outcome `email_in_use`) means
+the email already belongs to a slashdocs user with a different provider
+subject. Legitimate causes are a switch of identity provider or issuer URL, or
+an email at the provider changed to an address another user already has. On a
+deployment that once accepted unverified emails, it can also mean someone else
+took the address first (see the upgrade section below). The warning log names
+the existing account's `existing_user_id`; it never logs the email.
+
+Do not relink an account until you have confirmed, outside slashdocs, that
+the person signing in owns the existing account. Relinking hands that account,
+and every credential already issued to it, to whoever signs in next with the
+email. When ownership is confirmed, revoke the old credentials and unlink in
+one transaction, then have the person sign in again:
+
+```sql
+BEGIN;
+UPDATE cli_credentials SET revoked_at = now()
+  WHERE user_id = '<existing_user_id>' AND revoked_at IS NULL;
+UPDATE service_account_keys SET revoked_at = now()
+  WHERE revoked_at IS NULL AND service_account_id IN (
+    SELECT id FROM service_accounts WHERE owner_user_id = '<existing_user_id>');
+UPDATE users SET google_sub = NULL WHERE id = '<existing_user_id>';
+COMMIT;
+```
+
+Browser sessions already issued to that account stay valid until they expire
+(30 days). To end them at once, rotate the session secret; that also signs out
+every other user and invalidates MCP tokens and stored GitHub connections.
+
+If the existing account is not the same person, do not relink it. Revoke its
+credentials as above, disable its service accounts, and change that row's
+email so the rightful owner can sign in to a fresh account; then move any
+documents they should have.
+
+#### Upgrading a deployment that ran without verified emails
+
+If a v0.1.x deployment used a provider that omits `email_verified` (Entra
+without `xms_edov`, or any provider that lets users choose their email), an
+account may have been created with an address its holder did not own. The
+upgrade blocks new logins of that kind, but accounts created earlier keep
+their sessions, CLI credentials, service accounts, and the email-addressed
+shares they already received. After upgrading:
+
+- Watch `slashdocs_auth_attempts_total{outcome="email_in_use"}`. A rightful
+  owner locked out by a squatted address shows up here; follow the section
+  above and confirm ownership before relinking.
+- Review accounts on your org domains that nobody recognises, and revoke their
+  credentials.
+- To end all existing browser sessions, rotate the session secret, accepting
+  the side effects above.
 
 If the server reaches the IdP at a different URL than browsers do (common with
 docker-compose, where the browser sees `http://localhost:5556` but containers
@@ -438,6 +555,7 @@ Sealed Secrets, etc.).
 | `database.{host,user,password,name,port,sslMode,migrate}`                  | Postgres connection pieces (composed into a DSN at runtime); `migrate: false` skips startup migrations.                         |
 | `blob.{bucket,region,endpoint,forcePathStyle,accessKeyID,secretAccessKey}` | S3 settings.                                                                                                                    |
 | `googleOAuth.{clientID,clientSecret}`                                      | Google OAuth credentials.                                                                                                       |
+| `oidc.acceptMissingEmailVerified`                                           | Sets `SLASHDOCS_OIDC_ACCEPT_MISSING_EMAIL_VERIFIED`. Default `false`; see "Verified email is required".                        |
 | `oidc.{issuerURL,providerName,internalIssuerURL,clientID,clientSecret}`    | Generic OIDC provider; used instead of `googleOAuth` when `issuerURL` is set.                                                   |
 | `session.secret`                                                           | At least 32 random bytes.                                                                                                       |
 | `deployment.{mode,orgDomains,orgName,defaultDocPermission}`                | `public` (default) or `org`; org mode gates login to `orgDomains` and may set a sharing default for new documents.              |
@@ -520,6 +638,7 @@ Terminate TLS at nginx, Caddy, or any reverse proxy of your choice.
 | `SLASHDOCS_OIDC_CLIENT_SECRET`       | OIDC client secret.                                                                                                                            |
 | `SLASHDOCS_OIDC_PROVIDER_NAME`       | Optional display label for the login button. Defaults to `SSO` (`Google` when the Google pair is used).                                        |
 | `SLASHDOCS_OIDC_INTERNAL_ISSUER_URL` | Optional server-side base URL for the IdP when it differs from the browser-facing issuer (split horizon, e.g. docker-compose).                 |
+| `SLASHDOCS_OIDC_ACCEPT_MISSING_EMAIL_VERIFIED`| Optional, default `false`. Accept ID tokens that carry no `email_verified` claim. Only for a provider that never sends it and issues tokens solely for addresses it controls; see "Verified email is required".|
 
 Set either the `GOOGLE_OAUTH_*` pair or the `SLASHDOCS_OIDC_*` variables, never
 both. The redirect URI to register is

@@ -167,6 +167,10 @@ spec:
             - name: SLASHDOCS_OIDC_INTERNAL_ISSUER_URL
               value: {{ .Values.oidc.internalIssuerURL | quote }}
             {{- end }}
+            # Always passed through so the server's strict boolean parse decides;
+            # a quoted "false" must not be read as truthy by the template.
+            - name: SLASHDOCS_OIDC_ACCEPT_MISSING_EMAIL_VERIFIED
+              value: {{ .Values.oidc.acceptMissingEmailVerified | toString | quote }}
             - name: SLASHDOCS_OIDC_CLIENT_ID
               valueFrom:
                 secretKeyRef:

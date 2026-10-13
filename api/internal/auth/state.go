@@ -32,6 +32,15 @@ type LoginState struct {
 	// was introduced. Its zero value preserves callbacks for states created by
 	// older instances during a rolling deployment.
 	WebBindingRequired bool
+	// Nonce and PKCEVerifier are the OIDC LoginBinding for the provider
+	// round trip. Both are empty in states written by older instances.
+	Nonce        string
+	PKCEVerifier string
+}
+
+// OIDCBinding returns the login binding stored in the state.
+func (s LoginState) OIDCBinding() LoginBinding {
+	return LoginBinding{Nonce: s.Nonce, PKCEVerifier: s.PKCEVerifier}
 }
 
 // loginStateJSON preserves the historical GoogleUser wire key while allowing
@@ -51,6 +60,8 @@ type loginStateJSON struct {
 	OAuthRedirectURI   string
 	OAuthResource      string
 	OAuthScope         string
+	Nonce              string `json:",omitempty"`
+	PKCEVerifier       string `json:",omitempty"`
 }
 
 func (s LoginState) MarshalJSON() ([]byte, error) {
@@ -67,6 +78,8 @@ func (s LoginState) MarshalJSON() ([]byte, error) {
 		OAuthRedirectURI:   s.OAuthRedirectURI,
 		OAuthResource:      s.OAuthResource,
 		OAuthScope:         s.OAuthScope,
+		Nonce:              s.Nonce,
+		PKCEVerifier:       s.PKCEVerifier,
 	})
 }
 
@@ -94,6 +107,8 @@ func (s *LoginState) UnmarshalJSON(data []byte) error {
 		OAuthRedirectURI:   wire.OAuthRedirectURI,
 		OAuthResource:      wire.OAuthResource,
 		OAuthScope:         wire.OAuthScope,
+		Nonce:              wire.Nonce,
+		PKCEVerifier:       wire.PKCEVerifier,
 	}
 	return nil
 }

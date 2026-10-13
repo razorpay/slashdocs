@@ -3,6 +3,8 @@ package server
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -105,6 +107,12 @@ func (h handlers) oauthStart(c *gin.Context) {
 		badRequest(c, message)
 		return
 	}
+	binding, err := auth.NewLoginBinding()
+	if err != nil {
+		internalErr(c, err)
+		return
+	}
+	st.Nonce, st.PKCEVerifier = binding.Nonce, binding.PKCEVerifier
 	state := c.Query("state")
 	if mode == authModeWeb {
 		// Web state is always server-generated. Accepting a caller-selected value
@@ -112,7 +120,6 @@ func (h handlers) oauthStart(c *gin.Context) {
 		state = ""
 	}
 	if state == "" {
-		var err error
 		state, err = auth.RandomURLToken()
 		if err != nil {
 			internalErr(c, err)
@@ -134,7 +141,7 @@ func (h handlers) oauthStart(c *gin.Context) {
 		}
 	}
 	// nosemgrep: go.gin.ssrf.gin-tainted-url-host.gin-tainted-url-host - the issuer's discovered auth endpoint fixes the redirect host; state is encoded as an OAuth query parameter.
-	c.Redirect(http.StatusFound, h.deps.oidc.AuthCodeURL(state, opts...))
+	c.Redirect(http.StatusFound, h.deps.oidc.AuthCodeURL(state, binding, opts...))
 }
 
 func loginStateValidationError(st auth.LoginState) string {
@@ -192,10 +199,9 @@ func (h handlers) oauthCallback(c *gin.Context) {
 		return
 	}
 	metricKind := oidcAuthMetricKind(h.deps.oidc.Issuer)
-	u, err := h.deps.oidc.ExchangeAndVerify(c.Request.Context(), c.Query("code"))
+	u, err := h.deps.oidc.ExchangeAndVerify(c.Request.Context(), c.Query("code"), st.OIDCBinding())
 	if err != nil {
-		incAuth(metricKind, "failure")
-		c.JSON(http.StatusUnauthorized, errorResponse("unauthorized", "oidc login failed", nil))
+		h.rejectOIDCExchange(c, metricKind, err)
 		return
 	}
 	if !emailDomainAllowed(u.Email, h.deps.allowedOAuthDomains) {
@@ -205,6 +211,10 @@ func (h handlers) oauthCallback(c *gin.Context) {
 	}
 	uid, externalSubject := oidcIdentityKeys(h.deps.oidc.Issuer, u.Sub)
 	p, err := h.deps.repository.UpsertGoogleUser(c.Request.Context(), uid, u.Email, u.Name, externalSubject, u.PictureURL)
+	if errors.Is(err, repo.ErrEmailInUse) {
+		h.rejectEmailInUse(c, metricKind, u.Email, uid)
+		return
+	}
 	if err != nil {
 		internalErr(c, err)
 		return
@@ -217,6 +227,8 @@ func (h handlers) oauthCallback(c *gin.Context) {
 		}
 		st.User = u
 		st.UserID = p.ID
+		// The provider round trip is over; the CLI code must not carry its secrets.
+		st.Nonce, st.PKCEVerifier = "", ""
 		if err := h.deps.stateStore.PutCode(c.Request.Context(), code, st); err != nil {
 			internalErr(c, err)
 			return
@@ -236,6 +248,41 @@ func (h handlers) oauthCallback(c *gin.Context) {
 		redir = "/"
 	}
 	c.Redirect(http.StatusFound, redir)
+}
+
+// rejectOIDCExchange answers a failed code exchange or ID-token check. An
+// unverified email gets a specific 403 so users and operators can act on it;
+// every other failure stays a generic 401 and is logged for the operator.
+func (h handlers) rejectOIDCExchange(c *gin.Context, metricKind string, err error) {
+	var notVerified *auth.EmailNotVerifiedError
+	if errors.As(err, &notVerified) {
+		incAuth(metricKind, "email_not_verified")
+		attrs := []any{"issuer", h.deps.oidc.Issuer, "reason", notVerified.Reason}
+		if notVerified.Reason == auth.EmailVerifiedMissing {
+			attrs = append(attrs, "hint", "send email_verified=true (Entra: add the xms_edov optional ID-token claim); set SLASHDOCS_OIDC_ACCEPT_MISSING_EMAIL_VERIFIED=true only for a provider that never sends either and issues tokens solely for addresses it controls")
+		}
+		slog.Warn("oidc login rejected: the ID token does not establish a verified email", attrs...)
+		c.JSON(http.StatusForbidden, errorResponse("email_not_verified", "your identity provider did not confirm that this email address is verified", nil))
+		return
+	}
+	incAuth(metricKind, "failure")
+	slog.Warn("oidc login failed", "issuer", h.deps.oidc.Issuer, "err", err)
+	c.JSON(http.StatusUnauthorized, errorResponse("unauthorized", "oidc login failed", nil))
+}
+
+// rejectEmailInUse answers a login whose email already belongs to a user with
+// a different provider subject. It logs opaque IDs, never the email, so an
+// operator can relink the existing row without personal data in the logs.
+func (h handlers) rejectEmailInUse(c *gin.Context, metricKind, email, newUserID string) {
+	incAuth(metricKind, "email_in_use")
+	existingID := ""
+	if existing, err := h.deps.repository.UserByEmail(c.Request.Context(), email); err == nil {
+		existingID = existing.ID
+	}
+	slog.Warn("oidc login rejected: email is linked to a different identity-provider subject",
+		"issuer", h.deps.oidc.Issuer, "existing_user_id", existingID, "new_user_id", newUserID,
+		"hint", "do not relink until the owner of the existing account is confirmed out of band; see docs/self-hosting.md, \"Email already linked to another account\"")
+	c.JSON(http.StatusForbidden, errorResponse("email_in_use", "this email address is already linked to a different sign-in account", nil))
 }
 
 func oidcAuthMetricKind(issuer string) string {

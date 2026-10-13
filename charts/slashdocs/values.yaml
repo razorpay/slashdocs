@@ -147,6 +147,11 @@ oidc:
   # Base URL where the server reaches the IdP when that differs from the
   # browser-facing issuer (split horizon). Usually empty.
   internalIssuerURL: ""
+  # Accept ID tokens without an email_verified claim. Leave false unless the
+  # provider never sends it and issues tokens only for addresses it controls.
+  # For Entra ID, add the xms_edov optional claim instead. See
+  # docs/self-hosting.md ("Verified email is required").
+  acceptMissingEmailVerified: false
   clientID: ""
   clientSecret: ""
   existingSecret: ""

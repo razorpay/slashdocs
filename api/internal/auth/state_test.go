@@ -116,3 +116,18 @@ func TestLoginStateJSONReadsRollingUserKeys(t *testing.T) {
 		})
 	}
 }
+
+func TestLoginStateJSONKeepsOIDCBinding(t *testing.T) {
+	in := LoginState{Mode: "web", Redirect: "/", Nonce: "nonce-1", PKCEVerifier: "verifier-1", WebBindingRequired: true}
+	raw, err := json.Marshal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out LoginState
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Nonce != in.Nonce || out.PKCEVerifier != in.PKCEVerifier {
+		t.Fatalf("round trip lost the OIDC binding: %s -> %+v", raw, out)
+	}
+}

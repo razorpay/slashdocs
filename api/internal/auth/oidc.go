@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -49,6 +51,9 @@ type OIDCConfig struct {
 	ClientID          string
 	ClientSecret      string
 	RedirectURL       string
+	// AcceptMissingEmailVerified accepts ID tokens that carry no
+	// email_verified claim. See OIDC.AcceptMissingEmailVerified.
+	AcceptMissingEmailVerified bool
 }
 
 // OIDC drives the OpenID Connect authorization-code flow for one provider.
@@ -58,6 +63,72 @@ type OIDC struct {
 	Config   *oauth2.Config
 	Verifier *oidc.IDTokenVerifier
 	Issuer   string
+	// AcceptMissingEmailVerified is an operator opt-in for identity providers
+	// that never send email_verified. By default an ID token must prove the
+	// email is verified, because the email gates org login and receives
+	// email-addressed shares. An explicit false is rejected either way.
+	AcceptMissingEmailVerified bool
+}
+
+// ErrEmailNotVerified reports an ID token that does not establish that its
+// email address is verified. Errors carrying it are *EmailNotVerifiedError,
+// which says why.
+var ErrEmailNotVerified = errors.New("email is not verified by the identity provider")
+
+// Reasons an ID token's email was not accepted as verified.
+const (
+	// EmailVerifiedFalse: the token says email_verified is false (or a
+	// non-true value).
+	EmailVerifiedFalse = "email_verified_false"
+	// EntraDomainNotVerified: no email_verified, and Entra's xms_edov is
+	// false (or a non-true value).
+	EntraDomainNotVerified = "xms_edov_false"
+	// EmailVerifiedMissing: neither claim is present and the operator has not
+	// opted in with SLASHDOCS_OIDC_ACCEPT_MISSING_EMAIL_VERIFIED.
+	EmailVerifiedMissing = "claim_missing"
+)
+
+// EmailNotVerifiedError is returned when the ID token does not establish a
+// verified email. errors.Is(err, ErrEmailNotVerified) matches it.
+type EmailNotVerifiedError struct{ Reason string }
+
+func (e *EmailNotVerifiedError) Error() string {
+	return ErrEmailNotVerified.Error() + " (" + e.Reason + ")"
+}
+
+func (e *EmailNotVerifiedError) Is(target error) bool { return target == ErrEmailNotVerified }
+
+// errNonceMismatch reports an ID token that was not issued for this login.
+var errNonceMismatch = errors.New("id token nonce does not match the login request")
+
+// LoginBinding ties one authorization request to the token that answers it.
+// The nonce is sent to the provider and must come back unchanged in the ID
+// token; the PKCE verifier stays on the server and is sent only to the token
+// endpoint, so an intercepted authorization code cannot be redeemed alone.
+//
+// The zero value is a login state written by an older server during a rolling
+// deployment, before bindings existed: it adds nothing to the request and
+// skips both checks. Login states are created and stored only by the server;
+// a client can reach the zero value only by starting a login on an older
+// instance during a rollout, which is the exposure that existed before.
+// Once a release with bindings has fully rolled out, the zero value can be
+// rejected instead.
+type LoginBinding struct {
+	Nonce        string
+	PKCEVerifier string
+}
+
+// NewLoginBinding returns a fresh nonce and PKCE verifier from crypto/rand.
+func NewLoginBinding() (LoginBinding, error) {
+	nonce, err := RandomURLToken()
+	if err != nil {
+		return LoginBinding{}, err
+	}
+	verifier, err := RandomURLToken()
+	if err != nil {
+		return LoginBinding{}, err
+	}
+	return LoginBinding{Nonce: nonce, PKCEVerifier: verifier}, nil
 }
 
 // NewOIDC prepares an OIDC client. Google uses its stable OAuth endpoints and
@@ -109,8 +180,9 @@ func NewOIDC(ctx context.Context, cfg OIDCConfig) (OIDC, error) {
 		verifier = oidc.NewVerifier(cfg.IssuerURL, oidc.NewRemoteKeySet(ctx, jwks), &oidc.Config{ClientID: cfg.ClientID})
 	}
 	return OIDC{
-		Issuer:   cfg.IssuerURL,
-		Verifier: verifier,
+		Issuer:                     cfg.IssuerURL,
+		AcceptMissingEmailVerified: cfg.AcceptMissingEmailVerified,
+		Verifier:                   verifier,
 		Config: &oauth2.Config{
 			ClientID:     cfg.ClientID,
 			ClientSecret: cfg.ClientSecret,
@@ -132,13 +204,28 @@ func rebaseURL(u, from, to string) string {
 	return u
 }
 
-func (o OIDC) AuthCodeURL(state string, opts ...oauth2.AuthCodeOption) string {
+// AuthCodeURL returns the provider's authorization URL for state, carrying the
+// binding's nonce and S256 PKCE challenge. The verifier itself never leaves
+// the server.
+func (o OIDC) AuthCodeURL(state string, b LoginBinding, opts ...oauth2.AuthCodeOption) string {
+	if b.Nonce != "" {
+		opts = append(opts, oidc.Nonce(b.Nonce))
+	}
+	if b.PKCEVerifier != "" {
+		opts = append(opts, oauth2.S256ChallengeOption(b.PKCEVerifier))
+	}
 	return o.Config.AuthCodeURL(state, opts...)
 }
 
-// ExchangeAndVerify redeems an authorization code and verifies the returned
-// ID token's signature, issuer, audience, and expiry.
-func (o OIDC) ExchangeAndVerify(ctx context.Context, code string, opts ...oauth2.AuthCodeOption) (OIDCUser, error) {
+// ExchangeAndVerify redeems an authorization code with the binding's PKCE
+// verifier, verifies the returned ID token's signature, issuer, audience, and
+// expiry, checks that it carries the binding's nonce, and requires a verified
+// email address.
+func (o OIDC) ExchangeAndVerify(ctx context.Context, code string, b LoginBinding) (OIDCUser, error) {
+	var opts []oauth2.AuthCodeOption
+	if b.PKCEVerifier != "" {
+		opts = append(opts, oauth2.VerifierOption(b.PKCEVerifier))
+	}
 	tok, err := o.Config.Exchange(ctx, code, opts...)
 	if err != nil {
 		return OIDCUser{}, err
@@ -151,25 +238,81 @@ func (o OIDC) ExchangeAndVerify(ctx context.Context, code string, opts ...oauth2
 	if err != nil {
 		return OIDCUser{}, err
 	}
+	if b.Nonce != "" && subtle.ConstantTimeCompare([]byte(idToken.Nonce), []byte(b.Nonce)) != 1 {
+		return OIDCUser{}, errNonceMismatch
+	}
 	if strings.TrimSpace(idToken.Subject) == "" {
 		return OIDCUser{}, errors.New("missing subject claim")
 	}
-	var claims struct {
-		Email         string `json:"email"`
-		EmailVerified *bool  `json:"email_verified"`
-		Name          string `json:"name"`
-		Picture       string `json:"picture"`
-	}
+	// Decode into a map and read exact claim names. Decoding into a struct
+	// would match names case-insensitively, so "Email_Verified" or "EMAIL"
+	// (for example from a custom attribute mapping) could stand in for the
+	// standard claims.
+	var claims map[string]json.RawMessage
 	if err := idToken.Claims(&claims); err != nil {
 		return OIDCUser{}, err
 	}
-	if strings.TrimSpace(claims.Email) == "" {
+	email := stringClaim(claims["email"])
+	if strings.TrimSpace(email) == "" {
 		return OIDCUser{}, errors.New("missing email claim")
 	}
-	if claims.EmailVerified != nil && !*claims.EmailVerified {
-		return OIDCUser{}, errors.New("email is not verified by the identity provider")
+	// xms_edov is Microsoft Entra's optional claim stating that the owner of
+	// the email's domain is verified. Entra never sends email_verified.
+	if reason := o.emailNotVerifiedReason(claims["email_verified"], claims["xms_edov"]); reason != "" {
+		return OIDCUser{}, &EmailNotVerifiedError{Reason: reason}
 	}
-	return OIDCUser{Sub: idToken.Subject, Email: claims.Email, Name: claims.Name, PictureURL: claims.Picture}, nil
+	return OIDCUser{Sub: idToken.Subject, Email: email, Name: stringClaim(claims["name"]), PictureURL: stringClaim(claims["picture"])}, nil
+}
+
+// emailNotVerifiedReason decides whether the ID token establishes a verified
+// email, returning "" when it does. email_verified, when present, is
+// authoritative. Without it, Entra's xms_edov decides when present. With
+// neither, the email is accepted only when the operator opted in.
+func (o OIDC) emailNotVerifiedReason(emailVerified, entraDomainOwnerVerified json.RawMessage) string {
+	switch {
+	case claimPresent(emailVerified):
+		if claimTrue(emailVerified) {
+			return ""
+		}
+		return EmailVerifiedFalse
+	case claimPresent(entraDomainOwnerVerified):
+		if claimTrue(entraDomainOwnerVerified) {
+			return ""
+		}
+		return EntraDomainNotVerified
+	case o.AcceptMissingEmailVerified:
+		return ""
+	default:
+		return EmailVerifiedMissing
+	}
+}
+
+// stringClaim returns a string claim, or "" when it is absent or not a string.
+func stringClaim(raw json.RawMessage) string {
+	var s string
+	if json.Unmarshal(raw, &s) != nil {
+		return ""
+	}
+	return s
+}
+
+func claimPresent(raw json.RawMessage) bool {
+	return len(raw) > 0 && string(raw) != "null"
+}
+
+// claimTrue reads a boolean claim. The spec type is a JSON boolean, but some
+// providers emit the string "true" (AWS Cognito) or "1" (Entra optional
+// claims). Anything else, including other strings and numbers, is false.
+func claimTrue(raw json.RawMessage) bool {
+	var b bool
+	if json.Unmarshal(raw, &b) == nil {
+		return b
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s == "1" || strings.EqualFold(s, "true")
+	}
+	return false
 }
 
 func LoopbackRedirectAllowed(raw string) bool {
