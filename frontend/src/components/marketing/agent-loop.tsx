@@ -41,11 +41,11 @@ const rise = "animate-[rise_300ms_ease-out]";
 
 // The agent's terminal and the people's browser play the real loop: publish,
 // comment, revise. At each handoff both windows buzz and a gust of wind
-// carries the work across. It starts when it scrolls into view. With reduced
+// carries the work across. It plays only while it is in view. With reduced
 // motion it shows the last beat and stays still.
 export function AgentLoop() {
   const ref = useRef<HTMLDivElement>(null);
-  const inView = useInView(ref, { once: true, amount: 0.4 });
+  const inView = useInView(ref, { amount: 0.4 });
   const still = usePrefersReducedMotion();
   const beat = useBeat(inView && !still, still ? BEAT_COUNT - 1 : 0);
   const { lines, doc, step, send } = sceneAt(beat);

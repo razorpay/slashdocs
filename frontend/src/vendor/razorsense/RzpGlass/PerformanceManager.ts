@@ -142,6 +142,7 @@ function getGpuStrings(
 function checkMajorPerformanceCaveat(): boolean {
   const canvas = document.createElement('canvas');
   const gl = canvas.getContext('webgl', { failIfMajorPerformanceCaveat: true });
+  gl?.getExtension('WEBGL_lose_context')?.loseContext();
   return gl === null;
 }
 
@@ -188,20 +189,21 @@ function classifyByDeviceSignals(memoryGB: number | null, cores: number, mobile:
 // Per-tier render settings
 // ---------------------------------------------------------------------------
 
+// The effect is a soft wash, so pixels above about 1080p give no visible gain.
 const RENDER_SETTINGS: Record<GpuTier, RenderSettings> = {
   high: {
-    // ~4K equivalent
-    maxPixelCount: 1920 * 1080 * 4,
-    minPixelRatio: 2,
+    // ~1080p max
+    maxPixelCount: 1920 * 1080,
+    minPixelRatio: 1,
   },
   mid: {
-    // ~1080p equivalent
-    maxPixelCount: 1920 * 1080 * 2,
+    // ~720p max
+    maxPixelCount: 1280 * 720,
     minPixelRatio: 1,
   },
   low: {
-    // ~720p max
-    maxPixelCount: 1280 * 720,
+    // ~540p max
+    maxPixelCount: 960 * 540,
     minPixelRatio: 1,
   },
   potato: {
@@ -211,7 +213,7 @@ const RENDER_SETTINGS: Record<GpuTier, RenderSettings> = {
   },
   unknown: {
     // Treat conservatively – same as mid
-    maxPixelCount: 1920 * 1080 * 2,
+    maxPixelCount: 1280 * 720,
     minPixelRatio: 1,
   },
 };
@@ -402,27 +404,27 @@ class WebGLPerformanceController {
     }
 
     onLevelChange?.(this.level);
-    this.startMonitoring();
-    document.addEventListener('visibilitychange', this.handleVisibilityChange);
   }
 
-  private handleVisibilityChange = (): void => {
-    if (document.hidden) {
-      // Pause the monitoring loop — RAF is throttled while hidden and would
-      // produce artificially low FPS readings that trigger false fallbacks.
-      if (this.rafId !== null) {
-        cancelAnimationFrame(this.rafId);
-        this.rafId = null;
-      }
-    } else {
-      // Reset FPS state so the stale hidden-period sample is discarded,
-      // then resume monitoring from a clean baseline.
-      this.frameCount = 0;
-      this.lastTime = performance.now();
-      this.fps = 60;
-      this.startMonitoring();
+  /**
+   * Count frames while the effect renders. Each start discards the old sample,
+   * because a paused loop would read as a low FPS and trigger a false fallback.
+   */
+  start(): void {
+    if (this.disposed || this.rafId !== null) return;
+    this.frameCount = 0;
+    this.lastTime = performance.now();
+    this.fps = 60;
+    this.startMonitoring();
+  }
+
+  /** Stop counting, so no frame is requested while the effect is paused */
+  stop(): void {
+    if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = null;
     }
-  };
+  }
 
   private setLevel(level: PerformanceLevel): void {
     if (this.level === level) return;
@@ -460,7 +462,8 @@ class WebGLPerformanceController {
 
   private startMonitoring(): void {
     const loop = (): void => {
-      if (this.disposed) return;
+      // Schedule first, so a level change in evaluatePerformance can stop the loop
+      this.rafId = requestAnimationFrame(loop);
 
       const now = performance.now();
       this.frameCount++;
@@ -471,8 +474,6 @@ class WebGLPerformanceController {
         this.lastTime = now;
         this.evaluatePerformance();
       }
-
-      this.rafId = requestAnimationFrame(loop);
     };
 
     this.rafId = requestAnimationFrame(loop);
@@ -490,11 +491,7 @@ class WebGLPerformanceController {
   /** Stop the monitoring loop and release resources */
   dispose(): void {
     this.disposed = true;
-    if (this.rafId !== null) {
-      cancelAnimationFrame(this.rafId);
-      this.rafId = null;
-    }
-    document.removeEventListener('visibilitychange', this.handleVisibilityChange);
+    this.stop();
   }
 }
 

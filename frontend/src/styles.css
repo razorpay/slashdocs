@@ -192,16 +192,15 @@
 }
 
 /* The RazorSense ring: a gradient border, masked to the edge, with a soft
-   glow under it. It breathes slowly, as the Slash composer does. */
+   glow under it. It breathes slowly, as the Slash composer does. Only the
+   opacity moves, so the compositor runs it without a repaint on each frame. */
 @keyframes razorsense-pulse {
   0%,
   100% {
     opacity: 0.55;
-    background-position: 0% 50%;
   }
   50% {
     opacity: 0.95;
-    background-position: 100% 50%;
   }
 }
 .razorsense-ring {
@@ -218,7 +217,6 @@
   border-radius: inherit;
   pointer-events: none;
   background: var(--razorsense-border);
-  background-size: 240% 100%;
   mask:
     linear-gradient(#fff 0 0) content-box,
     linear-gradient(#fff 0 0);
