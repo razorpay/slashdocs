@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 	"regexp"
 	"sort"
@@ -11,7 +12,44 @@ import (
 	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
-var labelPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,47}$`)
+var (
+	labelPattern     = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,47}$`)
+	errTooManyLabels = errors.New("at most 20 labels are allowed")
+	errInvalidLabel  = errors.New("labels must use lowercase letters, numbers, dots, underscores, or hyphens")
+)
+
+func validateAndNormalizeLabels(rawLabels []string) ([]string, error) {
+	if len(rawLabels) > 20 {
+		return nil, errTooManyLabels
+	}
+	seen := map[string]bool{}
+	labels := make([]string, 0, len(rawLabels))
+	for _, raw := range rawLabels {
+		label := strings.ToLower(strings.TrimSpace(raw))
+		if !labelPattern.MatchString(label) {
+			return nil, errInvalidLabel
+		}
+		if !seen[label] {
+			seen[label] = true
+			labels = append(labels, label)
+		}
+	}
+	sort.Strings(labels)
+	return labels, nil
+}
+
+func parseFormLabels(c *gin.Context) []string {
+	var result []string
+	for _, item := range c.PostFormArray("labels") {
+		for _, part := range strings.Split(item, ",") {
+			trimmed := strings.TrimSpace(part)
+			if trimmed != "" {
+				result = append(result, trimmed)
+			}
+		}
+	}
+	return result
+}
 
 func (h handlers) listDocumentLabels(c *gin.Context) {
 	if !h.deps.labelsEnabled {
@@ -44,25 +82,12 @@ func (h handlers) replaceDocumentLabels(c *gin.Context) {
 		badRequest(c, "labels are required")
 		return
 	}
-	if len(body.Labels) > 20 {
-		badRequest(c, "at most 20 labels are allowed")
+	labels, err := validateAndNormalizeLabels(body.Labels)
+	if err != nil {
+		badRequest(c, err.Error())
 		return
 	}
-	seen := map[string]bool{}
-	labels := make([]string, 0, len(body.Labels))
-	for _, raw := range body.Labels {
-		label := strings.ToLower(strings.TrimSpace(raw))
-		if !labelPattern.MatchString(label) {
-			badRequest(c, "labels must use lowercase letters, numbers, dots, underscores, or hyphens")
-			return
-		}
-		if !seen[label] {
-			seen[label] = true
-			labels = append(labels, label)
-		}
-	}
-	sort.Strings(labels)
-	labels, err := h.deps.repository.ReplaceDocumentLabels(c.Request.Context(), c.Param("id"), labels, *current(c))
+	labels, err = h.deps.repository.ReplaceDocumentLabels(c.Request.Context(), c.Param("id"), labels, *current(c))
 	if err != nil {
 		internalErr(c, err)
 		return

@@ -86,6 +86,177 @@ func TestCreateDocument(t *testing.T) {
 	}
 }
 
+func TestCreateDocumentInFolder(t *testing.T) {
+	e := newTestEnv(t)
+	owner := principalHeader(fixtureOwner)
+	stranger := principalHeader(fixtureStranger)
+
+	folderID := createFolder(t, e, `{"title":"Engineering"}`, owner)
+
+	t.Run("creates document directly inside folder", func(t *testing.T) {
+		body, contentType := multipartBody(t, map[string]string{
+			"title":     "Spec",
+			"folder_id": folderID,
+		}, "file", "spec.html", "<html><body>Spec</body></html>")
+
+		rr := doRaw(t, e.h, http.MethodPost, "/v1/documents", body, map[string]string{
+			"Content-Type":     contentType,
+			"X-Test-Principal": owner,
+		})
+		assertStatus(t, rr, http.StatusCreated)
+		if jsonField(t, rr.Body.Bytes(), "folder_id") != folderID {
+			t.Fatalf("expected folder_id %q, got %q", folderID, jsonField(t, rr.Body.Bytes(), "folder_id"))
+		}
+
+		docID := jsonField(t, rr.Body.Bytes(), "id")
+		got := do(t, e.h, http.MethodGet, "/v1/documents/"+docID, "", map[string]string{
+			"X-Test-Principal": owner,
+		})
+		assertStatus(t, got, http.StatusOK)
+		if jsonField(t, got.Body.Bytes(), "parent_folder_id") != folderID {
+			t.Fatalf("expected document parent_folder_id to be %q, got %q", folderID, jsonField(t, got.Body.Bytes(), "parent_folder_id"))
+		}
+	})
+
+	t.Run("refuses create when caller is not editor on folder", func(t *testing.T) {
+		body, contentType := multipartBody(t, map[string]string{
+			"title":     "Unauthorized Spec",
+			"folder_id": folderID,
+		}, "file", "spec.html", "<html><body>Spec</body></html>")
+
+		rr := doRaw(t, e.h, http.MethodPost, "/v1/documents", body, map[string]string{
+			"Content-Type":     contentType,
+			"X-Test-Principal": stranger,
+		})
+		assertStatus(t, rr, http.StatusForbidden)
+		assertNoDocumentWithTitle(t, e, stranger, "Unauthorized Spec")
+		assertNoDocumentWithTitle(t, e, owner, "Unauthorized Spec")
+	})
+
+	t.Run("refuses create when folder does not exist", func(t *testing.T) {
+		body, contentType := multipartBody(t, map[string]string{
+			"title":     "Missing Folder Spec",
+			"folder_id": "fld_missing12345",
+		}, "file", "spec.html", "<html><body>Spec</body></html>")
+
+		rr := doRaw(t, e.h, http.MethodPost, "/v1/documents", body, map[string]string{
+			"Content-Type":     contentType,
+			"X-Test-Principal": owner,
+		})
+		assertStatus(t, rr, http.StatusForbidden)
+		assertNoDocumentWithTitle(t, e, owner, "Missing Folder Spec")
+	})
+
+	t.Run("returns permission warning when destination folder has active grants", func(t *testing.T) {
+		// Share folder with viewer
+		rrShare := do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/grants",
+			`{"address":"`+fixtureStranger.Email+`","role":"viewer"}`,
+			map[string]string{"X-Test-Principal": owner, "Content-Type": "application/json"})
+		assertStatus(t, rrShare, http.StatusCreated)
+
+		body, contentType := multipartBody(t, map[string]string{
+			"title":     "Shared Folder Doc",
+			"folder_id": folderID,
+		}, "file", "doc.html", "<html><body>Shared</body></html>")
+
+		rr := doRaw(t, e.h, http.MethodPost, "/v1/documents", body, map[string]string{
+			"Content-Type":     contentType,
+			"X-Test-Principal": owner,
+		})
+		assertStatus(t, rr, http.StatusCreated)
+		var resp struct {
+			PermissionWarning *struct {
+				Kind    string `json:"kind"`
+				Message string `json:"message"`
+			} `json:"permission_warning"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("bad response: %v", err)
+		}
+		if resp.PermissionWarning == nil || resp.PermissionWarning.Kind != "may_broaden_access" {
+			t.Fatalf("expected permission warning, got: %s", rr.Body.String())
+		}
+	})
+}
+
+func assertNoDocumentWithTitle(t *testing.T, e *testEnv, principal, title string) {
+	t.Helper()
+	list := do(t, e.h, http.MethodGet, "/v1/documents", "", map[string]string{
+		"X-Test-Principal": principal,
+	})
+	assertStatus(t, list, http.StatusOK)
+	var resp struct {
+		Items []struct {
+			Title string `json:"title"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(list.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode list documents: %v", err)
+	}
+	for _, doc := range resp.Items {
+		if doc.Title == title {
+			t.Fatalf("expected no document with title %q, but found one", title)
+		}
+	}
+}
+
+func TestCreateDocumentWithLabels(t *testing.T) {
+	e := newTestEnv(t)
+	owner := principalHeader(fixtureOwner)
+
+	t.Run("attaches labels on create", func(t *testing.T) {
+		body, contentType := multipartBody(t, map[string]string{
+			"title":  "Labeled Doc",
+			"labels": "api,review-ready",
+		}, "file", "doc.html", "<html><body>Doc</body></html>")
+
+		rr := doRaw(t, e.h, http.MethodPost, "/v1/documents", body, map[string]string{
+			"Content-Type":     contentType,
+			"X-Test-Principal": owner,
+		})
+		assertStatus(t, rr, http.StatusCreated)
+
+		var resp struct {
+			ID     string   `json:"id"`
+			Labels []string `json:"labels"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("bad response: %v", err)
+		}
+		if len(resp.Labels) != 2 || resp.Labels[0] != "api" || resp.Labels[1] != "review-ready" {
+			t.Fatalf("unexpected labels in create response: %v", resp.Labels)
+		}
+
+		got := do(t, e.h, http.MethodGet, "/v1/documents/"+resp.ID+"/labels", "", map[string]string{
+			"X-Test-Principal": owner,
+		})
+		assertStatus(t, got, http.StatusOK)
+		var listResp struct {
+			Items []string `json:"items"`
+		}
+		if err := json.Unmarshal(got.Body.Bytes(), &listResp); err != nil {
+			t.Fatalf("bad list labels response: %v", err)
+		}
+		if len(listResp.Items) != 2 || listResp.Items[0] != "api" || listResp.Items[1] != "review-ready" {
+			t.Fatalf("unexpected labels from GET: %v", listResp.Items)
+		}
+	})
+
+	t.Run("rejects invalid label", func(t *testing.T) {
+		body, contentType := multipartBody(t, map[string]string{
+			"title":  "Invalid Label Doc",
+			"labels": "INVALID LABEL!",
+		}, "file", "doc.html", "<html><body>Doc</body></html>")
+
+		rr := doRaw(t, e.h, http.MethodPost, "/v1/documents", body, map[string]string{
+			"Content-Type":     contentType,
+			"X-Test-Principal": owner,
+		})
+		assertStatus(t, rr, http.StatusBadRequest)
+		assertNoDocumentWithTitle(t, e, owner, "Invalid Label Doc")
+	})
+}
+
 func TestDocumentSearchPrimitives(t *testing.T) {
 	e := newTestEnv(t)
 	headers := map[string]string{

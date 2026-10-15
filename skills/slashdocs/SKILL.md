@@ -48,7 +48,8 @@ format:
 3. Save it locally (for example `report.html`).
 4. Use `slashdocs docs --help` and `slashdocs docs create --help` to confirm current
    syntax.
-5. Publish with the CLI.
+5. Publish with the CLI (`slashdocs docs create report.html --title 'Report'`) or via MCP `create_document`.
+   Pass `--folder-id <fld_…>` when publishing into a specific folder, and `--labels api,review-ready` to tag the document at creation.
 6. Return the printed slashdocs document URL.
 
 ### Updating an existing document
@@ -77,7 +78,7 @@ before the @, or `me`), `in:` (a folder or any folder above the document),
 `5 september`, `monday`, `today`, `3 days ago`), a week, a month, or a year
 (`last week`, `september`, `this year`, `2026`), or `last 7 days`, in UTC.
 
-Manage labels directly from the CLI:
+Manage labels directly from the CLI (or via MCP `set_document_labels`):
 
 ```bash
 slashdocs docs labels list doc_123

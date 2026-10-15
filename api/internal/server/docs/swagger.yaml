@@ -344,8 +344,16 @@ definitions:
         type: string
       default_grant:
         $ref: '#/definitions/server.defaultGrant'
+      folder_id:
+        type: string
       id:
         type: string
+      labels:
+        items:
+          type: string
+        type: array
+      permission_warning:
+        $ref: '#/definitions/server.permissionWarning'
     type: object
   server.createGrantResponse:
     properties:
@@ -619,6 +627,13 @@ definitions:
           $ref: '#/definitions/server.commentMentionRequest'
         type: array
       status:
+        type: string
+    type: object
+  server.permissionWarning:
+    properties:
+      kind:
+        type: string
+      message:
         type: string
     type: object
   server.principalRef:
@@ -942,6 +957,14 @@ paths:
         name: file
         required: true
         type: file
+      - description: Destination folder ID
+        in: formData
+        name: folder_id
+        type: string
+      - description: Comma-separated document labels
+        in: formData
+        name: labels
+        type: string
       - description: 'Default sharing applied at create: viewer, commenter, editor
           or private. Overrides the server-wide default.'
         in: formData

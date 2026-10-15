@@ -309,7 +309,11 @@ func principalHasGrant(p auth.Principal, principalType, principalID string) bool
 	return false
 }
 
-func (s *Store) CreateDocument(ctx context.Context, owner auth.Principal, title string, html []byte) (repo.Document, repo.Version, error) {
+func (s *Store) CreateDocument(ctx context.Context, owner auth.Principal, title string, html []byte, opts ...repo.CreateDocumentOptions) (repo.Document, repo.Version, error) {
+	var opt repo.CreateDocumentOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return repo.Document{}, repo.Version{}, err
@@ -343,11 +347,66 @@ func (s *Store) CreateDocument(ctx context.Context, owner auth.Principal, title 
 	if err := q.UpdateDocumentCurrentVersion(ctx, dbsqlc.UpdateDocumentCurrentVersionParams{CurrentVersionID: pgtype.Text{String: verID, Valid: true}, ID: docID}); err != nil {
 		return repo.Document{}, repo.Version{}, err
 	}
+	hasGrants, err := applyFolderAndLabels(ctx, q, docID, owner, opt)
+	if err != nil {
+		return repo.Document{}, repo.Version{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return repo.Document{}, repo.Version{}, err
 	}
 	committed = true
-	return repo.Document{ID: docID, Title: title, Owner: owner, CurrentVersionID: verID}, repo.Version{ID: verID, Number: 1, DocumentID: docID, CreatedBy: owner, SHA256: sum, CreatedAt: pgTimeRFC3339(createdAt)}, nil
+	return repo.Document{
+		ID:               docID,
+		Title:            title,
+		Owner:            owner,
+		CurrentVersionID: verID,
+		ParentFolderID:   opt.FolderID,
+		Labels:           append([]string(nil), opt.Labels...),
+		FolderHasGrants:  hasGrants,
+	}, repo.Version{
+		ID:         verID,
+		Number:     1,
+		DocumentID: docID,
+		CreatedBy:  owner,
+		SHA256:     sum,
+		CreatedAt:  pgTimeRFC3339(createdAt),
+	}, nil
+}
+
+func applyFolderAndLabels(ctx context.Context, q *dbsqlc.Queries, docID string, owner auth.Principal, opt repo.CreateDocumentOptions) (bool, error) {
+	var hasGrants bool
+	if opt.FolderID != "" {
+		if err := q.AcquireFolderTreeLock(ctx, folderTreeLockID); err != nil {
+			return false, err
+		}
+		moved, err := q.MoveDocumentToFolder(ctx, dbsqlc.MoveDocumentToFolderParams{FolderID: opt.FolderID, DocumentID: docID})
+		if err != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23503" { // destination folder does not exist
+				return false, repo.ErrNotFound
+			}
+			return false, err
+		}
+		if moved == 0 {
+			return false, repo.ErrNotFound
+		}
+		var errGrants error
+		hasGrants, errGrants = q.FolderOrAncestorsHaveGrants(ctx, opt.FolderID)
+		if errGrants != nil {
+			return false, errGrants
+		}
+	}
+	for _, label := range opt.Labels {
+		if err := q.InsertDocumentLabel(ctx, dbsqlc.InsertDocumentLabelParams{
+			DocumentID:    docID,
+			Label:         label,
+			CreatedByType: string(owner.Type),
+			CreatedByID:   owner.ID,
+		}); err != nil {
+			return false, err
+		}
+	}
+	return hasGrants, nil
 }
 func (s *Store) GetDocument(ctx context.Context, id string) (repo.Document, error) {
 	r, err := s.q.GetDocument(ctx, id)
