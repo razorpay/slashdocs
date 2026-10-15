@@ -28,6 +28,14 @@ type LoginState struct {
 	OAuthRedirectURI string
 	OAuthResource    string
 	OAuthScope       string
+	// OAuthRefreshTokenHash holds the SHA-256 hash of the refresh token that
+	// is currently redeemable for this MCP token family. Rotation overwrites
+	// it; presenting any other token value revokes the family.
+	OAuthRefreshTokenHash string
+	// OAuthChainExpiresAt is the absolute deadline of an MCP refresh-token
+	// family: sliding renewals never extend past it, so one consent cannot
+	// grant perpetual access.
+	OAuthChainExpiresAt time.Time
 	// WebBindingRequired marks web login states created after browser binding
 	// was introduced. Its zero value preserves callbacks for states created by
 	// older instances during a rolling deployment.
@@ -38,35 +46,39 @@ type LoginState struct {
 // the provider-neutral User name used by LoginState in Go. User is decode-only
 // compatibility for states briefly written under that key.
 type loginStateJSON struct {
-	Mode               string
-	Redirect           string
-	CLIRedirect        string
-	CodeChallenge      string
-	ExpiresAt          time.Time
-	GoogleUser         *OIDCUser
-	User               *OIDCUser `json:",omitempty"`
-	UserID             string
-	WebBindingRequired bool
-	OAuthClientID      string
-	OAuthRedirectURI   string
-	OAuthResource      string
-	OAuthScope         string
+	Mode                  string
+	Redirect              string
+	CLIRedirect           string
+	CodeChallenge         string
+	ExpiresAt             time.Time
+	GoogleUser            *OIDCUser
+	User                  *OIDCUser `json:",omitempty"`
+	UserID                string
+	WebBindingRequired    bool
+	OAuthClientID         string
+	OAuthRedirectURI      string
+	OAuthResource         string
+	OAuthScope            string
+	OAuthRefreshTokenHash string    `json:",omitempty"`
+	OAuthChainExpiresAt   time.Time `json:",omitzero"`
 }
 
 func (s LoginState) MarshalJSON() ([]byte, error) {
 	return json.Marshal(loginStateJSON{
-		Mode:               s.Mode,
-		Redirect:           s.Redirect,
-		CLIRedirect:        s.CLIRedirect,
-		CodeChallenge:      s.CodeChallenge,
-		ExpiresAt:          s.ExpiresAt,
-		GoogleUser:         &s.User,
-		UserID:             s.UserID,
-		WebBindingRequired: s.WebBindingRequired,
-		OAuthClientID:      s.OAuthClientID,
-		OAuthRedirectURI:   s.OAuthRedirectURI,
-		OAuthResource:      s.OAuthResource,
-		OAuthScope:         s.OAuthScope,
+		Mode:                  s.Mode,
+		Redirect:              s.Redirect,
+		CLIRedirect:           s.CLIRedirect,
+		CodeChallenge:         s.CodeChallenge,
+		ExpiresAt:             s.ExpiresAt,
+		GoogleUser:            &s.User,
+		UserID:                s.UserID,
+		WebBindingRequired:    s.WebBindingRequired,
+		OAuthClientID:         s.OAuthClientID,
+		OAuthRedirectURI:      s.OAuthRedirectURI,
+		OAuthResource:         s.OAuthResource,
+		OAuthScope:            s.OAuthScope,
+		OAuthRefreshTokenHash: s.OAuthRefreshTokenHash,
+		OAuthChainExpiresAt:   s.OAuthChainExpiresAt,
 	})
 }
 
@@ -82,18 +94,20 @@ func (s *LoginState) UnmarshalJSON(data []byte) error {
 		user = *wire.User
 	}
 	*s = LoginState{
-		Mode:               wire.Mode,
-		Redirect:           wire.Redirect,
-		CLIRedirect:        wire.CLIRedirect,
-		CodeChallenge:      wire.CodeChallenge,
-		ExpiresAt:          wire.ExpiresAt,
-		User:               user,
-		UserID:             wire.UserID,
-		WebBindingRequired: wire.WebBindingRequired,
-		OAuthClientID:      wire.OAuthClientID,
-		OAuthRedirectURI:   wire.OAuthRedirectURI,
-		OAuthResource:      wire.OAuthResource,
-		OAuthScope:         wire.OAuthScope,
+		Mode:                  wire.Mode,
+		Redirect:              wire.Redirect,
+		CLIRedirect:           wire.CLIRedirect,
+		CodeChallenge:         wire.CodeChallenge,
+		ExpiresAt:             wire.ExpiresAt,
+		User:                  user,
+		UserID:                wire.UserID,
+		WebBindingRequired:    wire.WebBindingRequired,
+		OAuthClientID:         wire.OAuthClientID,
+		OAuthRedirectURI:      wire.OAuthRedirectURI,
+		OAuthResource:         wire.OAuthResource,
+		OAuthScope:            wire.OAuthScope,
+		OAuthRefreshTokenHash: wire.OAuthRefreshTokenHash,
+		OAuthChainExpiresAt:   wire.OAuthChainExpiresAt,
 	}
 	return nil
 }

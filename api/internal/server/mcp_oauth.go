@@ -1,8 +1,10 @@
 package server
 
 import (
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"html/template"
 	"net"
 	"net/http"
@@ -26,7 +28,28 @@ const (
 	mcpClientRegistrationTTL    = 365 * 24 * time.Hour
 	mcpAuthorizationCodeTTLHint = 5 * time.Minute
 	mcpAccessTokenTTL           = time.Hour
-	maxMCPAuthRequestBytes      = 64 * 1024
+	// mcpRefreshTokenTTL is the sliding inactivity window of a refresh-token
+	// family: each rotation renews it, so an active client stays signed in
+	// while an abandoned token dies within the TTL.
+	mcpRefreshTokenTTL = 14 * 24 * time.Hour
+	// mcpRefreshChainTTL is the absolute lifetime of a refresh-token family
+	// measured from the original browser consent. Sliding renewals never
+	// extend past it, so one consent cannot grant perpetual access and a
+	// stolen chain dies within this bound even if actively renewed: the user
+	// must re-authenticate in the browser at least once every 30 days.
+	mcpRefreshChainTTL = 30 * 24 * time.Hour
+	// mcpRefreshTokenPrefix is a public token type marker, not a credential.
+	//nolint:gosec // The fixed prefix only routes the token to its verifier.
+	mcpRefreshTokenPrefix = "slashdocs_mcp_refresh_"
+	// mcpRefreshStateIDPrefix namespaces refresh-token family rows inside the
+	// shared one-time login state store, mirroring how MCP authorization codes
+	// reuse the CLI code store. The row stores only the SHA-256 hash of the
+	// currently redeemable token, never the token itself.
+	mcpRefreshStateIDPrefix = "mcp_refresh_family:"
+	// mcpRefreshMode marks state rows that are redeemable refresh tokens, so
+	// login states can never be replayed against the refresh grant.
+	mcpRefreshMode         = "mcp_refresh"
+	maxMCPAuthRequestBytes = 64 * 1024
 	// Dynamic registration is embedded in the signed client ID. These byte
 	// limits keep the resulting /oauth/authorize request comfortably below the
 	// common 8 KiB proxy request-line/header limit while preserving ordinary
@@ -81,18 +104,21 @@ type mcpClientRegistrationResponse struct {
 }
 
 type mcpTokenResponse struct {
-	AccessToken string `json:"access_token"`
-	TokenType   string `json:"token_type"`
-	ExpiresIn   int    `json:"expires_in"`
-	Scope       string `json:"scope"`
+	AccessToken  string `json:"access_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int    `json:"expires_in"`
+	Scope        string `json:"scope"`
+	RefreshToken string `json:"refresh_token,omitempty"`
 }
 
 type mcpTokenRequest struct {
+	GrantType    string
 	Code         string
 	CodeVerifier string
 	ClientID     string
 	RedirectURI  string
 	Resource     string
+	RefreshToken string
 }
 
 type oauthRequestError struct {
@@ -137,7 +163,7 @@ func (h handlers) mcpAuthorizationServerMetadata(c *gin.Context) {
 		RegistrationEndpoint:              origin + "/oauth/register",
 		ResponseTypesSupported:            []string{"code"},
 		ResponseModesSupported:            []string{"query"},
-		GrantTypesSupported:               []string{"authorization_code"},
+		GrantTypesSupported:               []string{"authorization_code", "refresh_token"},
 		TokenEndpointAuthMethodsSupported: []string{"none"},
 		CodeChallengeMethodsSupported:     []string{"S256"},
 		ScopesSupported:                   []string{mcpScope},
@@ -181,7 +207,7 @@ func (h handlers) mcpRegisterClient(c *gin.Context) {
 		ClientName:              client.Name,
 		RedirectURIs:            client.RedirectURIs,
 		TokenEndpointAuthMethod: "none",
-		GrantTypes:              []string{"authorization_code"},
+		GrantTypes:              []string{"authorization_code", "refresh_token"},
 		ResponseTypes:           []string{"code"},
 	})
 }
@@ -213,13 +239,12 @@ func validateMCPClientRegistration(in mcpClientRegistrationRequest) string {
 	return ""
 }
 
-// validateMCPGrantTypes requires the authorization_code grant and tolerates a
+// validateMCPGrantTypes requires the authorization_code grant and accepts a
 // co-registered refresh_token grant, which conformant MCP clients (mcp2cli,
-// VS Code) request by default during dynamic registration. The server never
-// issues refresh tokens, so the grant is accepted here but never exercised:
-// clients simply re-run the authorization_code flow when the short-lived
-// access token expires. Rejecting the registration outright would lock those
-// clients out entirely.
+// VS Code, Claude) request by default during dynamic registration. The token
+// endpoint issues a rotating refresh token with every exchange, so clients
+// renew the short-lived access token silently instead of re-running the
+// browser authorization flow every hour.
 func validateMCPGrantTypes(grantTypes []string) string {
 	if len(grantTypes) == 0 {
 		return ""
@@ -482,6 +507,10 @@ func (h handlers) mcpToken(c *gin.Context) {
 		oauthError(c, http.StatusBadRequest, "invalid_client", "unknown or expired client_id")
 		return
 	}
+	if in.GrantType == "refresh_token" {
+		h.mcpRefreshGrant(c, in)
+		return
+	}
 	st, ok, err := h.deps.stateStore.TakeCode(c.Request.Context(), in.Code)
 	if err != nil {
 		internalErr(c, err)
@@ -492,15 +521,111 @@ func (h handlers) mcpToken(c *gin.Context) {
 		oauthError(c, http.StatusBadRequest, "invalid_grant", "authorization code is invalid, expired, or does not match the PKCE request")
 		return
 	}
-	token := auth.NewMCPAccessToken(st.UserID, in.Resource, h.deps.sessionSecret, mcpAccessTokenTTL)
 	incAuth("mcp_exchange", "success")
+	familyID, err := auth.RandomURLToken()
+	if err != nil {
+		internalErr(c, err)
+		return
+	}
+	h.issueMCPTokens(c, st.UserID, in.ClientID, in.Resource, firstNonEmpty(st.OAuthScope, mcpScope),
+		familyID, time.Now().Add(mcpRefreshChainTTL))
+}
+
+// mcpRefreshGrant redeems a rotating refresh token. Each family keeps exactly
+// one live row that stores the hash of its currently redeemable token. The
+// one-time Take of that row retrieves and invalidates it, and the row is only
+// re-created after every check passes, so any failed redemption — a replayed
+// rotated-out token, a wrong client, a wrong resource — revokes the whole
+// family (OAuth 2.1 §4.14.2). A thief and the legitimate client racing the
+// same token therefore cannot both end up with a live chain: the loser's
+// attempt kills the family and forces a fresh browser consent.
+func (h handlers) mcpRefreshGrant(c *gin.Context, in mcpTokenRequest) {
+	reject := func() {
+		incAuth("mcp_refresh", "failure")
+		oauthError(c, http.StatusBadRequest, "invalid_grant", "refresh token is invalid, expired, revoked, or bound to a different client")
+	}
+	familyID, ok := parseMCPRefreshToken(in.RefreshToken)
+	if !ok {
+		reject()
+		return
+	}
+	st, ok, err := h.deps.stateStore.TakeState(c.Request.Context(), mcpRefreshStateIDPrefix+familyID)
+	if err != nil {
+		internalErr(c, err)
+		return
+	}
+	if !ok || st.Mode != mcpRefreshMode ||
+		subtle.ConstantTimeCompare([]byte(st.OAuthRefreshTokenHash), []byte(auth.HashToken(in.RefreshToken))) != 1 ||
+		st.OAuthClientID != in.ClientID || st.OAuthResource != in.Resource || in.Resource != h.mcpResource() ||
+		st.OAuthChainExpiresAt.IsZero() || time.Now().After(st.OAuthChainExpiresAt) {
+		reject()
+		return
+	}
+	// Offboarded accounts must not keep renewable credentials: the chain ends
+	// here unless the user still resolves.
+	if _, err := h.deps.repository.ResolveUser(c.Request.Context(), st.UserID); err != nil {
+		if errors.Is(err, auth.ErrNotFound) {
+			reject()
+			return
+		}
+		internalErr(c, err)
+		return
+	}
+	incAuth("mcp_refresh", "success")
+	h.issueMCPTokens(c, st.UserID, in.ClientID, in.Resource, firstNonEmpty(st.OAuthScope, mcpScope),
+		familyID, st.OAuthChainExpiresAt)
+}
+
+// parseMCPRefreshToken splits a refresh token into its family id, which keys
+// the stored row, and reports whether the token is well formed. The secret
+// half is never inspected directly; redemption compares the full token's hash
+// against the stored hash.
+func parseMCPRefreshToken(token string) (familyID string, ok bool) {
+	rest, found := strings.CutPrefix(token, mcpRefreshTokenPrefix)
+	if !found {
+		return "", false
+	}
+	familyID, secret, found := strings.Cut(rest, ".")
+	if !found || familyID == "" || secret == "" {
+		return "", false
+	}
+	return familyID, true
+}
+
+// issueMCPTokens mints the short-lived access token plus the family's next
+// refresh token, persists the rotated hash in the one-time state store, and
+// writes the OAuth token response. The row's expiry is the sliding renewal
+// window capped by the family's absolute chain deadline.
+func (h handlers) issueMCPTokens(c *gin.Context, userID, clientID, resource, scope, familyID string, chainExpiresAt time.Time) {
+	accessToken := auth.NewMCPAccessToken(userID, resource, h.deps.sessionSecret, mcpAccessTokenTTL)
+	refreshSecret, err := auth.RandomURLToken()
+	if err != nil {
+		internalErr(c, err)
+		return
+	}
+	refreshToken := mcpRefreshTokenPrefix + familyID + "." + refreshSecret
+	expiresAt := time.Now().Add(mcpRefreshTokenTTL)
+	if expiresAt.After(chainExpiresAt) {
+		expiresAt = chainExpiresAt
+	}
+	if err := h.deps.stateStore.PutState(c.Request.Context(), mcpRefreshStateIDPrefix+familyID, auth.LoginState{
+		Mode: mcpRefreshMode, UserID: userID,
+		OAuthClientID: clientID, OAuthResource: resource, OAuthScope: scope,
+		OAuthRefreshTokenHash: auth.HashToken(refreshToken),
+		OAuthChainExpiresAt:   chainExpiresAt,
+		ExpiresAt:             expiresAt,
+	}); err != nil {
+		internalErr(c, err)
+		return
+	}
 	c.Header("Cache-Control", "no-store")
 	c.Header("Pragma", "no-cache")
 	c.JSON(http.StatusOK, mcpTokenResponse{
-		AccessToken: token,
-		TokenType:   "Bearer",
-		ExpiresIn:   int(mcpAccessTokenTTL / time.Second),
-		Scope:       firstNonEmpty(st.OAuthScope, mcpScope),
+		AccessToken:  accessToken,
+		TokenType:    "Bearer",
+		ExpiresIn:    int(mcpAccessTokenTTL / time.Second),
+		Scope:        scope,
+		RefreshToken: refreshToken,
 	})
 }
 
@@ -508,12 +633,21 @@ func parseMCPTokenRequest(c *gin.Context) (mcpTokenRequest, *oauthRequestError) 
 	if !strings.HasPrefix(strings.ToLower(c.GetHeader("Content-Type")), "application/x-www-form-urlencoded") {
 		return mcpTokenRequest{}, &oauthRequestError{http.StatusUnsupportedMediaType, "invalid_request", "token requests must be form encoded"}
 	}
-	if c.PostForm("grant_type") != "authorization_code" {
-		return mcpTokenRequest{}, &oauthRequestError{http.StatusBadRequest, "unsupported_grant_type", "only authorization_code is supported"}
+	grantType := c.PostForm("grant_type")
+	if grantType != "authorization_code" && grantType != "refresh_token" {
+		return mcpTokenRequest{}, &oauthRequestError{http.StatusBadRequest, "unsupported_grant_type", "only the authorization_code and refresh_token grants are supported"}
 	}
 	in := mcpTokenRequest{
-		Code: c.PostForm("code"), CodeVerifier: c.PostForm("code_verifier"),
+		GrantType: grantType,
+		Code:      c.PostForm("code"), CodeVerifier: c.PostForm("code_verifier"),
 		ClientID: c.PostForm("client_id"), RedirectURI: c.PostForm("redirect_uri"), Resource: c.PostForm("resource"),
+		RefreshToken: c.PostForm("refresh_token"),
+	}
+	if grantType == "refresh_token" {
+		if in.RefreshToken == "" || in.ClientID == "" || in.Resource == "" {
+			return mcpTokenRequest{}, &oauthRequestError{http.StatusBadRequest, "invalid_request", "refresh_token, client_id, and resource are required"}
+		}
+		return in, nil
 	}
 	if in.Code == "" || in.CodeVerifier == "" || in.ClientID == "" || in.RedirectURI == "" || in.Resource == "" {
 		return mcpTokenRequest{}, &oauthRequestError{http.StatusBadRequest, "invalid_request", "code, code_verifier, client_id, redirect_uri, and resource are required"}
