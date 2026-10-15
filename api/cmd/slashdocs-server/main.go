@@ -293,7 +293,10 @@ func newApplicationServer(ctx context.Context, store *pgrepo.Store, blobs blob.S
 	if err != nil {
 		return nil, err
 	}
-	sender := loadSlackSender(os.Getenv("SLASHDOCS_SLACK_BOT_TOKEN"))
+	sender, err := loadNotificationSender(os.Getenv)
+	if err != nil {
+		return nil, err
+	}
 	store.SetNotificationsEnabled(sender != nil)
 	options := []server.Option{
 		server.WithCommentNotificationSender(sender),

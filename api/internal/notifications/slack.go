@@ -21,7 +21,7 @@ type DeliveryError struct {
 	RetryAfter time.Duration
 }
 
-func (e *DeliveryError) Error() string { return "Slack delivery: " + e.Code }
+func (e *DeliveryError) Error() string { return "notification delivery: " + e.Code }
 
 type Slack struct {
 	token  string

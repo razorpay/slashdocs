@@ -453,6 +453,7 @@ Sealed Secrets, etc.).
 | `kvEvents.{mode,listenerDatabaseURL,existingSecret}`                       | Realtime KV events: `SLASHDOCS_KV_EVENTS_MODE` and the dedicated LISTEN connection URL (secret-backed). Rendered only when set. |
 | `commitSha`                                                                | Optional revision surfaced at `/commit.txt`.                                                                                    |
 | `ingress`                                                                  | Standard ingress block; supports multiple hosts.                                                                                |
+| `googleChat.{webhookSecret,webhookKey}`                                    | Google Chat webhook notifications: Secret holding the webhook URL.                                                              |
 | `extraEnv` / `extraEnvFrom`                                                | Append arbitrary env vars / envFrom sources.                                                                                    |
 | `resources`                                                                | CPU/memory requests and limits.                                                                                                 |
 | `livenessProbe` / `readinessProbe`                                         | HTTP probes against `/livez` and `/readyz`.                                                                                     |
@@ -533,6 +534,21 @@ Set either the `GOOGLE_OAUTH_*` pair or the `SLASHDOCS_OIDC_*` variables, never
 both. The redirect URI to register is
 `<SLASHDOCS_APP_ORIGIN>/v1/auth/google/callback` for Google and
 `<SLASHDOCS_APP_ORIGIN>/v1/auth/oidc/callback` for everything else.
+
+### Notifications (at most one provider)
+
+Comment and access notifications are off unless one of these is set; the server
+refuses to start with both. See
+[Comment notifications](comment-notifications.md) for provider setup.
+
+| Variable                            | Purpose                                                                                                                     |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `SLASHDOCS_SLACK_BOT_TOKEN`         | Slack bot token; DMs each recipient.                                                                                        |
+| `SLASHDOCS_GOOGLE_CHAT_WEBHOOK_URL` | Google Chat incoming webhook (`https://chat.googleapis.com/v1/spaces/…/messages?…`); posts every notification to one space. |
+
+The webhook URL and the Slack token both grant posting rights, so keep them in
+a secret store. The server needs outbound HTTPS to `chat.googleapis.com` or
+`slack.com`.
 
 ### Optional
 
@@ -649,6 +665,8 @@ down-migration manually if needed; the binary does not auto-rollback.
 - [ ] OAuth/OIDC redirect URIs registered at the IdP match `SLASHDOCS_APP_ORIGIN`.
 - [ ] `ALLOWED_OAUTH_DOMAINS` set if you don't want public sign-ups.
 - [ ] Postgres backups configured.
+- [ ] If notifications are on: exactly one provider configured, its secret in a
+      secret manager, and outbound HTTPS to the provider allowed.
 - [ ] Blob storage versioning / lifecycle rules configured.
 - [ ] `SLASHDOCS_COMMIT_SHA` baked into your image so `/commit.txt`
       reports the running build.
