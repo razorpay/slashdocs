@@ -20,6 +20,7 @@ import { useEscChord } from "@/lib/use-esc-chord";
 import { createPersistentStore } from "@/lib/persistent-store";
 import { cursorsShownStore } from "@/lib/live-cursors";
 import { isChordBlocked, type ChordKey } from "@/lib/esc-chord";
+import { randomId } from "@/lib/uuid";
 import {
   COMMENT_STATUS,
   DEFAULT_COMMENT_FILTER,
@@ -284,7 +285,7 @@ export function DocWorkspace({
   // the same text again returns to its draft.
   const startDraft = useCallback(
     (selection: PendingSelection) => {
-      let draftId = `draft:${crypto.randomUUID()}`;
+      let draftId = `draft:${randomId()}`;
       updateDrafts((list) => {
         const same = list.find(
           (draft) =>
