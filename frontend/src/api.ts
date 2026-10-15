@@ -353,6 +353,16 @@ export const api = {
       body: fd,
     });
   },
+  // The stored bytes as text. A byte order mark is kept and invalid UTF-8 is an
+  // error, so the text encodes back to the same bytes.
+  versionHTML: async (doc: string, version: string) => {
+    const res = await fetch(`/v1/documents/${doc}/versions/${version}/html`, {
+      credentials: "include",
+    });
+    if (!res.ok) throw new APIError(res.status, "http_error", res.statusText);
+    const bytes = await res.arrayBuffer();
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  },
   renderToken: (doc: string, version: string) =>
     request<{ token: string; url: string }>(
       `/v1/documents/${doc}/versions/${version}/render-token`,

@@ -300,3 +300,93 @@ test("delivers a KV patch to a second open page through the browser SSE stream",
   await slashdocs.patchKV(document.id, key, value);
   await expect(secondOutput).toHaveText(value);
 });
+
+async function selectWord(page: Page, word: string) {
+  await renderedDocument(page)
+    .locator("#comment-target")
+    .evaluate((element, text) => {
+      const node = element.firstChild as Text;
+      const start = node.data.indexOf(text);
+      const range = element.ownerDocument.createRange();
+      range.setStart(node, start);
+      range.setEnd(node, start + text.length);
+      const selection = element.ownerDocument.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }, word);
+}
+
+test("an owner edits text and saves it as a new version", async ({
+  page,
+  slashdocs,
+}) => {
+  const title = uniqueName("Text edit");
+  const html = documentHTML(title, "The quikc brown fox &amp; friends.");
+  const document = await slashdocs.createDocument(title, html);
+
+  await page.goto(`/app/d/${document.id}`);
+  await expect(renderedDocument(page).locator("#comment-target")).toBeVisible();
+  await selectWord(page, "quikc");
+  await renderedDocument(page)
+    .getByRole("button", { name: "Edit selected text" })
+    .click();
+
+  const editor = page.getByRole("textbox", { name: "Edited text" });
+  await expect(editor).toHaveText("quikc");
+  await editor.press("ControlOrMeta+a");
+  await page.keyboard.type("quick");
+  await page.getByRole("button", { name: "Apply" }).click();
+  await expect(renderedDocument(page).locator("#comment-target")).toHaveText(
+    "The quick brown fox & friends.",
+  );
+
+  await page.getByRole("button", { name: "Save as version" }).click();
+  const dialog = page.getByRole("dialog", { name: "Save edits as a new version" });
+  await expect(dialog.getByRole("textbox", { name: "Change summary" })).toHaveValue(
+    'Edited "quikc" → "quick"',
+  );
+  const saved = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      response.request().method() === "POST" &&
+      url.pathname === `/v1/documents/${document.id}/versions`
+    );
+  });
+  await dialog.getByRole("button", { name: "Save version" }).click();
+  const response = await saved;
+  expect(response.ok()).toBeTruthy();
+  const version = (await response.json()) as { id: string; number: number };
+  expect(version.number).toBe(2);
+
+  const stored = await page.request.get(
+    `/v1/documents/${document.id}/versions/${version.id}/html`,
+  );
+  expect(await stored.text()).toBe(html.replace("quikc", "quick"));
+  await expect(page.getByRole("button", { name: "Save as version" })).toBeHidden();
+});
+
+test("a viewer sees no Edit action", async ({ page, slashdocs }) => {
+  const title = uniqueName("Viewer edit");
+  const document = await slashdocs.createDocument(title, documentHTML(title));
+  const someoneElse = { type: "user", id: "someone-else", email: "else@example.com" };
+  await page.route(`**/v1/documents/${document.id}`, async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as Record<string, unknown>;
+    await route.fulfill({ response, json: { ...body, owner: someoneElse } });
+  });
+  await page.route(`**/v1/documents/${document.id}/access`, async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as Record<string, unknown>;
+    await route.fulfill({ response, json: { ...body, current_role: "viewer" } });
+  });
+
+  await page.goto(`/app/d/${document.id}`);
+  await expect(renderedDocument(page).locator("#comment-target")).toBeVisible();
+  await selectWord(page, "sentence");
+  await expect(
+    renderedDocument(page).getByRole("button", { name: "Comment on selected text" }),
+  ).toBeVisible();
+  await expect(
+    renderedDocument(page).getByRole("button", { name: "Edit selected text" }),
+  ).toBeHidden();
+});

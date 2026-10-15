@@ -53,6 +53,7 @@ import { principalColor, samePrincipal } from "@/lib/principals";
 import { ShareSheet } from "./doc-share-sheet";
 import { useDoc } from "./doc-context";
 import { UploadVersionMenuItem, UploadVersionSheet } from "./doc-upload-version";
+import { EditsBar } from "./doc-edits-bar";
 import type { Viewer } from "./use-document-stream";
 
 const MAX_VIEWER_AVATARS = 4;
@@ -125,7 +126,7 @@ export function DocBar({
     },
     onError: (e) => toast.error(errorMessage(e, "Delete failed")),
   });
-  const { printDocument: exportPDF } = useDoc();
+  const { printDocument: exportPDF, textEdits } = useDoc();
   return (
     <DocBarFrame
       home="/app/documents"
@@ -148,6 +149,7 @@ export function DocBar({
         )
       }
     >
+      {textEdits ? <EditsBar textEdits={textEdits} versions={versions} /> : null}
       <Viewers viewers={viewers} versions={versions} onFollow={onFollowViewer} />
       {viewers.length ? <CursorsToggle /> : null}
       {isViewingOlder ? (

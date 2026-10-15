@@ -13,7 +13,10 @@ import { Button } from "@/components/ui/button";
 import { DocBar } from "./doc-bar";
 import { DocWorkspace } from "./doc-workspace";
 import { cursorsShownStore } from "@/lib/live-cursors";
+import { ROLE_RANK } from "@/lib/constants";
+import { samePrincipal } from "@/lib/principals";
 import { useDocumentStream, type Viewer } from "./use-document-stream";
+import { useTextEdits } from "./use-text-edits";
 
 function retryDocumentLoad(failureCount: number, error: Error) {
   if (error instanceof APIError && (error.status === 403 || error.status === 404)) {
@@ -163,6 +166,24 @@ export function DocumentPage() {
     [cursorsShown, cursorVersion, nav, location.search],
   );
 
+  const principal = me.data?.principal;
+  const isOwner = !!doc.data && samePrincipal(principal, doc.data.owner);
+  const access = useQuery({
+    queryKey: queryKeys.documentAccess(id),
+    queryFn: () => api.documentAccess(id),
+    enabled: !!id && !!principal && !!doc.data && !isOwner,
+    staleTime: 30_000,
+  });
+  const canEdit =
+    isOwner || (ROLE_RANK[access.data?.current_role || ""] || 0) >= ROLE_RANK.editor;
+  const textEdits = useTextEdits({
+    docId: id,
+    canEdit,
+    current,
+    latest,
+    onVersion: setSelectedVersion,
+  });
+
   if (doc.isLoading) {
     return (
       <div className="p-6">
@@ -210,6 +231,7 @@ export function DocumentPage() {
       home="/app/documents"
       stream={stream}
       followedCursor={followedCursor}
+      textEdits={textEdits}
       onDocumentClick={closeShare}
       bar={(controls) => (
         <DocBar

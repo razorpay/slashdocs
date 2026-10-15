@@ -17,6 +17,19 @@ import { cursorsShownStore, parseCursorSpot } from "@/lib/live-cursors";
 import { useDocumentExport } from "./use-document-export";
 import { useDoc } from "./doc-context";
 import { useBridgeHost } from "./use-bridge-host";
+import { TextEditBox } from "./doc-text-edit-box";
+import type { EditRect } from "./use-text-edits";
+
+const EDIT_BOX_WIDTH = 448;
+const EDIT_BOX_HEIGHT = 240;
+
+function editRect(value: unknown): EditRect | null {
+  if (!value || typeof value !== "object") return null;
+  const { top, bottom, left } = value as Record<string, unknown>;
+  return [top, bottom, left].every((n) => typeof n === "number" && Number.isFinite(n))
+    ? { top: top as number, bottom: bottom as number, left: left as number }
+    : null;
+}
 
 const FORWARDED_KEYS = new Set<string>([
   "Escape",
@@ -50,10 +63,13 @@ export function RenderFrame() {
     moveCursor,
     subscribeCursors,
     followedCursor,
+    textEdits,
   } = useDoc();
   const cursorsShown = cursorsShownStore.useStore();
   const versionRef = useRef(version);
   versionRef.current = version;
+  const textEditsRef = useRef(textEdits);
+  textEditsRef.current = textEdits;
   const location = useLocation();
 
   const token = useQuery({
@@ -62,9 +78,16 @@ export function RenderFrame() {
     staleTime: 4 * 60_000,
     enabled: !!version,
   });
+  // Dropping text edit previews reloads the frame under a new URL.
+  const frameReload = textEdits?.frameReload ?? 0;
+  const renderURL = useMemo(() => {
+    const url = token.data?.url;
+    if (!url || !frameReload) return url;
+    return `${url}${url.includes("?") ? "&" : "?"}slashdocs_edits=${frameReload}`;
+  }, [token.data?.url, frameReload]);
   const { ref, frameSrc, frameOrigin, ready, postToFrame, deliverKV } = useBridgeHost(
     docId,
-    token.data?.url,
+    renderURL,
   );
   // Paint results from a frame that is navigating away (its WindowProxy
   // survives navigation) must not bring back the state reset below.
@@ -299,6 +322,18 @@ export function RenderFrame() {
           typeof e.data.top === "number" ? e.data.top * scaleRef.current : undefined;
         if (quote) startDraft({ quote, anchor, top });
       }
+      if (e.data?.type === "slashdocs:edit-request") {
+        const rect = editRect(e.data.rect);
+        const anchor = e.data.anchor;
+        if (
+          rect &&
+          anchor &&
+          typeof anchor === "object" &&
+          typeof anchor.quote === "string"
+        ) {
+          textEditsRef.current?.request(anchor, rect);
+        }
+      }
       if (e.data?.type === "slashdocs:viewport") {
         reportViewport(textLinkAnchor(e.data.anchor) ?? undefined);
       }
@@ -469,6 +504,57 @@ export function RenderFrame() {
     paint();
   }, [paint]);
 
+  const editEnabled = !!textEdits?.enabled;
+  useEffect(() => {
+    if (ready) postToFrame({ type: "slashdocs:edit-enabled", enabled: editEnabled });
+  }, [ready, editEnabled, postToFrame]);
+
+  // Each frame shows every unsaved edit once, in the order the edits were made.
+  const previewed = useRef(new Set<string>());
+  useEffect(() => {
+    previewed.current = new Set();
+  }, [frameSrc]);
+  const edits = textEdits?.edits;
+  const editsShown = !!textEdits?.baseVersion && textEdits.baseVersion === version;
+  useEffect(() => {
+    if (!ready || !editsShown || !edits) return;
+    for (const edit of edits) {
+      if (edit.failed || previewed.current.has(edit.id)) continue;
+      previewed.current.add(edit.id);
+      postToFrame({
+        type: "slashdocs:edit-preview",
+        anchor: edit.anchor,
+        html: edit.html,
+      });
+    }
+  }, [ready, editsShown, edits, postToFrame]);
+
+  const draft = textEdits?.draft;
+  let editBox = null;
+  if (draft && textEdits) {
+    const frame = ref.current?.getBoundingClientRect();
+    const scale = scaleRef.current;
+    const left = (frame?.left ?? 0) + draft.rect.left * scale;
+    const below = (frame?.top ?? 0) + draft.rect.bottom * scale + 8;
+    const above = (frame?.top ?? 0) + draft.rect.top * scale - EDIT_BOX_HEIGHT - 8;
+    editBox = (
+      <TextEditBox
+        key={`${draft.located.start}:${draft.located.end}:${draft.seed}`}
+        seed={draft.seed}
+        dropped={draft.dropped}
+        position={{
+          left: Math.max(8, Math.min(left, window.innerWidth - EDIT_BOX_WIDTH - 8)),
+          top: Math.max(
+            8,
+            below + EDIT_BOX_HEIGHT < window.innerHeight ? below : above,
+          ),
+        }}
+        onApply={textEdits.apply}
+        onCancel={textEdits.cancel}
+      />
+    );
+  }
+
   // The parent (DocPage) only mounts RenderFrame when a current version
   // exists, so version is always set here.
   if (token.isLoading) return <Center>Preparing secure render…</Center>;
@@ -526,6 +612,7 @@ export function RenderFrame() {
           {Math.round(scale * 100)}%
         </button>
       )}
+      {editBox}
     </div>
   );
 }

@@ -81,6 +81,8 @@ Publishing model:
   - Creating a document stores the uploaded HTML as version 1.
   - Pushing HTML creates a new immutable version.
   - The slashdocs UI is for review; agents and CLI/API publishers create versions.
+  - Owners and editors can also fix text in the UI. Each save is a new version,
+    so pull the latest version before editing a document again.
   - Runtime KV changes from uploaded HTML do not create versions; see:
       slashdocs guidelines interactivity kv
 

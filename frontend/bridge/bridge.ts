@@ -14,6 +14,7 @@ import {
   refreshSVGRects,
 } from "./highlight.ts";
 import { createCursorLayer, trackPointer } from "./cursors.ts";
+import { applyEditPreview } from "./edit-preview.ts";
 import { CHORD_KEYS } from "../src/lib/esc-chord.ts";
 import {
   reduceVimScroll,
@@ -1263,8 +1264,18 @@ type Theme = "dark" | "light";
   }
 
   let selectionAction: HTMLDivElement | null = null;
+  let editAction: HTMLButtonElement | null = null;
+  let editEnabled = false;
   let actionRange: Range | null = null;
   let selectionDismissed = false;
+
+  function showEditAction(): void {
+    editAction?.style.setProperty(
+      "display",
+      editEnabled ? "flex" : "none",
+      "important",
+    );
+  }
 
   function dismissSelectionAction(): void {
     selectionAction?.remove();
@@ -1272,7 +1283,10 @@ type Theme = "dark" | "light";
     selectionDismissed = true;
   }
 
-  function commitSelection(range: Range): void {
+  function commitSelection(
+    range: Range,
+    type: "slashdocs:selection" | "slashdocs:edit-request" = "slashdocs:selection",
+  ): void {
     const d = doc();
     if (!d?.body) return;
     const anchor = describeAnchor(d.body, range);
@@ -1281,9 +1295,23 @@ type Theme = "dark" | "light";
     const scrollTop = d.defaultView?.scrollY || d.documentElement.scrollTop || 0;
     dismissSelectionAction();
     parent.postMessage(
-      { type: "slashdocs:selection", anchor, top: rect.top + scrollTop },
+      {
+        type,
+        anchor,
+        top: rect.top + scrollTop,
+        rect: { top: rect.top, bottom: rect.bottom, left: rect.left },
+      },
       targetOrigin(),
     );
+  }
+
+  function previewEdit(anchor: CommentAnchor, html: string): void {
+    const d = doc();
+    if (!d?.body) return;
+    clearHighlights(d);
+    applyEditPreview(d.body, anchor, html);
+    lastPaintKey = null;
+    if (lastPaint) paint(lastPaint.items, lastPaint.active);
   }
 
   function selection(): void {
@@ -1359,6 +1387,14 @@ type Theme = "dark" | "light";
           if (actionRange) commitSelection(actionRange);
         },
       );
+      editAction = addAction(
+        "Edit selected text",
+        "Edit text",
+        "M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z",
+        () => {
+          if (actionRange) commitSelection(actionRange, "slashdocs:edit-request");
+        },
+      );
       addAction(
         "Copy link to selected text",
         "Copy link to text",
@@ -1388,11 +1424,13 @@ type Theme = "dark" | "light";
       }
       d.body.appendChild(selectionAction);
     }
+    showEditAction();
     const rect = range.getBoundingClientRect();
     const view = d.defaultView!;
+    const width = selectionAction.offsetWidth || 84;
     selectionAction.style.setProperty(
       "left",
-      `${Math.max(8, Math.min(rect.right - 84, view.innerWidth - 92))}px`,
+      `${Math.max(8, Math.min(rect.right - width, view.innerWidth - width - 8))}px`,
       "important",
     );
     selectionAction.style.setProperty(
@@ -1960,6 +1998,15 @@ type Theme = "dark" | "light";
         pending.reject(
           new Error((e.data.error && e.data.error.message) || "GitHub request failed"),
         );
+    } else if (e.data.type === "slashdocs:edit-enabled") {
+      editEnabled = e.data.enabled === true;
+      showEditAction();
+    } else if (
+      e.data.type === "slashdocs:edit-preview" &&
+      e.data.anchor &&
+      typeof e.data.html === "string"
+    ) {
+      previewEdit(e.data.anchor, e.data.html);
     } else if (e.data.type === "slashdocs:navigate-text") {
       navigateText(e.data.anchor);
     } else if (e.data.type === "slashdocs:navigate-heading") {

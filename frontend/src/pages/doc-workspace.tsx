@@ -94,6 +94,7 @@ export function DocWorkspace({
   notifications = true,
   stream = NO_STREAM,
   followedCursor,
+  textEdits,
   onDocumentClick,
   bar,
 }: {
@@ -110,6 +111,7 @@ export function DocWorkspace({
     subscribeCursors: DocContextValue["subscribeCursors"];
   };
   followedCursor?: DocContextValue["followedCursor"];
+  textEdits?: DocContextValue["textEdits"];
   onDocumentClick?: () => void;
   bar: (controls: DocBarControls) => ReactNode;
 }) {
@@ -481,6 +483,7 @@ export function DocWorkspace({
       moveCursor: stream.moveCursor,
       subscribeCursors: stream.subscribeCursors,
       followedCursor,
+      textEdits,
     }),
     [
       docId,
@@ -513,6 +516,7 @@ export function DocWorkspace({
       stream.moveCursor,
       stream.subscribeCursors,
       followedCursor,
+      textEdits,
     ],
   );
 
