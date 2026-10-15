@@ -4,6 +4,7 @@ import { FileText, Folder as FolderIcon, Trash2 } from "lucide-react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { Button } from "@/components/ui/button";
 import { DeleteDocumentDialog } from "@/components/delete-document-dialog";
+import { LabelChips, StatusBadge } from "@/components/document-meta";
 import { api, docID, docTitle, type FolderEntry, type Principal } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { principalLabel, samePrincipal } from "@/lib/principals";
@@ -51,6 +52,8 @@ export function UnifiedGrid({
               canDelete={samePrincipal(me.data?.principal, e.document.owner)}
               pinned={pinnedIds?.has(docID(e.document))}
               snippet={e.document.snippet}
+              status={e.document.status}
+              labels={e.document.labels}
             />
           );
         }
@@ -68,6 +71,8 @@ function DraggableEntryCard({
   canDelete,
   pinned,
   snippet,
+  status,
+  labels,
 }: {
   type: ResourceType;
   id: string;
@@ -76,6 +81,8 @@ function DraggableEntryCard({
   canDelete: boolean;
   pinned?: boolean;
   snippet?: string;
+  status?: string;
+  labels?: string[];
 }) {
   const isFolder = type === "folder";
   const {
@@ -105,11 +112,11 @@ function DraggableEntryCard({
     >
       <Link
         to={isFolder ? `/app/folders/${id}` : `/app/d/${id}`}
-        className="flex h-40 cursor-default flex-col p-4"
+        className="flex h-44 cursor-default flex-col p-4"
         draggable={false}
       >
         <span className="flex items-center gap-2">
-          <span className="flex h-9 w-9 items-center justify-center rounded-sm bg-[var(--color-accent-muted)] text-[var(--color-accent)]">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-sm bg-[var(--color-accent-muted)] text-[var(--color-accent)]">
             {isFolder ? (
               <FolderIcon className="h-[18px] w-[18px]" />
             ) : (
@@ -117,14 +124,21 @@ function DraggableEntryCard({
             )}
           </span>
           {pinned && <PinnedMark />}
+          <StatusBadge
+            status={status}
+            className="ml-auto transition-opacity duration-150 group-focus-within:opacity-0 group-hover:opacity-0"
+          />
         </span>
         {snippet && (
           <SearchSnippet text={snippet} className="mt-3 line-clamp-2 text-xs" />
         )}
         <span className="mt-auto min-w-0">
-          <span className="line-clamp-2 font-heading text-[15px] font-medium leading-snug">
+          <span
+            className={`${snippet ? "line-clamp-1" : "line-clamp-2"} font-heading text-[15px] font-medium leading-snug`}
+          >
             {title}
           </span>
+          <LabelChips labels={labels} max={2} className="mt-2 overflow-hidden" />
           <span className="mt-1 block truncate text-xs text-[var(--color-fg-muted)]">
             {principalLabel(owner)}
           </span>

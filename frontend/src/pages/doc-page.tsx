@@ -224,6 +224,7 @@ export function DocumentPage() {
           latest={latest}
           versions={versionItems}
           labels={doc.data.labels || []}
+          status={doc.data.status}
           onSelectVersion={setSelectedVersion}
           viewers={stream.viewers}
           onFollowViewer={followViewer}

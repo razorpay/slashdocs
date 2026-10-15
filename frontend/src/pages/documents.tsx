@@ -1,6 +1,6 @@
 import { useTitle } from "@/lib/use-title";
 import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useOnboarding, autoMarkFirstDoc, onboardingProgress } from "@/lib/onboarding";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -38,8 +38,13 @@ import {
 
 export function DocumentsPage() {
   useTitle("Documents");
-  const [q, setQ] = useState("");
-  const [debouncedQ, setDebouncedQ] = useState("");
+  const [searchParams] = useSearchParams();
+  const urlQ = searchParams.get("q") || "";
+  const [q, setQ] = useState(urlQ);
+  const [debouncedQ, setDebouncedQ] = useState(urlQ.trim());
+  useEffect(() => {
+    if (urlQ) setQ(urlQ);
+  }, [urlQ]);
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedQ(q.trim()), 250);
     return () => window.clearTimeout(t);

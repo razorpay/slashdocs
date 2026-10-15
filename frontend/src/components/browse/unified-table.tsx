@@ -3,6 +3,7 @@ import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { Button } from "@/components/ui/button";
 import { Avatar } from "@/components/ui/misc";
 import { DeleteDocumentDialog } from "@/components/delete-document-dialog";
+import { LabelChips, StatusBadge } from "@/components/document-meta";
 import { docID, docTitle, type FolderEntry, type Principal } from "@/api";
 import { principalLabel, samePrincipal } from "@/lib/principals";
 import { DRAG_TYPE } from "./drag";
@@ -51,6 +52,8 @@ export function UnifiedTable({
               canDelete={samePrincipal(principal, e.document.owner)}
               pinned={pinnedIds?.has(docID(e.document))}
               snippet={e.document.snippet}
+              status={e.document.status}
+              labels={e.document.labels}
             />
           );
         }
@@ -68,6 +71,8 @@ function DraggableEntryRow({
   canDelete,
   pinned,
   snippet,
+  status,
+  labels,
 }: {
   type: ResourceType;
   id: string;
@@ -76,6 +81,8 @@ function DraggableEntryRow({
   canDelete: boolean;
   pinned?: boolean;
   snippet?: string;
+  status?: string;
+  labels?: string[];
 }) {
   const isFolder = type === "folder";
   const {
@@ -114,6 +121,12 @@ function DraggableEntryRow({
         </EntryName>
         {snippet ? (
           <SearchSnippet text={snippet} className="mt-1 line-clamp-2 pl-6 text-xs" />
+        ) : null}
+        {status || labels?.length ? (
+          <div className="mt-1.5 flex min-w-0 items-center gap-1.5 pl-6">
+            <StatusBadge status={status} />
+            <LabelChips labels={labels} className="overflow-hidden" />
+          </div>
         ) : null}
       </td>
       <td className="px-4 py-3">

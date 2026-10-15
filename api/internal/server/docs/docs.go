@@ -1206,6 +1206,43 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/documents/{id}/status": {
+            "put": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Sets the review status to draft, in_review, approved, or archived. An empty status clears it.",
+                "tags": [
+                    "documents"
+                ],
+                "summary": "Set document status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/documents/{id}/versions": {
             "get": {
                 "security": [
@@ -2007,6 +2044,10 @@ const docTemplate = `{
                 },
                 "snippet": {
                     "description": "Snippet is set in search results when the text matches. U+0002 and\nU+0003 surround each match.",
+                    "type": "string"
+                },
+                "status": {
+                    "description": "Status is one of DocumentStatuses, or empty when no status is set.",
                     "type": "string"
                 },
                 "title": {

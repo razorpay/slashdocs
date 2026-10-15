@@ -172,6 +172,7 @@ func (h handlers) listFolders(c *gin.Context) {
 			return
 		}
 	}
+	h.hydrateDocuments(c.Request.Context(), entryDocuments(items))
 	c.JSON(http.StatusOK, folderListResponse{Folder: folder, Items: items, HasMore: has})
 }
 func (h handlers) getFolder(c *gin.Context) {
