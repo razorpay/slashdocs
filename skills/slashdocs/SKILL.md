@@ -51,6 +51,11 @@ format:
 5. Publish with the CLI.
 6. Return the printed slashdocs document URL.
 
+If the `ai-sessions` CLI is installed, run `ai-sessions doc status <doc id>` after
+a create or push and follow its `next:` line (it either asks the person one
+question or says there is nothing to ask). Never share or link without the
+person's yes.
+
 ### Updating an existing document
 
 If the user is iterating on an existing slashdocs document, push a new version
