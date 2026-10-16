@@ -611,7 +611,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "open|resolved|stale|orphaned|all",
+                        "description": "open|resolved|all",
                         "name": "status",
                         "in": "query"
                     },
