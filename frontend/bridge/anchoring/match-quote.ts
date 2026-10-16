@@ -14,6 +14,12 @@ export type Match = {
    * for the quote and context.
    */
   score: number;
+
+  /**
+   * Similarity between 0 and 1.0 of the text around the match to the expected
+   * prefix and suffix, ignoring the quote itself. 1.0 when no context is given.
+   */
+  contextScore: number;
 };
 
 /**
@@ -83,8 +89,19 @@ export function matchQuote(
   quote: string,
   context: Context = {},
 ): Match | null {
+  return matchQuoteCandidates(text, quote, context)[0] ?? null;
+}
+
+/**
+ * Like `matchQuote`, but return every candidate match, best first.
+ */
+export function matchQuoteCandidates(
+  text: string,
+  quote: string,
+  context: Context = {},
+): Match[] {
   if (quote.length === 0) {
-    return null;
+    return [];
   }
 
   // Choose the maximum number of errors to allow for the initial search.
@@ -102,18 +119,18 @@ export function matchQuote(
   const matches = search(text, quote, maxErrors);
 
   if (matches.length === 0) {
-    return null;
+    return [];
   }
+
+  const quoteWeight = 50; // Similarity of matched text to quote.
+  const prefixWeight = 20; // Similarity of text before matched text to `context.prefix`.
+  const suffixWeight = 20; // Similarity of text after matched text to `context.suffix`.
+  const posWeight = 2; // Proximity to expected location. Used as a tie-breaker.
 
   /**
    * Compute a score between 0 and 1.0 for a match candidate.
    */
-  const scoreMatch = (match: StringMatch) => {
-    const quoteWeight = 50; // Similarity of matched text to quote.
-    const prefixWeight = 20; // Similarity of text before matched text to `context.prefix`.
-    const suffixWeight = 20; // Similarity of text after matched text to `context.suffix`.
-    const posWeight = 2; // Proximity to expected location. Used as a tie-breaker.
-
+  const scoreMatch = (match: StringMatch): Match => {
     const quoteScore = 1 - match.errors / quote.length;
 
     const prefixScore = context.prefix
@@ -141,18 +158,22 @@ export function matchQuote(
       suffixWeight * suffixScore +
       posWeight * posScore;
     const maxScore = quoteWeight + prefixWeight + suffixWeight + posWeight;
-    return rawScore / maxScore;
+    const contextScore =
+      (prefixWeight * prefixScore + suffixWeight * suffixScore) /
+      (prefixWeight + suffixWeight);
+    return {
+      start: match.start,
+      end: match.end,
+      score: rawScore / maxScore,
+      contextScore,
+    };
   };
 
   // Rank matches based on similarity of actual and expected surrounding text
   // and actual/expected offset in the document text.
-  const scoredMatches = matches.map((m) => ({
-    start: m.start,
-    end: m.end,
-    score: scoreMatch(m),
-  }));
+  const scoredMatches = matches.map(scoreMatch);
 
-  // Choose match with the highest score.
+  // Best match first.
   scoredMatches.sort((a, b) => b.score - a.score);
-  return scoredMatches[0];
+  return scoredMatches;
 }
