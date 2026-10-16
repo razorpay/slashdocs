@@ -114,7 +114,7 @@ func (h handlers) createComment(c *gin.Context) {
 // @Security bearerAuth
 // @Security cookieAuth
 // @Param id path string true "Document ID"
-// @Param status query string false "open|resolved|stale|orphaned|all"
+// @Param status query string false "Thread filter: open, resolved, orphaned or all. Empty means all."
 // @Param version_id query string false "Version ID"
 // @Success 200 {object} listResponse[commentResponse]
 // @Router /v1/documents/{id}/comments [get]
@@ -122,8 +122,15 @@ func (h handlers) listComments(c *gin.Context) {
 	if !h.needDocRole(c, c.Param("id"), repo.RoleViewer) {
 		return
 	}
+	status := c.Query("status")
+	if !validCommentListStatus(status) {
+		badRequest(c, "status must be open, resolved, orphaned or all")
+		return
+	}
 	versionID := c.Query("version_id")
-	items, err := h.deps.repository.ListComments(c.Request.Context(), c.Param("id"), c.Query("status"), versionID)
+	// Status is a property of a thread, and orphaned is only known after
+	// placement, so the query reads every row and the filter runs on threads.
+	items, err := h.deps.repository.ListComments(c.Request.Context(), c.Param("id"), "", versionID)
 	if err != nil {
 		internalErr(c, err)
 		return
@@ -139,7 +146,38 @@ func (h handlers) listComments(c *gin.Context) {
 	if placementVersionID != "" {
 		placementHTML, _ = h.deps.repository.GetVersionHTML(c.Request.Context(), placementVersionID)
 	}
-	c.JSON(http.StatusOK, listResponse[commentResponse]{Items: commentsJSON(items, placementVersionID, placementHTML, *current(c))})
+	threads := filterCommentThreads(commentsJSON(items, placementVersionID, placementHTML, *current(c)), status)
+	c.JSON(http.StatusOK, listResponse[commentResponse]{Items: threads})
+}
+
+// validCommentListStatus reports whether status is a value listComments accepts.
+func validCommentListStatus(status string) bool {
+	switch status {
+	case "", "all", commentStatusOpen, commentStatusResolved, placementOrphaned:
+		return true
+	}
+	return false
+}
+
+// filterCommentThreads keeps the threads that match status. Replies travel
+// with their thread: a reply is never filtered on its own status.
+func filterCommentThreads(threads []commentResponse, status string) []commentResponse {
+	if status == "" || status == "all" {
+		return threads
+	}
+	out := make([]commentResponse, 0, len(threads))
+	for _, th := range threads {
+		if status == placementOrphaned {
+			if th.CurrentPlacement != nil && th.CurrentPlacement.Status == placementOrphaned {
+				out = append(out, th)
+			}
+			continue
+		}
+		if th.Status == status {
+			out = append(out, th)
+		}
+	}
+	return out
 }
 
 // CreateCommentReply godoc
