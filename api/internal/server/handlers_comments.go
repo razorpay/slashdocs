@@ -98,6 +98,10 @@ func (h handlers) createComment(c *gin.Context) {
 		badRequest(c, "invalid comment")
 		return
 	}
+	htmlBytes, ok := h.loadAndValidateCommentVersion(c, c.Param("id"), in.VersionID, in.Anchor)
+	if !ok {
+		return
+	}
 	cm, err := h.deps.repository.CreateComment(c.Request.Context(), c.Param("id"), in.VersionID, in.Body, in.Anchor, *p, commentMentions(in.Mentions))
 	if err != nil {
 		commentWriteError(c, err)
@@ -105,7 +109,45 @@ func (h handlers) createComment(c *gin.Context) {
 	}
 	incComment("created", cm.Status, actorType(c))
 	h.announce(c, repo.DocumentEventComments)
-	c.JSON(http.StatusCreated, commentJSON(cm, cm.VersionID, "", *p))
+	c.JSON(http.StatusCreated, commentJSON(cm, cm.VersionID, string(htmlBytes), *p))
+}
+
+func (h handlers) loadAndValidateCommentVersion(c *gin.Context, docID, versionID string, anchor repo.Anchor) ([]byte, bool) {
+	ver, err := h.deps.repository.GetVersion(c.Request.Context(), versionID)
+	if err != nil {
+		if errors.Is(err, repo.ErrNotFound) {
+			notFound(c)
+			return nil, false
+		}
+		internalErr(c, err)
+		return nil, false
+	}
+	if ver.DocumentID != docID {
+		notFound(c)
+		return nil, false
+	}
+	htmlBytes, err := h.deps.repository.GetVersionHTML(c.Request.Context(), versionID)
+	if err != nil {
+		if errors.Is(err, repo.ErrNotFound) {
+			notFound(c)
+			return nil, false
+		}
+		internalErr(c, err)
+		return nil, false
+	}
+	if err := validateCommentAnchor(anchor, htmlBytes); err != nil {
+		if errors.Is(err, errAnchorNotFound) {
+			c.JSON(http.StatusBadRequest, errorResponse("anchor_not_found", "quote not found in document version", nil))
+			return nil, false
+		}
+		if errors.Is(err, errAnchorAmbiguous) {
+			c.JSON(http.StatusBadRequest, errorResponse("anchor_ambiguous", "quote occurs more than once in version; provide prefix or suffix to disambiguate", nil))
+			return nil, false
+		}
+		badRequest(c, err.Error())
+		return nil, false
+	}
+	return htmlBytes, true
 }
 
 // ListComments godoc

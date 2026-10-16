@@ -344,6 +344,11 @@ func TestMCPDocumentAndFolderToolParity(t *testing.T) {
 	}), "MCP parity update"))
 	versionID = requiredMCPString(t, updated, "id")
 
+	assertMCPToolError(t, callMCPToolHTTP(t, e, token, "create_comment", map[string]any{
+		"document_id": docID, "version_id": versionID, "body": "Bad quote",
+		"quote": "text not in document",
+	}), "quote not found in document version")
+
 	comment := mustMCPObject(t, assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "create_comment", map[string]any{
 		"document_id": docID, "version_id": versionID, "body": "Please check this",
 		"quote": "second version", "prefix": "", "suffix": "",
