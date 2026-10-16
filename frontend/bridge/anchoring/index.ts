@@ -13,7 +13,7 @@
 // All offsets are character offsets into the document body's raw
 // `textContent`. Quotes are stored in "rendered" form (each `<br>`
 // substituted by a space) so line-broken selections read naturally.
-import { matchQuote } from "./match-quote.ts";
+import { matchQuoteCandidates } from "./match-quote.ts";
 import {
   rawOffsetToRendered,
   renderedOffsetToRaw,
@@ -173,7 +173,7 @@ export function resolveAnchor(
   const { text, brPositionsInText } = getRenderedText
     ? getRenderedText()
     : renderedTextOf(root);
-  const match = matchQuote(text, quote, {
+  const candidates = matchQuoteCandidates(text, quote, {
     prefix,
     suffix,
     // The stored offset is a raw-textContent position while matchQuote works
@@ -184,22 +184,32 @@ export function resolveAnchor(
       ? Math.min(rawOffsetToRendered(brPositionsInText, start), text.length)
       : undefined,
   });
+  let match = candidates[0];
   if (!match) {
     return null;
   }
   // A verbatim occurrence of an unambiguous quote always anchors: the score
   // floor exists to reject garbled fuzzy matches, not exact text whose
   // surrounding context was rewritten. A quote that is repeated, in the
-  // document now or around the comment when it was made, instead needs its
-  // context to agree, so an edit to the commented copy detaches the comment
-  // rather than moving it to another copy.
-  const exact = text.slice(match.start, match.end) === quote;
-  if (exact) {
+  // document now or around the comment when it was made, instead anchors on
+  // a verbatim copy whose context agrees, so an edit to the commented copy
+  // detaches the comment rather than moving it to another copy. Any such copy
+  // will do, as in the API's placement check (comment_placement.go): the best
+  // scoring one can lead on the position hint alone.
+  const isExact = (m: { start: number; end: number }) =>
+    text.slice(m.start, m.end) === quote;
+  if (isExact(match)) {
     const ambiguous =
       occursMoreThanOnce(text, quote) ||
       occursMoreThanOnce(`${prefix ?? ""}${quote}${suffix ?? ""}`, quote);
     if (ambiguous && match.contextScore < MIN_CONTEXT_SCORE_FOR_AMBIGUOUS_QUOTE) {
-      return null;
+      const agreeing = candidates.find(
+        (m) => isExact(m) && m.contextScore >= MIN_CONTEXT_SCORE_FOR_AMBIGUOUS_QUOTE,
+      );
+      if (!agreeing) {
+        return null;
+      }
+      match = agreeing;
     }
   } else {
     const minScore =

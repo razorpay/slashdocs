@@ -89,8 +89,19 @@ export function matchQuote(
   quote: string,
   context: Context = {},
 ): Match | null {
+  return matchQuoteCandidates(text, quote, context)[0] ?? null;
+}
+
+/**
+ * Like `matchQuote`, but return every candidate match, best first.
+ */
+export function matchQuoteCandidates(
+  text: string,
+  quote: string,
+  context: Context = {},
+): Match[] {
   if (quote.length === 0) {
-    return null;
+    return [];
   }
 
   // Choose the maximum number of errors to allow for the initial search.
@@ -108,7 +119,7 @@ export function matchQuote(
   const matches = search(text, quote, maxErrors);
 
   if (matches.length === 0) {
-    return null;
+    return [];
   }
 
   const quoteWeight = 50; // Similarity of matched text to quote.
@@ -162,7 +173,7 @@ export function matchQuote(
   // and actual/expected offset in the document text.
   const scoredMatches = matches.map(scoreMatch);
 
-  // Choose match with the highest score.
+  // Best match first.
   scoredMatches.sort((a, b) => b.score - a.score);
-  return scoredMatches[0];
+  return scoredMatches;
 }

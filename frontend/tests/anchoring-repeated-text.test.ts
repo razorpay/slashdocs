@@ -107,3 +107,47 @@ test("a unique quote still anchors after the text around it is rewritten", () =>
   );
   assert.strictEqual(landedIn(resolveAnchor(v2, anchor)), quote);
 });
+
+test("a comment on repeated text stays put when the text after it is rewritten", () => {
+  const anchor = anchorOn(plans, "TBD", 1);
+
+  // The quote is still at its stored offsets, so it anchors there whatever
+  // the context says, as the API reports.
+  const v2 = render("<p>Plan A: TBD</p><p>Plan B: TBD</p><p>X</p>");
+  assert.strictEqual(landedIn(resolveAnchor(v2, anchor)), "Plan B: TBD");
+});
+
+test("a copy in a script never counts as a copy of the quote", () => {
+  const anchor = anchorOn("<p>Old intro TBD old outro.</p>", "TBD", 0);
+
+  const v2 = render(
+    '<p>New words here TBD and different words.</p><script>const x = "TBD";</script>',
+  );
+  assert.strictEqual(
+    landedIn(resolveAnchor(v2, anchor)),
+    "New words here TBD and different words.",
+  );
+});
+
+test("a repeated quote anchors on any copy whose context agrees, not only the nearest", () => {
+  const anchor = {
+    quote: "TBD",
+    prefix: "Owner for the payments team: ",
+    suffix: " until finance replies here.",
+  };
+  // The stored position is near, but not at, the first copy, whose context
+  // scores just below the floor; the second copy's context clears it.
+  const first = "Owner for the payment group: TBD until the vendor replies.";
+  const second = "Owner for payments: TBD until finance says so.";
+  const v2 = render(`<p>${first}</p><p>${second}</p>`);
+  assert.strictEqual(
+    landedIn(
+      resolveAnchor(v2, {
+        ...anchor,
+        start_offset: first.indexOf("TBD") - 2,
+        end_offset: first.indexOf("TBD") + 1,
+      }),
+    ),
+    second,
+  );
+});
