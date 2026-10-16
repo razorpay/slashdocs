@@ -1,5 +1,5 @@
 import { Tooltip } from "@/components/ui/tooltip";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -126,6 +126,8 @@ export function DocBar({
     onError: (e) => toast.error(errorMessage(e, "Delete failed")),
   });
   const { printDocument: exportPDF } = useDoc();
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [labelsOpen, setLabelsOpen] = useState(false);
   return (
     <DocBarFrame
       home="/app/documents"
@@ -163,13 +165,21 @@ export function DocBar({
         </Button>
       ) : null}
       <VersionHistoryDialog
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
         current={current}
         latest={latest}
         versions={versions}
         onSelectVersion={onSelectVersion}
       />
       {config.data?.labels_enabled === true ? (
-        <LabelsDialog docId={docId} labels={labels} canEdit={canEdit} />
+        <LabelsDialog
+          open={labelsOpen}
+          onOpenChange={setLabelsOpen}
+          docId={docId}
+          labels={labels}
+          canEdit={canEdit}
+        />
       ) : null}
       <Button
         asChild
@@ -246,6 +256,14 @@ export function DocBar({
           >
             <Maximize2 className="h-4 w-4" /> Full screen
           </DropdownItem>
+          <DropdownItem className="sm:hidden" onSelect={() => setHistoryOpen(true)}>
+            <GitBranch className="h-4 w-4" /> Version history
+          </DropdownItem>
+          {config.data?.labels_enabled === true ? (
+            <DropdownItem className="lg:hidden" onSelect={() => setLabelsOpen(true)}>
+              <Tag className="h-4 w-4" /> Document labels
+            </DropdownItem>
+          ) : null}
           <DropdownItem
             onSelect={() =>
               window.open(
@@ -383,17 +401,30 @@ function CursorsToggle() {
 }
 
 function LabelsDialog({
+  open: controlledOpen,
+  onOpenChange: controlledOnOpenChange,
   docId,
   labels,
   canEdit,
 }: {
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   docId: string;
   labels: string[];
   canEdit: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const open = controlledOpen ?? uncontrolledOpen;
+  const setOpen = controlledOnOpenChange ?? setUncontrolledOpen;
   const [draft, setDraft] = useState(labels.join(", "));
   const qc = useQueryClient();
+
+  useEffect(() => {
+    if (open) {
+      setDraft(labels.join(", "));
+    }
+  }, [open, labels]);
+
   const save = useMutation({
     mutationFn: () =>
       api.replaceDocumentLabels(
@@ -412,13 +443,7 @@ function LabelsDialog({
     onError: (e) => toast.error(errorMessage(e, "Could not update labels")),
   });
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (next) setDraft(labels.join(", "));
-      }}
-    >
+    <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button
           variant="ghost"
@@ -457,17 +482,23 @@ function LabelsDialog({
 }
 
 function VersionHistoryDialog({
+  open: controlledOpen,
+  onOpenChange: controlledOnOpenChange,
   current,
   latest,
   versions,
   onSelectVersion,
 }: {
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   current: string;
   latest: string;
   versions: Version[];
   onSelectVersion: (versionID: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const open = controlledOpen ?? uncontrolledOpen;
+  const setOpen = controlledOnOpenChange ?? setUncontrolledOpen;
   const sorted = [...versions].sort((a, b) => b.number - a.number);
   const select = (versionID: string) => {
     if (versionID === current) return;
