@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -243,6 +244,51 @@ func (h handlers) listServiceAccounts(c *gin.Context) {
 	c.JSON(http.StatusOK, listResponse[repo.ServiceAccount]{Items: items})
 }
 
+// resolveServiceAccountUpdateName validates raw (which may be a bare label or a
+// full .bot address) and returns the full canonical bot address.
+func resolveServiceAccountUpdateName(c *gin.Context, r repo.Repository, saID, raw string) (string, bool) {
+	if strings.Contains(raw, "@") {
+		at := strings.Index(raw, "@")
+		label, domain, ok := bots.Split(raw)
+		if !ok {
+			if at == 0 || bots.ValidateLabel(raw[:at]) != nil {
+				badRequest(c, "Use letters, numbers, and hyphens for the bot's name.")
+				return "", false
+			}
+			badRequest(c, "Addresses must end in .bot.")
+			return "", false
+		}
+		if err := bots.ValidateLabel(label); err != nil {
+			badRequest(c, "Use letters, numbers, and hyphens for the bot's name.")
+			return "", false
+		}
+		if err := bots.ValidateDomain(domain); err != nil {
+			badRequest(c, "Addresses must end in .bot.")
+			return "", false
+		}
+		return bots.Compose(label, domain), true
+	}
+
+	if err := bots.ValidateLabel(raw); err != nil {
+		badRequest(c, "Use letters, numbers, and hyphens for the bot's name.")
+		return "", false
+	}
+	sa, err := r.GetServiceAccount(c.Request.Context(), saID)
+	if err != nil {
+		if errors.Is(err, repo.ErrNotFound) {
+			notFound(c)
+			return "", false
+		}
+		internalErr(c, err)
+		return "", false
+	}
+	_, currentDomain, ok := bots.Split(sa.Name)
+	if !ok {
+		currentDomain = bots.GenerateDomain()
+	}
+	return bots.Compose(raw, currentDomain), true
+}
+
 // PatchServiceAccount godoc
 // @Summary Update service account
 // @Tags service-accounts
@@ -256,8 +302,8 @@ func (h handlers) patchServiceAccount(c *gin.Context) {
 		return
 	}
 	var in struct {
-		Name     string `json:"name"`
-		Disabled *bool  `json:"disabled"`
+		Name     *string `json:"name"`
+		Disabled *bool   `json:"disabled"`
 	}
 	if !requireJSON(c) {
 		return
@@ -266,8 +312,20 @@ func (h handlers) patchServiceAccount(c *gin.Context) {
 		badRequest(c, "invalid body")
 		return
 	}
-	sa, err := h.deps.repository.UpdateServiceAccount(c.Request.Context(), c.Param("id"), in.Name, in.Disabled)
+	var newName string
+	if in.Name != nil {
+		var ok bool
+		newName, ok = resolveServiceAccountUpdateName(c, h.deps.repository, c.Param("id"), strings.TrimSpace(*in.Name))
+		if !ok {
+			return
+		}
+	}
+	sa, err := h.deps.repository.UpdateServiceAccount(c.Request.Context(), c.Param("id"), newName, in.Disabled)
 	if err != nil {
+		if errors.Is(err, repo.ErrConflict) {
+			c.JSON(http.StatusConflict, errorResponse("address_taken", "Someone already uses "+newName+". Try a different address.", nil))
+			return
+		}
 		internalErr(c, err)
 		return
 	}
