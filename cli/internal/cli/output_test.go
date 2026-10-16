@@ -62,6 +62,22 @@ func TestCompactRowRendersEffectiveAccess(t *testing.T) {
 	}
 }
 
+// TestCompactRowShowsVersionCreatedAt locks in that version rows surface
+// created_at so readers can tell whether a doc is fresh or stale.
+func TestCompactRowShowsVersionCreatedAt(t *testing.T) {
+	t.Parallel()
+	row := map[string]any{
+		"id":         "ver_1",
+		"number":     2,
+		"sha256":     "abc123",
+		"created_at": "2026-10-11T09:30:00Z",
+	}
+	want := "id=ver_1  number=2  sha256=abc123  created_at=2026-10-11T09:30:00Z"
+	if got := compactRow(row); got != want {
+		t.Fatalf("compactRow()\n got: %q\nwant: %q", got, want)
+	}
+}
+
 func TestJSONRenderingLeavesMentionPayloadUnchanged(t *testing.T) {
 	t.Parallel()
 	payload := []byte(`{"items":[{"id":"cmt_1","body":"Ping @Alice","mentions":[{"principal":{"type":"user","id":"usr_1","name":"Alice"},"offset":5,"length":6}]}]}`)
