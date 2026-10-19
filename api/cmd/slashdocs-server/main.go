@@ -22,6 +22,7 @@ import (
 	"github.com/razorpay/slashdocs/api/internal/db"
 	"github.com/razorpay/slashdocs/api/internal/googlegroups"
 	"github.com/razorpay/slashdocs/api/internal/kvevents"
+	"github.com/razorpay/slashdocs/api/internal/notifications"
 	"github.com/razorpay/slashdocs/api/internal/repo"
 	pgrepo "github.com/razorpay/slashdocs/api/internal/repo/postgres"
 	"github.com/razorpay/slashdocs/api/internal/server"
@@ -296,8 +297,17 @@ func newApplicationServer(ctx context.Context, store *pgrepo.Store, blobs blob.S
 	if err != nil {
 		return nil, err
 	}
-	sender := loadSlackSender(os.Getenv("SLASHDOCS_SLACK_BOT_TOKEN"))
+	slackBotToken := os.Getenv("SLASHDOCS_SLACK_BOT_TOKEN")
+	sender := loadSlackSender(slackBotToken)
 	store.SetNotificationsEnabled(sender != nil)
+	linkPreviews, err := boolEnv("SLASHDOCS_SLACK_LINK_PREVIEWS", false)
+	if err != nil {
+		return nil, err
+	}
+	slackSigningSecret, err := loadSlackLinkPreviews(linkPreviews, slackBotToken, os.Getenv("SLASHDOCS_SLACK_SIGNING_SECRET"))
+	if err != nil {
+		return nil, err
+	}
 	options := []server.Option{
 		server.WithCommentNotificationSender(sender),
 		server.WithRepository(store),
@@ -311,6 +321,9 @@ func newApplicationServer(ctx context.Context, store *pgrepo.Store, blobs blob.S
 	}
 	if googleGroups.directory != nil {
 		options = append(options, server.WithGoogleGroupDirectory(googleGroups.directory))
+	}
+	if slackSigningSecret != "" {
+		options = append(options, server.WithSlackUnfurler(notifications.NewSlack(strings.TrimSpace(slackBotToken))))
 	}
 	return server.New(server.Config{
 		Environment:               server.EnvProduction,
@@ -330,6 +343,7 @@ func newApplicationServer(ctx context.Context, store *pgrepo.Store, blobs blob.S
 		GoogleGroupsEnabled:       googleGroups.enabled,
 		GoogleGroupsMembershipTTL: googleGroups.membershipTTL,
 		DisableLabels:             !labelsEnabled,
+		SlackSigningSecret:        slackSigningSecret,
 	}, options...), nil
 }
 

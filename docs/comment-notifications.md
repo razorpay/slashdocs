@@ -93,7 +93,8 @@ match. Install the app with bot scopes
 [`users:read.email`](https://docs.slack.dev/reference/methods/users.lookupByEmail/),
 [`im:write`](https://docs.slack.dev/reference/methods/conversations.open/), and
 [`chat:write`](https://docs.slack.dev/reference/methods/chat.postMessage/).
-No event subscriptions or inbound Slack webhook are required.
+Notifications need no event subscriptions or inbound Slack webhook; only
+[link previews](#slack-link-previews) do.
 Enable **App Home → Messages Tab** so the bot can send DMs. It can be read-only;
 this integration does not handle messages sent back to the bot. In an app
 manifest, set `features.app_home.messages_tab_enabled` and
@@ -122,6 +123,30 @@ application origin so notification buttons point to the right deployment.
 Rotate by updating the Secret and restarting the workload, then revoke the old
 token after rollout. To offboard, remove the environment injection, revoke the
 Slack token, and delete the Secret key.
+
+## Slack link previews
+
+The same Slack app can preview pasted document links with
+[`chat.unfurl`](https://docs.slack.dev/messaging/unfurling-links-in-messages/).
+A link gets a card with the title, a summary, `vN · N open threads · owner` and
+an **Open doc** button only when:
+
+1. `SLASHDOCS_DEPLOYMENT=org`;
+2. anyone in the organization can open the document, directly or through a folder;
+3. nobody from another organization is in the conversation.
+
+Every other link, including one being typed or one in a private channel the bot
+has not joined, gets "SlashDocs document · Sign in to see if you have access".
+Slack keeps a card once posted, and does not preview links posted by apps.
+
+In the Slack app, subscribe to the bot event `link_shared` at
+`<SLASHDOCS_APP_ORIGIN>/v1/slack/events`, add the app and previous origins as
+**App unfurl domains**, add the bot scopes `links:read`, `links:write`,
+`channels:read`, `groups:read`, `im:read` and `mpim:read`, and reinstall. Slack
+checks the URL when it is saved, so first deploy with
+`SLASHDOCS_SLACK_LINK_PREVIEWS` and `SLASHDOCS_SLACK_SIGNING_SECRET` set (see
+[environment variables](self-hosting.md#optional)). Rotate the signing secret
+like the bot token.
 
 ## Delivery behavior
 
