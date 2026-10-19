@@ -50,6 +50,9 @@ type Config struct {
 	// programmatic users of server.New retain the existing feature set unless
 	// the application entrypoint explicitly disables labels.
 	DisableLabels bool
+	// SlackSigningSecret turns on Slack link previews (POST /v1/slack/events)
+	// when it is set together with WithSlackUnfurler. Empty means off.
+	SlackSigningSecret string
 }
 
 // Server wraps the gin engine.
@@ -87,6 +90,9 @@ type dependencies struct {
 	googleGroupDirectory      googlegroups.GoogleGroupDirectory
 	googleGroupResolver       *googlegroups.Resolver
 	labelsEnabled             bool
+	slackSigningSecret        string
+	slackUnfurler             notifications.Unfurler
+	previousOrigins           []string
 }
 
 // Option configures the Server.
@@ -98,6 +104,12 @@ func WithAuthenticator(a auth.Authenticator) Option {
 
 func WithCommentNotificationSender(sender notifications.Sender) Option {
 	return func(d *dependencies) { d.commentNotificationSender = sender }
+}
+
+// WithSlackUnfurler supplies the Slack client for link previews. Previews are
+// only served when Config.SlackSigningSecret is also set.
+func WithSlackUnfurler(u notifications.Unfurler) Option {
+	return func(d *dependencies) { d.slackUnfurler = u }
 }
 
 func (s *Server) RunCommentNotifications(ctx context.Context) {
@@ -161,6 +173,8 @@ func New(cfg Config, opts ...Option) *Server {
 		githubAccessChecks:   new(singleflight.Group),
 		googleGroupsEnabled:  cfg.GoogleGroupsEnabled,
 		labelsEnabled:        !cfg.DisableLabels,
+		slackSigningSecret:   cfg.SlackSigningSecret,
+		previousOrigins:      cfg.PreviousOrigins,
 	}
 	if cfg.GitHubClientID != "" && cfg.GitHubClientSecret != "" && cfg.AppOrigin != "" {
 		deps.githubOAuth = &oauth2.Config{
@@ -265,6 +279,11 @@ func (s *Server) routes(deps dependencies) {
 	v1.GET("/auth/oidc/callback", h.oauthCallback)
 	v1.POST("/auth/cli/exchange", h.cliExchange)
 	v1.POST("/auth/logout", h.logout)
+	// Slack link previews. Public, because Slack cannot sign in; every request
+	// must carry a valid Slack signature instead (see verifySlackSignature).
+	if deps.slackSigningSecret != "" && deps.slackUnfurler != nil {
+		v1.POST("/slack/events", verifySlackSignature(deps.slackSigningSecret, time.Now), h.slackEvents)
+	}
 
 	// Every route below requires authentication.
 	authed := v1.Group("", requireAuth(deps.authenticator, deps.appOrigin, deps.googleGroupResolver))
