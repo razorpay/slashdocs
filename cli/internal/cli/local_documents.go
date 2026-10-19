@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	docrender "github.com/razorpay/slashdocs/internal/render"
+	"github.com/razorpay/slashdocs/internal/textedit"
 )
 
 // Local documents are the HTML files of the documents folder. The ID of a
@@ -45,6 +47,7 @@ func (s *localDocs) registerDocuments(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH "+doc, s.handle(s.rename))
 	mux.HandleFunc("DELETE "+doc, s.handle(s.deleteDocument))
 	mux.HandleFunc("POST "+doc+"/versions", s.handle(s.push))
+	mux.HandleFunc("POST "+doc+"/edits", s.handle(s.edit))
 	mux.HandleFunc("GET "+doc+"/versions/{version}/html", s.html)
 	mux.HandleFunc("GET "+doc+"/headings", s.handle(s.headings))
 	mux.HandleFunc("GET "+doc+"/link", s.handle(s.link))
@@ -160,6 +163,45 @@ func (s *localDocs) push(r *http.Request, doc string) (any, error) {
 	}
 	sum := sha256.Sum256(b)
 	return map[string]string{"id": localVersion(b), "sha256": hex.EncodeToString(sum[:])}, s.write(doc, b)
+}
+
+// edit replaces exact text in the document, as the server does. Without a
+// base version the edits apply to the current content.
+func (s *localDocs) edit(r *http.Request, doc string) (any, error) {
+	var in struct {
+		BaseVersionID string          `json:"base_version_id"`
+		ChangeSummary string          `json:"change_summary"`
+		Edits         []textedit.Edit `json:"edits"`
+	}
+	if err := decodeLocal(r, &in); err != nil {
+		return nil, err
+	}
+	if len(in.Edits) == 0 || len(in.Edits) > textedit.MaxEdits {
+		return nil, localError{http.StatusBadRequest, fmt.Sprintf("pass between 1 and %d edits", textedit.MaxEdits)}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, err := s.root.ReadFile(doc)
+	if err != nil {
+		return nil, err
+	}
+	base := localVersion(current)
+	if in.BaseVersionID != "" && in.BaseVersionID != base {
+		return nil, localError{http.StatusConflict, "base_version_id is stale: the current version is " + base}
+	}
+	b, err := textedit.Apply(current, in.Edits)
+	var editErr *textedit.Error
+	if errors.As(err, &editErr) {
+		return nil, localError{http.StatusUnprocessableEntity, editErr.Error()}
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > localMaxHTML {
+		return nil, localError{http.StatusRequestEntityTooLarge, "edited HTML exceeds 50 MiB"}
+	}
+	sum := sha256.Sum256(b)
+	return map[string]any{"id": localVersion(b), "sha256": hex.EncodeToString(sum[:]), "base_version_id": base, "edits_applied": len(in.Edits)}, s.write(doc, b)
 }
 
 // html sends the document as a download, as the server does, because it is

@@ -43,6 +43,10 @@ slashdocs docs pull doc_123 --out report.html
 slashdocs docs comments list doc_123 --json > review.json
 # edit report.html
 slashdocs docs push doc_123 report.html --summary "Address review comments"
+# or change only the text that needs it, without uploading the file
+slashdocs docs edit doc_123 --old "TTL of 10 minutes" --new "TTL of 5 minutes"
+# --all replaces every occurrence, e.g. a renamed term
+slashdocs docs edit doc_123 --all --old "Cache design" --new "Cache plan"
 slashdocs docs comments resolve doc_123 cmt_1 cmt_2
 ```
 

@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/razorpay/slashdocs/internal/textedit"
 )
 
 // defaultDocPermissionEnv is the CLI-side per-user override for the sharing
@@ -33,6 +35,7 @@ func docsCmd(g *globals, out io.Writer) *cobra.Command {
 		documentMoveCmd(g, out),
 		pullCmd(g, out),
 		docsPushCmd(g, out),
+		docsEditCmd(g, out),
 		versionsCmd(g, out),
 		commentsCmd(g, out),
 		documentLabelsCmd(g, out),
@@ -542,6 +545,94 @@ func docsPushCmd(g *globals, out io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&base, "base-version", "", "base version ID")
 	cmd.Flags().StringVar(&summary, "summary", "", "change summary, one change per line")
 	return cmd
+}
+
+func docsEditCmd(g *globals, out io.Writer) *cobra.Command {
+	var olds, news []string
+	var editsFile, base, summary string
+	var all bool
+	cmd := &cobra.Command{
+		Use:   "edit <doc_id>",
+		Short: "Replace text in a document without uploading it again",
+		Long: `Replace exact text in the HTML of a document. The server applies the edits
+and saves the result as a new version, so only the changed text is sent and
+everything else stays byte-for-byte the same.
+
+Each --old must occur exactly once in the current HTML; include surrounding
+text to make it unique, or pass --all to replace every occurrence. Pair each
+--old with a --new, in order, or pass --edits with a JSON list of
+{"old_string", "new_string", "replace_all"} objects. Edits apply in order, and
+if one does not match, nothing is saved.
+
+Without --base-version the edits apply to the current version, even when
+someone else changed another part of the document since you read it.`,
+		Example: `  slashdocs docs edit doc_123 --old 'TTL of 10 minutes' --new 'TTL of 5 minutes'
+  slashdocs docs edit doc_123 --all --old 'Cache design' --new 'Cache plan'
+  slashdocs docs edit doc_123 --edits edits.json --summary 'Shorten cache TTLs'`,
+		Args: exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			edits, err := editArgs(olds, news, all, editsFile)
+			if err != nil {
+				return err
+			}
+			payload := map[string]any{"edits": edits}
+			if base != "" {
+				payload["base_version_id"] = base
+			}
+			if summary != "" {
+				payload["change_summary"] = summary
+			}
+			cl, err := client(g)
+			if err != nil {
+				return err
+			}
+			b, err := cl.doJSON("POST", apiPath("/v1/documents/%s/edits", args[0]), payload)
+			var apiErr *APIError
+			if errors.As(err, &apiErr) && apiErr.Code == "edit_failed" {
+				apiErr.Message = strings.Replace(apiErr.Message, "set replace_all", "pass --all", 1)
+			}
+			if err != nil {
+				return err
+			}
+			// The pulled base version stays as it was: a later push of the
+			// pulled file must not overwrite these edits without a conflict.
+			return printSavedVersion(out, g, "Saved version %s of %s.", args[0], cl.Base, b)
+		},
+	}
+	cmd.Flags().StringArrayVar(&olds, "old", nil, "exact text to replace; repeat with --new for several edits")
+	cmd.Flags().StringArrayVar(&news, "new", nil, "replacement for the --old at the same position")
+	cmd.Flags().BoolVar(&all, "all", false, "replace every occurrence of each --old, not just one")
+	cmd.Flags().StringVar(&editsFile, "edits", "", `JSON file of [{"old_string": ..., "new_string": ..., "replace_all": false}], or - for stdin`)
+	cmd.Flags().StringVar(&base, "base-version", "", "fail unless this is still the current version")
+	cmd.Flags().StringVar(&summary, "summary", "", "change summary, one change per line (defaults to one line per edit)")
+	return cmd
+}
+
+// editArgs builds the edits from --old/--new pairs or an --edits file. all
+// applies to the pairs; each edit in the file says for itself.
+func editArgs(olds, news []string, all bool, file string) ([]textedit.Edit, error) {
+	if len(olds) != len(news) {
+		return nil, fmt.Errorf("pass one --new for each --old (got %d --old and %d --new)", len(olds), len(news))
+	}
+	edits := make([]textedit.Edit, 0, len(olds))
+	for i := range olds {
+		edits = append(edits, textedit.Edit{OldString: olds[i], NewString: news[i], ReplaceAll: all})
+	}
+	if file != "" {
+		b, _, err := readFileArg(file)
+		if err != nil {
+			return nil, err
+		}
+		var fromFile []textedit.Edit
+		if err := json.Unmarshal(b, &fromFile); err != nil {
+			return nil, fmt.Errorf("could not parse %s: want a JSON list of {\"old_string\", \"new_string\"} objects: %w", file, err)
+		}
+		edits = append(edits, fromFile...)
+	}
+	if len(edits) == 0 {
+		return nil, errors.New("nothing to edit; pass --old and --new, or --edits")
+	}
+	return edits, nil
 }
 
 func commentsCmd(g *globals, out io.Writer) *cobra.Command {

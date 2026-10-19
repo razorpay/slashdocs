@@ -353,6 +353,22 @@ export const api = {
       body: fd,
     });
   },
+  getVersionHTML: (doc: string, version: string) =>
+    request<string>(`/v1/documents/${doc}/versions/${version}/html`),
+  // Applies exact find-and-replace edits on the server. Without a base
+  // version they apply to whatever version is current.
+  editDocument: (
+    doc: string,
+    input: {
+      edits: { old_string: string; new_string: string }[];
+      base_version_id?: string;
+      change_summary?: string;
+    },
+  ) =>
+    request<Version & { base_version_id: string; edits_applied: number }>(
+      `/v1/documents/${doc}/edits`,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
   renderToken: (doc: string, version: string) =>
     request<{ token: string; url: string }>(
       `/v1/documents/${doc}/versions/${version}/render-token`,

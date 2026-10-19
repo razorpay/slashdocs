@@ -71,6 +71,15 @@ Publish a new document:
 Push an update to an existing document:
   slashdocs docs push <doc_id> report.html --base-version <version_id> --summary 'Address comments'
 
+Change existing text without uploading the file again:
+  slashdocs docs edit <doc_id> --old 'TTL of 10 minutes' --new 'TTL of 5 minutes'
+
+Each --old must occur exactly once in the current HTML; add surrounding text to
+make it unique, or pass --all to replace every occurrence. Repeat --old/--new
+for several edits, or pass --edits edits.json. If one edit does not match,
+nothing is saved. Prefer edit for small changes: the rest of the document stays
+byte-for-byte the same and comments elsewhere stay anchored.
+
 Write one change per line in --summary; the version history shows each line
 as a list item.
 
@@ -79,7 +88,7 @@ version for the active context, so --base-version is optional.
 
 Publishing model:
   - Creating a document stores the uploaded HTML as version 1.
-  - Pushing HTML creates a new immutable version.
+  - Pushing HTML, or editing its text, creates a new immutable version.
   - The slashdocs UI is for review; agents and CLI/API publishers create versions.
   - Runtime KV changes from uploaded HTML do not create versions; see:
       slashdocs guidelines interactivity kv

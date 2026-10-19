@@ -58,6 +58,16 @@ instead of creating a duplicate. Use the CLI help to find the current push/updat
 syntax and include a short summary of what changed. Write one change per line;
 the version history shows a multi-line summary as a list.
 
+For changes to existing text, such as a fixed number, a reworded sentence, or
+a few addressed comments, use `slashdocs docs edit` (MCP: `edit_document`)
+instead of pushing the whole file. It sends only exact find-and-replace pairs,
+so it is fast, leaves the rest of the document byte-for-byte unchanged, and
+keeps comments elsewhere anchored. Each old string must occur exactly once in
+the current HTML; add surrounding text to make it unique, or pass `--all`
+(MCP: `replace_all`) when every occurrence should change, such as a renamed
+term. If one does not match, nothing is saved. Push the whole file
+only for restructuring or large rewrites.
+
 ### Searching and labels
 
 Use the same Slack-style search language as the web application:

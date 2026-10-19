@@ -14,6 +14,7 @@ import {
   refreshSVGRects,
 } from "./highlight.ts";
 import { createCursorLayer, trackPointer } from "./cursors.ts";
+import { startTextEditing, type TextEditor } from "./text-editing.ts";
 import { CHORD_KEYS } from "../src/lib/esc-chord.ts";
 import {
   reduceVimScroll,
@@ -471,6 +472,29 @@ type Theme = "dark" | "light";
   }
 
   let printPreparing = false;
+  let textEditor: TextEditor | null = null;
+
+  // Text editing makes the words of the document editable. Highlights split
+  // text nodes, so they come off first; the app sends no paint while editing.
+  function setTextEditing(on: boolean): void {
+    const d = doc();
+    if (!on) {
+      if (!textEditor) return;
+      textEditor.stop();
+      textEditor = null;
+      // Reload the document so it shows its source again, not the edits.
+      frame.setAttribute("srcdoc", frame.getAttribute("srcdoc") || "");
+      return;
+    }
+    if (textEditor || !d) return;
+    paint([], null);
+    textEditor = startTextEditing(d, {
+      onDirty: (count) =>
+        parent.postMessage({ type: "slashdocs:text-dirty", count }, targetOrigin()),
+      onRefused: () =>
+        parent.postMessage({ type: "slashdocs:text-refused" }, targetOrigin()),
+    });
+  }
   const exportPending = new Map<string, { resolve: () => void; reject: () => void }>();
   let exportID = 0;
   function requestPrint(): void {
@@ -1127,6 +1151,11 @@ type Theme = "dark" | "light";
   }
 
   function handleLinkClick(e: MouseEvent): void {
+    // A click while editing places the caret; it does not follow the link.
+    if (textEditor) {
+      e.preventDefault();
+      return;
+    }
     const d = doc();
     if (!d || !e.target || !(e.target as Element).closest) return;
     const a = (e.target as Element).closest("a[href]") as HTMLAnchorElement | null;
@@ -1881,6 +1910,11 @@ type Theme = "dark" | "light";
     trackPointer(d, (spot) =>
       parent.postMessage({ type: "slashdocs:pointer", spot }, targetOrigin()),
     );
+    // A document that reloads by itself while being edited stays editable.
+    if (textEditor) {
+      textEditor = null;
+      setTextEditing(true);
+    }
     parent.postMessage({ type: "slashdocs:ready" }, targetOrigin());
     scheduleViewport();
     hydrateKV();
@@ -1938,8 +1972,25 @@ type Theme = "dark" | "light";
       else pending?.reject();
       return;
     }
-    if (e.data.type === "slashdocs:paint") paint(e.data.comments, e.data.active);
-    else if (e.data.type === "slashdocs:theme") applyTheme(e.data.theme);
+    if (e.data.type === "slashdocs:text-editing") {
+      setTextEditing(e.data.on === true);
+      return;
+    }
+    if (
+      e.data.type === "slashdocs:text-collect" &&
+      typeof e.data.requestId === "string"
+    ) {
+      const result = textEditor?.collect() || { changes: [], unsupported: false };
+      parent.postMessage(
+        { type: "slashdocs:text-changes", requestId: e.data.requestId, ...result },
+        targetOrigin(),
+      );
+      return;
+    }
+    if (e.data.type === "slashdocs:paint") {
+      // Painting would split the text nodes the editor is watching.
+      if (!textEditor) paint(e.data.comments, e.data.active);
+    } else if (e.data.type === "slashdocs:theme") applyTheme(e.data.theme);
     else if (e.data.type === "slashdocs:kv-response") {
       const requestId = String(e.data.requestId || "");
       const pending = kvPending[requestId];

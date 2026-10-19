@@ -17,6 +17,7 @@ import { cursorsShownStore, parseCursorSpot } from "@/lib/live-cursors";
 import { useDocumentExport } from "./use-document-export";
 import { useDoc } from "./doc-context";
 import { useBridgeHost } from "./use-bridge-host";
+import type { TextEditResult } from "./doc-context";
 
 const FORWARDED_KEYS = new Set<string>([
   "Escape",
@@ -51,6 +52,9 @@ export function RenderFrame() {
     moveCursor,
     subscribeCursors,
     followedCursor,
+    textEditing,
+    setTextEditCount,
+    registerTextEditCollector,
   } = useDoc();
   const cursorsShown = cursorsShownStore.useStore();
   const versionRef = useRef(version);
@@ -123,13 +127,46 @@ export function RenderFrame() {
   }, [location.hash, ready, postToFrame]);
 
   const paint = useCallback(() => {
-    if (!ready) return;
+    // Highlights split the text the reader is editing; they come back after.
+    if (!ready || textEditing) return;
     postToFrame({
       type: "slashdocs:paint",
       comments: paintPayload,
       active: activeComment,
     });
-  }, [ready, paintPayload, activeComment, postToFrame]);
+  }, [ready, textEditing, paintPayload, activeComment, postToFrame]);
+  const paintRef = useRef(paint);
+  paintRef.current = paint;
+
+  useEffect(() => {
+    if (ready) postToFrame({ type: "slashdocs:text-editing", on: textEditing });
+  }, [ready, textEditing, postToFrame]);
+
+  // Text edits are collected from the frame on request, when the reader saves.
+  const textCollects = useRef(new Map<string, (result: TextEditResult) => void>());
+  useEffect(() => {
+    if (!ready) return;
+    const pending = textCollects.current;
+    registerTextEditCollector(
+      () =>
+        new Promise<TextEditResult>((resolve, reject) => {
+          const requestId = `text-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+          const timer = window.setTimeout(() => {
+            pending.delete(requestId);
+            reject(new Error("The document did not report its changes."));
+          }, 5000);
+          pending.set(requestId, (result) => {
+            window.clearTimeout(timer);
+            resolve(result);
+          });
+          postToFrame({ type: "slashdocs:text-collect", requestId });
+        }),
+    );
+    return () => {
+      registerTextEditCollector(null);
+      pending.clear();
+    };
+  }, [ready, postToFrame, registerTextEditCollector]);
 
   // Vim scrolling works whether focus is inside the rendered document or on
   // the surrounding viewer chrome. The bridge handles the actual scroll so
@@ -337,6 +374,28 @@ export function RenderFrame() {
       if (e.data?.type === "slashdocs:document-click") {
         handleRenderedDocumentClick();
       }
+      // The document reloaded in place, as it does when editing is
+      // cancelled: it has no highlights until it is painted again.
+      if (e.data?.type === "slashdocs:ready" && readyRef.current) {
+        paintRef.current();
+      }
+      if (
+        e.data?.type === "slashdocs:text-changes" &&
+        typeof e.data.requestId === "string"
+      ) {
+        const resolve = textCollects.current.get(e.data.requestId);
+        textCollects.current.delete(e.data.requestId);
+        resolve?.(parseTextEditResult(e.data));
+      }
+      if (e.data?.type === "slashdocs:text-dirty" && typeof e.data.count === "number") {
+        setTextEditCount(Math.max(0, Math.min(1_000_000, Math.floor(e.data.count))));
+      }
+      if (e.data?.type === "slashdocs:text-refused") {
+        toast.info(
+          "Only words can be edited here. To add paragraphs or change layout, upload a new version.",
+          { id: "text-refused" },
+        );
+      }
       if (
         e.data?.type === "slashdocs:paint-result" &&
         Array.isArray(e.data.results) &&
@@ -440,6 +499,7 @@ export function RenderFrame() {
     setCommentViewport,
     syncCommentRail,
     applyZoom,
+    setTextEditCount,
   ]);
 
   // The page holds the event stream; the bridge host forwards its KV changes.
@@ -530,4 +590,19 @@ export function RenderFrame() {
       )}
     </div>
   );
+}
+
+// parseTextEditResult reads a text-changes message. The frame hosts untrusted
+// HTML on the bridge's origin, so the message is checked, not trusted.
+function parseTextEditResult(data: Record<string, unknown>): TextEditResult {
+  const changes = Array.isArray(data.changes)
+    ? data.changes
+        .slice(0, 10_000)
+        .filter(
+          (c): c is { before: string; after: string } =>
+            !!c && typeof c.before === "string" && typeof c.after === "string",
+        )
+        .map(({ before, after }) => ({ before, after }))
+    : [];
+  return { changes, unsupported: data.unsupported === true };
 }
