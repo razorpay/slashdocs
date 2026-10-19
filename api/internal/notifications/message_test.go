@@ -153,6 +153,23 @@ func TestSlackAccessRequestMessageContent(t *testing.T) {
 	}
 }
 
+func TestCommentActivityNamesActor(t *testing.T) {
+	for _, tc := range []struct {
+		message Message
+		want    string
+	}{
+		{Message{Actor: "Ravi (ravi@example.com)"}, "💬 Ravi (ravi@example.com) commented on your doc"},
+		{Message{Actor: "ravi@example.com", Reply: true}, "💬 ravi@example.com replied to a comment on your doc"},
+		{Message{Actor: "Ravi", Reason: "mention", Reply: true}, "🔔 Ravi mentioned you in a comment"},
+		{Message{Actor: "  "}, "💬 Someone commented on your doc"},
+		{Message{Actor: "password: hunter2"}, "💬 password: [redacted] commented on your doc"},
+	} {
+		if got := commentActivity(tc.message); got != tc.want {
+			t.Errorf("commentActivity(%+v) = %q, want %q", tc.message, got, tc.want)
+		}
+	}
+}
+
 func TestNotificationPreviewBoundsAndSensitiveFields(t *testing.T) {
 	long := notificationPreview(strings.Repeat("界", 3000), 150)
 	if utf8.RuneCountInString(long) != 150 || !utf8.ValidString(long) || !strings.HasSuffix(long, "…") {

@@ -84,6 +84,13 @@ spec:
             - name: GOOGLE_GROUPS_REQUEST_TIMEOUT
               value: {{ .Values.googleGroups.requestTimeout | quote }}
             {{- end }}
+            {{- if .Values.googleChat.webhookSecret }}
+            - name: SLASHDOCS_GOOGLE_CHAT_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.googleChat.webhookSecret }}
+                  key: {{ .Values.googleChat.webhookKey }}
+            {{- end }}
             {{- if eq .Values.deployment.mode "org" }}
             - name: SLASHDOCS_ORG_DOMAINS
               value: {{ required "deployment.orgDomains is required when deployment.mode=org" .Values.deployment.orgDomains | quote }}
