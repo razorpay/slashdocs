@@ -148,6 +148,7 @@ func (h handlers) listDocuments(c *gin.Context) {
 			internalErr(c, err)
 			return
 		}
+		h.hydrateDocuments(c.Request.Context(), documentPointers(items))
 		c.JSON(http.StatusOK, listResponse[repo.Document]{Items: items})
 		return
 	}
@@ -156,11 +157,7 @@ func (h handlers) listDocuments(c *gin.Context) {
 		internalErr(c, err)
 		return
 	}
-	if h.deps.labelsEnabled {
-		for i := range items {
-			items[i].Labels, _ = h.deps.repository.ListDocumentLabels(c.Request.Context(), items[i].ID)
-		}
-	}
+	h.hydrateDocuments(c.Request.Context(), documentPointers(items))
 	c.JSON(http.StatusOK, listResponse[repo.Document]{Items: items})
 }
 
@@ -207,9 +204,7 @@ func (h handlers) getDocument(c *gin.Context) {
 			}
 		}
 	}
-	if h.deps.labelsEnabled {
-		d.Labels, _ = h.deps.repository.ListDocumentLabels(c.Request.Context(), d.ID)
-	}
+	h.hydrateDocuments(c.Request.Context(), []*repo.Document{&d})
 	c.JSON(http.StatusOK, d)
 }
 

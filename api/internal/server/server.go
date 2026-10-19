@@ -313,6 +313,7 @@ func (s *Server) routes(deps dependencies) {
 	authed.POST("/documents/:id/versions", h.createVersion)
 	authed.GET("/documents/:id/labels", h.listDocumentLabels)
 	authed.PUT("/documents/:id/labels", h.replaceDocumentLabels)
+	authed.PUT("/documents/:id/status", h.setDocumentStatus)
 	authed.POST("/documents/:id/github/raw", h.githubRawContent)
 	authed.POST("/documents/:id/comments", h.createComment)
 	authed.GET("/me/notifications", activityLimit, h.notificationPreferences)

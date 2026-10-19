@@ -15,6 +15,7 @@ export type CommentMention = {
   offset: number;
   length: number;
 };
+export type DocumentStatus = "draft" | "in_review" | "approved" | "archived";
 export type Document = {
   id: string;
   title: string;
@@ -24,6 +25,7 @@ export type Document = {
   parent_folder?: { id: string; title: string };
   updated_at?: string;
   labels?: string[];
+  status?: DocumentStatus;
   // Search results only: the matching text. U+0002 and U+0003 surround each match.
   snippet?: string;
 };
@@ -369,6 +371,11 @@ export const api = {
     request<{ items: string[] }>(`/v1/documents/${doc}/labels`, {
       method: "PUT",
       body: JSON.stringify({ labels }),
+    }),
+  setDocumentStatus: (doc: string, status: DocumentStatus | "") =>
+    request<{ status: DocumentStatus | "" }>(`/v1/documents/${doc}/status`, {
+      method: "PUT",
+      body: JSON.stringify({ status }),
     }),
   githubStatus: () => request<GitHubStatus>("/v1/integrations/github"),
   githubConnectURL: (redirect = location.pathname + location.search) =>

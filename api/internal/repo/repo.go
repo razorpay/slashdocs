@@ -80,6 +80,9 @@ const (
 	StatusDeclined = "declined"
 )
 
+// DocumentStatuses are the review statuses an editor can set on a document.
+var DocumentStatuses = []string{"draft", "in_review", "approved", "archived"}
+
 type Document struct {
 	ID               string            `json:"id"`
 	Title            string            `json:"title"`
@@ -89,6 +92,8 @@ type Document struct {
 	ParentFolder     *FolderBreadcrumb `json:"parent_folder,omitempty"`
 	UpdatedAt        string            `json:"updated_at,omitempty"`
 	Labels           []string          `json:"labels,omitempty"`
+	// Status is one of DocumentStatuses, or empty when no status is set.
+	Status string `json:"status,omitempty"`
 	// Snippet is set in search results when the text matches. U+0002 and
 	// U+0003 surround each match.
 	Snippet string `json:"snippet,omitempty"`
@@ -376,6 +381,10 @@ type Repository interface {
 	ListDocumentsByLabel(ctx context.Context, principal auth.Principal, label string) ([]Document, error)
 	ListDocumentLabels(ctx context.Context, documentID string) ([]string, error)
 	ReplaceDocumentLabels(ctx context.Context, documentID string, labels []string, actor auth.Principal) ([]string, error)
+	// DocumentStatuses maps each existing document ID to its status, which
+	// is empty when none is set.
+	DocumentStatuses(ctx context.Context, documentIDs []string) (map[string]string, error)
+	SetDocumentStatus(ctx context.Context, documentID, status string) error
 	UpsertGitHubConnection(ctx context.Context, connection GitHubConnection) error
 	GetGitHubConnection(ctx context.Context, userID string) (GitHubConnection, error)
 	DeleteGitHubConnection(ctx context.Context, userID string) error

@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { errorMessage } from "@/lib/errors";
 import {
   Check,
+  ChevronDown,
   ExternalLink,
   FileDown,
   ArrowUpToLine,
@@ -43,7 +44,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetTrigger } from "@/components/ui/sheet";
 import { DeleteDocumentDialog } from "@/components/delete-document-dialog";
-import { api, type Principal, type Version } from "@/api";
+import { api, type DocumentStatus, type Principal, type Version } from "@/api";
+import { LabelChips, StatusBadge, StatusDot } from "@/components/document-meta";
+import { DOCUMENT_STATUSES, statusMeta } from "@/lib/document-status";
 import { canManageSharing, ROLE_RANK } from "@/lib/constants";
 import { changeSummaryLines } from "@/lib/change-summary";
 import { formatTimestamp } from "@/lib/format-date";
@@ -68,6 +71,7 @@ export function DocBar({
   latest,
   versions,
   labels,
+  status,
   onSelectVersion,
   viewers,
   onFollowViewer,
@@ -87,6 +91,7 @@ export function DocBar({
   latest: string;
   versions: Version[];
   labels: string[];
+  status?: DocumentStatus;
   onSelectVersion: (versionID: string) => void;
   viewers: Viewer[];
   onFollowViewer: (viewer: Viewer) => void;
@@ -137,15 +142,19 @@ export function DocBar({
       }
       title={title}
       meta={
-        currentVersion && (
-          <span
-            className={`hidden shrink-0 text-xs tabular-nums sm:inline ${isViewingOlder ? "text-amber-600 dark:text-amber-300" : "text-[var(--color-fg-muted)]"}`}
-            title={isViewingOlder ? "Viewing an older version" : "Latest version"}
-          >
-            v{currentVersion.number}
-            {isViewingOlder ? " · older" : ""}
-          </span>
-        )
+        <>
+          <StatusMenu docId={docId} status={status} canEdit={canEdit} />
+          <LabelChips labels={labels} max={3} className="hidden lg:flex" />
+          {currentVersion && (
+            <span
+              className={`hidden shrink-0 text-xs tabular-nums sm:inline ${isViewingOlder ? "text-amber-600 dark:text-amber-300" : "text-[var(--color-fg-muted)]"}`}
+              title={isViewingOlder ? "Viewing an older version" : "Latest version"}
+            >
+              v{currentVersion.number}
+              {isViewingOlder ? " · older" : ""}
+            </span>
+          )}
+        </>
       }
     >
       <Viewers viewers={viewers} versions={versions} onFollow={onFollowViewer} />
@@ -314,6 +323,73 @@ export function DocBar({
 
 // Other people viewing the document, in the colors of their cursors.
 // Clicking one goes to their cursor, or else to what they see.
+function StatusMenu({
+  docId,
+  status,
+  canEdit,
+}: {
+  docId: string;
+  status?: DocumentStatus;
+  canEdit: boolean;
+}) {
+  const qc = useQueryClient();
+  const meta = statusMeta(status);
+  const save = useMutation({
+    mutationFn: (next: DocumentStatus | "") => api.setDocumentStatus(docId, next),
+    onSuccess: (_, next) => {
+      qc.invalidateQueries({ queryKey: queryKeys.document(docId) });
+      qc.invalidateQueries({ queryKey: queryKeys.documents() });
+      qc.invalidateQueries({ queryKey: queryKeys.foldersAll() });
+      toast.success(
+        next ? `Status set to ${statusMeta(next)?.label}.` : "Status cleared.",
+      );
+    },
+    onError: (e) => toast.error(errorMessage(e, "Could not update status")),
+  });
+  if (!canEdit) {
+    return <StatusBadge status={status} className="hidden sm:inline-flex" />;
+  }
+  return (
+    <Dropdown>
+      <DropdownTrigger asChild>
+        <button
+          type="button"
+          aria-label={meta ? `Status: ${meta.label}` : "Set status"}
+          title={meta ? `Status: ${meta.label}` : "Set status"}
+          disabled={save.isPending}
+          className={`hidden h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium transition-colors duration-150 hover:bg-[var(--color-surface-muted)] disabled:opacity-60 sm:inline-flex ${meta ? "border-[var(--color-border)] text-[var(--color-fg)]" : "border-dashed border-[var(--color-border-strong)] text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]"}`}
+        >
+          {meta ? <StatusDot color={meta.color} /> : null}
+          {meta ? meta.label : "Set status"}
+          <ChevronDown className="h-3 w-3 text-[var(--color-fg-muted)]" />
+        </button>
+      </DropdownTrigger>
+      <DropdownContent align="start" className="min-w-[180px]">
+        {DOCUMENT_STATUSES.map((s) => (
+          <DropdownItem key={s.value} onSelect={() => save.mutate(s.value)}>
+            <StatusDot color={s.color} className="h-2 w-2" />
+            {s.label}
+            {s.value === status ? (
+              <Check className="ml-auto h-4 w-4 text-[var(--color-accent)]" />
+            ) : null}
+          </DropdownItem>
+        ))}
+        {meta ? (
+          <>
+            <DropdownSeparator />
+            <DropdownItem
+              className="text-[var(--color-fg-muted)]"
+              onSelect={() => save.mutate("")}
+            >
+              Clear status
+            </DropdownItem>
+          </>
+        ) : null}
+      </DropdownContent>
+    </Dropdown>
+  );
+}
+
 function Viewers({
   viewers,
   versions,

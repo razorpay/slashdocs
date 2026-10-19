@@ -941,6 +941,37 @@ func (s *Store) ReplaceDocumentLabels(ctx context.Context, documentID string, la
 	return append([]string(nil), labels...), nil
 }
 
+func (s *Store) DocumentStatuses(ctx context.Context, documentIDs []string) (map[string]string, error) {
+	out := make(map[string]string, len(documentIDs))
+	if len(documentIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.Query(ctx, `SELECT id, status FROM documents WHERE id = ANY($1::text[])`, documentIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, status string
+		if err := rows.Scan(&id, &status); err != nil {
+			return nil, err
+		}
+		out[id] = status
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) SetDocumentStatus(ctx context.Context, documentID, status string) error {
+	tag, err := s.db.Exec(ctx, `UPDATE documents SET status=$2 WHERE id=$1`, documentID, status)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return repo.ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) UpsertGitHubConnection(ctx context.Context, c repo.GitHubConnection) error {
 	return s.q.UpsertGitHubConnection(ctx, dbsqlc.UpsertGitHubConnectionParams{UserID: c.UserID, GithubUserID: c.GitHubUserID, Login: c.Login, AvatarUrl: c.AvatarURL, AccessTokenCiphertext: c.AccessTokenCiphertext})
 }

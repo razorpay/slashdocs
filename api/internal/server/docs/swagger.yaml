@@ -70,6 +70,10 @@ definitions:
           Snippet is set in search results when the text matches. U+0002 and
           U+0003 surround each match.
         type: string
+      status:
+        description: Status is one of DocumentStatuses, or empty when no status is
+          set.
+        type: string
       title:
         type: string
       updated_at:
@@ -1428,6 +1432,29 @@ paths:
       summary: Enable or mute your document notifications
       tags:
       - notifications
+  /v1/documents/{id}/status:
+    put:
+      description: Sets the review status to draft, in_review, approved, or archived.
+        An empty status clears it.
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Set document status
+      tags:
+      - documents
   /v1/documents/{id}/versions:
     get:
       parameters:
