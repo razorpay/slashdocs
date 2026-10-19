@@ -62,6 +62,26 @@ type VersionConflictError struct {
 func (e *VersionConflictError) Error() string        { return "version_conflict" }
 func (e *VersionConflictError) Is(target error) bool { return target == ErrVersionConflict }
 
+// ErrEmailIdentityConflict indicates that a sign-in's identity key is new but
+// its verified email already belongs to a different identity key. Generic OIDC
+// derives the user id and the stored google_sub from the exact issuer and the
+// token subject, so this happens after SLASHDOCS_OIDC_ISSUER_URL changes for a
+// database that already has users. The concrete error is an
+// *EmailIdentityConflictError carrying both keys; callers can match it with
+// errors.Is(err, ErrEmailIdentityConflict) or extract the detail with errors.As.
+var ErrEmailIdentityConflict = errors.New("email_identity_conflict")
+
+// EmailIdentityConflictError carries the email and the identity keys involved
+// in an ErrEmailIdentityConflict alongside the sentinel.
+type EmailIdentityConflictError struct {
+	Email                   string
+	ExistingExternalSubject string
+	IncomingExternalSubject string
+}
+
+func (e *EmailIdentityConflictError) Error() string        { return "email_identity_conflict" }
+func (e *EmailIdentityConflictError) Is(target error) bool { return target == ErrEmailIdentityConflict }
+
 var ErrAmbiguousPath = errors.New("ambiguous_path")
 
 type AmbiguousPathError struct {
