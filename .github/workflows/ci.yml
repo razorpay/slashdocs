@@ -125,7 +125,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       # Build the stack image once with the shared layer cache; the compose
       # stack reuses these layers instead of rebuilding the frontend and Go
@@ -208,7 +208,7 @@ jobs:
           echo "version=${major}.${minor}.$((patch + 1))-master.${count}" >>"$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to Docker Hub
         if: env.PUBLISH == 'true'
