@@ -2319,6 +2319,9 @@ const docTemplate = `{
                 "current_placement": {
                     "$ref": "#/definitions/server.commentPlacementResponse"
                 },
+                "edited_at": {
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
                 },

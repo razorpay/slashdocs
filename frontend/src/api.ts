@@ -110,6 +110,7 @@ export type Comment = {
   };
   created_at?: string;
   resolved_at?: string;
+  edited_at?: string;
 };
 export type CommentPatch = {
   body?: string;

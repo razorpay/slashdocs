@@ -220,6 +220,16 @@ func (h handlers) patchComment(c *gin.Context) {
 		badRequest(c, message)
 		return
 	}
+	if in.Body != nil || in.Mentions != nil {
+		cm, ok := h.loadCommentInDocument(c, c.Param("id"), c.Param("comment_id"))
+		if !ok {
+			return
+		}
+		if !authoredBy(cm, *current(c)) {
+			forbidden(c, "only the author can edit a comment")
+			return
+		}
+	}
 	var mentions *[]repo.CommentMention
 	if in.Mentions != nil {
 		converted := commentMentions(*in.Mentions)

@@ -30,7 +30,7 @@ func (q *Queries) DeleteCommentMentions(ctx context.Context, commentID string) e
 }
 
 const getComment = `-- name: GetComment :one
-SELECT id, document_id, created_on_version_id, author_type, author_id, author_email, author_name, body, selected_text, anchor_json, status, parent_comment_id, root_comment_id, created_at, resolved_at
+SELECT id, document_id, created_on_version_id, author_type, author_id, author_email, author_name, body, selected_text, anchor_json, status, parent_comment_id, root_comment_id, created_at, resolved_at, edited_at
 FROM comments
 WHERE id = $1
 `
@@ -51,6 +51,7 @@ type GetCommentRow struct {
 	RootCommentID      string
 	CreatedAt          pgtype.Timestamptz
 	ResolvedAt         pgtype.Timestamptz
+	EditedAt           pgtype.Timestamptz
 }
 
 func (q *Queries) GetComment(ctx context.Context, id string) (GetCommentRow, error) {
@@ -72,12 +73,13 @@ func (q *Queries) GetComment(ctx context.Context, id string) (GetCommentRow, err
 		&i.RootCommentID,
 		&i.CreatedAt,
 		&i.ResolvedAt,
+		&i.EditedAt,
 	)
 	return i, err
 }
 
 const getCommentForReply = `-- name: GetCommentForReply :one
-SELECT id, document_id, created_on_version_id, author_type, author_id, author_email, author_name, body, selected_text, anchor_json, status, parent_comment_id, root_comment_id, created_at, resolved_at
+SELECT id, document_id, created_on_version_id, author_type, author_id, author_email, author_name, body, selected_text, anchor_json, status, parent_comment_id, root_comment_id, created_at, resolved_at, edited_at
 FROM comments
 WHERE id = $1
 FOR KEY SHARE
@@ -99,6 +101,7 @@ type GetCommentForReplyRow struct {
 	RootCommentID      string
 	CreatedAt          pgtype.Timestamptz
 	ResolvedAt         pgtype.Timestamptz
+	EditedAt           pgtype.Timestamptz
 }
 
 func (q *Queries) GetCommentForReply(ctx context.Context, id string) (GetCommentForReplyRow, error) {
@@ -120,12 +123,13 @@ func (q *Queries) GetCommentForReply(ctx context.Context, id string) (GetComment
 		&i.RootCommentID,
 		&i.CreatedAt,
 		&i.ResolvedAt,
+		&i.EditedAt,
 	)
 	return i, err
 }
 
 const getCommentForUpdate = `-- name: GetCommentForUpdate :one
-SELECT id, document_id, created_on_version_id, author_type, author_id, author_email, author_name, body, selected_text, anchor_json, status, parent_comment_id, root_comment_id, created_at, resolved_at
+SELECT id, document_id, created_on_version_id, author_type, author_id, author_email, author_name, body, selected_text, anchor_json, status, parent_comment_id, root_comment_id, created_at, resolved_at, edited_at
 FROM comments
 WHERE id = $1
 FOR UPDATE
@@ -147,6 +151,7 @@ type GetCommentForUpdateRow struct {
 	RootCommentID      string
 	CreatedAt          pgtype.Timestamptz
 	ResolvedAt         pgtype.Timestamptz
+	EditedAt           pgtype.Timestamptz
 }
 
 func (q *Queries) GetCommentForUpdate(ctx context.Context, id string) (GetCommentForUpdateRow, error) {
@@ -168,6 +173,7 @@ func (q *Queries) GetCommentForUpdate(ctx context.Context, id string) (GetCommen
 		&i.RootCommentID,
 		&i.CreatedAt,
 		&i.ResolvedAt,
+		&i.EditedAt,
 	)
 	return i, err
 }
@@ -390,7 +396,7 @@ func (q *Queries) ListCommentMentions(ctx context.Context, commentIds []string) 
 }
 
 const listComments = `-- name: ListComments :many
-SELECT id,document_id,created_on_version_id,author_type,author_id,author_email,author_name,body,selected_text,anchor_json,status,parent_comment_id,root_comment_id,created_at,resolved_at
+SELECT id,document_id,created_on_version_id,author_type,author_id,author_email,author_name,body,selected_text,anchor_json,status,parent_comment_id,root_comment_id,created_at,resolved_at,edited_at
 FROM comments WHERE document_id= $1 AND ($2::text='' OR status= $2) AND ($3::text='' OR created_on_version_id= $3) ORDER BY created_at, id
 `
 
@@ -416,6 +422,7 @@ type ListCommentsRow struct {
 	RootCommentID      string
 	CreatedAt          pgtype.Timestamptz
 	ResolvedAt         pgtype.Timestamptz
+	EditedAt           pgtype.Timestamptz
 }
 
 func (q *Queries) ListComments(ctx context.Context, arg ListCommentsParams) ([]ListCommentsRow, error) {
@@ -443,6 +450,7 @@ func (q *Queries) ListComments(ctx context.Context, arg ListCommentsParams) ([]L
 			&i.RootCommentID,
 			&i.CreatedAt,
 			&i.ResolvedAt,
+			&i.EditedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -452,6 +460,15 @@ func (q *Queries) ListComments(ctx context.Context, arg ListCommentsParams) ([]L
 		return nil, err
 	}
 	return items, nil
+}
+
+const markCommentEdited = `-- name: MarkCommentEdited :exec
+UPDATE comments SET edited_at=clock_timestamp(), edit_revision=edit_revision+1 WHERE id=$1
+`
+
+func (q *Queries) MarkCommentEdited(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, markCommentEdited, id)
+	return err
 }
 
 const updateCommentBody = `-- name: UpdateCommentBody :exec

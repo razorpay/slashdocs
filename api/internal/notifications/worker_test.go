@@ -101,8 +101,12 @@ func TestOutboxDeliveryPreferencesAndAccess(t *testing.T) {
 	if _, err := store.UpdateComment(ctx, c.ID, repo.CommentUpdate{Mentions: &emptyMentions}); err != nil {
 		t.Fatal(err)
 	}
-	if count() != 0 {
-		t.Fatal("removing a mention must not queue a notification")
+	if count() != 1 {
+		t.Fatal("removing a mention must notify the owner about the edit")
+	}
+	resetGate()
+	if err := w.DeliverNext(ctx); err != nil {
+		t.Fatal(err)
 	}
 	ownerMention := []repo.CommentMention{mention(owner, "@Owner")}
 	if _, err := store.UpdateComment(ctx, c.ID, repo.CommentUpdate{Mentions: &ownerMention}); err != nil {
@@ -115,7 +119,7 @@ func TestOutboxDeliveryPreferencesAndAccess(t *testing.T) {
 	if err := w.DeliverNext(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if count() != 0 || sender.reasons[len(sender.reasons)-1] != "mention" {
+	if count() != 0 || sender.reasons[len(sender.reasons)-1] != "edited_mention" {
 		t.Fatal("edited mention notification was not delivered")
 	}
 	if _, err := store.UpdateComment(ctx, c.ID, repo.CommentUpdate{Mentions: &ownerMention}); err != nil {

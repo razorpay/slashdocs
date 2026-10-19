@@ -18,6 +18,7 @@ import {
   CheckCircle2,
   Link2,
   MessageSquareText,
+  Pencil,
   Reply,
   RotateCcw,
   Send,
@@ -76,6 +77,8 @@ function MentionTextarea({
   rows,
   className,
   autoFocus,
+  disabled,
+  ariaLabel,
 }: {
   draft: MentionDraft;
   onChange: (draft: MentionDraft) => void;
@@ -84,6 +87,8 @@ function MentionTextarea({
   rows?: number;
   className?: string;
   autoFocus?: boolean;
+  disabled?: boolean;
+  ariaLabel?: string;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const beforeInputSelection = useRef<TextSelection | null>(null);
@@ -244,6 +249,8 @@ function MentionTextarea({
     <div className="relative min-w-0 flex-1">
       <Textarea
         ref={ref}
+        disabled={disabled}
+        aria-label={ariaLabel}
         rows={rows}
         value={draft.body}
         onChange={() => {}}
@@ -992,6 +999,7 @@ function CommentCard({
   const cardRef = useRef<HTMLElement>(null);
   const active = activeComment === c.id;
   const [replying, setReplying] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [linkParams] = useSearchParams();
   const linkedComment = linkParams.get("comment");
   useEffect(() => {
@@ -1072,9 +1080,10 @@ function CommentCard({
           <Badge variant="accent">open</Badge>
         )}
       </div>
-      {(c.created_at || (resolved && c.resolved_at)) && (
+      {(c.created_at || c.edited_at || (resolved && c.resolved_at)) && (
         <div className="mb-1 flex flex-wrap gap-x-3 text-[11px] text-[var(--color-fg-muted)]">
           {c.created_at ? <span>Added {formatTimestamp(c.created_at)}</span> : null}
+          <EditedLabel comment={c} />
           {resolved && c.resolved_at ? (
             <span>Resolved {formatTimestamp(c.resolved_at)}</span>
           ) : null}
@@ -1090,10 +1099,19 @@ function CommentCard({
           {c.selected_text}
         </blockquote>
       )}
-      <CommentBody text={c.body} mentions={c.mentions} />
+      {editing ? (
+        <CommentEditor c={c} docId={docId} onClose={() => setEditing(false)} />
+      ) : (
+        <CommentBody text={c.body} mentions={c.mentions} />
+      )}
       <div className="mt-1">
         <ReactionBar c={c} docId={docId}>
           {replies.length === 0 && replyButton}
+          <EditCommentButton
+            canEdit={samePrincipal(principal, c.author)}
+            editing={editing}
+            onEdit={() => setEditing(true)}
+          />
           <CopyCommentLink commentId={c.id} />
           <DeleteCommentButton
             c={c}
@@ -1163,6 +1181,7 @@ function ReplyItem({
   canDelete: boolean;
   children?: ReactNode;
 }) {
+  const [editing, setEditing] = useState(false);
   return (
     <div
       data-comment-id={r.id}
@@ -1173,20 +1192,147 @@ function ReplyItem({
           {r.author.name || r.author.email || r.author.id}
         </span>
       </div>
-      {r.created_at ? (
-        <div className="mb-1 text-[11px] text-[var(--color-fg-muted)]">
-          {formatTimestamp(r.created_at)}
+      {r.created_at || r.edited_at ? (
+        <div className="mb-1 flex flex-wrap gap-x-3 text-[11px] text-[var(--color-fg-muted)]">
+          {r.created_at && <span>{formatTimestamp(r.created_at)}</span>}
+          <EditedLabel comment={r} />
         </div>
       ) : null}
-      <CommentBody text={r.body} mentions={r.mentions} />
+      {editing ? (
+        <CommentEditor c={r} docId={docId} onClose={() => setEditing(false)} />
+      ) : (
+        <CommentBody text={r.body} mentions={r.mentions} />
+      )}
       <div className="mt-1">
         <ReactionBar c={r} docId={docId}>
           {children}
+          <EditCommentButton
+            canEdit={canDelete}
+            editing={editing}
+            onEdit={() => setEditing(true)}
+          />
           <CopyCommentLink commentId={r.id} />
           <DeleteCommentButton c={r} docId={docId} canDelete={canDelete} />
         </ReactionBar>
       </div>
     </div>
+  );
+}
+
+function EditedLabel({ comment }: { comment: Comment }) {
+  return comment.edited_at ? (
+    <span title={`Edited ${formatTimestamp(comment.edited_at)}`}>Edited</span>
+  ) : null;
+}
+
+function EditCommentButton({
+  canEdit,
+  editing,
+  onEdit,
+}: {
+  canEdit: boolean;
+  editing: boolean;
+  onEdit: () => void;
+}) {
+  if (!canEdit) return null;
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      aria-label="Edit comment"
+      title="Edit comment"
+      disabled={editing}
+      onClick={(event) => {
+        event.stopPropagation();
+        onEdit();
+      }}
+    >
+      <Pencil className="h-4 w-4" />
+    </Button>
+  );
+}
+
+function CommentEditor({
+  c,
+  docId,
+  onClose,
+}: {
+  c: Comment;
+  docId: string;
+  onClose: () => void;
+}) {
+  const q = useQueryClient();
+  const [draft, setDraft] = useState<MentionDraft>(() => ({
+    body: c.body,
+    mentions: c.mentions || [],
+  }));
+  const save = useMutation({
+    mutationFn: (value: MentionDraft) => api.patchComment(docId, c.id, value),
+    onSuccess: async () => {
+      await q.invalidateQueries({ queryKey: queryKeys.comments(docId) });
+      onClose();
+    },
+    onError: (error) => toast.error(errorMessage(error, "Could not edit comment")),
+  });
+  const unchanged =
+    draft.body === c.body &&
+    JSON.stringify(draft.mentions) === JSON.stringify(c.mentions || []);
+  return (
+    <form
+      className="space-y-2"
+      onClick={(event) => event.stopPropagation()}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!draft.body.trim() || unchanged || save.isPending) return;
+        save.mutate(draft);
+      }}
+    >
+      <MentionTextarea
+        autoFocus
+        ariaLabel="Edit comment text"
+        rows={3}
+        draft={draft}
+        onChange={setDraft}
+        disabled={save.isPending}
+        onKeyDown={(event) => {
+          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+            event.preventDefault();
+            event.currentTarget.form?.requestSubmit();
+          }
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            if (!save.isPending) onClose();
+          }
+        }}
+        className="text-sm"
+      />
+      {save.isError && (
+        <p role="alert" className="text-xs text-red-600">
+          Could not save changes. Your edit is still here; try again.
+        </p>
+      )}
+      <div className="flex justify-end gap-2">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          disabled={save.isPending}
+          onClick={onClose}
+        >
+          Cancel
+        </Button>
+        <Button
+          type="submit"
+          size="sm"
+          disabled={!draft.body.trim() || unchanged || save.isPending}
+          aria-keyshortcuts="Meta+Enter Control+Enter"
+        >
+          {save.isPending ? "Saving…" : "Save changes"}
+        </Button>
+      </div>
+    </form>
   );
 }
 

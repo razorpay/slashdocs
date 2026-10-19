@@ -8,6 +8,7 @@ type NotificationPreferences struct {
 }
 
 type CommentNotification struct {
+	Revision    int64
 	CommentID   string
 	RecipientID string
 	Reason      string

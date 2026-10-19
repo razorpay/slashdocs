@@ -63,6 +63,7 @@ type commentResponse struct {
 	Status             string                    `json:"status"`
 	CreatedOnVersionID string                    `json:"created_on_version_id"`
 	CreatedAt          string                    `json:"created_at,omitempty"`
+	EditedAt           string                    `json:"edited_at,omitempty"`
 	ResolvedAt         string                    `json:"resolved_at,omitempty"`
 	ParentCommentID    string                    `json:"parent_comment_id,omitempty"`
 	Mentions           []commentMentionResponse  `json:"mentions"`
@@ -170,6 +171,7 @@ func commentBaseJSON(cm repo.Comment, viewer auth.Principal) commentResponse {
 		CreatedOnVersionID: cm.VersionID,
 		CreatedAt:          cm.CreatedAt,
 		ResolvedAt:         cm.ResolvedAt,
+		EditedAt:           cm.EditedAt,
 		ParentCommentID:    cm.ParentCommentID,
 		Mentions:           commentMentionsJSON(cm.Mentions),
 		Reactions:          commentReactionsJSON(cm.Reactions, viewer),

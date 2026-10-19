@@ -303,8 +303,10 @@ func (s *Store) enqueueCommentNotifications(ctx context.Context, tx pgx.Tx, comm
 		FROM notification_subscriptions
 		ORDER BY comment_id,recipient_id,priority DESC
 	)
-	INSERT INTO comment_notification_outbox(comment_id,recipient_id,reason)
-	SELECT c.id, subscription.recipient_id, subscription.reason
+	INSERT INTO comment_notification_outbox(comment_id,recipient_id,reason,revision)
+	SELECT c.id, subscription.recipient_id,
+		CASE WHEN c.edit_revision > 0 THEN 'edited_' || subscription.reason ELSE subscription.reason END,
+		c.edit_revision
 	FROM comments c
 	JOIN documents d ON d.id=c.document_id
 	JOIN resolved_subscriptions subscription ON subscription.comment_id=c.id
@@ -316,23 +318,6 @@ func (s *Store) enqueueCommentNotifications(ctx context.Context, tx pgx.Tx, comm
 	return err
 }
 
-// Editing a comment only notifies users added by that edit. Existing mentions,
-// the document owner, and service accounts do not receive another message.
-func (s *Store) enqueueNewCommentMentionNotifications(ctx context.Context, tx pgx.Tx, commentID string, recipientIDs []string) error {
-	if !s.notificationsEnabled || len(recipientIDs) == 0 {
-		return nil
-	}
-	_, err := tx.Exec(ctx, `INSERT INTO comment_notification_outbox AS queued(comment_id,recipient_id,reason)
-		SELECT c.id, recipient.id, 'mention'
-		FROM comments c JOIN documents d ON d.id=c.document_id
-		CROSS JOIN unnest($2::text[]) AS recipient(id)
-		WHERE c.id=$1 AND NOT (c.author_type='user' AND c.author_id=recipient.id)
-		AND NOT EXISTS(SELECT 1 FROM notification_preferences p WHERE p.principal_type='user' AND p.principal_id=recipient.id AND NOT p.enabled)
-		AND NOT EXISTS(SELECT 1 FROM document_notification_mutes m WHERE m.principal_type='user' AND m.principal_id=recipient.id AND m.document_id=d.id)
-		ON CONFLICT(comment_id,recipient_id) DO UPDATE SET reason='mention', available_at=LEAST(queued.available_at, now())`, commentID, recipientIDs)
-	return err
-}
-
 // A lease outlives the sender's deadline and lets another process recover work
 // after a crash. Successful delivery deletes the row immediately.
 func (s *Store) ClaimCommentNotification(ctx context.Context) (*repo.CommentNotification, error) {
@@ -341,10 +326,10 @@ func (s *Store) ClaimCommentNotification(ctx context.Context) (*repo.CommentNoti
 	}
 	var n repo.CommentNotification
 	err := s.db.QueryRow(ctx, `UPDATE comment_notification_outbox o SET available_at=now()+interval '1 minute', attempts=o.attempts+1
-		FROM (SELECT comment_id, recipient_id FROM comment_notification_outbox WHERE available_at<=now()
-		ORDER BY available_at FOR UPDATE SKIP LOCKED LIMIT 1) pending
-		WHERE o.comment_id=pending.comment_id AND o.recipient_id=pending.recipient_id
-		RETURNING o.comment_id,o.recipient_id,o.reason,o.attempts`).Scan(&n.CommentID, &n.RecipientID, &n.Reason, &n.Attempts)
+		FROM (SELECT comment_id, recipient_id, revision FROM comment_notification_outbox WHERE available_at<=now()
+		ORDER BY available_at, created_at, revision FOR UPDATE SKIP LOCKED LIMIT 1) pending
+		WHERE o.comment_id=pending.comment_id AND o.recipient_id=pending.recipient_id AND o.revision=pending.revision
+		RETURNING o.comment_id,o.recipient_id,o.reason,o.attempts,o.revision`).Scan(&n.CommentID, &n.RecipientID, &n.Reason, &n.Attempts, &n.Revision)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -353,10 +338,10 @@ func (s *Store) ClaimCommentNotification(ctx context.Context) (*repo.CommentNoti
 
 func (s *Store) FinishCommentNotification(ctx context.Context, n repo.CommentNotification, retryAfter time.Duration) error {
 	if retryAfter <= 0 {
-		_, err := s.db.Exec(ctx, `DELETE FROM comment_notification_outbox WHERE comment_id=$1 AND recipient_id=$2 AND attempts=$3`, n.CommentID, n.RecipientID, n.Attempts)
+		_, err := s.db.Exec(ctx, `DELETE FROM comment_notification_outbox WHERE comment_id=$1 AND recipient_id=$2 AND attempts=$3 AND revision=$4`, n.CommentID, n.RecipientID, n.Attempts, n.Revision)
 		return err
 	}
-	_, err := s.db.Exec(ctx, `UPDATE comment_notification_outbox SET available_at=now()+$4*interval '1 second' WHERE comment_id=$1 AND recipient_id=$2 AND attempts=$3`, n.CommentID, n.RecipientID, n.Attempts, retryAfter.Seconds())
+	_, err := s.db.Exec(ctx, `UPDATE comment_notification_outbox SET available_at=now()+$4*interval '1 second' WHERE comment_id=$1 AND recipient_id=$2 AND attempts=$3 AND revision=$5`, n.CommentID, n.RecipientID, n.Attempts, retryAfter.Seconds(), n.Revision)
 	return err
 }
 

@@ -34,6 +34,8 @@ type Comment struct {
 	ResolvedAt         pgtype.Timestamptz
 	ParentCommentID    pgtype.Text
 	RootCommentID      string
+	EditedAt           pgtype.Timestamptz
+	EditRevision       int64
 }
 
 // Structured principals mentioned in comment bodies. Mention metadata grants no access; future notification delivery must re-check effective document access and apply rate limits.
@@ -56,6 +58,7 @@ type CommentNotificationOutbox struct {
 	Attempts    int32
 	AvailableAt pgtype.Timestamptz
 	CreatedAt   pgtype.Timestamptz
+	Revision    int64
 }
 
 type CommentPlacement struct {

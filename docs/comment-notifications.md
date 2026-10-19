@@ -3,7 +3,9 @@
 Comments stay beside their highlighted text. The sidebar shows the total thread
 count, including threads whose text is currently hidden or missing, with All,
 Open, and Resolved filters. Opening a comment link selects its thread even if it
-is resolved. Each comment and reply has a **Copy comment link** action.
+is resolved. Each comment and reply has a **Copy comment link** action. Authors can use
+**Edit comment** to change their own text and mentions, then **Save changes** or
+**Cancel**. Saved edits show an **Edited** label with the latest edit time.
 
 ## Personal notification controls
 
@@ -16,7 +18,9 @@ starts with future activity, without replaying the muted backlog.
 With Slack configured, each new comment or reply notifies the document's human
 owner and explicitly mentioned human users. The author is excluded and recipients
 are deduplicated; an owner who is also mentioned receives one mention notification.
-Edits, reactions, resolving, and reopening do not notify. Service accounts can
+Every saved change to comment text or mentions also notifies the owner, the
+parent comment author for replies, and currently mentioned users, with an explicit
+"edited" message. Unchanged saves, reactions, resolving, and reopening do not notify. Service accounts can
 write comments and receive structured mentions, but have no Slack inbox.
 
 Choose a person from the `@` suggestions to create a mention. The composer shows
@@ -50,7 +54,7 @@ slashdocs docs comments reply doc_123 cmt_123 --body-file - \
 slashdocs docs comments reply doc_123 cmt_123 --body 'Follow up' \
   --mention sa:sa_123
 
-# Mention changes require the updated body; editing does not send notifications.
+# Edits notify recipients; mention changes can accompany the updated body.
 slashdocs docs comments update doc_123 cmt_123 --body 'Updated request' \
   --mention user:usr_123
 slashdocs docs comments update doc_123 cmt_123 --clear-mentions
@@ -125,9 +129,14 @@ Slack token, and delete the Secret key.
 
 ## Delivery behavior
 
-The comment and outbox recipients are saved in one database transaction. A worker
-rechecks the recipient's current document access and notification settings before
-sending a DM. Slack receives the document title, highlighted text, comment or
+The comment and outbox recipients are saved in one database transaction. Each
+edit gets a separate revision, so rapid edits remain separate notifications.
+The queue does not retain copies of comment text: every delivery attempt,
+including retries, reads the latest comment text. Pending notifications therefore
+reflect corrections and redactions made before that read; several queued edits
+can carry the same latest text. Edits cannot retract messages already sent or
+change a delivery already in progress. A worker rechecks the recipient's current
+document access and notification settings before sending a DM. Slack receives the document title, highlighted text, comment or
 reply content, and a button linking to that exact comment. Replies include the
 root thread's highlight. The activity leads the message, followed by
 `Document: <title>` as a link, an italic Slack

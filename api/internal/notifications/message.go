@@ -62,6 +62,15 @@ func slackMessage(channel string, message Message) map[string]any {
 	if message.Reason == "mention" {
 		activity = "🔔 " + actor + " mentioned you in a comment"
 	}
+	if strings.HasPrefix(message.Reason, "edited_") {
+		activity = "✏️ " + actor + " edited a comment on your doc"
+		if message.Reply {
+			activity = "✏️ " + actor + " edited a reply on your doc"
+		}
+		if message.Reason == "edited_mention" {
+			activity = "✏️ " + actor + " edited a comment mentioning you"
+		}
+	}
 	text := func(value string) map[string]any {
 		return map[string]any{"type": "text", "text": value}
 	}

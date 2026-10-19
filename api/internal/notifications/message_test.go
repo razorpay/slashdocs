@@ -83,6 +83,9 @@ func TestSlackCommentActivityHeadings(t *testing.T) {
 		{name: "comment", message: Message{Actor: "Asha"}, want: "💬 Asha commented on your doc"},
 		{name: "reply", message: Message{Actor: "Asha", Reply: true}, want: "💬 Asha replied to a comment on your doc"},
 		{name: "mention", message: Message{Actor: "Asha", Reason: "mention"}, want: "🔔 Asha mentioned you in a comment"},
+		{name: "edited comment", message: Message{Actor: "Asha", Reason: "edited_owner"}, want: "✏️ Asha edited a comment on your doc"},
+		{name: "edited reply", message: Message{Actor: "Asha", Reason: "edited_reply", Reply: true}, want: "✏️ Asha edited a reply on your doc"},
+		{name: "edited mention", message: Message{Actor: "Asha", Reason: "edited_mention"}, want: "✏️ Asha edited a comment mentioning you"},
 		{name: "missing actor", message: Message{}, want: "💬 Someone commented on your doc"},
 	}
 	for _, tt := range tests {

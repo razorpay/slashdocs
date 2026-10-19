@@ -262,6 +262,7 @@ type Comment struct {
 	Reactions       []CommentReaction `json:"reactions"`
 	Replies         []Comment         `json:"replies,omitempty"`
 	CreatedAt       string            `json:"created_at,omitempty"`
+	EditedAt        string            `json:"edited_at,omitempty"`
 	ResolvedAt      string            `json:"resolved_at,omitempty"`
 }
 
