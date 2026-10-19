@@ -165,6 +165,7 @@ slashdocs docs create report.html --title "Agent report"
 slashdocs docs list
 slashdocs docs pull doc_123 --out report.html
 slashdocs docs push doc_123 report.html --summary "Update findings"
+slashdocs docs edit doc_123 --old "TTL of 10 minutes" --new "TTL of 5 minutes"
 
 slashdocs docs comments list doc_123
 slashdocs docs comments create doc_123 --quote "important text" --body "Please clarify this."

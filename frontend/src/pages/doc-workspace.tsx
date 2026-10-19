@@ -31,6 +31,7 @@ import {
   type CommentViewport,
   type DocContextValue,
   type PendingSelection,
+  type TextEditResult,
 } from "./doc-context";
 import { RenderFrame } from "./doc-render-frame";
 import { Comments } from "./doc-comments";
@@ -144,6 +145,27 @@ export function DocWorkspace({
   }, []);
   const printDocument = useCallback(() => {
     documentPrinterRef.current?.();
+  }, []);
+  const [textEditing, setTextEditing] = useState(false);
+  const [textEditCount, setTextEditCount] = useState(0);
+  // Editing belongs to the version on screen.
+  useEffect(() => {
+    setTextEditing(false);
+  }, [docId, version]);
+  useEffect(() => {
+    if (!textEditing) setTextEditCount(0);
+  }, [textEditing]);
+  const textEditCollectorRef = useRef<(() => Promise<TextEditResult>) | null>(null);
+  const registerTextEditCollector = useCallback(
+    (collect: (() => Promise<TextEditResult>) | null) => {
+      textEditCollectorRef.current = collect;
+    },
+    [],
+  );
+  const collectTextEdits = useCallback(async (): Promise<TextEditResult> => {
+    const collect = textEditCollectorRef.current;
+    if (!collect) throw new Error("The document is not ready to save.");
+    return collect();
   }, []);
   const documentScrollerRef = useRef<((top: number) => void) | null>(null);
   const registerDocumentScroller = useCallback(
@@ -486,6 +508,12 @@ export function DocWorkspace({
       moveCursor: stream.moveCursor,
       subscribeCursors: stream.subscribeCursors,
       followedCursor,
+      textEditing,
+      setTextEditing,
+      textEditCount,
+      setTextEditCount,
+      registerTextEditCollector,
+      collectTextEdits,
     }),
     [
       docId,
@@ -519,6 +547,10 @@ export function DocWorkspace({
       stream.moveCursor,
       stream.subscribeCursors,
       followedCursor,
+      textEditing,
+      textEditCount,
+      registerTextEditCollector,
+      collectTextEdits,
     ],
   );
 

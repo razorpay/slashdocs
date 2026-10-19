@@ -344,6 +344,7 @@ func (s *Server) routes(deps dependencies) {
 	authed.GET("/documents/:id/approvals", h.listApprovals)
 	authed.DELETE("/documents/:id/approvals/:approval_id", h.deleteApproval)
 	authed.POST("/documents/:id/versions", h.createVersion)
+	authed.POST("/documents/:id/edits", h.editDocument)
 	authed.GET("/documents/:id/labels", h.listDocumentLabels)
 	authed.PUT("/documents/:id/labels", h.replaceDocumentLabels)
 	authed.POST("/documents/:id/github/raw", h.githubRawContent)

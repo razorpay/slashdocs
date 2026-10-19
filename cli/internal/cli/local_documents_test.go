@@ -80,6 +80,13 @@ func TestLocalDocumentsCLI(t *testing.T) {
 		t.Errorf("headings = %q", out)
 	}
 	sd("docs", "comments", "create", "plan.html", "--body", "Why?", "--quote", "Rollout", "--version", localVersion([]byte(v2)))
+	sd("docs", "edit", "plan.html", "--old", "<p>Dates</p>", "--new", "<p>Dates: May</p>")
+	if got := string(readTestFile(t, filepath.Join(dir, "plan.html"))); got != "<title>Q3 plan</title><h2>Rollout</h2><p>Dates: May</p>" {
+		t.Errorf("after edit the file = %q", got)
+	}
+	if _, err := Execute([]string{"--server", info.URL, "docs", "edit", "plan.html", "--old", "<h3>", "--new", "x"}); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Errorf("edit of missing text = %v, want a not found error", err)
+	}
 
 	sd("docs", "move", "plan.html", "--folder-id", "archive")
 	if !exists("archive/plan.html") || !exists("archive/.plan.html.slashdocs.json") {
