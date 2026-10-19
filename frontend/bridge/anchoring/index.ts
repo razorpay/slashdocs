@@ -13,7 +13,7 @@
 // All offsets are character offsets into the document body's raw
 // `textContent`. Quotes are stored in "rendered" form (each `<br>`
 // substituted by a space) so line-broken selections read naturally.
-import { matchQuote } from "./match-quote.ts";
+import { matchQuoteCandidates } from "./match-quote.ts";
 import {
   rawOffsetToRendered,
   renderedOffsetToRaw,
@@ -55,11 +55,28 @@ const MIN_ANCHOR_SCORE = 0.6;
 const MIN_ANCHOR_SCORE_WITHOUT_CONTEXT = 0.89;
 
 /**
+ * Minimum prefix/suffix agreement (`Match.contextScore`) for a verbatim match
+ * of an ambiguous quote, one that appears more than once in the document or
+ * in its own stored context. Every copy of such a quote matches verbatim, so
+ * only the surrounding text says which copy the comment was on; without this
+ * floor a comment whose copy was edited jumps to another copy. Measured: the
+ * right copy after nearby edits or a moved paragraph scores >= 0.73, another
+ * copy of a short repeated phrase ("TBD") scores ~0.5.
+ */
+const MIN_CONTEXT_SCORE_FOR_AMBIGUOUS_QUOTE = 0.65;
+
+/**
  * Collapse runs of whitespace so quote verification tolerates reformatting
  * that doesn't change visible text.
  */
 function normalizeSpace(s: string): string {
   return s.replace(/\s+/g, " ").trim();
+}
+
+/** Whether `quote` occurs more than once in `text`, overlaps included. */
+function occursMoreThanOnce(text: string, quote: string): boolean {
+  const first = text.indexOf(quote);
+  return first !== -1 && text.indexOf(quote, first + 1) !== -1;
 }
 
 /**
@@ -156,7 +173,7 @@ export function resolveAnchor(
   const { text, brPositionsInText } = getRenderedText
     ? getRenderedText()
     : renderedTextOf(root);
-  const match = matchQuote(text, quote, {
+  const candidates = matchQuoteCandidates(text, quote, {
     prefix,
     suffix,
     // The stored offset is a raw-textContent position while matchQuote works
@@ -167,17 +184,39 @@ export function resolveAnchor(
       ? Math.min(rawOffsetToRendered(brPositionsInText, start), text.length)
       : undefined,
   });
+  let match = candidates[0];
   if (!match) {
     return null;
   }
-  // A verbatim occurrence of the quote always anchors: the score floor exists
-  // to reject garbled fuzzy matches, not exact text whose surrounding context
-  // was rewritten.
-  const exact = text.slice(match.start, match.end) === quote;
-  const minScore =
-    prefix || suffix ? MIN_ANCHOR_SCORE : MIN_ANCHOR_SCORE_WITHOUT_CONTEXT;
-  if (!exact && match.score < minScore) {
-    return null;
+  // A verbatim occurrence of an unambiguous quote always anchors: the score
+  // floor exists to reject garbled fuzzy matches, not exact text whose
+  // surrounding context was rewritten. A quote that is repeated, in the
+  // document now or around the comment when it was made, instead anchors on
+  // a verbatim copy whose context agrees, so an edit to the commented copy
+  // detaches the comment rather than moving it to another copy. Any such copy
+  // will do, as in the API's placement check (comment_placement.go): the best
+  // scoring one can lead on the position hint alone.
+  const isExact = (m: { start: number; end: number }) =>
+    text.slice(m.start, m.end) === quote;
+  if (isExact(match)) {
+    const ambiguous =
+      occursMoreThanOnce(text, quote) ||
+      occursMoreThanOnce(`${prefix ?? ""}${quote}${suffix ?? ""}`, quote);
+    if (ambiguous && match.contextScore < MIN_CONTEXT_SCORE_FOR_AMBIGUOUS_QUOTE) {
+      const agreeing = candidates.find(
+        (m) => isExact(m) && m.contextScore >= MIN_CONTEXT_SCORE_FOR_AMBIGUOUS_QUOTE,
+      );
+      if (!agreeing) {
+        return null;
+      }
+      match = agreeing;
+    }
+  } else {
+    const minScore =
+      prefix || suffix ? MIN_ANCHOR_SCORE : MIN_ANCHOR_SCORE_WITHOUT_CONTEXT;
+    if (match.score < minScore) {
+      return null;
+    }
   }
   try {
     return TextRange.fromOffsets(
