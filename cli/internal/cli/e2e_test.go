@@ -129,7 +129,19 @@ func e2eMux(t *testing.T) *http.ServeMux {
 		}
 		writeTestJSON(t, w, map[string]any{"items": []any{map[string]any{"id": "sa_1", "name": "bot"}}})
 	})
-	mux.HandleFunc("/v1/service-accounts/sa_1", jsonH(t, map[string]any{"id": "sa_1", "name": "bot"}))
+	mux.HandleFunc("/v1/service-accounts/sa_1", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "PATCH" {
+			var in map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			name := "bot"
+			if n, ok := in["name"].(string); ok {
+				name = n
+			}
+			writeTestJSON(t, w, map[string]any{"id": "sa_1", "name": name})
+			return
+		}
+		writeTestJSON(t, w, map[string]any{"id": "sa_1", "name": "bot"})
+	})
 	mux.HandleFunc("/v1/service-accounts/sa_1/keys", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "POST" {
 			writeTestJSON(t, w, map[string]any{"id": "sak_1", "token": "slashdocs_sa_x"}) //nolint:gosec // This fixed value is a mock response, not a credential.
@@ -162,7 +174,7 @@ func TestCLICommandsE2E(t *testing.T) {
 	html := filepath.Join(t.TempDir(), "x.html")
 	writeTestFile(t, html, []byte("<h1>x</h1>"))
 	out := filepath.Join(t.TempDir(), "out.html")
-	cmds := [][]string{{"auth", "whoami"}, {"docs", "list"}, {"docs", "list", `incident from:alice@example.com label:api,review in:"Product Specs"`}, {"docs", "labels", "list", "doc_1"}, {"docs", "labels", "set", "doc_1", "API,review"}, {"docs", "labels", "clear", "doc_1"}, {"docs", "create", html}, {"docs", "show", "doc_1"}, {"docs", "update", "doc_1", "--title", "New"}, {"docs", "versions", "list", "doc_1"}, {"docs", "versions", "show", "doc_1", "ver_1"}, {"docs", "versions", "html", "doc_1", "ver_1"}, {"docs", "pull", "doc_1", "--out", out}, {"docs", "push", "doc_1", html}, {"docs", "comments", "list", "doc_1"}, {"docs", "comments", "create", "doc_1", "--body", "hi", "--quote", "x", "--version", "ver_1"}, {"docs", "comments", "reply", "doc_1", "cmt_1", "--body", "reply"}, {"docs", "comments", "update", "doc_1", "cmt_1", "--status", "resolved"}, {"docs", "comments", "update", "doc_1", "cmt_1", "--body", "revised"}, {"docs", "comments", "delete", "doc_1", "cmt_1"}, {"docs", "comments", "resolve", "doc_1", "cmt_1"}, {"docs", "comments", "reopen", "doc_1", "cmt_1"}, {"docs", "grants", "list", "doc_1"}, {"docs", "grants", "add", "doc_1", "--principal", "user:a@b.com", "--role", "viewer"}, {"docs", "grants", "update", "doc_1", "gr_1", "--role", "editor"}, {"docs", "grants", "revoke", "doc_1", "gr_1"}, {"sa", "list"}, {"sa", "create", "bot"}, {"sa", "update", "sa_1", "--disable"}, {"sa", "key", "list", "sa_1"}, {"sa", "key", "create", "sa_1"}, {"sa", "key", "revoke", "sa_1", "sak_1"}, {"sa", "transfer", "sa_1", "--to", "new@example.com"}, {"sa", "transfers", "list"}, {"sa", "transfer", "accept", "xfer_1"}, {"sa", "transfer", "decline", "xfer_1"}, {"context", "list"}, {"context", "use", srv.URL}, {"skills", "update"}, {"open", "doc_1"}}
+	cmds := [][]string{{"auth", "whoami"}, {"docs", "list"}, {"docs", "list", `incident from:alice@example.com label:api,review in:"Product Specs"`}, {"docs", "labels", "list", "doc_1"}, {"docs", "labels", "set", "doc_1", "API,review"}, {"docs", "labels", "clear", "doc_1"}, {"docs", "create", html}, {"docs", "show", "doc_1"}, {"docs", "update", "doc_1", "--title", "New"}, {"docs", "versions", "list", "doc_1"}, {"docs", "versions", "show", "doc_1", "ver_1"}, {"docs", "versions", "html", "doc_1", "ver_1"}, {"docs", "pull", "doc_1", "--out", out}, {"docs", "push", "doc_1", html}, {"docs", "comments", "list", "doc_1"}, {"docs", "comments", "create", "doc_1", "--body", "hi", "--quote", "x", "--version", "ver_1"}, {"docs", "comments", "reply", "doc_1", "cmt_1", "--body", "reply"}, {"docs", "comments", "update", "doc_1", "cmt_1", "--status", "resolved"}, {"docs", "comments", "update", "doc_1", "cmt_1", "--body", "revised"}, {"docs", "comments", "delete", "doc_1", "cmt_1"}, {"docs", "comments", "resolve", "doc_1", "cmt_1"}, {"docs", "comments", "reopen", "doc_1", "cmt_1"}, {"docs", "grants", "list", "doc_1"}, {"docs", "grants", "add", "doc_1", "--principal", "user:a@b.com", "--role", "viewer"}, {"docs", "grants", "update", "doc_1", "gr_1", "--role", "editor"}, {"docs", "grants", "revoke", "doc_1", "gr_1"}, {"sa", "list"}, {"sa", "create", "bot"}, {"sa", "update", "sa_1", "--name", "new-bot"}, {"sa", "update", "sa_1", "--disable"}, {"sa", "key", "list", "sa_1"}, {"sa", "key", "create", "sa_1"}, {"sa", "key", "revoke", "sa_1", "sak_1"}, {"sa", "transfer", "sa_1", "--to", "new@example.com"}, {"sa", "transfers", "list"}, {"sa", "transfer", "accept", "xfer_1"}, {"sa", "transfer", "decline", "xfer_1"}, {"context", "list"}, {"context", "use", srv.URL}, {"skills", "update"}, {"open", "doc_1"}}
 	for _, c := range cmds {
 		t.Run(strings.Join(c, " "), func(t *testing.T) {
 			if _, err := Execute(c); err != nil {
@@ -208,6 +220,7 @@ func TestCommandOutputsAreConversational(t *testing.T) {
 		{[]string{"docs", "grants", "add", "doc_1", "--to", "a@b.com", "--role", "viewer"}, []string{"Shared", "a@b.com", "viewer"}},
 		{[]string{"docs", "grants", "add", "doc_1", "--everyone", "--role", "viewer"}, []string{"Shared", "viewer"}},
 		{[]string{"docs", "grants", "revoke", "doc_1", "gr_1"}, []string{"Revoked grant", "gr_1"}},
+		{[]string{"sa", "update", "sa_1", "--name", "new-bot"}, []string{"Updated service account", "sa_1"}},
 		{[]string{"sa", "update", "sa_1", "--disable"}, []string{"Disabled service account", "sa_1"}},
 		{[]string{"sa", "key", "create", "sa_1"}, []string{"Created key", "Copy this key"}},
 		{[]string{"sa", "key", "revoke", "sa_1", "sak_1"}, []string{"Revoked key", "sak_1"}},
