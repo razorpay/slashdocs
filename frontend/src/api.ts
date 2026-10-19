@@ -22,6 +22,8 @@ export type Document = {
   current_version_id?: string;
   parent_folder_id?: string;
   parent_folder?: { id: string; title: string };
+  approval_status?: ApprovalStatus;
+  approval_summary?: ApprovalSummary;
   updated_at?: string;
   labels?: string[];
   // Search results only: the matching text. U+0002 and U+0003 surround each match.
@@ -122,6 +124,45 @@ export type Grant = {
   id: string;
   principal?: Principal;
   role: string;
+};
+export type ApprovalStatus = "approved" | "changes_requested" | "pending";
+export type ApprovalDecision = "approved" | "changes_requested";
+export type ApprovalSummary = {
+  total: number;
+  approved: number;
+  changes_requested: number;
+  pending: number;
+};
+export type ApprovalRequest = {
+  id: string;
+  document_id: string;
+  approver: Principal;
+  requested_by?: { id: string; email?: string };
+};
+export type Approval = {
+  id: string;
+  document_id: string;
+  version_id: string;
+  approver: Principal;
+  decision: ApprovalDecision;
+  note?: string;
+  decided_at?: string;
+  carried_from_version_id?: string;
+};
+export type ApprovalListItem = {
+  id?: string;
+  approver: Principal;
+  decision: ApprovalDecision | null;
+  note?: string;
+  decided_at?: string;
+  carried_from_version_id?: string;
+  carried_from_version_number?: number;
+};
+export type ApprovalsList = {
+  version_id: string;
+  status?: ApprovalStatus;
+  summary: ApprovalSummary;
+  items: ApprovalListItem[];
 };
 export type FolderBreadcrumb = {
   id: string;
@@ -343,10 +384,17 @@ export const api = {
   },
   listVersions: (doc: string) =>
     request<{ items: Version[] }>(`/v1/documents/${doc}/versions`),
-  createVersion: (doc: string, base: string, summary: string, file: File) => {
+  createVersion: (
+    doc: string,
+    base: string,
+    summary: string,
+    file: File,
+    resetApprovals = false,
+  ) => {
     const fd = new FormData();
     fd.set("base_version_id", base);
     fd.set("change_summary", summary);
+    if (resetApprovals) fd.set("reset_approvals", "true");
     fd.set("file", file);
     return request<Version>(`/v1/documents/${doc}/versions`, {
       method: "POST",
@@ -358,6 +406,35 @@ export const api = {
       `/v1/documents/${doc}/versions/${version}/render-token`,
       { method: "POST" },
     ),
+  listApprovers: (doc: string) =>
+    request<{ items: ApprovalRequest[] }>(`/v1/documents/${doc}/approvers`),
+  createApprover: (doc: string, address: string) =>
+    request<ApprovalRequest>(`/v1/documents/${doc}/approvers`, {
+      method: "POST",
+      body: JSON.stringify({ address }),
+    }),
+  deleteApprover: (doc: string, approverId: string) =>
+    request<undefined>(`/v1/documents/${doc}/approvers/${approverId}`, {
+      method: "DELETE",
+    }),
+  listApprovals: (doc: string, version?: string) =>
+    request<ApprovalsList>(
+      `/v1/documents/${doc}/approvals${version ? `?version=${encodeURIComponent(version)}` : ""}`,
+    ),
+  createApproval: (
+    doc: string,
+    versionId: string,
+    decision: ApprovalDecision,
+    note?: string,
+  ) =>
+    request<Approval>(`/v1/documents/${doc}/approvals`, {
+      method: "POST",
+      body: JSON.stringify({ version_id: versionId, decision, note }),
+    }),
+  deleteApproval: (doc: string, approvalId: string) =>
+    request<undefined>(`/v1/documents/${doc}/approvals/${approvalId}`, {
+      method: "DELETE",
+    }),
   printToken: (doc: string, version: string) =>
     request<{ token: string; url: string }>(
       `/v1/documents/${doc}/versions/${version}/print-token`,

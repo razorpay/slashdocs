@@ -80,6 +80,13 @@ const (
 	StatusDeclined = "declined"
 )
 
+// Approval decision values. A document's derived approval status reuses these
+// plus StatusPending.
+const (
+	DecisionApproved         = "approved"
+	DecisionChangesRequested = "changes_requested"
+)
+
 type Document struct {
 	ID               string            `json:"id"`
 	Title            string            `json:"title"`
@@ -92,6 +99,61 @@ type Document struct {
 	// Snippet is set in search results when the text matches. U+0002 and
 	// U+0003 surround each match.
 	Snippet string `json:"snippet,omitempty"`
+	// ApprovalStatus and ApprovalSummary are handler-populated (like
+	// ParentFolder) and only present when the document has assigned approvers.
+	ApprovalStatus  string           `json:"approval_status,omitempty"`
+	ApprovalSummary *ApprovalSummary `json:"approval_summary,omitempty"`
+}
+
+// ApprovalRequest names a principal the document owner wants a decision from.
+// It is version-independent: the set of approvers survives new versions.
+type ApprovalRequest struct {
+	ID          string         `json:"id"`
+	DocumentID  string         `json:"document_id"`
+	Approver    auth.Principal `json:"approver"`
+	RequestedBy auth.Principal `json:"requested_by"`
+}
+
+// Approval is one approver's decision on one version. Carried rows (copied
+// forward on version pushes) keep the original decision time and point at the
+// version that received the explicit decision.
+type Approval struct {
+	ID         string         `json:"id"`
+	DocumentID string         `json:"document_id"`
+	VersionID  string         `json:"version_id"`
+	Approver   auth.Principal `json:"approver"`
+	Decision   string         `json:"decision"`
+	// Note is the reviewer's explanation. Required for changes_requested,
+	// optional for an approval.
+	Note                 string `json:"note,omitempty"`
+	DecidedAt            string `json:"decided_at,omitempty"`
+	CarriedFromVersionID string `json:"carried_from_version_id,omitempty"`
+}
+
+// ApprovalSummary aggregates decisions from currently assigned approvers on
+// one version. Status is derived, not stored: approved when everyone
+// approved, changes_requested when anyone did, pending otherwise.
+type ApprovalSummary struct {
+	Total            int    `json:"total"`
+	Approved         int    `json:"approved"`
+	ChangesRequested int    `json:"changes_requested"`
+	Pending          int    `json:"pending"`
+	Status           string `json:"-"`
+}
+
+// DeriveApprovalStatus computes the aggregate status for a version given its
+// decision counts. Returns "" when no approvers are assigned.
+func DeriveApprovalStatus(total, approved, changesRequested int) string {
+	switch {
+	case total == 0:
+		return ""
+	case approved == total:
+		return DecisionApproved
+	case changesRequested > 0:
+		return DecisionChangesRequested
+	default:
+		return StatusPending
+	}
 }
 
 type FolderBreadcrumb struct {
@@ -208,7 +270,10 @@ type Version struct {
 	CreatedBy     auth.Principal `json:"created_by"`
 	ChangeSummary string         `json:"change_summary"`
 	SHA256        string         `json:"sha256"`
-	CreatedAt     string         `json:"created_at"`
+	// CarriedApprovals counts approval rows copied forward when this version
+	// was created; used for metrics only.
+	CarriedApprovals int    `json:"-"`
+	CreatedAt        string `json:"created_at"`
 }
 
 type GitHubConnection struct {
@@ -408,7 +473,10 @@ type Repository interface {
 	ListGrants(ctx context.Context, documentID string) ([]Grant, error)
 	UpdateGrant(ctx context.Context, documentID, grantID string, role Role, updatedBy auth.Principal) (Grant, error)
 	DeleteGrant(ctx context.Context, documentID, grantID string, deletedBy auth.Principal) error
-	CreateVersion(ctx context.Context, documentID, baseVersionID, changeSummary string, html []byte, createdBy auth.Principal) (Version, error)
+	// CreateVersion writes a new immutable version. Unless resetApprovals is
+	// set, active approved decisions on the base version are copied forward to
+	// the new version (with provenance) in the same transaction.
+	CreateVersion(ctx context.Context, documentID, baseVersionID, changeSummary string, html []byte, createdBy auth.Principal, resetApprovals bool) (Version, error)
 	ListVersions(ctx context.Context, documentID string) ([]Version, error)
 	GetVersion(ctx context.Context, id string) (Version, error)
 	GetVersionHTML(ctx context.Context, id string) ([]byte, error)
@@ -448,4 +516,23 @@ type Repository interface {
 	DeletePin(ctx context.Context, principal auth.Principal, resourceType, resourceID string) error
 	ListHiddenFeaturedItems(ctx context.Context, principal auth.Principal) ([]string, error)
 	HideFeaturedItem(ctx context.Context, principal auth.Principal, resourceID string) error
+	// CreateApprovalRequest assigns an approver; ErrConflict when already
+	// assigned. DeleteApprovalRequest removes the assignment and revokes all of
+	// that approver's decisions on the document.
+	CreateApprovalRequest(ctx context.Context, documentID string, approver, requestedBy auth.Principal) (ApprovalRequest, error)
+	ListApprovalRequests(ctx context.Context, documentID string) ([]ApprovalRequest, error)
+	DeleteApprovalRequest(ctx context.Context, documentID, requestID string) error
+	// CreateOrUpdateApproval upserts the approver's decision on a version. The
+	// bool reports whether a new decision row was created (false = replaced).
+	// ErrNotFound when the version is not part of the document; ErrForbidden
+	// when the principal is not an assigned approver.
+	CreateOrUpdateApproval(ctx context.Context, documentID, versionID, decision, note string, approver auth.Principal) (Approval, bool, error)
+	// DeleteApproval revokes the approver's own decision; ErrForbidden when the
+	// decision belongs to someone else.
+	DeleteApproval(ctx context.Context, documentID, approvalID string, approver auth.Principal) error
+	ListApprovals(ctx context.Context, documentID, versionID string) ([]Approval, error)
+	// DocumentApprovalSummaries batch-computes each document's approval summary
+	// for its current version. Documents without assigned approvers are absent
+	// from the result map.
+	DocumentApprovalSummaries(ctx context.Context, documentIDs []string) (map[string]ApprovalSummary, error)
 }

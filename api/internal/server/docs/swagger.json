@@ -580,6 +580,225 @@
                 }
             }
         },
+        "/v1/documents/{id}/approvals": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Per-approver decisions for a version (current version by default), merged with pending approvers, plus the derived aggregate status.",
+                "tags": [
+                    "approvals"
+                ],
+                "summary": "List decisions and aggregate status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Version ID (defaults to the current version)",
+                        "name": "version",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server.approvalsListResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Records the caller's decision on a version. Submitting again replaces the previous decision for that version.",
+                "tags": [
+                    "approvals"
+                ],
+                "summary": "Submit or update a decision",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server.approvalResponse"
+                        }
+                    },
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/server.approvalResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}/approvals/{approval_id}": {
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Removes the caller's decision on a version, returning them to pending. Assignment is unaffected.",
+                "tags": [
+                    "approvals"
+                ],
+                "summary": "Revoke own decision",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Approval ID",
+                        "name": "approval_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}/approvers": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "tags": [
+                    "approvals"
+                ],
+                "summary": "List assigned approvers",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server.listResponse-server_approvalRequestResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Assigns a user or service account as an approver. The approver must already have at least viewer access on the document.",
+                "tags": [
+                    "approvals"
+                ],
+                "summary": "Assign an approver",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/server.approvalRequestResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}/approvers/{approver_id}": {
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Removes the assignment and revokes all of that approver's decisions on the document.",
+                "tags": [
+                    "approvals"
+                ],
+                "summary": "Remove an approver",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Approval request ID",
+                        "name": "approver_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
         "/v1/documents/{id}/comments": {
             "get": {
                 "security": [
@@ -1266,6 +1485,12 @@
                         "type": "string",
                         "description": "Change summary",
                         "name": "change_summary",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Set to true to skip carrying approved decisions forward (forces a full re-review)",
+                        "name": "reset_approvals",
                         "in": "formData"
                     },
                     {
@@ -1963,6 +2188,23 @@
                 }
             }
         },
+        "repo.ApprovalSummary": {
+            "type": "object",
+            "properties": {
+                "approved": {
+                    "type": "integer"
+                },
+                "changes_requested": {
+                    "type": "integer"
+                },
+                "pending": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
         "repo.CLICredential": {
             "type": "object",
             "properties": {
@@ -1977,6 +2219,13 @@
         "repo.Document": {
             "type": "object",
             "properties": {
+                "approval_status": {
+                    "description": "ApprovalStatus and ApprovalSummary are handler-populated (like\nParentFolder) and only present when the document has assigned approvers.",
+                    "type": "string"
+                },
+                "approval_summary": {
+                    "$ref": "#/definitions/repo.ApprovalSummary"
+                },
                 "current_version_id": {
                     "type": "string"
                 },
@@ -2145,6 +2394,99 @@
                     "type": "integer"
                 },
                 "sha256": {
+                    "type": "string"
+                }
+            }
+        },
+        "server.approvalListItem": {
+            "type": "object",
+            "properties": {
+                "approver": {
+                    "$ref": "#/definitions/server.principalResponse"
+                },
+                "carried_from_version_id": {
+                    "type": "string"
+                },
+                "carried_from_version_number": {
+                    "description": "CarriedFromVersionNumber is the display number of the version that\nreceived the explicit decision, so the UI can say \"Approved on v3\"\ninstead of an opaque ID. Zero when the decision is not carried.",
+                    "type": "integer"
+                },
+                "decided_at": {
+                    "type": "string"
+                },
+                "decision": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "note": {
+                    "type": "string"
+                }
+            }
+        },
+        "server.approvalRequestResponse": {
+            "type": "object",
+            "properties": {
+                "approver": {
+                    "$ref": "#/definitions/server.principalResponse"
+                },
+                "document_id": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "requested_by": {
+                    "$ref": "#/definitions/server.requestedByJSON"
+                }
+            }
+        },
+        "server.approvalResponse": {
+            "type": "object",
+            "properties": {
+                "approver": {
+                    "$ref": "#/definitions/server.principalResponse"
+                },
+                "carried_from_version_id": {
+                    "type": "string"
+                },
+                "decided_at": {
+                    "type": "string"
+                },
+                "decision": {
+                    "type": "string"
+                },
+                "document_id": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "note": {
+                    "type": "string"
+                },
+                "version_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "server.approvalsListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/server.approvalListItem"
+                    }
+                },
+                "status": {
+                    "type": "string"
+                },
+                "summary": {
+                    "$ref": "#/definitions/repo.ApprovalSummary"
+                },
+                "version_id": {
                     "type": "string"
                 }
             }
@@ -2757,6 +3099,17 @@
                 }
             }
         },
+        "server.listResponse-server_approvalRequestResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/server.approvalRequestResponse"
+                    }
+                }
+            }
+        },
         "server.listResponse-server_commentResponse": {
             "type": "object",
             "properties": {
@@ -2887,6 +3240,17 @@
                     "type": "string"
                 },
                 "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "server.requestedByJSON": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "id": {
                     "type": "string"
                 }
             }

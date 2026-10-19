@@ -180,9 +180,12 @@ Interactive documents are allowed.
     sets, checkboxes/toggles for binary state, inputs/sliders for numbers, and
     buttons for clear commands.
   - For links, make the target obvious in the visible text.
-  - For persisted document-local state such as approvals, tracker rows, and
-    dropdown selections, use the slashdocs KV primitive:
+  - For persisted document-local state such as tracker rows and dropdown
+    selections, use the slashdocs KV primitive:
       slashdocs guidelines interactivity kv
+  - For document sign-off, use the native approval workflow instead of
+    hand-rolled KV approval state:
+      slashdocs guidelines review approvals
   - For documents that render files from GitHub at read time, use the GitHub
     bridge rather than embedding credentials or fetching private URLs directly:
       slashdocs guidelines interactivity github
@@ -228,27 +231,28 @@ Print preparation is optional:
 	},
 	{
 		Path:    []string{"interactivity", "kv"},
-		Summary: "Persist approval states, tracker fields, dropdowns, and other document-local state.",
+		Summary: "Persist tracker fields, dropdowns, and other document-local state.",
 		Aliases: [][]string{{"kv"}, {"state"}, {"store"}, {"storage"}},
 		Body: `slashdocs guidelines: interactivity kv
 
 Uploaded HTML can use a document-scoped KV store through window.slashdocs.kv.
-This is for runtime state such as approvals, tracker fields, dropdown choices,
-checkboxes, and lightweight workflow metadata.
+This is for runtime state such as tracker fields, dropdown choices,
+checkboxes, and lightweight workflow metadata. (For document sign-off, prefer
+the native approval workflow: slashdocs guidelines review approvals.)
 
 API:
-  const value = await window.slashdocs.kv.get("approval:pm");
+  const value = await window.slashdocs.kv.get("tracker:owner");
   const all = await window.slashdocs.kv.all();
 
-  await window.slashdocs.kv.set("approval:pm", {
-    status: "approved",
+  await window.slashdocs.kv.set("tracker:owner", {
+    status: "done",
     by: "pm@example.com"
   });
 
-  await window.slashdocs.kv.delete("approval:pm");
+  await window.slashdocs.kv.delete("tracker:owner");
 
   await window.slashdocs.kv.patch({
-    "approval:pm": { status: "approved" },
+    "tracker:owner": { status: "done" },
     "tracker:old-row": null
   });
 
@@ -303,7 +307,7 @@ Small dropdown example:
   </select>
 
   <script>
-    const key = "approval:status";
+    const key = "tracker:status";
     const select = document.querySelector("#status");
 
     window.slashdocs.kv.get(key).then(value => {
@@ -447,6 +451,43 @@ Write documents for review, not just display.
   - Keep approval or tracker controls close to the content they affect.
   - Use KV for live document-local workflow state. Use versioned HTML updates for
     changes to the document template or source content.
+  - For formal sign-off, use the native approval workflow:
+      slashdocs guidelines review approvals
+`,
+	},
+	{
+		Path:    []string{"review", "approvals"},
+		Summary: "Request and track document sign-off with the native approval workflow.",
+		Aliases: [][]string{{"approvals"}, {"approval"}, {"approve"}},
+		Body: `slashdocs guidelines: review approvals
+
+slashdocs has a first-class approval workflow. Prefer it over hand-rolled KV
+approval state: it is version-aware, server-enforced, and shows up in the
+reader UI and document listings.
+
+Model:
+  - The document owner assigns approvers. Approvers need viewer access first.
+  - Approvers approve or request changes on a specific version.
+  - The document is "approved" only when every assigned approver approved.
+  - Approved decisions carry forward to new versions automatically; only
+    approvers who requested changes (or never decided) reset to pending.
+  - Push with --reset-approvals to force a full re-review after big changes.
+  - Approvers can revoke their decision at any time.
+  - Requesting changes requires a note saying what needs to change; a note is
+    optional when approving.
+
+Commands:
+  slashdocs docs approvers add <doc_id> --to reviewer@org.example
+  slashdocs docs approvers list <doc_id>
+  slashdocs docs approvers remove <doc_id> <approver_id>
+  slashdocs docs approvals list <doc_id> [--version <version_id>]
+  slashdocs docs approve <doc_id> [--version <version_id>] [--note "..."]
+  slashdocs docs request-changes <doc_id> --note "what needs to change"
+  slashdocs docs revoke-approval <doc_id> [--version <version_id>]
+  slashdocs docs push <doc_id> <file> --reset-approvals
+
+The document response includes approval_status and approval_summary once
+approvers are assigned; use --json for machine-readable output.
 `,
 	},
 }

@@ -41,17 +41,21 @@ export function UploadVersionSheet({
 }) {
   const q = useQueryClient();
   const [summary, setSummary] = useState("");
+  const [resetApprovals, setResetApprovals] = useState(false);
   const { file, setFile, reset } = useStagedFile();
   const m = useMutation({
-    mutationFn: () => api.createVersion(docId, baseVersion, summary, file!),
+    mutationFn: () =>
+      api.createVersion(docId, baseVersion, summary, file!, resetApprovals),
     onSuccess: () => {
       toast.success("Version uploaded.");
       onOpenChange(false);
       setSummary("");
+      setResetApprovals(false);
       reset();
       q.invalidateQueries({ queryKey: queryKeys.versions(docId) });
       q.invalidateQueries({ queryKey: queryKeys.document(docId) });
       q.invalidateQueries({ queryKey: queryKeys.comments(docId) });
+      q.invalidateQueries({ queryKey: queryKeys.approvalsAll(docId) });
     },
     onError: (e) => toast.error(errorMessage(e, "Upload failed")),
   });
@@ -75,6 +79,14 @@ export function UploadVersionSheet({
               onChange={(e) => setSummary(e.target.value)}
             />
             <HtmlFileInput file={file} onFile={setFile} />
+            <label className="flex items-center gap-2 text-xs text-[var(--color-fg-muted)]">
+              <input
+                type="checkbox"
+                checked={resetApprovals}
+                onChange={(e) => setResetApprovals(e.target.checked)}
+              />
+              Require everyone to re-approve (don&apos;t carry approvals forward)
+            </label>
             <Button type="submit" disabled={!file || m.isPending}>
               {m.isPending ? "Uploading…" : "Upload version"}
             </Button>

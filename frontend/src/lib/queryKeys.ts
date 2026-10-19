@@ -24,4 +24,9 @@ export const queryKeys = {
   // Prefix key matching every people search. Grants change who is a contact.
   userSearchAll: () => ["users", "search"] as const,
   userSearch: (query: string) => ["users", "search", query] as const,
+  approvers: (doc: string) => ["approvers", doc] as const,
+  approvals: (doc: string, version?: string) =>
+    ["approvals", doc, version || "current"] as const,
+  // Prefix key matching approval decisions for every version of a document.
+  approvalsAll: (doc: string) => ["approvals", doc] as const,
 };

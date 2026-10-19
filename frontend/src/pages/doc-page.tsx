@@ -247,6 +247,8 @@ export function DocumentPage() {
           onFollowViewer={followViewer}
           shareOpen={shareOpen}
           onShareOpenChange={setShareOpen}
+          approvalStatus={doc.data.approval_status}
+          approvalSummary={doc.data.approval_summary}
         />
       )}
     />
