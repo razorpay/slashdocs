@@ -10,7 +10,7 @@ RETURNING created_at;
 
 -- name: ListComments :many
 SELECT id,document_id,created_on_version_id,author_type,author_id,author_email,author_name,body,selected_text,anchor_json,status,parent_comment_id,root_comment_id,created_at,resolved_at
-FROM comments WHERE document_id= @document_id AND (@status::text='' OR status= @status) AND (@version_id::text='' OR created_on_version_id= @version_id) ORDER BY created_at, id;
+FROM comments WHERE document_id= @document_id AND (@status::text='' OR @status::text='all' OR status= @status) AND (@version_id::text='' OR created_on_version_id= @version_id) ORDER BY created_at, id;
 
 -- name: InsertCommentMention :exec
 INSERT INTO comment_mentions(comment_id, principal_type, principal_id, offset_utf16, length_utf16, label_text)

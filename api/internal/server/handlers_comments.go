@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -114,7 +115,7 @@ func (h handlers) createComment(c *gin.Context) {
 // @Security bearerAuth
 // @Security cookieAuth
 // @Param id path string true "Document ID"
-// @Param status query string false "open|resolved|stale|orphaned|all"
+// @Param status query string false "open|resolved|all"
 // @Param version_id query string false "Version ID"
 // @Success 200 {object} listResponse[commentResponse]
 // @Router /v1/documents/{id}/comments [get]
@@ -122,8 +123,18 @@ func (h handlers) listComments(c *gin.Context) {
 	if !h.needDocRole(c, c.Param("id"), repo.RoleViewer) {
 		return
 	}
+	status := strings.ToLower(strings.TrimSpace(c.Query("status")))
+	switch status {
+	case "", commentStatusAll:
+		status = ""
+	case commentStatusOpen, commentStatusResolved:
+		// valid status filter
+	default:
+		badRequest(c, "invalid comment status")
+		return
+	}
 	versionID := c.Query("version_id")
-	items, err := h.deps.repository.ListComments(c.Request.Context(), c.Param("id"), c.Query("status"), versionID)
+	items, err := h.deps.repository.ListComments(c.Request.Context(), c.Param("id"), status, versionID)
 	if err != nil {
 		internalErr(c, err)
 		return

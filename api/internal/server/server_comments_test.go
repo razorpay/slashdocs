@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"testing"
@@ -237,4 +238,109 @@ func TestPatchCommentRejectsInvalidStatus(t *testing.T) {
 	})
 
 	assertStatus(t, rr, http.StatusBadRequest)
+}
+
+func TestListCommentsStatusFilter(t *testing.T) {
+	e := newTestEnv(t)
+
+	// e.cmt is already open. Let's create a second comment and resolve it.
+	create := do(t, e.h, http.MethodPost, "/v1/documents/"+e.doc.ID+"/comments", fmt.Sprintf(`{
+	  "version_id": %q,
+	  "body": "second comment",
+	  "anchor": { "quote": "fixture", "prefix": "", "suffix": "" }
+	}`, e.ver.ID), map[string]string{
+		"Content-Type":     "application/json",
+		"X-Test-Principal": principalHeader(fixtureCommenter),
+	})
+	assertStatus(t, create, http.StatusCreated)
+	cmt2ID := jsonField(t, create.Body.Bytes(), "id")
+
+	// Resolve the second comment
+	patch := do(t, e.h, http.MethodPatch, "/v1/documents/"+e.doc.ID+"/comments/"+cmt2ID, `{"status":"resolved"}`, map[string]string{
+		"Content-Type":     "application/json",
+		"X-Test-Principal": principalHeader(fixtureCommenter),
+	})
+	assertStatus(t, patch, http.StatusOK)
+
+	// Filter open: should return only e.cmt
+	rrOpen := do(t, e.h, http.MethodGet, "/v1/documents/"+e.doc.ID+"/comments?status=open", "", map[string]string{
+		"X-Test-Principal": principalHeader(fixtureCommenter),
+	})
+	assertStatus(t, rrOpen, http.StatusOK)
+	var gotOpen struct {
+		Items []struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rrOpen.Body.Bytes(), &gotOpen); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if len(gotOpen.Items) != 1 || gotOpen.Items[0].ID != e.cmt.ID || gotOpen.Items[0].Status != "open" {
+		t.Fatalf("expected 1 open comment (%s), got: %+v", e.cmt.ID, gotOpen.Items)
+	}
+
+	// Filter resolved: should return only cmt2ID
+	rrResolved := do(t, e.h, http.MethodGet, "/v1/documents/"+e.doc.ID+"/comments?status=resolved", "", map[string]string{
+		"X-Test-Principal": principalHeader(fixtureCommenter),
+	})
+	assertStatus(t, rrResolved, http.StatusOK)
+	var gotResolved struct {
+		Items []struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rrResolved.Body.Bytes(), &gotResolved); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if len(gotResolved.Items) != 1 || gotResolved.Items[0].ID != cmt2ID || gotResolved.Items[0].Status != "resolved" {
+		t.Fatalf("expected 1 resolved comment (%s), got: %+v", cmt2ID, gotResolved.Items)
+	}
+
+	// Filter all: should return both comments
+	rrAll := do(t, e.h, http.MethodGet, "/v1/documents/"+e.doc.ID+"/comments?status=all", "", map[string]string{
+		"X-Test-Principal": principalHeader(fixtureCommenter),
+	})
+	assertStatus(t, rrAll, http.StatusOK)
+	var gotAll struct {
+		Items []struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rrAll.Body.Bytes(), &gotAll); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if len(gotAll.Items) != 2 {
+		t.Fatalf("expected 2 comments with status=all, got: %+v", gotAll.Items)
+	}
+
+	// Omitted filter: should return both comments
+	rrDefault := do(t, e.h, http.MethodGet, "/v1/documents/"+e.doc.ID+"/comments", "", map[string]string{
+		"X-Test-Principal": principalHeader(fixtureCommenter),
+	})
+	assertStatus(t, rrDefault, http.StatusOK)
+	var gotDefault struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rrDefault.Body.Bytes(), &gotDefault); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if len(gotDefault.Items) != 2 {
+		t.Fatalf("expected 2 comments with default filter, got: %+v", gotDefault.Items)
+	}
+
+	// Invalid status filters (including phantom stale, orphaned, and bogus values)
+	for _, bad := range []string{"stale", "orphaned", "closed", "invalid"} {
+		rrBad := do(t, e.h, http.MethodGet, "/v1/documents/"+e.doc.ID+"/comments?status="+bad, "", map[string]string{
+			"X-Test-Principal": principalHeader(fixtureCommenter),
+		})
+		assertStatus(t, rrBad, http.StatusBadRequest)
+		assertJSON(t, rrBad.Body.Bytes(), `{
+		  "error": { "code": "bad_request", "message": "invalid comment status" }
+		}`)
+	}
 }

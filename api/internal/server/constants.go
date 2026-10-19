@@ -25,6 +25,7 @@ const (
 
 // Comment / transfer statuses
 const (
+	commentStatusAll      = "all"
 	commentStatusOpen     = "open"
 	commentStatusResolved = "resolved"
 	// commentMentionsMediaType is a rolling-upgrade sentinel: old servers reject

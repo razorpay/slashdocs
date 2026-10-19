@@ -275,7 +275,7 @@ func registerMCPCommentTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 	server.AddTool(mcp.NewTool("list_comments", readOnlyOptions(
 		mcp.WithDescription("List document comment threads, optionally filtered by status or version."),
 		mcpDocumentID(),
-		mcp.WithString("status", mcp.Description("Optional status filter."), mcp.Enum("open", "resolved", "stale", "orphaned", "all")),
+		mcp.WithString("status", mcp.Description("Optional status filter."), mcp.Enum("open", "resolved", "all")),
 		mcp.WithString("version_id", mcp.Description("Optional version filter.")),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		doc, invalid := mcpRequired(request, "document_id")

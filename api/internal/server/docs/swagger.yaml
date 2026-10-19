@@ -1044,7 +1044,7 @@ paths:
         name: id
         required: true
         type: string
-      - description: open|resolved|stale|orphaned|all
+      - description: open|resolved|all
         in: query
         name: status
         type: string

@@ -1217,6 +1217,9 @@ func (s *Store) GetComment(ctx context.Context, id string) (repo.Comment, error)
 	return comment, nil
 }
 func (s *Store) ListComments(ctx context.Context, documentID, status, versionID string) ([]repo.Comment, error) {
+	if status == "all" {
+		status = ""
+	}
 	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return nil, err
