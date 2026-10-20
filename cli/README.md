@@ -22,6 +22,20 @@ There is no built-in default server. Installing via `curl https://<your-server>/
 
 Self-hosted login only needs the server URL. The server owns the OIDC configuration (generic `SLASHDOCS_OIDC_*` variables or the Google aliases); the CLI uses server-mediated loopback PKCE.
 
+For a remote shell (for example, over SSH):
+
+```bash
+slashdocs auth login slashdocs.example.com --no-browser
+```
+
+Open the printed login URL in a browser on your computer and sign in. If the
+browser cannot load the final `http://127.0.0.1:<port>/callback?...` page, copy the
+full URL from its address bar, paste it into the waiting CLI, and press Enter.
+The CLI checks that the callback address and state match this login, then
+exchanges the code using its original PKCE verifier. No SSH port forwarding is
+needed. Pasting also works without `--no-browser`; the flag only skips opening
+a browser automatically. `SLASHDOCS_NO_BROWSER=1` also skips opening a browser.
+
 By default, login stores the secret token in the OS keychain when available and keeps only metadata plus a `token_ref` in `~/.config/slashdocs/config.json`. If the keychain is unavailable, it falls back to storing the token in the config file with `0600` permissions. Set `SLASHDOCS_NO_KEYCHAIN=1` to force file-only storage.
 
 For CI/bots:
