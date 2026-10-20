@@ -19,6 +19,11 @@ const MAX_SPOT_ZOOM = 100;
 
 // A view's place may lie outside its element, up to this many times its size.
 const MAX_VIEW_FRACTION = 1000;
+// The server takes a cursor chat message up to this many characters, without
+// control characters.
+const MAX_MESSAGE = 100;
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 
 function parsePlace(value: unknown, limit = { min: 0, max: 1 }): CursorPlace | null {
   const { path, x, y, z } = (value ?? {}) as Record<string, unknown>;
@@ -32,16 +37,21 @@ function parsePlace(value: unknown, limit = { min: 0, max: 1 }): CursorPlace | n
 
 // parseCursorSpot accepts a spot from the render frame, which also runs the
 // document's own scripts. Anything else means that the pointer left. An
-// invalid view is dropped.
+// invalid view or message is dropped.
 export function parseCursorSpot(value: unknown): CursorSpot | null {
   const spot = parsePlace(value);
+  const { m } = (value ?? {}) as { m?: unknown };
+  const message =
+    typeof m === "string" && m && [...m].length <= MAX_MESSAGE && !CONTROL.test(m)
+      ? m
+      : undefined;
   const view =
     spot &&
     parsePlace((value as { v?: unknown }).v, {
       min: -MAX_VIEW_FRACTION,
       max: MAX_VIEW_FRACTION,
     });
-  return spot && view ? { ...spot, v: view } : spot;
+  return spot && { ...spot, ...(view && { v: view }), ...(message && { m: message }) };
 }
 
 // createCursorBatch collects this reader's pointer points and sends them in
@@ -57,15 +67,15 @@ export function createCursorBatch(send: (points: CursorPoint[]) => Promise<unkno
 
   function flush() {
     timer = undefined;
-    // Only the newest view matters, so the batch keeps that one.
+    // Only the newest view and message matter, so the batch keeps those.
     let newestView = -1;
     queue.forEach((point, i) => {
       if (point.v) newestView = i;
     });
     const points = queue.map((point, i) => {
-      if (!point.v || i === newestView) return point;
       const copy = { ...point };
-      delete copy.v;
+      if (i !== newestView) delete copy.v;
+      if (i !== queue.length - 1) delete copy.m;
       return copy;
     });
     queue = [];

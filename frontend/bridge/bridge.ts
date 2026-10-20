@@ -14,7 +14,7 @@ import {
   refreshSVGRects,
 } from "./highlight.ts";
 import { createCanvasLayer, parsePins } from "./canvas.ts";
-import { createCursorLayer, trackPointer } from "./cursors.ts";
+import { createCursorChat, createCursorLayer, trackPointer } from "./cursors.ts";
 import { CHORD_KEYS } from "../src/lib/esc-chord.ts";
 import {
   reduceVimScroll,
@@ -109,6 +109,8 @@ type Theme = "dark" | "light";
 (function bridge(): void {
   const appOrigin = window.__SLASHDOCS_APP_ORIGIN__ || "*";
   const frame = document.getElementById("slashdocs-doc") as HTMLIFrameElement;
+  // This viewer's cursor color, from the app, for the cursor chat field.
+  let cursorColor: string | undefined;
   const cursors = createCursorLayer(doc, () =>
     parent.postMessage({ type: "slashdocs:unfollowed" }, targetOrigin()),
   );
@@ -1922,11 +1924,12 @@ type Theme = "dark" | "light";
     d.addEventListener("scroll", cursors.refresh, { capture: true, passive: true });
     d.defaultView?.addEventListener("resize", cursors.refresh);
     cursors.watchInput(d);
-    trackPointer(d, (spot) =>
+    const pointer = trackPointer(d, (spot) =>
       parent.postMessage({ type: "slashdocs:pointer", spot }, targetOrigin()),
     );
     if (canvasEnabled) canvas.start(d);
     else canvas.stop();
+    if (pointer) createCursorChat(d, pointer, () => cursorColor);
     parent.postMessage({ type: "slashdocs:ready" }, targetOrigin());
     scheduleViewport();
     hydrateKV();
@@ -2064,6 +2067,12 @@ type Theme = "dark" | "light";
       cursors.follow(String(e.data.session || ""));
     } else if (e.data.type === "slashdocs:unfollow-cursor") {
       cursors.unfollow();
+    } else if (
+      e.data.type === "slashdocs:cursor-color" &&
+      typeof e.data.color === "string" &&
+      /^#[0-9a-f]{3,8}$/i.test(e.data.color)
+    ) {
+      cursorColor = e.data.color;
     }
   });
 })();

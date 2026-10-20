@@ -7,7 +7,10 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 
@@ -28,6 +31,8 @@ const (
 	maxCursorBytes         = 4 * 1024
 	maxCursorPoints        = 16
 	maxCursorZoom          = 100
+	// A cursor chat message holds at most this many characters.
+	maxCursorMessage = 100
 	// A view's place may lie outside its element, up to this many times its size.
 	maxViewFraction       = 1000
 	liveEventWriteTimeout = 5 * time.Second
@@ -66,7 +71,8 @@ func (p presence) valid() bool {
 // that the pointer left the document. T is the time of the point in
 // milliseconds on the clock of the session. Z, when set, is how much larger
 // the element shows than its layout size, as on a zoomed canvas. V, when set,
-// is the place at the center of the viewer's view, which followers show.
+// is the place at the center of the viewer's view, which followers show. M,
+// when set, is the viewer's cursor chat message.
 type cursor struct {
 	Session string        `json:"session"`
 	Version string        `json:"version"`
@@ -80,6 +86,7 @@ type cursorPoint struct {
 	Y      float64      `json:"y"`
 	Z      float64      `json:"z,omitempty"`
 	V      *cursorPlace `json:"v,omitempty"`
+	M      string       `json:"m,omitempty"`
 	Hidden bool         `json:"hidden,omitempty"`
 }
 
@@ -89,6 +96,13 @@ type cursorPlace struct {
 	X    float64 `json:"x"`
 	Y    float64 `json:"y"`
 	Z    float64 `json:"z,omitempty"`
+}
+
+// validCursorMessage accepts a short cursor chat message without control
+// characters. Viewers render it as text.
+func validCursorMessage(m string) bool {
+	return utf8.ValidString(m) && utf8.RuneCountInString(m) <= maxCursorMessage &&
+		!strings.ContainsFunc(m, unicode.IsControl)
 }
 
 // valid checks a place whose fractions lie between lo and hi.
@@ -104,7 +118,8 @@ func (c cursor) valid() bool {
 	}
 	for _, p := range c.Points {
 		place := cursorPlace{Path: p.Path, X: p.X, Y: p.Y, Z: p.Z}
-		if p.T < 0 || !place.valid(0, 1) || (p.V != nil && !p.V.valid(-maxViewFraction, maxViewFraction)) {
+		if p.T < 0 || !place.valid(0, 1) || (p.V != nil && !p.V.valid(-maxViewFraction, maxViewFraction)) ||
+			!validCursorMessage(p.M) {
 			return false
 		}
 	}

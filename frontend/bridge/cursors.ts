@@ -53,6 +53,10 @@ function fraction(offset: number, size: number, clamp = true): number {
 
 // A view's place may lie outside its element, up to this many times its size.
 export const MAX_VIEW_FRACTION = 1000;
+// A cursor chat message holds at most this many characters, like the server.
+export const MAX_CURSOR_MESSAGE = 100;
+// A sent cursor chat message stays this long after Enter.
+const MESSAGE_LINGER = 5000;
 
 // The zoom that a spot records is clamped to this, like the server does.
 const MAX_ZOOM = 100;
@@ -119,14 +123,25 @@ function cursorElement(d: Document, path: string): Element | undefined {
   return el;
 }
 
-// trackPointer reports where this viewer's pointer is, and in v the place at
-// the center of their view with its zoom, which those who follow them show. It
-// reports at most once a frame and only when either changes. Null means that
-// the pointer left.
-export function trackPointer(d: Document, report: (spot: CursorSpot | null) => void) {
+export type PointerTracker = {
+  // position is the pointer's place in the document viewport, if it is there.
+  position: () => { x: number; y: number } | null;
+  // setMessage shows a cursor chat message at this viewer's cursor, or none.
+  setMessage: (message: string) => void;
+};
+
+// trackPointer reports where this viewer's pointer is, in v the place at the
+// center of their view with its zoom, which those who follow them show, and in
+// m their cursor chat message. It reports at most once a frame and only when
+// any changes. Null means that the pointer left.
+export function trackPointer(
+  d: Document,
+  report: (spot: CursorSpot | null) => void,
+): PointerTracker | undefined {
   const view = d.defaultView;
   if (!view) return;
   let pointer: { x: number; y: number } | null = null;
+  let message = "";
   let frame = 0;
   let reported = "";
   // The view is named by the element at its center. When the center is on
@@ -145,7 +160,11 @@ export function trackPointer(d: Document, report: (spot: CursorSpot | null) => v
     frame = 0;
     const at = pointer && cursorSpot(d, pointer.x, pointer.y);
     const centerPlace = at && center();
-    const spot: CursorSpot | null = at && centerPlace ? { ...at, v: centerPlace } : at;
+    const spot: CursorSpot | null = at && {
+      ...at,
+      ...(centerPlace && { v: centerPlace }),
+      ...(message && { m: message }),
+    };
     const key = JSON.stringify(spot);
     if (key === reported) return;
     reported = key;
@@ -175,6 +194,86 @@ export function trackPointer(d: Document, report: (spot: CursorSpot | null) => v
       capture: true,
       passive: true,
     });
+  return {
+    position: () => pointer,
+    setMessage: (next) => {
+      message = next.trim().slice(0, MAX_CURSOR_MESSAGE);
+      schedule();
+    },
+  };
+}
+
+function isTextEditing(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  return (
+    !!el?.closest?.('input,textarea,select,[contenteditable="true"]') ||
+    !!el?.isContentEditable
+  );
+}
+
+// createCursorChat lets a viewer type a short message at their cursor, as in
+// Figma: "/" opens a field by the pointer, and others see the text live at
+// this viewer's cursor. Enter keeps it a few seconds; Esc clears it. The field
+// lives in the bridge window, over the document, and lets the pointer through.
+export function createCursorChat(d: Document, pointer: PointerTracker) {
+  document.getElementById("slashdocs-cursor-chat")?.remove();
+  const box = document.createElement("div");
+  box.id = "slashdocs-cursor-chat";
+  box.hidden = true;
+  box.style.cssText =
+    "position:fixed;left:0;top:0;z-index:2147483647;pointer-events:none";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.maxLength = MAX_CURSOR_MESSAGE;
+  input.placeholder = "Say something";
+  input.setAttribute("aria-label", "Cursor chat message");
+  input.style.cssText =
+    "width:240px;padding:5px 10px;border:0;border-radius:3px 12px 12px 12px;background:#1f2328;color:#fff;font:500 13px/18px system-ui,-apple-system,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.25);outline:none";
+  box.appendChild(input);
+  document.body.appendChild(box);
+  let linger = 0;
+  const place = () => {
+    const at = pointer.position();
+    if (at) box.style.transform = `translate(${at.x + 14}px,${at.y + 18}px)`;
+  };
+  const close = (keep: boolean) => {
+    if (box.hidden) return;
+    box.hidden = true;
+    const text = input.value.trim();
+    input.value = "";
+    window.clearTimeout(linger);
+    pointer.setMessage(keep ? text : "");
+    if (keep && text)
+      linger = window.setTimeout(() => pointer.setMessage(""), MESSAGE_LINGER);
+    d.defaultView?.focus();
+  };
+  d.addEventListener(
+    "keydown",
+    (e) => {
+      if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (isTextEditing(e.target) || !pointer.position()) return;
+      e.preventDefault();
+      window.clearTimeout(linger);
+      pointer.setMessage("");
+      place();
+      box.hidden = false;
+      input.focus();
+    },
+    true,
+  );
+  d.addEventListener("pointermove", () => !box.hidden && place(), {
+    capture: true,
+    passive: true,
+  });
+  input.addEventListener("input", () => pointer.setMessage(input.value));
+  input.addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    if (e.key === "Enter" || e.key === "Escape") {
+      e.preventDefault();
+      close(e.key === "Enter");
+    }
+  });
+  input.addEventListener("blur", () => close(true));
 }
 
 // A track holds a cursor's points that playback has not passed. offset maps
@@ -259,6 +358,8 @@ type Cursor = {
   y: number;
   // The newest view of this cursor's viewer, if they send it.
   view?: CursorPlace;
+  // The viewer's name, which the label shows unless they chat.
+  name: string;
 };
 
 export type RemoteCursor = {
@@ -342,7 +443,16 @@ export function createCursorLayer(
       "position:absolute;left:12px;top:16px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px 7px;border-radius:3px 9px 9px 9px;color:#fff;font:500 12px/16px system-ui,-apple-system,sans-serif;box-shadow:0 1px 3px rgba(0,0,0,.2);transform-origin:0 0";
     el.append(svg, label);
     layer.appendChild(el);
-    const cursor = { track: newTrack(), el, label, arrow, shown: false, x: 0, y: 0 };
+    const cursor = {
+      track: newTrack(),
+      el,
+      label,
+      arrow,
+      shown: false,
+      x: 0,
+      y: 0,
+      name: "",
+    };
     cursors.set(session, cursor);
     return cursor;
   }
@@ -398,7 +508,16 @@ export function createCursorLayer(
 
   function receive({ session, name, color, points }: RemoteCursor) {
     const cursor = cursors.get(session) ?? create(session);
-    if (cursor.label.textContent !== name) cursor.label.textContent = name;
+    cursor.name = name;
+    // A cursor chat message shows in the label, in the viewer's color.
+    const message = points.at(-1)?.m ?? "";
+    const text = message || name;
+    if (cursor.label.textContent !== text) cursor.label.textContent = text;
+    cursor.label.style.whiteSpace = message ? "normal" : "nowrap";
+    cursor.label.style.maxWidth = message ? "260px" : "200px";
+    cursor.label.style.width = message ? "max-content" : "";
+    cursor.label.style.fontSize = message ? "13px" : "12px";
+    cursor.label.style.padding = message ? "5px 10px" : "2px 7px";
     cursor.label.style.background = color;
     cursor.arrow.setAttribute("fill", color);
     addPoints(cursor.track, points, performance.now());
@@ -490,7 +609,7 @@ export function createCursorLayer(
       return;
     }
     followed = session;
-    showFollowing(cursor.label.textContent ?? "", cursor.label.style.background);
+    showFollowing(cursor.name, cursor.label.style.background);
     if (!reducedMotion())
       cursor.label.animate(
         [

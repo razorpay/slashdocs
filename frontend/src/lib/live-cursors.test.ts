@@ -83,6 +83,22 @@ describe("createCursorBatch views", () => {
     await vi.advanceTimersByTimeAsync(CURSOR_BATCH_INTERVAL);
     expect(batches[1].map((point) => point.v?.x)).toEqual([undefined, 0.5, undefined]);
   });
+
+  it("sends the message only on the newest point", async () => {
+    const batches: CursorPoint[][] = [];
+    let finish = () => {};
+    const batch = createCursorBatch((points) => {
+      batches.push(points);
+      return new Promise<void>((resolve) => (finish = resolve));
+    });
+    batch.add({ ...spot(0), m: "h" });
+    await vi.advanceTimersByTimeAsync(0);
+    batch.add({ ...spot(0), m: "hi" });
+    batch.add({ ...spot(0), m: "hi!" });
+    finish();
+    await vi.advanceTimersByTimeAsync(CURSOR_BATCH_INTERVAL);
+    expect(batches[1].map((point) => point.m)).toEqual([undefined, "hi!"]);
+  });
 });
 
 describe("parseCursorSpot", () => {
@@ -104,6 +120,15 @@ describe("parseCursorSpot", () => {
     expect(parseCursorSpot({ ...spot(1), v: { path: "0..1", x: 0, y: 0 } })).toEqual(
       spot(1),
     );
+  });
+
+  it("keeps a short text message and drops any other", () => {
+    expect(parseCursorSpot({ ...spot(1), m: "Look here" })).toEqual({
+      ...spot(1),
+      m: "Look here",
+    });
+    for (const m of ["a".repeat(101), "bell\u0007", 5, ""])
+      expect(parseCursorSpot({ ...spot(1), m })).toEqual(spot(1));
   });
 
   it("keeps a valid zoom and drops any other", () => {
