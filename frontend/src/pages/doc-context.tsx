@@ -63,7 +63,7 @@ export type DocContextValue = {
   reportViewport: (anchor?: Partial<Anchor>) => void;
   moveCursor: (spot: CursorSpot | null) => void;
   subscribeCursors: (listener: CursorListener) => () => void;
-  // The cursor of the viewer the reader asked to go to. Each request is a new
+  // The cursor of the viewer the reader follows, if any. Each request is a new
   // object, so the same viewer can be followed again.
   followedCursor?: { session: string };
   // The rendered document is a canvas with comment pins: the panel lists
@@ -81,6 +81,9 @@ export type DocContextValue = {
   // The reader is placing a comment pin on the canvas.
   placingPin: boolean;
   setPlacingPin: (on: boolean) => void;
+  // The reader stopped following in the document, by moving the view or with
+  // the stop button.
+  onUnfollowCursor?: () => void;
 };
 
 const DocContext = createContext<DocContextValue | null>(null);
