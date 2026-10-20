@@ -64,6 +64,8 @@ type patchCommentRequest struct {
 	Body     *string                  `json:"body"`
 	Status   string                   `json:"status"`
 	Mentions *[]commentMentionRequest `json:"mentions"`
+	// Anchor moves a pinned comment on a canvas to a new spot.
+	Anchor *repo.Anchor `json:"anchor"`
 }
 
 // pointTargetPattern is the allowed value of a data-slashdocs-target attribute.
@@ -284,7 +286,7 @@ func (h handlers) createCommentReply(c *gin.Context) {
 
 // PatchComment godoc
 // @Summary Update comment
-// @Description Any request containing the mentions key, including an empty array, must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed.
+// @Description Any request containing the mentions key, including an empty array, must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed. An anchor with kind "point" moves a pinned canvas comment to a new spot; text comments cannot move.
 // @Tags comments
 // @Security bearerAuth
 // @Security cookieAuth
@@ -313,17 +315,23 @@ func (h handlers) patchComment(c *gin.Context) {
 		badRequest(c, message)
 		return
 	}
+	if in.Anchor != nil && !h.validCommentMove(c, in.Anchor) {
+		return
+	}
 	var mentions *[]repo.CommentMention
 	if in.Mentions != nil {
 		converted := commentMentions(*in.Mentions)
 		mentions = &converted
 	}
-	cm, err := h.deps.repository.UpdateComment(c.Request.Context(), c.Param("comment_id"), repo.CommentUpdate{Body: in.Body, Status: in.Status, Mentions: mentions})
+	cm, err := h.deps.repository.UpdateComment(c.Request.Context(), c.Param("comment_id"), repo.CommentUpdate{Body: in.Body, Status: in.Status, Mentions: mentions, Anchor: in.Anchor})
 	if err != nil {
 		commentWriteError(c, err)
 		return
 	}
 	event := "updated"
+	if in.Anchor != nil {
+		event = "moved"
+	}
 	switch in.Status {
 	case commentStatusResolved:
 		event = "resolved"
@@ -353,7 +361,7 @@ func normalizePatchCommentRequest(in *patchCommentRequest) string {
 		return "comment body cannot be empty"
 	case in.Status != "" && in.Status != commentStatusOpen && in.Status != commentStatusResolved:
 		return "invalid comment status"
-	case in.Body == nil && in.Status == "" && in.Mentions == nil:
+	case patchIsEmpty(in):
 		return "nothing to update"
 	default:
 		return ""
@@ -585,4 +593,33 @@ func (h handlers) canMutateComment(c *gin.Context, docID, commentID string) bool
 	}
 	forbidden(c, "comment access required")
 	return false
+}
+
+// validCommentMove checks a new spot for a pinned comment: only a pinned
+// thread moves, and only to another valid point. Text comments keep their
+// anchor for life.
+func (h handlers) validCommentMove(c *gin.Context, a *repo.Anchor) bool {
+	if a.Point == nil {
+		badRequest(c, "only a pinned comment can move")
+		return false
+	}
+	if msg, ok := validateCommentAnchor(a, h.deps.canvasCommentsEnabled); !ok {
+		badRequest(c, msg)
+		return false
+	}
+	cm, err := h.deps.repository.GetComment(c.Request.Context(), c.Param("comment_id"))
+	if err != nil {
+		commentWriteError(c, err)
+		return false
+	}
+	if cm.Anchor.Point == nil || cm.ParentCommentID != "" {
+		badRequest(c, "only a pinned comment can move")
+		return false
+	}
+	return true
+}
+
+// patchIsEmpty tells that a comment patch changes nothing.
+func patchIsEmpty(in *patchCommentRequest) bool {
+	return in.Body == nil && in.Status == "" && in.Mentions == nil && in.Anchor == nil
 }

@@ -9,7 +9,7 @@ import {
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
-import { api, type CommentMention, type Principal } from "@/api";
+import { api, type AnchorPoint, type CommentMention, type Principal } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { useCommentDrafts } from "@/lib/comment-drafts";
 import { Center } from "@/components/ui/misc";
@@ -41,6 +41,10 @@ const THEME_LABELS = { light: "Light", dark: "Dark", system: "System" } as const
 
 // The desktop comments panel stays as the reader left it, across documents
 // and visits. The mobile sheet always starts closed.
+// How long after a pin comment loses focus it is checked for being empty;
+// longer than the composer's save delay.
+const EMPTY_PIN_GRACE = 500;
+
 const commentsOpenStore = createPersistentStore<boolean>(
   "slashdocs:comments-open",
   true,
@@ -356,6 +360,22 @@ export function DocWorkspace({
       ),
     [updateDrafts],
   );
+  const moveDraft = useCallback(
+    (draftId: string, point: AnchorPoint, label?: string) =>
+      updateDrafts((list) =>
+        list.map((d) =>
+          d.id === draftId
+            ? {
+                ...d,
+                anchor: { ...d.anchor, kind: "point", point },
+                label,
+                updatedAt: Date.now(),
+              }
+            : d,
+        ),
+      ),
+    [updateDrafts],
+  );
   const discardDraft = useCallback(
     (draftId: string) => {
       updateDrafts((list) => list.filter((d) => d.id !== draftId));
@@ -365,6 +385,36 @@ export function DocWorkspace({
     },
     [updateDrafts, peekDraft],
   );
+
+  const latestDrafts = useRef(drafts);
+  latestDrafts.current = drafts;
+  const activeCommentRef = useRef(activeComment);
+  activeCommentRef.current = activeComment;
+  // Empty pin comments left from an earlier visit go when the page opens;
+  // none of them is being written.
+  useEffect(() => {
+    for (const d of latestDrafts.current)
+      if (d.anchor?.point && !d.body.trim()) discardDraft(d.id);
+    // Only when a document opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docId]);
+  // A pin comment left empty goes away when the reader moves on, as in
+  // Figma. The check waits for the composer to save what it holds.
+  const previousActive = useRef(activeComment);
+  useEffect(() => {
+    const previous = previousActive.current;
+    previousActive.current = activeComment;
+    if (!previous || previous === activeComment) return;
+    window.setTimeout(() => {
+      const draft = latestDrafts.current.find((d) => d.id === previous);
+      if (
+        draft?.anchor?.point &&
+        !draft.body.trim() &&
+        previousActive.current !== previous
+      )
+        discardDraft(previous);
+    }, EMPTY_PIN_GRACE);
+  }, [activeComment, discardDraft]);
 
   const exitFullscreen = useCallback(() => {
     setSearchParams(
@@ -461,7 +511,11 @@ export function DocWorkspace({
   // the thread a moment later, when the Esc chord gives up.
   const placingEndedAt = useRef(0);
   useEffect(() => {
-    if (!placingPin) placingEndedAt.current = Date.now();
+    if (placingPin) return;
+    placingEndedAt.current = Date.now();
+    // Stopping with an empty pin comment open closes it, and so it goes.
+    const draft = latestDrafts.current.find((d) => d.id === activeCommentRef.current);
+    if (draft?.anchor?.point && !draft.body.trim()) setActiveComment(undefined);
   }, [placingPin]);
   const onBareEscape = useCallback(() => {
     if (fullscreen) exitFullscreen();
@@ -520,6 +574,7 @@ export function DocWorkspace({
       pinLabels,
       setPinLabels,
       pinsShown: isMobile || commentsOpen,
+      moveDraft,
     }),
     [
       docId,
@@ -560,6 +615,7 @@ export function DocWorkspace({
       pinLabels,
       isMobile,
       commentsOpen,
+      moveDraft,
     ],
   );
 

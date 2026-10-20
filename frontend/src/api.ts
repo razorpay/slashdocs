@@ -123,6 +123,8 @@ export type CommentPatch = {
   body?: string;
   status?: string;
   mentions?: CommentMention[];
+  // Moves a pinned canvas comment to a new spot.
+  anchor?: { kind: "point"; point: AnchorPoint };
 };
 
 const COMMENT_MENTIONS_MEDIA_TYPE = "application/vnd.slashdocs.comment-mentions+json";

@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import type { Anchor, Comment, CursorSpot, Principal } from "@/api";
+import type { Anchor, AnchorPoint, Comment, CursorSpot, Principal } from "@/api";
 import type { CommentFilter } from "@/lib/constants";
 import type { CommentDraft } from "@/lib/comment-drafts";
 import type { CursorListener, DocumentKVListener } from "./use-document-stream";
@@ -76,6 +76,8 @@ export type DocContextValue = {
   // The canvas's names for the targets of pinned comments, by comment id.
   pinLabels: ReadonlyMap<string, string>;
   setPinLabels: (labels: ReadonlyMap<string, string>) => void;
+  // moveDraft moves an unsent pin comment to a new spot.
+  moveDraft: (id: string, point: AnchorPoint, label?: string) => void;
   // revealPin brings a canvas comment's pin into view.
   registerPinRevealer: (reveal: ((id: string) => void) | null) => void;
   revealPin: (id: string) => void;

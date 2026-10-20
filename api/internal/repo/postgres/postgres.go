@@ -1270,9 +1270,10 @@ func (s *Store) UpdateComment(ctx context.Context, id string, update repo.Commen
 	if err != nil {
 		return repo.Comment{}, err
 	}
-	if err := applyCommentUpdate(ctx, q, id, effectiveBody, bodyChanged, update.Status, nextMentions, replaceMentions); err != nil {
+	if err := applyCommentUpdate(ctx, q, id, effectiveBody, bodyChanged, update.Status, update.Anchor, nextMentions, replaceMentions); err != nil {
 		return repo.Comment{}, err
 	}
+	comment.Anchor = anchorAfterMove(comment.Anchor, update.Anchor)
 	if replaceMentions {
 		if err := s.enqueueNewCommentMentionNotifications(ctx, tx, id, newlyMentionedUserIDs(previousMentions, nextMentions)); err != nil {
 			return repo.Comment{}, err
@@ -1349,7 +1350,7 @@ func newlyMentionedUserIDs(previous, next []repo.CommentMention) []string {
 	return added
 }
 
-func applyCommentUpdate(ctx context.Context, q *dbsqlc.Queries, commentID, body string, bodyChanged bool, status string, mentions []repo.CommentMention, replaceMentions bool) error {
+func applyCommentUpdate(ctx context.Context, q *dbsqlc.Queries, commentID, body string, bodyChanged bool, status string, anchor *repo.Anchor, mentions []repo.CommentMention, replaceMentions bool) error {
 	if bodyChanged {
 		if err := q.UpdateCommentBody(ctx, dbsqlc.UpdateCommentBodyParams{Body: body, ID: commentID}); err != nil {
 			return err
@@ -1360,6 +1361,9 @@ func applyCommentUpdate(ctx context.Context, q *dbsqlc.Queries, commentID, body 
 			return err
 		}
 	}
+	if err := moveCommentAnchor(ctx, q, commentID, anchor); err != nil {
+		return err
+	}
 	if !replaceMentions {
 		return nil
 	}
@@ -1367,6 +1371,26 @@ func applyCommentUpdate(ctx context.Context, q *dbsqlc.Queries, commentID, body 
 		return err
 	}
 	return insertCommentMentions(ctx, q, commentID, mentions)
+}
+
+// moveCommentAnchor stores a moved pin's new anchor; nil moves nothing.
+func moveCommentAnchor(ctx context.Context, q *dbsqlc.Queries, id string, next *repo.Anchor) error {
+	if next == nil {
+		return nil
+	}
+	b, err := json.Marshal(next)
+	if err != nil {
+		return err
+	}
+	return q.UpdateCommentAnchor(ctx, dbsqlc.UpdateCommentAnchorParams{AnchorJson: b, ID: id})
+}
+
+// anchorAfterMove is the anchor a comment has after an update.
+func anchorAfterMove(current repo.Anchor, next *repo.Anchor) repo.Anchor {
+	if next == nil {
+		return current
+	}
+	return *next
 }
 
 func (s *Store) DeleteComment(ctx context.Context, id string) error {

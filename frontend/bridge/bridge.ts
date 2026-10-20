@@ -1794,7 +1794,10 @@ type Theme = "dark" | "light";
           canvas.setPlacing(false);
           return;
         }
-        if (ev.key === "c" && !chordArmedAt && !selectedRange(d.getSelection())) {
+        // Only a C within the Esc chord's window belongs to the chord.
+        const inChord = chordArmedAt > 0 && Date.now() - chordArmedAt <= 800;
+        if (ev.key === "c" && !inChord && !selectedRange(d.getSelection())) {
+          chordArmedAt = 0;
           ev.preventDefault();
           canvas.setPlacing(!canvas.isPlacing());
           return;
@@ -2033,6 +2036,8 @@ type Theme = "dark" | "light";
       typeof e.data.id === "string"
     ) {
       canvas.focus(e.data.id);
+    } else if (e.data.type === "slashdocs:canvas-release-outside") {
+      canvas.releaseOutside();
     } else if (e.data.type === "slashdocs:canvas-watch") {
       canvas.watch(typeof e.data.id === "string" ? e.data.id : null);
     } else if (e.data.type === "slashdocs:canvas-place-mode") {

@@ -7,14 +7,14 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { api, type Anchor } from "@/api";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { api, type Anchor, type AnchorPoint } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { matchesCommentFilter } from "@/lib/constants";
 import { Center } from "@/components/ui/misc";
 import { CHORD_KEYS, CHORD_WINDOW_MS } from "@/lib/esc-chord";
 import { cursorsShownStore, parseCursorSpot } from "@/lib/live-cursors";
-import { principalLabel } from "@/lib/principals";
+import { principalLabel, samePrincipal } from "@/lib/principals";
 import { useDocumentExport } from "./use-document-export";
 import { useDoc } from "./doc-context";
 import { useBridgeHost } from "./use-bridge-host";
@@ -61,6 +61,8 @@ export function RenderFrame() {
     setPinLabels,
     pinsShown,
     setActiveComment,
+    principal,
+    moveDraft,
   } = useDoc();
   const config = useQuery({ queryKey: queryKeys.config(), queryFn: api.getConfig });
   const canvasEnabled = config.data?.canvas_comments_enabled === true;
@@ -111,7 +113,7 @@ export function RenderFrame() {
     () => [
       ...drafts.flatMap((d) =>
         d.anchor?.point && d.version === version
-          ? [{ id: d.id, point: d.anchor.point, draft: true }]
+          ? [{ id: d.id, point: d.anchor.point, draft: true, movable: true }]
           : [],
       ),
       ...comments.flatMap((c) =>
@@ -123,13 +125,43 @@ export function RenderFrame() {
                 initials: initialsOf(principalLabel(c.author)),
                 replies: c.replies?.length ?? 0,
                 resolved: c.status === "resolved",
+                // The server also lets editors move pins; the canvas offers
+                // it on the reader's own.
+                movable: samePrincipal(c.author, principal),
               },
             ]
           : [],
       ),
     ],
-    [comments, commentFilter, drafts, version],
+    [comments, commentFilter, drafts, version, principal],
   );
+  // A pin dragged to a new spot: a draft moves locally, a saved comment
+  // through the API. A failed save puts the pin back on the next refresh.
+  const queryClient = useQueryClient();
+  const movePin = useCallback(
+    (id: string, point: AnchorPoint, label: unknown) => {
+      if (drafts.some((d) => d.id === id)) {
+        moveDraft(
+          id,
+          point,
+          typeof label === "string" ? label.slice(0, 80) : undefined,
+        );
+        return;
+      }
+      api
+        .patchComment(docId, id, { anchor: { kind: "point", point } })
+        .catch(() => toast.error("Could not move the comment."))
+        .finally(() =>
+          queryClient.invalidateQueries({ queryKey: queryKeys.comments(docId) }),
+        );
+    },
+    [drafts, moveDraft, docId, queryClient],
+  );
+  const releaseOutside = useRef(() =>
+    postToFrameRef.current({ type: "slashdocs:canvas-release-outside" }),
+  );
+  const postToFrameRef = useRef(postToFrame);
+  postToFrameRef.current = postToFrame;
   // The comment last activated by a click in the frame, which needs no focus.
   const activatedInFrame = useRef<string | undefined>(undefined);
   // Text and pin anchoring report separately; the panel shows either kind.
@@ -423,6 +455,24 @@ export function RenderFrame() {
               typeof e.data.label === "string" ? e.data.label.slice(0, 80) : undefined,
           });
       }
+      // A pin dragged out of the frame is let go over the app, where the
+      // frame hears no release: tell it, so the pin goes back.
+      if (e.data?.type === "slashdocs:canvas-dragging") {
+        window.removeEventListener("pointerup", releaseOutside.current);
+        if (e.data.on === true)
+          window.addEventListener("pointerup", releaseOutside.current, { once: true });
+      }
+      if (e.data?.type === "slashdocs:canvas-move" && typeof e.data.id === "string") {
+        const p = e.data.point as Record<string, unknown> | undefined;
+        const frac = (n: unknown): n is number =>
+          typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 1;
+        if (p && typeof p.target === "string" && frac(p.x) && frac(p.y))
+          movePin(
+            e.data.id,
+            { target: p.target.slice(0, 128), x: p.x, y: p.y },
+            e.data.label,
+          );
+      }
       if (
         e.data?.type === "slashdocs:canvas-pins-result" &&
         Array.isArray(e.data.results) &&
@@ -552,6 +602,7 @@ export function RenderFrame() {
     setPlacingPin,
     reportUnanchored,
     setPinLabels,
+    movePin,
   ]);
 
   // Canvas mode: the app enables it, the frame enters it for canvases, and

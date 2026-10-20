@@ -22,6 +22,8 @@ export type CanvasPin = {
   replies: number;
   resolved: boolean;
   draft: boolean;
+  // This reader may drag the pin to a new spot.
+  movable: boolean;
 };
 
 const MAX_SELECTOR = 256;
@@ -73,6 +75,7 @@ export function parsePins(value: unknown): CanvasPin[] {
       replies: typeof p.replies === "number" ? Math.max(0, Math.floor(p.replies)) : 0,
       resolved: p.resolved === true,
       draft: p.draft === true,
+      movable: p.movable === true,
     });
   }
   return out;
@@ -129,7 +132,8 @@ const CSS = `
 .sd-cluster:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
 .sd-cluster>b{display:flex;align-items:center;justify-content:center;width:24px;height:24px;margin-right:-6px;border-radius:50%;border:2px solid #fff;box-sizing:border-box;background:#e0e7ff;color:#3730a3;font-size:9px}
 .sd-cluster>span{margin-left:10px}
-.sd-pin:active,.sd-cluster:active{scale:.96}
+.sd-pin[data-pressed],.sd-cluster:active{scale:.96}
+.sd-pin[data-dragging]{cursor:grabbing;scale:1.1;transition:none;box-shadow:0 0 0 2px #2563eb,0 10px 24px rgba(0,0,0,.28)}
 [data-theme=dark] .sd-pin,[data-theme=dark] .sd-cluster{background:#27272a;box-shadow:0 0 0 1px rgba(255,255,255,.12),0 2px 8px rgba(0,0,0,.5);color:#e4e4e7}
 [data-theme=dark] .sd-cluster>b{border-color:#27272a}
 @media (prefers-reduced-motion:no-preference){.sd-pin[data-new]{animation:sd-pin-in 160ms cubic-bezier(.23,1,.32,1)}}
@@ -207,6 +211,9 @@ export function createCanvasLayer(host: CanvasHost) {
   let stable = 0;
   let lastKey = "";
   let lastSignature = "";
+  // The drag in progress, which the app can cancel when the pointer is let
+  // go outside the frame, where the frame hears no release.
+  let cancelDrag: (() => void) | null = null;
   // The pin the app shows a popover for, and its last reported rect.
   let watched: string | null = null;
   let lastRect = "";
@@ -360,8 +367,9 @@ export function createCanvasLayer(host: CanvasHost) {
         ? "Unsent comment"
         : `Comment${pin.resolved ? ", resolved" : ""}${pin.replies ? `, ${pin.replies} ${pin.replies === 1 ? "reply" : "replies"}` : ""}`,
     );
-    // A draft pin reopens its unsent comment, for example after a reload.
-    onPress(b, () => host.post({ type: "slashdocs:activate", id: pin.id }));
+    // A press opens the thread (a draft pin reopens its unsent comment, for
+    // example after a reload); a press that moves drags the pin.
+    pressOrDrag(b, pin);
     return b;
   }
 
@@ -412,6 +420,103 @@ export function createCanvasLayer(host: CanvasHost) {
         ? { type: "slashdocs:canvas-pin-rect", id: watched, rect }
         : { type: "slashdocs:canvas-pin-rect", id: watched, hidden: true },
     );
+  }
+
+  // pressOrDrag opens a pin on release, or moves it when the press travels.
+  // The pointer is captured, so the release comes back to the pin even
+  // though the pin sits over the document frame.
+  function pressOrDrag(b: HTMLElement, pin: CanvasPin) {
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (e.detail === 0) host.post({ type: "slashdocs:activate", id: pin.id });
+    });
+    b.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 || !on()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      b.setPointerCapture(e.pointerId);
+      // Pressed look set here, not by :active, which sticks when the release
+      // happens outside the frame.
+      b.dataset.pressed = "";
+      const start = { x: e.clientX, y: e.clientY };
+      const from = placed.find((p) => p.pin.id === pin.id);
+      const cam = camera();
+      const origin = from && {
+        x: cam.left + from.wx * cam.s,
+        y: cam.top + from.wy * cam.s,
+      };
+      let to: { x: number; y: number } | null = null;
+      let done = false;
+      const move = (ev: PointerEvent) => {
+        if (!pin.movable || !origin) return;
+        const dx = ev.clientX - start.x;
+        const dy = ev.clientY - start.y;
+        if (!to && Math.hypot(dx, dy) <= PLACE_SLOP) return;
+        if (!to) {
+          cancelDrag = () => {
+            to = null;
+            finish();
+            layout();
+          };
+          host.post({ type: "slashdocs:canvas-dragging", on: true });
+        }
+        to = { x: origin.x + dx, y: origin.y + dy };
+        delete b.dataset.pressed;
+        b.dataset.dragging = "";
+        b.style.transform = `translate(${to.x}px,${to.y}px)`;
+        if (pin.id === watched) {
+          lastRect = "";
+          host.post({
+            type: "slashdocs:canvas-pin-rect",
+            id: pin.id,
+            rect: {
+              left: to.x,
+              top: to.y - PIN_SIZE,
+              width: PIN_SIZE,
+              height: PIN_SIZE,
+            },
+          });
+        }
+      };
+      const finish = () => {
+        if (done) return;
+        done = true;
+        b.removeEventListener("pointermove", move);
+        delete b.dataset.dragging;
+        delete b.dataset.pressed;
+        if (cancelDrag) {
+          cancelDrag = null;
+          host.post({ type: "slashdocs:canvas-dragging", on: false });
+          if (to) drop(pin, to);
+          return;
+        }
+        host.post({ type: "slashdocs:activate", id: pin.id });
+      };
+      b.addEventListener("pointermove", move);
+      b.addEventListener("pointerup", finish, { once: true });
+      b.addEventListener("lostpointercapture", finish, { once: true });
+    });
+  }
+
+  // drop moves a pin to the spot under its point, or puts it back when that
+  // is outside the canvas. The move shows at once; the app saves it.
+  function drop(pin: CanvasPin, at: { x: number; y: number }) {
+    const vr = viewport!.getBoundingClientRect();
+    const inside =
+      at.x >= vr.left && at.x <= vr.right && at.y >= vr.top && at.y <= vr.bottom;
+    const point = inside ? anchorAt(at.x, at.y, d!.elementFromPoint(at.x, at.y)) : null;
+    if (!point) {
+      layout();
+      return;
+    }
+    pins = pins.map((p) => (p.id === pin.id ? { ...p, point } : p));
+    layout();
+    host.post({
+      type: "slashdocs:canvas-move",
+      id: pin.id,
+      point,
+      label: targetLabel(point.target),
+    });
   }
 
   function tick() {
@@ -620,6 +725,11 @@ export function createCanvasLayer(host: CanvasHost) {
       // Pins that were there keep their place; new ones animate in.
       shown = new Set([...shown].filter((id) => before.has(id)));
       layout();
+    },
+    // releaseOutside puts a dragged pin back when the pointer was let go
+    // outside the frame.
+    releaseOutside() {
+      cancelDrag?.();
     },
     // watch reports where a pin is while the app shows its popover.
     watch(id: string | null) {

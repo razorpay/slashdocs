@@ -316,6 +316,62 @@ func TestMCPCreatePointComment(t *testing.T) {
 	}), "y")
 }
 
+func TestMovePointComment(t *testing.T) {
+	e := newTestEnv(t)
+	rr := postComment(t, e, fixtureCommenter, `{"point":{"target":"t_mob","x":0.25,"y":0.75}}`)
+	assertStatus(t, rr, http.StatusCreated)
+	id := jsonField(t, rr.Body.Bytes(), "id")
+	path := "/v1/documents/" + e.doc.ID + "/comments/" + id
+	as := func(p auth.Principal) map[string]string {
+		return map[string]string{"Content-Type": "application/json", "X-Test-Principal": principalHeader(p)}
+	}
+
+	move := do(t, e.h, http.MethodPatch, path, `{"anchor":{"point":{"target":"t_otp","x":0.123456,"y":0.5}}}`, as(fixtureCommenter))
+	assertStatus(t, move, http.StatusOK)
+	anchor, _ := findComment(t, listComments(t, e, ""), id)["anchor"].(map[string]any)
+	point, _ := anchor["point"].(map[string]any)
+	if anchor["kind"] != "point" || point["target"] != "t_otp" || point["x"] != 0.1235 || point["y"] != 0.5 {
+		t.Fatalf("moved anchor = %v, want t_otp at 0.1235, 0.5", anchor)
+	}
+
+	// A move to the board, with no target, is a move too.
+	assertStatus(t, do(t, e.h, http.MethodPatch, path, `{"anchor":{"point":{"target":"","x":0.5,"y":0.5}}}`, as(fixtureCommenter)), http.StatusOK)
+
+	for _, tc := range []struct {
+		name, body string
+		p          auth.Principal
+		want       int
+	}{
+		{"text anchor", `{"anchor":{"quote":"hello"}}`, fixtureCommenter, http.StatusBadRequest},
+		{"point out of range", `{"anchor":{"point":{"target":"t_mob","x":1.5,"y":0}}}`, fixtureCommenter, http.StatusBadRequest},
+		{"bad target", `{"anchor":{"point":{"target":"has space","x":0,"y":0}}}`, fixtureCommenter, http.StatusBadRequest},
+		{"someone else's pin", `{"anchor":{"point":{"target":"t_mob","x":0,"y":0}}}`, fixtureViewer, http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertStatus(t, do(t, e.h, http.MethodPatch, path, tc.body, as(tc.p)), tc.want)
+		})
+	}
+}
+
+func TestTextCommentCannotMove(t *testing.T) {
+	e := newTestEnv(t)
+	rr := do(t, e.h, http.MethodPatch, "/v1/documents/"+e.doc.ID+"/comments/"+e.cmt.ID,
+		`{"anchor":{"point":{"target":"t_mob","x":0.5,"y":0.5}}}`,
+		map[string]string{"Content-Type": "application/json", "X-Test-Principal": principalHeader(fixtureOwner)})
+	assertStatus(t, rr, http.StatusBadRequest)
+}
+
+func TestMovePointCommentNeedsFeatureFlag(t *testing.T) {
+	e := newConfiguredTestEnv(t, server.Config{Environment: "test", DisableCanvasComments: true})
+	move := do(t, e.h, http.MethodPatch, "/v1/documents/"+e.doc.ID+"/comments/"+e.cmt.ID,
+		`{"anchor":{"point":{"target":"t_mob","x":0.5,"y":0.5}}}`,
+		map[string]string{"Content-Type": "application/json", "X-Test-Principal": principalHeader(fixtureOwner)})
+	assertStatus(t, move, http.StatusBadRequest)
+	if !strings.Contains(move.Body.String(), "point comments are not enabled") {
+		t.Fatalf("body = %s", move.Body.String())
+	}
+}
+
 func TestCommentBodyMustHaveText(t *testing.T) {
 	e := newTestEnv(t)
 	headers := map[string]string{"Content-Type": "application/json", "X-Test-Principal": principalHeader(fixtureCommenter)}

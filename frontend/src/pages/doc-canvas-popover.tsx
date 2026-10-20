@@ -42,12 +42,14 @@ function Floating({
   pin,
   label,
   onClose,
+  showClose = true,
   children,
 }: {
   frameRef: RefObject<HTMLIFrameElement | null>;
   pin: PinRect;
   label: string;
   onClose?: () => void;
+  showClose?: boolean;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -61,18 +63,27 @@ function Floating({
       ref={ref}
       role="dialog"
       aria-label={label}
+      // Esc closes the popover from inside it, as from the canvas.
+      onKeyDown={(e) => {
+        if (e.key !== "Escape" || !onClose) return;
+        e.stopPropagation();
+        onClose();
+      }}
       style={{
         left: at?.x ?? -9999,
         top: at?.y ?? -9999,
         width: WIDTH,
-        visibility: at ? "visible" : "hidden",
+        // Focusable while it measures itself (a hidden field cannot take
+        // the caret), then it fades in.
+        opacity: at ? 1 : 0,
+        transition: "opacity 120ms ease-out",
       }}
       className="fixed z-40"
     >
       <div className="max-h-[70vh] overflow-y-auto rounded-xl bg-[var(--color-surface)] shadow-xl ring-1 ring-[var(--color-border)]">
         {children}
       </div>
-      {onClose && (
+      {onClose && showClose && (
         // Floats on the corner so it never covers the card's own controls.
         <button
           type="button"
@@ -107,7 +118,14 @@ export function PinPopover({
 }) {
   if (draft)
     return (
-      <Floating frameRef={frameRef} pin={pin} label="New comment">
+      // The composer has its own cancel; Esc leaves it, and an empty one goes.
+      <Floating
+        frameRef={frameRef}
+        pin={pin}
+        label="New comment"
+        onClose={onClose}
+        showClose={false}
+      >
         <CommentComposer draft={draft} />
       </Floating>
     );

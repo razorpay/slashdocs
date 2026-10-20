@@ -722,7 +722,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "Any request containing the mentions key, including an empty array, must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed.",
+                "description": "Any request containing the mentions key, including an empty array, must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed. An anchor with kind \"point\" moves a pinned canvas comment to a new spot; text comments cannot move.",
                 "consumes": [
                     "application/json",
                     "application/vnd.slashdocs.comment-mentions+json"
@@ -2869,6 +2869,14 @@ const docTemplate = `{
         "server.patchCommentRequest": {
             "type": "object",
             "properties": {
+                "anchor": {
+                    "description": "Anchor moves a pinned comment on a canvas to a new spot.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/repo.Anchor"
+                        }
+                    ]
+                },
                 "body": {
                     "type": "string"
                 },
