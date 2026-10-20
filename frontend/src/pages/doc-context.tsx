@@ -10,6 +10,8 @@ export type PendingSelection = {
   quote: string;
   anchor?: Partial<Anchor>;
   top?: number;
+  // The canvas's name for a pin's target, such as a screen's title.
+  label?: string;
 };
 
 export type CommentPosition = {
@@ -64,6 +66,19 @@ export type DocContextValue = {
   // The cursor of the viewer the reader asked to go to. Each request is a new
   // object, so the same viewer can be followed again.
   followedCursor?: { session: string };
+  // The rendered document is a canvas with comment pins: the panel lists
+  // threads instead of lining them up beside highlights.
+  canvasMode: boolean;
+  setCanvasMode: (on: boolean) => void;
+  // The canvas's names for the targets of pinned comments, by comment id.
+  pinLabels: ReadonlyMap<string, string>;
+  setPinLabels: (labels: ReadonlyMap<string, string>) => void;
+  // revealPin brings a canvas comment's pin into view.
+  registerPinRevealer: (reveal: ((id: string) => void) | null) => void;
+  revealPin: (id: string) => void;
+  // The reader is placing a comment pin on the canvas.
+  placingPin: boolean;
+  setPlacingPin: (on: boolean) => void;
 };
 
 const DocContext = createContext<DocContextValue | null>(null);

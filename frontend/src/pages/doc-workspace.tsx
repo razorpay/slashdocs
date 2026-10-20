@@ -128,6 +128,9 @@ export function DocWorkspace({
   const [commentFilter, setCommentFilter] =
     useState<CommentFilter>(DEFAULT_COMMENT_FILTER);
   const [activeComment, setActiveComment] = useState<string>();
+  const [canvasMode, setCanvasMode] = useState(false);
+  const [pinLabels, setPinLabels] = useState<ReadonlyMap<string, string>>(new Map());
+  const [placingPin, setPlacingPin] = useState(false);
   const [unanchoredComments, setUnanchoredComments] = useState<ReadonlySet<string>>(
     new Set(),
   );
@@ -155,6 +158,11 @@ export function DocWorkspace({
   const scrollDocumentTo = useCallback((top: number) => {
     documentScrollerRef.current?.(top);
   }, []);
+  const pinRevealerRef = useRef<((id: string) => void) | null>(null);
+  const registerPinRevealer = useCallback((reveal: ((id: string) => void) | null) => {
+    pinRevealerRef.current = reveal;
+  }, []);
+  const revealPin = useCallback((id: string) => pinRevealerRef.current?.(id), []);
   const commentRailSyncRef = useRef<((top: number) => void) | null>(null);
   const registerCommentRailSync = useCallback(
     (sync: ((top: number) => void) | null) => {
@@ -289,11 +297,21 @@ export function DocWorkspace({
       if (signIn) return signIn();
       let draftId = `draft:${crypto.randomUUID()}`;
       updateDrafts((list) => {
-        const same = list.find(
-          (draft) =>
-            draft.version === version &&
-            draft.quote === selection.quote &&
-            draft.anchor?.start_offset === selection.anchor?.start_offset,
+        // A pin draft is the same spot on the same target; a text draft is
+        // the same quote at the same offset.
+        const point = selection.anchor?.point;
+        const near = (a?: number, b?: number) =>
+          a !== undefined && b !== undefined && Math.abs(a - b) < 0.001;
+        const same = list.find((draft) =>
+          draft.version !== version
+            ? false
+            : point
+              ? draft.anchor?.point?.target === point.target &&
+                near(draft.anchor.point.x, point.x) &&
+                near(draft.anchor.point.y, point.y)
+              : !draft.anchor?.point &&
+                draft.quote === selection.quote &&
+                draft.anchor?.start_offset === selection.anchor?.start_offset,
         );
         if (same) {
           draftId = same.id;
@@ -486,6 +504,14 @@ export function DocWorkspace({
       moveCursor: stream.moveCursor,
       subscribeCursors: stream.subscribeCursors,
       followedCursor,
+      canvasMode,
+      setCanvasMode,
+      placingPin,
+      setPlacingPin,
+      registerPinRevealer,
+      revealPin,
+      pinLabels,
+      setPinLabels,
     }),
     [
       docId,
@@ -519,6 +545,11 @@ export function DocWorkspace({
       stream.moveCursor,
       stream.subscribeCursors,
       followedCursor,
+      canvasMode,
+      placingPin,
+      registerPinRevealer,
+      revealPin,
+      pinLabels,
     ],
   );
 

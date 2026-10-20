@@ -13,6 +13,7 @@ import {
   highlightRange,
   refreshSVGRects,
 } from "./highlight.ts";
+import { createCanvasLayer, parsePins } from "./canvas.ts";
 import { createCursorLayer, trackPointer } from "./cursors.ts";
 import { CHORD_KEYS } from "../src/lib/esc-chord.ts";
 import {
@@ -109,6 +110,13 @@ type Theme = "dark" | "light";
   const appOrigin = window.__SLASHDOCS_APP_ORIGIN__ || "*";
   const frame = document.getElementById("slashdocs-doc") as HTMLIFrameElement;
   const cursors = createCursorLayer(doc);
+  // Canvas mode starts only after the app enables it, and only for documents
+  // that opt in with the slashdocs:canvas meta tag.
+  let canvasEnabled = false;
+  const canvas = createCanvasLayer({
+    doc,
+    post: (message) => parent.postMessage(message, targetOrigin()),
+  });
   let kvRequestID = 0;
   const kvPending: Record<string, KVPendingRequest> = {};
   let githubRequestID = 0;
@@ -1192,6 +1200,7 @@ type Theme = "dark" | "light";
     if (t !== "dark" && t !== "light") return;
     curTheme = t;
     const d = doc();
+    canvas.setTheme(t);
     if (!d || !d.documentElement) return;
     for (const name of PUBLIC_NAMES) {
       d.documentElement.setAttribute(`data-${name}-theme`, t);
@@ -1777,6 +1786,20 @@ type Theme = "dark" | "light";
     d.addEventListener("keydown", (ev) => {
       if (ev.key === "Escape") dismissSelectionAction();
       const modified = ev.metaKey || ev.ctrlKey || ev.altKey;
+      // On a canvas, C without a selection toggles placing a comment pin,
+      // as in Figma, and Esc leaves it before any Esc chord.
+      if (canvas.isOn() && !modified && !isTextEditingTarget(ev.target)) {
+        if (ev.key === "Escape" && canvas.isPlacing()) {
+          ev.preventDefault();
+          canvas.setPlacing(false);
+          return;
+        }
+        if (ev.key === "c" && !chordArmedAt && !selectedRange(d.getSelection())) {
+          ev.preventDefault();
+          canvas.setPlacing(!canvas.isPlacing());
+          return;
+        }
+      }
       // C comments on the selected text, as in Figma. Esc then C still
       // toggles the comments panel.
       if (
@@ -1851,6 +1874,8 @@ type Theme = "dark" | "light";
       function (ev) {
         if (!ev.ctrlKey) return;
         ev.preventDefault();
+        // A canvas zooms itself; scaling the frame too would zoom twice.
+        if (canvas.isOn()) return;
         parent.postMessage(
           {
             type: "slashdocs:zoom",
@@ -1881,6 +1906,8 @@ type Theme = "dark" | "light";
     trackPointer(d, (spot) =>
       parent.postMessage({ type: "slashdocs:pointer", spot }, targetOrigin()),
     );
+    if (canvasEnabled) canvas.start(d);
+    else canvas.stop();
     parent.postMessage({ type: "slashdocs:ready" }, targetOrigin());
     scheduleViewport();
     hydrateKV();
@@ -1992,6 +2019,22 @@ type Theme = "dark" | "light";
       emitKVChange(e.data.detail || {});
     } else if (e.data.type === "slashdocs:cursor") {
       cursors.receive(e.data.cursor);
+    } else if (e.data.type === "slashdocs:canvas-enable") {
+      canvasEnabled = true;
+      const d = doc();
+      if (d && !canvas.isOn()) canvas.start(d);
+    } else if (e.data.type === "slashdocs:canvas-pins") {
+      canvas.setPins(
+        parsePins(e.data.pins),
+        typeof e.data.active === "string" ? e.data.active : undefined,
+      );
+    } else if (
+      e.data.type === "slashdocs:canvas-focus" &&
+      typeof e.data.id === "string"
+    ) {
+      canvas.focus(e.data.id);
+    } else if (e.data.type === "slashdocs:canvas-place-mode") {
+      canvas.setPlacing(e.data.on === true, false);
     } else if (e.data.type === "slashdocs:clear-cursors") {
       cursors.clear();
     } else if (e.data.type === "slashdocs:follow-cursor") {
