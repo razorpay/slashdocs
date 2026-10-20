@@ -745,6 +745,13 @@ export function RenderFrame() {
     };
   }, [ready, cursorsShown, subscribeCursors, postToFrame]);
 
+  // The cursor chat field shows in this reader's cursor color.
+  const ownColor = principal ? principalColor(principal) : undefined;
+  useEffect(() => {
+    if (ready && ownColor)
+      postToFrame({ type: "slashdocs:cursor-color", color: ownColor });
+  }, [ready, ownColor, postToFrame]);
+
   // Follow a cursor once the frame shows its version, or stop. The effect above
   // gave the frame the cursor first.
   const followed = useRef(followedCursor);

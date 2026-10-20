@@ -215,20 +215,22 @@ function isTextEditing(target: EventTarget | null): boolean {
 // Figma: "/" opens a field by the pointer, and others see the text live at
 // this viewer's cursor. Enter keeps it a few seconds; Esc clears it. The field
 // lives in the bridge window, over the document, and lets the pointer through.
-export function createCursorChat(d: Document, pointer: PointerTracker) {
+export function createCursorChat(
+  d: Document,
+  pointer: PointerTracker,
+  // color gives this viewer's cursor color, as others see it.
+  color: () => string | undefined,
+) {
   document.getElementById("slashdocs-cursor-chat")?.remove();
   const box = document.createElement("div");
   box.id = "slashdocs-cursor-chat";
+  box.className = "slashdocs-chat";
   box.hidden = true;
-  box.style.cssText =
-    "position:fixed;left:0;top:0;z-index:2147483647;pointer-events:none";
   const input = document.createElement("input");
   input.type = "text";
   input.maxLength = MAX_CURSOR_MESSAGE;
   input.placeholder = "Say something";
   input.setAttribute("aria-label", "Cursor chat message");
-  input.style.cssText =
-    "width:240px;padding:5px 10px;border:0;border-radius:3px 12px 12px 12px;background:#1f2328;color:#fff;font:500 13px/18px system-ui,-apple-system,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.25);outline:none";
   box.appendChild(input);
   document.body.appendChild(box);
   let linger = 0;
@@ -255,6 +257,8 @@ export function createCursorChat(d: Document, pointer: PointerTracker) {
       e.preventDefault();
       window.clearTimeout(linger);
       pointer.setMessage("");
+      const own = color();
+      if (own) box.style.setProperty("--c", own);
       place();
       box.hidden = false;
       input.focus();
@@ -371,6 +375,21 @@ export type RemoteCursor = {
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
+// Styles for the follow frame and the cursor chat field in the bridge window.
+// --c is the followed viewer's color, or this viewer's own for the chat.
+const BRIDGE_CSS = `
+.slashdocs-follow{position:fixed;inset:0;z-index:2147483646;pointer-events:none;border:2px solid var(--c);opacity:0;visibility:hidden;transition:opacity 100ms ease-out,visibility 0s linear 100ms}
+.slashdocs-follow[data-on]{opacity:1;visibility:visible;transition:opacity 150ms cubic-bezier(.23,1,.32,1),visibility 0s}
+.slashdocs-follow button{all:unset;position:absolute;top:-2px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:6px;padding:3px 8px 5px 10px;border-radius:0 0 8px 8px;background:var(--c);color:#fff;font:500 12px/16px system-ui,-apple-system,sans-serif;white-space:nowrap;cursor:pointer;pointer-events:auto;transition:transform 160ms ease-out,filter 150ms ease}
+.slashdocs-follow button:active{transform:translateX(-50%) scale(.97)}
+.slashdocs-follow button:focus-visible{outline:2px solid var(--c);outline-offset:2px}
+.slashdocs-follow svg{width:12px;height:12px;opacity:.85}
+@media (hover:hover) and (pointer:fine){.slashdocs-follow button:hover{filter:brightness(.92)}}
+.slashdocs-chat{position:fixed;left:0;top:0;z-index:2147483647;pointer-events:none}
+.slashdocs-chat input{all:unset;box-sizing:border-box;field-sizing:content;min-width:120px;max-width:280px;padding:5px 10px;border-radius:3px 12px 12px 12px;background:var(--c,#27272a);color:#fff;font:500 13px/18px system-ui,-apple-system,sans-serif;box-shadow:0 1px 3px rgba(0,0,0,.2);caret-color:#fff}
+.slashdocs-chat input::placeholder{color:rgba(255,255,255,.7)}
+`;
+
 // createCursorLayer draws other viewers' cursors over the document frame,
 // which fills the bridge window. Viewport coordinates of the document are
 // thus coordinates of the layer.
@@ -398,14 +417,24 @@ export function createCursorLayer(
 
   // While the view follows a cursor, a frame in its color shows it, with a
   // button that stops following.
+  const style = document.createElement("style");
+  style.textContent = BRIDGE_CSS;
+  document.head.appendChild(style);
   const followFrame = document.createElement("div");
-  followFrame.hidden = true;
-  followFrame.style.cssText =
-    "position:fixed;inset:0;pointer-events:none;z-index:2147483646;border:2px solid transparent";
+  followFrame.className = "slashdocs-follow";
   const stopFollowing = document.createElement("button");
   stopFollowing.type = "button";
-  stopFollowing.style.cssText =
-    "position:absolute;top:8px;left:50%;transform:translateX(-50%);pointer-events:auto;cursor:pointer;border:0;border-radius:999px;padding:3px 10px;color:#fff;font:500 12px/16px system-ui,-apple-system,sans-serif;box-shadow:0 1px 3px rgba(0,0,0,.2)";
+  const followLabel = document.createElement("span");
+  const close = document.createElementNS(SVG_NS, "svg");
+  close.setAttribute("viewBox", "0 0 12 12");
+  close.setAttribute("aria-hidden", "true");
+  const cross = document.createElementNS(SVG_NS, "path");
+  cross.setAttribute("d", "M3 3l6 6M9 3l-6 6");
+  cross.setAttribute("stroke", "currentColor");
+  cross.setAttribute("stroke-width", "1.5");
+  cross.setAttribute("stroke-linecap", "round");
+  close.appendChild(cross);
+  stopFollowing.append(followLabel, close);
   stopFollowing.addEventListener("click", () => unfollow(true));
   followFrame.appendChild(stopFollowing);
   document.body.appendChild(followFrame);
@@ -588,11 +617,10 @@ export function createCursorLayer(
   }
 
   function showFollowing(name: string, color: string) {
-    followFrame.style.borderColor = color;
-    stopFollowing.style.background = color;
-    stopFollowing.textContent = `Following ${name}`;
+    followFrame.style.setProperty("--c", color);
+    followLabel.textContent = `Following ${name}`;
     stopFollowing.setAttribute("aria-label", `Stop following ${name}`);
-    followFrame.hidden = false;
+    followFrame.toggleAttribute("data-on", true);
   }
 
   // follow shows what another viewer sees, the center of their view at their
@@ -628,7 +656,7 @@ export function createCursorLayer(
     followed = null;
     window.clearTimeout(followTimer);
     followTimer = 0;
-    followFrame.hidden = true;
+    followFrame.toggleAttribute("data-on", false);
     if (here) unfollowed();
   }
 

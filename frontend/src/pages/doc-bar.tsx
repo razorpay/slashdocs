@@ -358,7 +358,10 @@ function Viewers({
               aria-pressed={following}
               onClick={() => onFollow(viewer)}
               style={{
-                boxShadow: `0 0 0 2px ${principalColor(viewer.principal)}, 0 0 0 4px var(--color-surface)`,
+                // Followed: a gap, then the viewer's color, as a pressed state.
+                boxShadow: following
+                  ? `0 0 0 2px var(--color-surface), 0 0 0 4px ${principalColor(viewer.principal)}`
+                  : `0 0 0 2px ${principalColor(viewer.principal)}, 0 0 0 4px var(--color-surface)`,
               }}
               className="relative rounded-full transition-transform duration-150 ease-out hover:z-10 hover:-translate-y-0.5 focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)] motion-reduce:transition-none"
             >
