@@ -2033,6 +2033,8 @@ type Theme = "dark" | "light";
       typeof e.data.id === "string"
     ) {
       canvas.focus(e.data.id);
+    } else if (e.data.type === "slashdocs:canvas-watch") {
+      canvas.watch(typeof e.data.id === "string" ? e.data.id : null);
     } else if (e.data.type === "slashdocs:canvas-place-mode") {
       canvas.setPlacing(e.data.on === true, false);
     } else if (e.data.type === "slashdocs:clear-cursors") {

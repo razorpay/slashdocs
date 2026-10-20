@@ -19,7 +19,7 @@ import { useTheme } from "@/lib/theme";
 import { useEscChord } from "@/lib/use-esc-chord";
 import { createPersistentStore } from "@/lib/persistent-store";
 import { cursorsShownStore } from "@/lib/live-cursors";
-import { isChordBlocked, type ChordKey } from "@/lib/esc-chord";
+import { CHORD_WINDOW_MS, isChordBlocked, type ChordKey } from "@/lib/esc-chord";
 import {
   COMMENT_STATUS,
   DEFAULT_COMMENT_FILTER,
@@ -457,9 +457,16 @@ export function DocWorkspace({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
+  // The Esc that stops placing a pin only does that: it must not also close
+  // the thread a moment later, when the Esc chord gives up.
+  const placingEndedAt = useRef(0);
+  useEffect(() => {
+    if (!placingPin) placingEndedAt.current = Date.now();
+  }, [placingPin]);
   const onBareEscape = useCallback(() => {
     if (fullscreen) exitFullscreen();
-    else setActiveComment(undefined);
+    else if (Date.now() - placingEndedAt.current > CHORD_WINDOW_MS + 200)
+      setActiveComment(undefined);
   }, [fullscreen, exitFullscreen]);
   const chord = useEscChord({
     available: chordKeys,
@@ -512,6 +519,7 @@ export function DocWorkspace({
       revealPin,
       pinLabels,
       setPinLabels,
+      pinsShown: isMobile || commentsOpen,
     }),
     [
       docId,
@@ -550,6 +558,8 @@ export function DocWorkspace({
       registerPinRevealer,
       revealPin,
       pinLabels,
+      isMobile,
+      commentsOpen,
     ],
   );
 

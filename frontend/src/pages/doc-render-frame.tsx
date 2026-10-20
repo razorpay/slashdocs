@@ -18,6 +18,7 @@ import { principalLabel } from "@/lib/principals";
 import { useDocumentExport } from "./use-document-export";
 import { useDoc } from "./doc-context";
 import { useBridgeHost } from "./use-bridge-host";
+import { PinPopover, PinPreview, type PinRect } from "./doc-canvas-popover";
 
 const FORWARDED_KEYS = new Set<string>([
   "Escape",
@@ -58,6 +59,8 @@ export function RenderFrame() {
     setPlacingPin,
     registerPinRevealer,
     setPinLabels,
+    pinsShown,
+    setActiveComment,
   } = useDoc();
   const config = useQuery({ queryKey: queryKeys.config(), queryFn: api.getConfig });
   const canvasEnabled = config.data?.canvas_comments_enabled === true;
@@ -390,6 +393,21 @@ export function RenderFrame() {
       if (e.data?.type === "slashdocs:canvas") setCanvasMode(true);
       if (e.data?.type === "slashdocs:canvas-place-mode")
         setPlacingPin(e.data.on === true);
+      if (
+        e.data?.type === "slashdocs:canvas-pin-rect" &&
+        typeof e.data.id === "string"
+      ) {
+        const rect = parsePinRect(e.data.rect);
+        if (e.data.id === watchedRef.current) setPinRect(rect);
+      }
+      if (e.data?.type === "slashdocs:canvas-pin-hover") {
+        window.clearTimeout(hoverTimer.current);
+        const rect = parsePinRect(e.data.rect);
+        if (typeof e.data.id === "string" && rect) {
+          const id = e.data.id.slice(0, 200);
+          hoverTimer.current = window.setTimeout(() => setHover({ id, rect }), 300);
+        } else setHover(undefined);
+      }
       if (e.data?.type === "slashdocs:canvas-place") {
         const p = e.data.point as Record<string, unknown> | undefined;
         const frac = (n: unknown): n is number =>
@@ -545,10 +563,18 @@ export function RenderFrame() {
     if (ready && canvasMode)
       postToFrame({
         type: "slashdocs:canvas-pins",
-        pins: pinsPayload,
+        pins: pinsShown || placingPin ? pinsPayload : [],
         active: activeComment,
       });
-  }, [ready, canvasMode, pinsPayload, activeComment, postToFrame]);
+  }, [
+    ready,
+    canvasMode,
+    pinsPayload,
+    activeComment,
+    pinsShown,
+    placingPin,
+    postToFrame,
+  ]);
   useEffect(() => {
     if (ready && canvasMode)
       postToFrame({ type: "slashdocs:canvas-place-mode", on: placingPin });
@@ -593,6 +619,29 @@ export function RenderFrame() {
     registerPinRevealer((id) => postToFrame({ type: "slashdocs:canvas-focus", id }));
     return () => registerPinRevealer(null);
   }, [registerPinRevealer, postToFrame]);
+  // The popover beside the active pin: its thread, or the comment being
+  // written for a new pin. The bridge reports where that pin is.
+  const watchedId =
+    canvasMode &&
+    activeComment &&
+    (drafts.some((d) => d.id === activeComment && d.anchor?.point) ||
+      comments.some((c) => c.id === activeComment && c.anchor?.point))
+      ? activeComment
+      : undefined;
+  const watchedRef = useRef(watchedId);
+  watchedRef.current = watchedId;
+  const [pinRect, setPinRect] = useState<PinRect | null>(null);
+  useEffect(() => {
+    setPinRect(null);
+    if (ready && canvasMode)
+      postToFrame({ type: "slashdocs:canvas-watch", id: watchedId ?? null });
+  }, [ready, canvasMode, watchedId, postToFrame]);
+  const [hover, setHover] = useState<{ id: string; rect: PinRect }>();
+  const hoverTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(hoverTimer.current), []);
+  const hovered =
+    hover && hover.id !== watchedId && comments.find((c) => c.id === hover.id);
+
   // A thread picked in the panel brings its pin into view once; one picked
   // on the canvas is already there. A refreshed comment list moves nothing.
   const focusedComment = useRef<string | undefined>(undefined);
@@ -672,6 +721,19 @@ export function RenderFrame() {
           sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
         />
       </div>
+      {watchedId && pinRect && pinsShown && (
+        <PinPopover
+          frameRef={ref}
+          pin={pinRect}
+          docId={docId}
+          draft={drafts.find((d) => d.id === watchedId)}
+          comment={comments.find((c) => c.id === watchedId)}
+          onClose={() => setActiveComment(undefined)}
+        />
+      )}
+      {hover && hovered && pinsShown && (
+        <PinPreview frameRef={ref} pin={hover.rect} comment={hovered} />
+      )}
       {showZoomBadge && (
         <button
           type="button"
@@ -707,4 +769,12 @@ function initialsOf(name: string): string {
       .slice(0, 2)
       .toUpperCase() || "?"
   );
+}
+
+function parsePinRect(value: unknown): PinRect | null {
+  const r = value as Record<string, unknown> | null;
+  const num = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
+  return r && num(r.left) && num(r.top) && num(r.width) && num(r.height)
+    ? { left: r.left, top: r.top, width: r.width, height: r.height }
+    : null;
 }

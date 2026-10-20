@@ -207,6 +207,9 @@ export function createCanvasLayer(host: CanvasHost) {
   let stable = 0;
   let lastKey = "";
   let lastSignature = "";
+  // The pin the app shows a popover for, and its last reported rect.
+  let watched: string | null = null;
+  let lastRect = "";
   let placing = false;
   let placeStyle: HTMLStyleElement | null = null;
   let press: { x: number; y: number } | null = null;
@@ -278,6 +281,7 @@ export function createCanvasLayer(host: CanvasHost) {
       const at = byId.get(el.dataset.id ?? "");
       if (at) el.style.transform = `translate(${at.x}px,${at.y}px)`;
     }
+    reportWatched(byId.get(watched ?? ""), vr);
   }
 
   function render(screen: { id: string; p: Placed; x: number; y: number }[]) {
@@ -338,15 +342,26 @@ export function createCanvasLayer(host: CanvasHost) {
       count.textContent = String(pin.replies);
       b.appendChild(count);
     }
+    b.addEventListener("pointerenter", () => {
+      if (pin.draft) return;
+      const r = b.getBoundingClientRect();
+      host.post({
+        type: "slashdocs:canvas-pin-hover",
+        id: pin.id,
+        rect: { left: r.left, top: r.top, width: r.width, height: r.height },
+      });
+    });
+    b.addEventListener("pointerleave", () =>
+      host.post({ type: "slashdocs:canvas-pin-hover", id: null }),
+    );
     b.setAttribute(
       "aria-label",
       pin.draft
-        ? "New comment"
+        ? "Unsent comment"
         : `Comment${pin.resolved ? ", resolved" : ""}${pin.replies ? `, ${pin.replies} ${pin.replies === 1 ? "reply" : "replies"}` : ""}`,
     );
-    onPress(b, () => {
-      if (!pin.draft) host.post({ type: "slashdocs:activate", id: pin.id });
-    });
+    // A draft pin reopens its unsent comment, for example after a reload.
+    onPress(b, () => host.post({ type: "slashdocs:activate", id: pin.id }));
     return b;
   }
 
@@ -377,6 +392,26 @@ export function createCanvasLayer(host: CanvasHost) {
       });
     });
     return b;
+  }
+
+  // reportWatched tells the app where the watched pin is, once a frame at
+  // most and only when it moves, so its popover stays beside it. A pin out
+  // of the viewport is hidden.
+  function reportWatched(at: { x: number; y: number } | undefined, vr: DOMRect) {
+    if (!watched) return;
+    const inside =
+      at && at.x >= vr.left && at.x <= vr.right && at.y >= vr.top && at.y <= vr.bottom;
+    const rect = inside
+      ? { left: at.x, top: at.y - PIN_SIZE, width: PIN_SIZE, height: PIN_SIZE }
+      : null;
+    const key = rect ? `${Math.round(rect.left)},${Math.round(rect.top)}` : "hidden";
+    if (key === lastRect) return;
+    lastRect = key;
+    host.post(
+      rect
+        ? { type: "slashdocs:canvas-pin-rect", id: watched, rect }
+        : { type: "slashdocs:canvas-pin-rect", id: watched, hidden: true },
+    );
   }
 
   function tick() {
@@ -585,6 +620,13 @@ export function createCanvasLayer(host: CanvasHost) {
       // Pins that were there keep their place; new ones animate in.
       shown = new Set([...shown].filter((id) => before.has(id)));
       layout();
+    },
+    // watch reports where a pin is while the app shows its popover.
+    watch(id: string | null) {
+      watched = id;
+      lastRect = "";
+      lastKey = "";
+      schedule();
     },
     setTheme(theme: string) {
       layer.setAttribute("data-theme", theme);
