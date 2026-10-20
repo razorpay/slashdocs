@@ -121,6 +121,17 @@ func commentsJSON(items []repo.Comment, placementVersionID string, placementHTML
 // the given version, returning its placement status, a confidence score, and
 // the matched text. placementHTML is the already-stringified version body.
 func commentPlacement(cm repo.Comment, placementVersionID, placementHTML string) (status string, confidence float64, matched string) {
+	if cm.Anchor.Point != nil {
+		// A point is attached while its target element exists in the version.
+		// The board itself (empty target) always exists.
+		t := cm.Anchor.Point.Target
+		if t == "" || placementVersionID == cm.VersionID || len(placementHTML) == 0 ||
+			strings.Contains(placementHTML, `data-slashdocs-target="`+t+`"`) ||
+			strings.Contains(placementHTML, `data-slashdocs-target='`+t+`'`) {
+			return placementAttached, 1.0, ""
+		}
+		return placementOrphaned, 0, ""
+	}
 	status = placementAttached
 	confidence = 1.0
 	matched = cm.SelectedText
@@ -176,7 +187,7 @@ func commentBaseJSON(cm repo.Comment, viewer auth.Principal) commentResponse {
 		Mentions:           commentMentionsJSON(cm.Mentions),
 		Reactions:          commentReactionsJSON(cm.Reactions, viewer),
 	}
-	if cm.SelectedText != "" {
+	if cm.SelectedText != "" || cm.Anchor.Point != nil {
 		out.SelectedText = cm.SelectedText
 		anchor := cm.Anchor
 		out.Anchor = &anchor

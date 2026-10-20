@@ -131,6 +131,8 @@ func (h handlers) postDocumentPresence(c *gin.Context) {
 	in.PictureURL = p.PictureURL
 	if in.Anchor != nil {
 		in.Anchor.DOMPath = ""
+		in.Anchor.Kind = ""
+		in.Anchor.Point = nil
 	}
 	if err := h.appendPresence(c.Request.Context(), docID, in, *p); err != nil {
 		if errors.Is(err, repo.ErrNotFound) {

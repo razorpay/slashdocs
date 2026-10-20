@@ -640,7 +640,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "Requests with non-empty mentions must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed instead of dropping metadata.",
+                "description": "Requests with non-empty mentions must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed instead of dropping metadata.\nThe anchor is either a text anchor (a non-empty quote) or, when canvas comments are enabled, a point anchor: anchor.point {target, x, y} where target is a data-slashdocs-target value (\"\" for the board itself) and x, y are fractions of its box between 0 and 1. A point anchor must leave the text fields empty; kind is set to \"point\" by the server.",
                 "consumes": [
                     "application/json",
                     "application/vnd.slashdocs.comment-mentions+json"
@@ -1956,6 +1956,13 @@ const docTemplate = `{
                 "end_offset": {
                     "type": "integer"
                 },
+                "kind": {
+                    "description": "Kind is \"\" for a text anchor and \"point\" for a canvas point anchor.\nBoth new fields are omitempty so text anchors serialise as before.",
+                    "type": "string"
+                },
+                "point": {
+                    "$ref": "#/definitions/repo.AnchorPoint"
+                },
                 "prefix": {
                     "type": "string"
                 },
@@ -1967,6 +1974,20 @@ const docTemplate = `{
                 },
                 "suffix": {
                     "type": "string"
+                }
+            }
+        },
+        "repo.AnchorPoint": {
+            "type": "object",
+            "properties": {
+                "target": {
+                    "type": "string"
+                },
+                "x": {
+                    "type": "number"
+                },
+                "y": {
+                    "type": "number"
                 }
             }
         },
@@ -2360,6 +2381,9 @@ const docTemplate = `{
         "server.configResponse": {
             "type": "object",
             "properties": {
+                "canvas_comments_enabled": {
+                    "type": "boolean"
+                },
                 "default_doc_permission": {
                     "type": "string"
                 },

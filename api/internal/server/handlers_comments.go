@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"errors"
+	"math"
 	"net/http"
+	"regexp"
 
 	"github.com/gin-gonic/gin"
 
@@ -61,9 +63,55 @@ type patchCommentRequest struct {
 	Mentions *[]commentMentionRequest `json:"mentions"`
 }
 
+// pointTargetPattern is the allowed value of a data-slashdocs-target attribute.
+// The limits keep targets safe to match against stored HTML as plain text.
+var pointTargetPattern = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,128}$`)
+
+// validateCommentAnchor checks the anchor of a new root comment and normalises
+// point anchors in place (kind forced to "point", x and y rounded to 4
+// decimals). Text anchors keep the original rule: a non-empty quote.
+func validateCommentAnchor(a *repo.Anchor, pointsEnabled bool) (msg string, ok bool) {
+	const invalid = "invalid comment"
+	if a.Point == nil {
+		if a.Quote == "" || a.Kind != "" {
+			return invalid, false
+		}
+		return "", true
+	}
+	if !pointsEnabled {
+		return "point comments are not enabled", false
+	}
+	if !pointAnchorValid(a) {
+		return invalid, false
+	}
+	a.Kind = "point"
+	a.Point.X = math.Round(a.Point.X*1e4) / 1e4
+	a.Point.Y = math.Round(a.Point.Y*1e4) / 1e4
+	return "", true
+}
+
+// pointAnchorValid reports whether a is a well-formed point anchor: no text
+// fields, an allowed target, and x and y inside the target's box.
+func pointAnchorValid(a *repo.Anchor) bool {
+	if a.Quote != "" || a.Prefix != "" || a.Suffix != "" || a.DOMPath != "" ||
+		a.StartOffset != 0 || a.EndOffset != 0 || (a.Kind != "" && a.Kind != "point") {
+		return false
+	}
+	p := a.Point
+	if p.Target != "" && !pointTargetPattern.MatchString(p.Target) {
+		return false
+	}
+	return unitFraction(p.X) && unitFraction(p.Y)
+}
+
+func unitFraction(v float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0 && v <= 1
+}
+
 // CreateComment godoc
 // @Summary Create comment
 // @Description Requests with non-empty mentions must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed instead of dropping metadata.
+// @Description The anchor is either a text anchor (a non-empty quote) or, when canvas comments are enabled, a point anchor: anchor.point {target, x, y} where target is a data-slashdocs-target value ("" for the board itself) and x, y are fractions of its box between 0 and 1. A point anchor must leave the text fields empty; kind is set to "point" by the server.
 // @Tags comments
 // @Security bearerAuth
 // @Security cookieAuth
@@ -94,8 +142,12 @@ func (h handlers) createComment(c *gin.Context) {
 		return
 	}
 	in.Body = normalized
-	if in.VersionID == "" || in.Body == "" || in.Anchor.Quote == "" {
+	if in.VersionID == "" || in.Body == "" {
 		badRequest(c, "invalid comment")
+		return
+	}
+	if msg, ok := validateCommentAnchor(&in.Anchor, h.deps.canvasCommentsEnabled); !ok {
+		badRequest(c, msg)
 		return
 	}
 	cm, err := h.deps.repository.CreateComment(c.Request.Context(), c.Param("id"), in.VersionID, in.Body, in.Anchor, *p, commentMentions(in.Mentions))

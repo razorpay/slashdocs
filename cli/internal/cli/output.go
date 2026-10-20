@@ -245,10 +245,28 @@ func compactRow(m map[string]any) string {
 	if mentions := mentionLabels(value(m, "mentions")); len(mentions) > 0 {
 		parts = append(parts, "mentions="+strings.Join(mentions, ","))
 	}
+	if point := pointLabel(value(m, "anchor")); point != "" {
+		parts = append(parts, "point="+point)
+	}
 	if len(parts) == 0 {
 		return fmt.Sprintf("%v", m)
 	}
 	return strings.Join(parts, "  ")
+}
+
+// pointLabel renders a point anchor as <target or board>@<x>,<y>, or "" for a
+// text anchor or anything else.
+func pointLabel(anchor any) string {
+	a, _ := anchor.(map[string]any)
+	p, ok := value(a, "point").(map[string]any)
+	if !ok {
+		return ""
+	}
+	target, _ := value(p, "target").(string)
+	if target == "" {
+		target = "board"
+	}
+	return fmt.Sprintf("%s@%v,%v", target, value(p, "x"), value(p, "y"))
 }
 
 // sourceGrantIDs collects explicit grant ids from an effective-access row's

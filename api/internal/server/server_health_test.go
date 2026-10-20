@@ -196,7 +196,8 @@ func TestConfigReportsDeploymentWording(t *testing.T) {
 	  "provider_name": "SSO",
 	  "default_doc_permission": "private",
 	  "google_groups_enabled": false,
-	  "labels_enabled": true
+	  "labels_enabled": true,
+	  "canvas_comments_enabled": true
 	}`)
 
 	org := newConfiguredTestEnv(t, server.Config{Environment: "test", Deployment: "org", OrgName: "Acme", OIDCProviderName: "Google", DefaultDocPermission: repo.RoleCommenter})
@@ -209,7 +210,8 @@ func TestConfigReportsDeploymentWording(t *testing.T) {
 	  "provider_name": "Google",
 	  "default_doc_permission": "commenter",
 	  "google_groups_enabled": false,
-	  "labels_enabled": true
+	  "labels_enabled": true,
+	  "canvas_comments_enabled": true
 	}`)
 }
 

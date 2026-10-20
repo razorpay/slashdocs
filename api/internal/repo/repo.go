@@ -240,6 +240,18 @@ type Anchor struct {
 	DOMPath     string `json:"dom_path"`
 	StartOffset int    `json:"start_offset"`
 	EndOffset   int    `json:"end_offset"`
+	// Kind is "" for a text anchor and "point" for a canvas point anchor.
+	// Both new fields are omitempty so text anchors serialise as before.
+	Kind  string       `json:"kind,omitempty"`
+	Point *AnchorPoint `json:"point,omitempty"`
+}
+
+// AnchorPoint pins a comment to a spot on a canvas: an element by its
+// data-slashdocs-target value ("" for the board itself) and fractions of its box.
+type AnchorPoint struct {
+	Target string  `json:"target"`
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
 }
 
 type CLICredential struct {
