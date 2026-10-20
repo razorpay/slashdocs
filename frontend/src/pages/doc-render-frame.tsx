@@ -14,7 +14,7 @@ import { matchesCommentFilter } from "@/lib/constants";
 import { Center } from "@/components/ui/misc";
 import { CHORD_KEYS, CHORD_WINDOW_MS } from "@/lib/esc-chord";
 import { cursorsShownStore, parseCursorSpot } from "@/lib/live-cursors";
-import { principalLabel, samePrincipal } from "@/lib/principals";
+import { principalColor, principalLabel, samePrincipal } from "@/lib/principals";
 import { useDocumentExport } from "./use-document-export";
 import { useDoc } from "./doc-context";
 import { useBridgeHost } from "./use-bridge-host";
@@ -113,7 +113,15 @@ export function RenderFrame() {
     () => [
       ...drafts.flatMap((d) =>
         d.anchor?.point && d.version === version
-          ? [{ id: d.id, point: d.anchor.point, draft: true, movable: true }]
+          ? [
+              {
+                id: d.id,
+                point: d.anchor.point,
+                draft: true,
+                movable: true,
+                color: principal ? principalColor(principal) : undefined,
+              },
+            ]
           : [],
       ),
       ...comments.flatMap((c) =>
@@ -128,6 +136,7 @@ export function RenderFrame() {
                 // The server also lets editors move pins; the canvas offers
                 // it on the reader's own.
                 movable: samePrincipal(c.author, principal),
+                color: principalColor(c.author),
               },
             ]
           : [],
@@ -166,10 +175,18 @@ export function RenderFrame() {
   const activatedInFrame = useRef<string | undefined>(undefined);
   // Text and pin anchoring report separately; the panel shows either kind.
   const unplaced = useRef({ text: new Set<string>(), pins: new Set<string>() });
+  // Unchanged results set no state: each update re-renders every thread in
+  // the panel, which is slow with hundreds of them.
+  const lastUnanchored = useRef("");
   const reportUnanchored = useCallback(() => {
     const { text, pins } = unplaced.current;
-    setUnanchoredComments(new Set([...text, ...pins]));
+    const ids = [...text, ...pins];
+    const key = ids.sort().join(",");
+    if (key === lastUnanchored.current) return;
+    lastUnanchored.current = key;
+    setUnanchoredComments(new Set(ids));
   }, [setUnanchoredComments]);
+  const lastPinLabels = useRef("");
 
   useDocumentExport(ref, frameOrigin, ready, registerDocumentPrinter);
 
@@ -178,6 +195,8 @@ export function RenderFrame() {
     // "highlight not found" badges never linger across version switches.
     setUnanchoredComments(new Set());
     unplaced.current = { text: new Set(), pins: new Set() };
+    lastUnanchored.current = "";
+    lastPinLabels.current = "";
     setCommentPositions(new Map());
     setCommentViewport({ scrollTop: 0, scrollHeight: 1 });
     setCanvasMode(false);
@@ -485,7 +504,11 @@ export function RenderFrame() {
         for (const r of results as Array<{ id?: unknown; label?: unknown }>)
           if (r && typeof r.id === "string" && typeof r.label === "string")
             labels.set(r.id, r.label.slice(0, 80));
-        setPinLabels(labels);
+        const labelsKey = JSON.stringify([...labels]);
+        if (labelsKey !== lastPinLabels.current) {
+          lastPinLabels.current = labelsKey;
+          setPinLabels(labels);
+        }
         unplaced.current.pins = new Set(
           results
             .filter((r) => r && r.placed === false && typeof r.id === "string")

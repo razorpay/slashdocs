@@ -24,6 +24,8 @@ export type CanvasPin = {
   draft: boolean;
   // This reader may drag the pin to a new spot.
   movable: boolean;
+  // The author's colour, as their cursor has it.
+  color: string;
 };
 
 const MAX_SELECTOR = 256;
@@ -35,6 +37,11 @@ export const CLUSTER_RADIUS = 28;
 // A cluster click fits its pins with this much room around them.
 const CLUSTER_PADDING = 80;
 const MAX_PINS = 500;
+// While placing, the cursor is a small pin whose tip (bottom left) marks the
+// spot, with a crosshair fallback.
+const PLACE_CURSOR = `url("data:image/svg+xml,${encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="M2 22V12a10 10 0 1 1 10 10z" fill="#2563eb" stroke="white" stroke-width="1.5"/><path d="M12 8v8M8 12h8" stroke="white" stroke-width="1.8" stroke-linecap="round"/></svg>',
+)}") 2 22, crosshair`;
 const PIN_SIZE = 32;
 
 // parseCanvasMeta reads the opt-in tag. Unknown keys are ignored; a missing
@@ -76,6 +83,8 @@ export function parsePins(value: unknown): CanvasPin[] {
       resolved: p.resolved === true,
       draft: p.draft === true,
       movable: p.movable === true,
+      color:
+        typeof p.color === "string" && /^#[0-9a-f]{3,8}$/i.test(p.color) ? p.color : "",
     });
   }
   return out;
@@ -121,23 +130,29 @@ export function clusterPins<T extends { id: string; x: number; y: number }>(
 
 const CSS = `
 .sd-pins{position:fixed;inset:0;pointer-events:none;z-index:2147483645;overflow:hidden}
-.sd-pin{all:unset;position:absolute;left:0;top:0;box-sizing:border-box;width:${PIN_SIZE}px;height:${PIN_SIZE}px;margin-top:-${PIN_SIZE}px;padding:3px;border-radius:50% 50% 50% 4px;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.08),0 2px 8px rgba(0,0,0,.18);pointer-events:auto;cursor:pointer;will-change:transform;transform-origin:0 100%;transition:box-shadow 150ms ease}
-.sd-pin:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
-.sd-pin>b{display:flex;align-items:center;justify-content:center;width:100%;height:100%;border-radius:50%;background:#e0e7ff;color:#3730a3;font:600 10px/1 system-ui,-apple-system,sans-serif;letter-spacing:.02em}
-.sd-pin[data-active]{box-shadow:0 0 0 2px #2563eb,0 2px 10px rgba(37,99,235,.35)}
-.sd-pin[data-resolved]>b{background:#dcfce7;color:#166534}
-.sd-pin[data-draft]>b{background:#2563eb;color:#fff;font-size:16px}
-.sd-pin>i{position:absolute;right:-5px;top:-5px;min-width:16px;height:16px;padding:0 4px;box-sizing:border-box;border-radius:8px;background:#18181b;color:#fff;font:600 10px/16px system-ui,-apple-system,sans-serif;font-style:normal;text-align:center}
-.sd-cluster{all:unset;position:absolute;left:0;top:0;box-sizing:border-box;height:28px;margin-top:-28px;display:flex;align-items:center;gap:0;padding:2px 8px 2px 2px;border-radius:14px 14px 14px 4px;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.08),0 2px 8px rgba(0,0,0,.18);pointer-events:auto;cursor:pointer;will-change:transform;transform-origin:0 100%;font:600 11px/1 system-ui,-apple-system,sans-serif;color:#3f3f46}
-.sd-cluster:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
-.sd-cluster>b{display:flex;align-items:center;justify-content:center;width:24px;height:24px;margin-right:-6px;border-radius:50%;border:2px solid #fff;box-sizing:border-box;background:#e0e7ff;color:#3730a3;font-size:9px}
-.sd-cluster>span{margin-left:10px}
+.sd-pin,.sd-cluster{all:unset;position:absolute;left:0;top:0;box-sizing:border-box;width:${PIN_SIZE}px;height:${PIN_SIZE}px;margin-top:-${PIN_SIZE}px;padding:3px;border-radius:50% 50% 50% 4px;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.08),0 2px 6px rgba(0,0,0,.16);pointer-events:auto;cursor:pointer;will-change:translate;transform-origin:0 100%;transition:box-shadow 150ms ease,scale 150ms cubic-bezier(.23,1,.32,1),opacity 150ms ease}
+.sd-pin:focus-visible,.sd-cluster:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
+.sd-pin>b,.sd-cluster>b{display:flex;align-items:center;justify-content:center;width:100%;height:100%;border-radius:50%;background:var(--c,#6366f1);color:#fff;font:600 10px/1 system-ui,-apple-system,sans-serif;letter-spacing:.02em}
+.sd-pin[data-active]{box-shadow:0 0 0 2px #fff,0 0 0 4px #2563eb,0 4px 12px rgba(37,99,235,.3)}
+.sd-pin[data-resolved]{opacity:.55}
+.sd-pin[data-resolved]>b{filter:saturate(.3)}
+.sd-pin[data-resolved]::after{content:"";position:absolute;right:-4px;bottom:-2px;width:14px;height:14px;border-radius:50%;background:#16a34a url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M4 7.2l2 2 4-4.4' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/14px no-repeat;box-shadow:0 0 0 2px #fff}
+.sd-pin[data-draft]>b{background:#fff;color:var(--c,#2563eb);box-shadow:inset 0 0 0 1.5px currentColor;font-size:16px;font-weight:500}
+.sd-pin>i{position:absolute;right:-6px;top:-6px;min-width:16px;height:16px;padding:0 4px;box-sizing:border-box;border-radius:8px;background:#18181b;color:#fff;font:600 10px/16px system-ui,-apple-system,sans-serif;font-style:normal;text-align:center;box-shadow:0 0 0 2px #fff}
+.sd-cluster{box-shadow:3px -3px 0 -1px #fff,3px -3px 0 0 rgba(0,0,0,.12),0 0 0 1px rgba(0,0,0,.08),0 2px 6px rgba(0,0,0,.16)}
+.sd-cluster>b{background:#18181b;font-size:11px}
 .sd-pin[data-pressed],.sd-cluster:active{scale:.96}
-.sd-pin[data-dragging]{cursor:grabbing;scale:1.1;transition:none;box-shadow:0 0 0 2px #2563eb,0 10px 24px rgba(0,0,0,.28)}
-[data-theme=dark] .sd-pin,[data-theme=dark] .sd-cluster{background:#27272a;box-shadow:0 0 0 1px rgba(255,255,255,.12),0 2px 8px rgba(0,0,0,.5);color:#e4e4e7}
-[data-theme=dark] .sd-cluster>b{border-color:#27272a}
-@media (prefers-reduced-motion:no-preference){.sd-pin[data-new]{animation:sd-pin-in 160ms cubic-bezier(.23,1,.32,1)}}
-@keyframes sd-pin-in{from{opacity:0;scale:.6}}
+.sd-pin[data-dragging]{cursor:grabbing;scale:1.1;transition:none;box-shadow:0 0 0 2px #fff,0 0 0 4px #2563eb,0 12px 24px rgba(0,0,0,.25)}
+@media (hover:hover) and (pointer:fine){.sd-pin:not([data-pressed]):not([data-dragging]):hover,.sd-cluster:hover{scale:1.06}}
+[data-theme=dark] .sd-pin,[data-theme=dark] .sd-cluster{background:#27272a;box-shadow:0 0 0 1px rgba(255,255,255,.14),0 2px 6px rgba(0,0,0,.5)}
+[data-theme=dark] .sd-cluster{box-shadow:3px -3px 0 -1px #27272a,3px -3px 0 0 rgba(255,255,255,.18),0 0 0 1px rgba(255,255,255,.14),0 2px 6px rgba(0,0,0,.5)}
+[data-theme=dark] .sd-cluster>b{background:#e4e4e7;color:#18181b}
+[data-theme=dark] .sd-pin[data-active]{box-shadow:0 0 0 2px #27272a,0 0 0 4px #60a5fa}
+[data-theme=dark] .sd-pin>i,[data-theme=dark] .sd-pin[data-resolved]::after{box-shadow:0 0 0 2px #27272a}
+[data-theme=dark] .sd-pin[data-draft]>b{background:#27272a}
+@media (prefers-reduced-motion:no-preference){.sd-pin[data-new]{animation:sd-pin-in 180ms cubic-bezier(.23,1,.32,1)}}
+@media (prefers-reduced-motion:reduce){.sd-pin,.sd-cluster{transition:none}}
+@keyframes sd-pin-in{from{opacity:0;scale:.8}}
 `;
 
 type Placed = { pin: CanvasPin; wx: number; wy: number };
@@ -286,7 +301,10 @@ export function createCanvasLayer(host: CanvasHost) {
     const byId = new Map(screen.map((at) => [at.id, at]));
     for (const el of Array.from(layer.children) as HTMLElement[]) {
       const at = byId.get(el.dataset.id ?? "");
-      if (at) el.style.transform = `translate(${at.x}px,${at.y}px)`;
+      // The translate property, not transform: the scale used for hover,
+      // press and drag then applies around the pin's tip, not the layer's
+      // corner, so the pin never drifts.
+      if (at) el.style.translate = `${at.x}px ${at.y}px`;
     }
     reportWatched(byId.get(watched ?? ""), vr);
   }
@@ -294,7 +312,22 @@ export function createCanvasLayer(host: CanvasHost) {
   function render(screen: { id: string; p: Placed; x: number; y: number }[]) {
     const keep = new Set<string>(pins.filter((p) => p.draft).map((p) => p.id));
     if (active) keep.add(active);
-    const clusters = clusterPins(screen, CLUSTER_RADIUS, keep);
+    // Group every pin the same way whatever is open, then lift the open pin
+    // and drafts out of their groups, so opening one does not regroup its
+    // neighbours.
+    const clusters = clusterPins(screen, CLUSTER_RADIUS).flatMap(
+      ({ seed, members }) => {
+        const lifted = members.filter((m) => keep.has(m.id));
+        if (!lifted.length) return [{ seed, members }];
+        const rest = members.filter((m) => !keep.has(m.id));
+        return [
+          ...lifted.map((m) => ({ seed: m, members: [m] })),
+          ...(rest.length
+            ? [{ seed: rest.includes(seed) ? seed : rest[0], members: rest }]
+            : []),
+        ];
+      },
+    );
     // Keep the buttons when nothing about them changed: replacing one
     // between a press and its release would swallow the click.
     const signature = clusters
@@ -341,6 +374,7 @@ export function createCanvasLayer(host: CanvasHost) {
     if (pin.resolved) b.dataset.resolved = "";
     if (pin.draft) b.dataset.draft = "";
     if (fresh) b.dataset.new = "";
+    if (pin.color) b.style.setProperty("--c", pin.color);
     const face = document.createElement("b");
     face.textContent = pin.draft ? "+" : pin.initials || "?";
     b.appendChild(face);
@@ -378,14 +412,10 @@ export function createCanvasLayer(host: CanvasHost) {
     b.type = "button";
     b.className = "sd-cluster";
     b.dataset.id = id;
-    for (const m of members.slice(0, 3)) {
-      const face = document.createElement("b");
-      face.textContent = m.pin.initials || "?";
-      b.appendChild(face);
-    }
-    const count = document.createElement("span");
-    count.textContent =
-      members.length > 3 ? `+${members.length - 3}` : String(members.length);
+    // One bubble the size of a pin, with the count and a card behind it,
+    // so a cluster never covers the pins around it.
+    const count = document.createElement("b");
+    count.textContent = members.length > 99 ? "99+" : String(members.length);
     b.appendChild(count);
     b.setAttribute("aria-label", `${members.length} comment threads`);
     onPress(b, () => {
@@ -463,7 +493,7 @@ export function createCanvasLayer(host: CanvasHost) {
         to = { x: origin.x + dx, y: origin.y + dy };
         delete b.dataset.pressed;
         b.dataset.dragging = "";
-        b.style.transform = `translate(${to.x}px,${to.y}px)`;
+        b.style.translate = `${to.x}px ${to.y}px`;
         if (pin.id === watched) {
           lastRect = "";
           host.post({
@@ -594,7 +624,7 @@ export function createCanvasLayer(host: CanvasHost) {
     if (placing) {
       placeStyle = d!.createElement("style");
       placeStyle.setAttribute("data-slashdocs-injected", "");
-      placeStyle.textContent = `${current!.viewport},${current!.viewport} *{cursor:crosshair!important;user-select:none!important}`;
+      placeStyle.textContent = `${current!.viewport},${current!.viewport} *{cursor:${PLACE_CURSOR}!important;user-select:none!important}`;
       d!.head.appendChild(placeStyle);
     }
     if (tell) host.post({ type: "slashdocs:canvas-place-mode", on: placing });

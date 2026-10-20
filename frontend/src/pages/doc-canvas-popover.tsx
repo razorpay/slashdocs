@@ -43,6 +43,7 @@ function Floating({
   label,
   onClose,
   showClose = true,
+  passive = false,
   children,
 }: {
   frameRef: RefObject<HTMLIFrameElement | null>;
@@ -50,6 +51,8 @@ function Floating({
   label: string;
   onClose?: () => void;
   showClose?: boolean;
+  // A preview lets the pointer through, so it never blocks the next pin.
+  passive?: boolean;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -74,9 +77,15 @@ function Floating({
         top: at?.y ?? -9999,
         width: WIDTH,
         // Focusable while it measures itself (a hidden field cannot take
-        // the caret), then it fades in.
+        // the caret), then it grows in from the pin's side.
         opacity: at ? 1 : 0,
-        transition: "opacity 120ms ease-out",
+        scale: at ? "1" : "0.97",
+        transformOrigin:
+          at && at.x < (frameRef.current?.getBoundingClientRect().left ?? 0) + pin.left
+            ? "right top"
+            : "left top",
+        pointerEvents: passive ? "none" : undefined,
+        transition: "opacity 150ms ease-out, scale 150ms cubic-bezier(.23,1,.32,1)",
       }}
       className="fixed z-40"
     >
@@ -151,7 +160,7 @@ export function PinPreview({
   const body =
     comment.body.length > 140 ? `${comment.body.slice(0, 140)}…` : comment.body;
   return (
-    <Floating frameRef={frameRef} pin={pin} label="Comment preview">
+    <Floating frameRef={frameRef} pin={pin} label="Comment preview" passive>
       <div className="pointer-events-none space-y-1 p-3 text-sm">
         <div className="font-medium">{principalLabel(comment.author)}</div>
         <p className="line-clamp-3 whitespace-pre-wrap break-words text-[var(--color-fg-muted)]">
