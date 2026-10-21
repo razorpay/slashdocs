@@ -55,6 +55,7 @@ import {
   ResolveButton,
   useSelf,
 } from "./doc-comment-parts";
+import { CommentMap } from "./comment-map";
 
 export function MentionTextarea({
   draft,
@@ -504,8 +505,9 @@ export function Comments({ mobile = false }: { mobile?: boolean }) {
           )}
         </div>
       ) : (
-        <div className="min-h-0 flex-1">
+        <div className="relative min-h-0 flex-1">
           <CommentRail comments={items} filter={filter} topInset={headerHeight} />
+          <CommentMap comments={items} topInset={headerHeight} />
         </div>
       )}
     </div>
