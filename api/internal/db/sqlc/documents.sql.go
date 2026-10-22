@@ -340,9 +340,16 @@ func (q *Queries) RecordWorkspaceEntry(ctx context.Context, arg RecordWorkspaceE
 
 const searchDocuments = `-- name: SearchDocuments :many
 WITH search AS NOT MATERIALIZED (
-  SELECT to_tsquery('english', $1::text) AS match,
-         to_tsquery('english', $2::text) AS exclude,
-         to_tsquery('english', $3::text) AS rank
+  -- (SELECT ...) hides the words from the planner. When it sees them, it
+  -- plans a sequential scan for a word that most documents have, and that
+  -- scan reads every document's vector. Without them it uses the index,
+  -- which reads none. NULLIF keeps to_tsquery from parsing an empty string,
+  -- which raises a notice on every call.
+  SELECT to_tsquery('english', NULLIF((SELECT $1::text), '')) AS match,
+         to_tsquery('english', NULLIF((SELECT $2::text), '')) AS exclude
+),
+ranking AS MATERIALIZED (
+  SELECT to_tsquery('english', NULLIF($3::text, '')) AS rank
 ),
 named_owners AS (
   SELECT 'user' AS owner_type, u.id FROM users u
@@ -350,9 +357,8 @@ named_owners AS (
   UNION ALL
   SELECT 'service_account', sa.id FROM service_accounts sa WHERE lower(sa.name) = ANY($4::text[])
 ),
-matches AS MATERIALIZED (
-  SELECT d.id, d.title, d.updated_at,
-         CASE WHEN numnode(search.rank) > 0 THEN ts_rank(to_tsvector('english', d.title), search.rank) ELSE 0 END AS rank
+candidates AS NOT MATERIALIZED (
+  SELECT d.id, d.title, d.updated_at, d.search_vector
   FROM documents d
   CROSS JOIN search
   -- A join, not EXISTS: the planner costs a correlated EXISTS per document,
@@ -364,10 +370,9 @@ matches AS MATERIALIZED (
         OR (g.principal_type='google_group' AND g.principal_id=ANY($7::text[]))
         OR ($8::boolean AND g.principal_type='anyone'))
   ) granted ON granted.resource_id=d.id
-  WHERE (numnode(search.match) = 0 OR d.search_vector @@ search.match)
-  -- The subquery lets the exclusion use the index. The vector of every
-  -- candidate is not read.
-  AND NOT (numnode(search.exclude) > 0 AND d.id IN (SELECT x.id FROM documents x WHERE x.search_vector @@ search.exclude))
+  -- The subquery finds the excluded documents in the index, once, and the
+  -- planner hashes them. Without excluded words it finds none.
+  WHERE d.id NOT IN (SELECT x.id FROM documents x WHERE x.search_vector @@ search.exclude)
   AND (
     COALESCE(cardinality($4::text[]), 0) = 0
     OR lower(d.owner_id) = ANY($4::text[])
@@ -402,7 +407,21 @@ matches AS MATERIALIZED (
             OR ($8::boolean AND g.principal_type='anyone')))) AS subtree(id)
     )
   )
-  ORDER BY rank DESC, d.updated_at DESC, d.title
+),
+matches AS MATERIALIZED (
+  SELECT c.id, c.title, c.updated_at,
+         ts_rank(to_tsvector('english', c.title), ranking.rank) AS rank
+  FROM candidates c
+  CROSS JOIN search
+  CROSS JOIN ranking
+  WHERE numnode(search.match) > 0 AND c.search_vector @@ search.match
+  UNION ALL
+  -- Without words, every candidate matches, the latest first.
+  SELECT c.id, c.title, c.updated_at, 0
+  FROM candidates c
+  CROSS JOIN search
+  WHERE COALESCE(numnode(search.match), 0) = 0
+  ORDER BY rank DESC, updated_at DESC, title
   LIMIT $13
 )
 SELECT d.id, d.title, d.current_version_id, d.owner_type, d.owner_id,
@@ -462,9 +481,17 @@ type SearchDocumentsRow struct {
 // The rank reads titles only: ranking the text would read the whole vector
 // of every matching document.
 //
-// The candidates are narrow rows, so that the index match, the access check,
+// candidates are narrow rows, so that the index match, the access check,
 // and the sort touch no text. Owners, folders, and snippets are joined after
-// LIMIT. The CTE is MATERIALIZED, so that the planner joins 25 rows.
+// LIMIT. matches is MATERIALIZED, so that the planner joins 25 rows.
+//
+// The two arms of matches keep the statement fast under a generic plan,
+// which PostgreSQL may choose for a prepared statement after five runs. With
+// the parameters unknown, "no words OR index match" cannot use the index and
+// reads every document's vector. Each arm has a condition on the parameters
+// only, which the executor checks once, so the arm that does not apply runs
+// nothing.
+// MATERIALIZED, so that the rank query is parsed once, not for every match.
 // Snippets are made after LIMIT, because ts_headline reads the whole text.
 func (q *Queries) SearchDocuments(ctx context.Context, arg SearchDocumentsParams) ([]SearchDocumentsRow, error) {
 	rows, err := q.db.Query(ctx, searchDocuments,
