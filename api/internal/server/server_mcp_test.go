@@ -59,6 +59,7 @@ var expectedMCPTools = []string{
 	"revoke_folder_grant",
 	"revoke_service_account_key",
 	"search_folders",
+	"set_document_labels",
 	"share_document",
 	"share_folder",
 	"unreact_comment",
@@ -152,6 +153,7 @@ func TestMCPStreamableHTTPInitializeListAndCall(t *testing.T) {
 		"revoke_document_grant":            true,
 		"revoke_folder_grant":              true,
 		"revoke_service_account_key":       true,
+		"set_document_labels":              true,
 		"update_comment":                   true,
 		"update_document_grant":            true,
 		"update_folder_grant":              true,
@@ -748,6 +750,49 @@ func TestMCPCreateDocumentPrivateDefaultServer(t *testing.T) {
 	}), "items")
 	if strings.Contains(access.Text, `"anyone"`) {
 		t.Fatalf("private-by-default server granted org-wide access: %s", access.Text)
+	}
+}
+
+func TestMCPCreateDocumentInFolderWithLabels(t *testing.T) {
+	e := newMCPOAuthTestEnv(t)
+	token := auth.NewMCPAccessToken(fixtureUser.ID, e.resource, oauthTestSigningMaterial, time.Minute)
+
+	folder := mustMCPObject(t, assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "create_folder", map[string]any{
+		"title": "Labelled folder",
+	}), "id"))
+	folderID := requiredMCPString(t, folder, "id")
+
+	created := mustMCPObject(t, assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "create_document", map[string]any{
+		"title":     "In folder with labels",
+		"html":      "<html><body>x</body></html>",
+		"folder_id": folderID,
+		"labels":    []string{"Review-Ready", "api", "api"},
+	}), `"labels":["api","review-ready"]`))
+	docID := requiredMCPString(t, created, "id")
+	if got := requiredMCPString(t, created, "folder_id"); got != folderID {
+		t.Fatalf("folder_id = %q, want %q", got, folderID)
+	}
+
+	assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "get_document", map[string]any{"document_id": docID}), `"parent_folder_id":"`+folderID+`"`)
+	assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "list_folder_documents", map[string]any{"folder_id": folderID}), docID)
+
+	assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "set_document_labels", map[string]any{
+		"document_id": docID,
+		"labels":      []string{"final"},
+	}), `"final"`)
+	assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "get_document", map[string]any{"document_id": docID}), `"labels":["final"]`)
+
+	// A missing or unshared folder is refused and nothing is created.
+	refused := callMCPToolHTTP(t, e, token, "create_document", map[string]any{
+		"title":     "Orphan candidate",
+		"html":      "<html><body>x</body></html>",
+		"folder_id": "fld_doesnotexist",
+	})
+	if !refused.IsError {
+		t.Fatalf("expected create_document into a missing folder to fail, got %#v", refused)
+	}
+	if listed := callMCPToolHTTP(t, e, token, "list_documents", map[string]any{}); strings.Contains(listed.Text, "Orphan candidate") {
+		t.Fatalf("refused create left a document behind: %s", listed.Text)
 	}
 }
 

@@ -16,9 +16,12 @@ import (
 
 // createDocumentResponse is the payload of POST /v1/documents.
 type createDocumentResponse struct {
-	ID               string        `json:"id"`
-	CurrentVersionID string        `json:"current_version_id"`
-	DefaultGrant     *defaultGrant `json:"default_grant,omitempty"`
+	ID                string             `json:"id"`
+	CurrentVersionID  string             `json:"current_version_id"`
+	FolderID          string             `json:"folder_id,omitempty"`
+	Labels            []string           `json:"labels,omitempty"`
+	PermissionWarning *permissionWarning `json:"permission_warning,omitempty"`
+	DefaultGrant      *defaultGrant      `json:"default_grant,omitempty"`
 }
 
 // defaultGrant reports the server-applied default "anyone" grant so clients
@@ -33,6 +36,39 @@ type defaultGrantPrincipal struct {
 	Type auth.PrincipalType `json:"type"`
 }
 
+func (h handlers) parseAndValidateDocumentLabels(c *gin.Context) ([]string, bool) {
+	rawLabels := parseFormLabels(c)
+	if len(rawLabels) == 0 {
+		return nil, true
+	}
+	if !h.deps.labelsEnabled {
+		featureDisabled(c, "Document labels are temporarily disabled")
+		return nil, false
+	}
+	labels, err := validateAndNormalizeLabels(rawLabels)
+	if err != nil {
+		badRequest(c, err.Error())
+		return nil, false
+	}
+	return labels, true
+}
+
+// The request override beats the server-wide default regardless of
+// deployment mode: only the server env is org-gated (at startup), because
+// a caller who sets the field makes an explicit per-document choice.
+func (h handlers) parseRequestedDefaultPermission(c *gin.Context) (repo.Role, bool) {
+	permission := h.deps.defaultDocPermission
+	if raw, ok := c.GetPostForm("default_permission"); ok {
+		role, valid := ParseDefaultDocPermission(raw)
+		if !valid {
+			badRequest(c, "default_permission must be viewer, commenter, editor or private")
+			return repo.RoleNone, false
+		}
+		permission = role
+	}
+	return permission, true
+}
+
 // CreateDocument godoc
 // @Summary Create document
 // @Tags documents
@@ -42,6 +78,8 @@ type defaultGrantPrincipal struct {
 // @Produce json
 // @Param title formData string true "Document title"
 // @Param file formData file true "Single-file HTML"
+// @Param folder_id formData string false "Destination folder ID"
+// @Param labels formData string false "Comma-separated document labels"
 // @Param default_permission formData string false "Default sharing applied at create: viewer, commenter, editor or private. Overrides the server-wide default."
 // @Success 201 {object} createDocumentResponse
 // @Router /v1/documents [post]
@@ -57,27 +95,36 @@ func (h handlers) createDocument(c *gin.Context) {
 		return
 	}
 	title := c.PostForm("title")
-	// The request override beats the server-wide default regardless of
-	// deployment mode: only the server env is org-gated (at startup), because
-	// a caller who sets the field makes an explicit per-document choice.
-	permission := h.deps.defaultDocPermission
-	if raw, ok := c.GetPostForm("default_permission"); ok {
-		role, valid := ParseDefaultDocPermission(raw)
-		if !valid {
-			badRequest(c, "default_permission must be viewer, commenter, editor or private")
-			return
-		}
-		permission = role
-	}
 	if title == "" {
 		badRequest(c, "invalid document upload")
 		return
 	}
+	folderID := strings.TrimSpace(c.PostForm("folder_id"))
+	if folderID != "" {
+		if !h.needFolderRole(c, folderID, repo.RoleEditor) {
+			return
+		}
+	}
+	labels, ok := h.parseAndValidateDocumentLabels(c)
+	if !ok {
+		return
+	}
+	permission, ok := h.parseRequestedDefaultPermission(c)
+	if !ok {
+		return
+	}
 	observeHTML("document_create", len(html))
-	d, _, err := h.deps.repository.CreateDocument(c.Request.Context(), *p, title, html)
+	d, _, err := h.deps.repository.CreateDocument(c.Request.Context(), *p, title, html, repo.CreateDocumentOptions{
+		FolderID: folderID,
+		Labels:   labels,
+	})
 	if err != nil {
 		if errors.Is(err, blob.ErrStorage) {
 			c.JSON(http.StatusBadGateway, errorResponse("blob_storage_failed", "could not upload HTML to blob storage", nil))
+			return
+		}
+		if errors.Is(err, repo.ErrNotFound) {
+			c.JSON(http.StatusForbidden, errorResponse("forbidden", "folder not found or access denied", nil))
 			return
 		}
 		internalErr(c, err)
@@ -85,6 +132,12 @@ func (h handlers) createDocument(c *gin.Context) {
 	}
 	incDocument("created", actorType(c))
 	incVersion("created_initial", actorType(c))
+
+	var warning *permissionWarning
+	if folderID != "" && d.FolderHasGrants {
+		warning = mayBroadenAccessWarning("This folder has active grants — everyone with access may see this document.")
+	}
+
 	var granted *defaultGrant
 	if permission != repo.RoleNone {
 		g, err := h.deps.repository.CreateGrant(c.Request.Context(), "document", d.ID, auth.Principal{Type: auth.PrincipalAnyone}, permission, *p)
@@ -100,7 +153,14 @@ func (h handlers) createDocument(c *gin.Context) {
 		incGrant("created", string(g.Role), string(g.Principal.Type), actorType(c))
 		granted = &defaultGrant{GrantID: g.ID, Principal: defaultGrantPrincipal{Type: auth.PrincipalAnyone}, Role: g.Role}
 	}
-	c.JSON(http.StatusCreated, createDocumentResponse{ID: d.ID, CurrentVersionID: d.CurrentVersionID, DefaultGrant: granted})
+	c.JSON(http.StatusCreated, createDocumentResponse{
+		ID:                d.ID,
+		CurrentVersionID:  d.CurrentVersionID,
+		FolderID:          folderID,
+		Labels:            d.Labels,
+		PermissionWarning: warning,
+		DefaultGrant:      granted,
+	})
 }
 
 // ListDocuments godoc
