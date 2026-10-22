@@ -60,7 +60,7 @@ func documentListCmd(g *globals, out io.Writer) *cobra.Command {
 		Use:   "list [query]",
 		Short: "List or search documents",
 		Long: "List documents, or search with the same Slack-style language as the web application.\n\n" +
-			"Every word must appear in the title or the text. The most relevant documents come first.\n" +
+			"Every word must appear in the title or the text. Documents with the words in the title come first, then the latest.\n" +
 			"Modifiers narrow the results:\n" +
 			"  \"exact phrase\"       Match the words together\n" +
 			"  -word                Exclude documents that contain the word\n" +

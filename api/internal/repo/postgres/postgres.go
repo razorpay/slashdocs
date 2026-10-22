@@ -830,7 +830,9 @@ func (s *Store) ListDocuments(ctx context.Context, p auth.Principal) ([]repo.Doc
 func (s *Store) SearchDocuments(ctx context.Context, p auth.Principal, search repo.DocumentSearch, includeOrgWide bool, limit int32) ([]repo.Document, error) {
 	rows, err := s.q.SearchDocuments(ctx, dbsqlc.SearchDocumentsParams{
 		MatchQuery:     tsquery(search.Terms, " & "),
+		WordsQuery:     tsqueryWords(search.Terms),
 		ExcludeQuery:   tsquery(search.ExcludedTerms, " | "),
+		RankQuery:      tsquery(search.Terms, " | "),
 		Owners:         search.Owners,
 		Folders:        search.Folders,
 		Labels:         search.Labels,

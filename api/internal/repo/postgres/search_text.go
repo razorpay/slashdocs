@@ -74,6 +74,19 @@ func tsquery(terms []string, op string) string {
 
 var tsqueryEscaper = strings.NewReplacer(`\`, `\\`, `'`, `''`)
 
+// tsqueryWords returns tsquery text that matches the words of every term in
+// any order: a phrase "error budget" becomes 'error':* & 'budget':*. Every
+// document that tsquery(terms, " & ") matches, this matches too. Search
+// finds these documents in the index and checks the order of the words, which
+// reads a document's text vector, on the sorted candidates only.
+func tsqueryWords(terms []string) string {
+	var words []string
+	for _, term := range terms {
+		words = append(words, strings.Fields(term)...)
+	}
+	return tsquery(words, " & ")
+}
+
 // IndexVersions gives search text to current versions that were created
 // before content search. Each batch locks its versions, so all servers can
 // run it at the same time. A version that cannot be read is skipped until the
