@@ -823,6 +823,7 @@ func (s *Store) SearchDocuments(ctx context.Context, p auth.Principal, search re
 	rows, err := s.q.SearchDocuments(ctx, dbsqlc.SearchDocumentsParams{
 		MatchQuery:     tsquery(search.Terms, " & "),
 		ExcludeQuery:   tsquery(search.ExcludedTerms, " | "),
+		RankQuery:      tsquery(search.Terms, " | "),
 		Owners:         search.Owners,
 		Folders:        search.Folders,
 		Labels:         search.Labels,

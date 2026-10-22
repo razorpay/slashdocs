@@ -128,3 +128,55 @@ func TestPostgresSearchDocumentText(t *testing.T) {
 		}
 	}
 }
+
+func TestPostgresSearchRanksTitlesThenLatest(t *testing.T) {
+	ctx := context.Background()
+	store, err := pgrepo.ConnectWithBlob(ctx, testdb.New(t), blob.NewMemory())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store.Close)
+	owner := auth.Principal{Type: auth.PrincipalUser, ID: "usr_rank_owner", Email: "rank-owner@test.com"}
+	create := func(title, body string) repo.Document {
+		t.Helper()
+		doc, _, err := store.CreateDocument(ctx, owner, title, []byte("<html><body>"+body+"</body></html>"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return doc
+	}
+	// Oldest first. The text of "often" has the word more often than any
+	// other document, which does not rank it higher: among documents that
+	// match in the text only, the latest comes first.
+	inTitle := create("Rollout plan", "<p>Notes.</p>")
+	often := create("Weekly report", "<p>rollout rollout rollout rollout rollout</p>")
+	latest := create("Status", "<p>One rollout.</p>")
+	partialTitle := create("Rollout checklist", "<p>Steps.</p>")
+
+	results, err := store.SearchDocuments(ctx, owner, repo.DocumentSearch{Terms: []string{"rollout"}}, false, 25)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, r := range results {
+		got = append(got, r.ID)
+	}
+	want := []string{partialTitle.ID, inTitle.ID, latest.ID, often.ID}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("results = %v, want title matches first (latest first), then text matches (latest first): %v", got, want)
+	}
+
+	// With several words, a title that has more of them ranks higher than a
+	// title that has one, and both rank above text-only matches.
+	results, err = store.SearchDocuments(ctx, owner, repo.DocumentSearch{Terms: []string{"rollout", "plan"}}, false, 25)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = got[:0]
+	for _, r := range results {
+		got = append(got, r.ID)
+	}
+	if want := []string{inTitle.ID}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("results = %v, want %v", got, want)
+	}
+}
