@@ -346,16 +346,17 @@ WITH search AS NOT MATERIALIZED (
   -- which reads none. NULLIF keeps to_tsquery from parsing an empty string,
   -- which raises a notice on every call.
   SELECT to_tsquery('english', NULLIF((SELECT $1::text), '')) AS match,
-         to_tsquery('english', NULLIF((SELECT $2::text), '')) AS exclude
+         to_tsquery('english', NULLIF((SELECT $2::text), '')) AS words,
+         to_tsquery('english', NULLIF((SELECT $3::text), '')) AS exclude
 ),
 ranking AS MATERIALIZED (
-  SELECT to_tsquery('english', NULLIF($3::text, '')) AS rank
+  SELECT to_tsquery('english', NULLIF($4::text, '')) AS rank
 ),
 named_owners AS (
   SELECT 'user' AS owner_type, u.id FROM users u
-  WHERE lower(u.email) = ANY($4::text[]) OR lower(split_part(u.email, '@', 1)) = ANY($4::text[])
+  WHERE lower(u.email) = ANY($5::text[]) OR lower(split_part(u.email, '@', 1)) = ANY($5::text[])
   UNION ALL
-  SELECT 'service_account', sa.id FROM service_accounts sa WHERE lower(sa.name) = ANY($4::text[])
+  SELECT 'service_account', sa.id FROM service_accounts sa WHERE lower(sa.name) = ANY($5::text[])
 ),
 candidates AS NOT MATERIALIZED (
   SELECT d.id, d.title, d.updated_at, d.search_vector
@@ -366,63 +367,82 @@ candidates AS NOT MATERIALIZED (
   LEFT JOIN (
     SELECT DISTINCT g.resource_id FROM resource_grants g
     WHERE g.resource_type='document' AND g.revoked_at IS NULL
-      AND ((g.principal_type= $5 AND g.principal_id= $6)
-        OR (g.principal_type='google_group' AND g.principal_id=ANY($7::text[]))
-        OR ($8::boolean AND g.principal_type='anyone'))
+      AND ((g.principal_type= $6 AND g.principal_id= $7)
+        OR (g.principal_type='google_group' AND g.principal_id=ANY($8::text[]))
+        OR ($9::boolean AND g.principal_type='anyone'))
   ) granted ON granted.resource_id=d.id
   -- The subquery finds the excluded documents in the index, once, and the
   -- planner hashes them. Without excluded words it finds none.
   WHERE d.id NOT IN (SELECT x.id FROM documents x WHERE x.search_vector @@ search.exclude)
   AND (
-    COALESCE(cardinality($4::text[]), 0) = 0
-    OR lower(d.owner_id) = ANY($4::text[])
+    COALESCE(cardinality($5::text[]), 0) = 0
+    OR lower(d.owner_id) = ANY($5::text[])
     OR (d.owner_type, d.owner_id) IN (SELECT owner_type, id FROM named_owners)
   )
   AND (
-    COALESCE(cardinality($9::text[]), 0) = 0
+    COALESCE(cardinality($10::text[]), 0) = 0
     OR d.parent_folder_id IN (
       SELECT subtree.id FROM folder_subtrees(ARRAY(
         SELECT f.id FROM folders f
-        WHERE f.id = ANY($9::text[]) OR lower(f.title) = ANY($9::text[]))) AS subtree(id)
+        WHERE f.id = ANY($10::text[]) OR lower(f.title) = ANY($10::text[]))) AS subtree(id)
     )
   )
   AND NOT EXISTS (
-    SELECT 1 FROM unnest($10::text[]) AS requested_label
+    SELECT 1 FROM unnest($11::text[]) AS requested_label
     WHERE NOT EXISTS (
       SELECT 1 FROM document_labels dl
       WHERE dl.document_id=d.id AND dl.label = requested_label
     )
   )
-  AND ($11::timestamptz IS NULL OR d.updated_at >= $11)
-  AND ($12::timestamptz IS NULL OR d.updated_at < $12)
+  AND ($12::timestamptz IS NULL OR d.updated_at >= $12)
+  AND ($13::timestamptz IS NULL OR d.updated_at < $13)
   AND (
-    (d.owner_type= $5 AND d.owner_id= $6)
+    (d.owner_type= $6 AND d.owner_id= $7)
     OR granted.resource_id IS NOT NULL
     OR d.parent_folder_id IN (
       SELECT subtree.id FROM folder_subtrees(ARRAY(
         SELECT g.resource_id FROM resource_grants g
         WHERE g.resource_type='folder' AND g.revoked_at IS NULL
-          AND ((g.principal_type= $5 AND g.principal_id= $6)
-            OR (g.principal_type='google_group' AND g.principal_id=ANY($7::text[]))
-            OR ($8::boolean AND g.principal_type='anyone')))) AS subtree(id)
+          AND ((g.principal_type= $6 AND g.principal_id= $7)
+            OR (g.principal_type='google_group' AND g.principal_id=ANY($8::text[]))
+            OR ($9::boolean AND g.principal_type='anyone')))) AS subtree(id)
     )
   )
 ),
 matches AS MATERIALIZED (
-  SELECT c.id, c.title, c.updated_at,
-         ts_rank(to_tsvector('english', c.title), ranking.rank) AS rank
-  FROM candidates c
-  CROSS JOIN search
-  CROSS JOIN ranking
-  WHERE numnode(search.match) > 0 AND c.search_vector @@ search.match
+  (
+    SELECT o.id, o.title, o.updated_at, o.rank
+    FROM (
+      SELECT c.id, c.title, c.updated_at, c.search_vector,
+             ts_rank(to_tsvector('english', c.title), ranking.rank) AS rank
+      FROM candidates c
+      CROSS JOIN search
+      CROSS JOIN ranking
+      WHERE numnode(search.words) > 0 AND c.search_vector @@ search.words
+      ORDER BY rank DESC, c.updated_at DESC, c.title
+      -- OFFSET 0 keeps the planner from moving the condition below into
+      -- this subquery, where it would run before the sort, on every
+      -- candidate. The sort carries a reference to each vector, not the
+      -- vector; the condition reads it.
+      OFFSET 0
+    ) o
+    CROSS JOIN search
+    WHERE o.search_vector @@ search.match
+    ORDER BY o.rank DESC, o.updated_at DESC, o.title
+    LIMIT $14
+  )
   UNION ALL
-  -- Without words, every candidate matches, the latest first.
-  SELECT c.id, c.title, c.updated_at, 0
-  FROM candidates c
-  CROSS JOIN search
-  WHERE COALESCE(numnode(search.match), 0) = 0
+  (
+    -- Without words, every candidate matches, the latest first.
+    SELECT c.id, c.title, c.updated_at, 0
+    FROM candidates c
+    CROSS JOIN search
+    WHERE COALESCE(numnode(search.match), 0) = 0
+    ORDER BY c.updated_at DESC, c.title
+    LIMIT $14
+  )
   ORDER BY rank DESC, updated_at DESC, title
-  LIMIT $13
+  LIMIT $14
 )
 SELECT d.id, d.title, d.current_version_id, d.owner_type, d.owner_id,
        COALESCE(u.email,'') AS owner_email,
@@ -447,6 +467,7 @@ ORDER BY m.rank DESC, m.updated_at DESC, m.title
 
 type SearchDocumentsParams struct {
 	MatchQuery     string
+	WordsQuery     string
 	ExcludeQuery   string
 	RankQuery      string
 	Owners         []string
@@ -475,15 +496,20 @@ type SearchDocumentsRow struct {
 	Snippet           string
 }
 
-// @match_query, @exclude_query, and @rank_query are tsquery text. A document
-// matches when its title or current text matches. Documents whose title
-// matches rank_query (the words joined with |) come first, then the latest.
-// The rank reads titles only: ranking the text would read the whole vector
-// of every matching document.
+// @match_query, @words_query, @exclude_query, and @rank_query are tsquery
+// text. A document matches when its title or current text matches
+// match_query. words_query is the words of match_query in any order; it
+// differs from match_query only when a term is a phrase. Documents whose
+// title matches rank_query (the words joined with |) come first, then the
+// latest. The rank reads titles only: ranking the text would read the whole
+// vector of every matching document.
 //
 // candidates are narrow rows, so that the index match, the access check,
-// and the sort touch no text. Owners, folders, and snippets are joined after
-// LIMIT. matches is MATERIALIZED, so that the planner joins 25 rows.
+// and the sort touch no text. The index finds the documents that have the
+// words. Whether they are in the order of a phrase is known from the text
+// vector only, so that check runs on the sorted candidates, in order, until
+// LIMIT rows pass. Owners, folders, and snippets are joined after LIMIT.
+// matches is MATERIALIZED, so that the planner joins 25 rows.
 //
 // The two arms of matches keep the statement fast under a generic plan,
 // which PostgreSQL may choose for a prepared statement after five runs. With
@@ -496,6 +522,7 @@ type SearchDocumentsRow struct {
 func (q *Queries) SearchDocuments(ctx context.Context, arg SearchDocumentsParams) ([]SearchDocumentsRow, error) {
 	rows, err := q.db.Query(ctx, searchDocuments,
 		arg.MatchQuery,
+		arg.WordsQuery,
 		arg.ExcludeQuery,
 		arg.RankQuery,
 		arg.Owners,

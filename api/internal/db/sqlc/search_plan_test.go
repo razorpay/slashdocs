@@ -41,7 +41,7 @@ func TestSearchDocumentsPlanUsesIndex(t *testing.T) {
 	}
 	// Words and an excluded word: the plan has an index scan for each.
 	args := []any{
-		"'rollout':*", "'draft':*", "'rollout':*", []string{}, "user", "usr_plan", []string{}, false,
+		"'rollout':*", "'rollout':*", "'draft':*", "'rollout':*", []string{}, "user", "usr_plan", []string{}, false,
 		[]string{}, []string{}, pgtype.Timestamptz{}, pgtype.Timestamptz{}, int32(25),
 	}
 	for _, mode := range []string{"force_custom_plan", "force_generic_plan"} {

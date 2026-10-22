@@ -101,7 +101,8 @@ export function DocumentsPage() {
   );
 
   // Browsing sorts by pinned status, last activity, then title. Search
-  // results keep the server's order, which is by relevance.
+  // results keep the server's order: documents with the words in the title
+  // first, then the latest.
   const merged = useMemo(
     () =>
       [...entries].sort((a, b) => {
