@@ -249,7 +249,7 @@ func (s *Server) routes(deps dependencies) {
 	registerAPIDocsRoutes(s.engine, deps)
 	s.engine.GET("/v/:id/:version_id", h.renderVersion)
 	s.engine.GET("/print/:id/:version_id", h.renderPrintVersion)
-	registerFrontendRoutes(s.engine, deps.appOrigin)
+	registerFrontendRoutes(s.engine, deps.appOrigin, deps.renderOrigin)
 
 	s.engine.GET("/livez", h.livez)
 	s.engine.GET("/readyz", h.readyz)
