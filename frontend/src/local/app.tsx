@@ -16,7 +16,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import { Page } from "@/components/layout/page";
 import { ENTRY_ROW, EntryName, EntryTable } from "@/components/browse/entry-table";
 import { beat } from "@/lib/enter";
-import { formatTimestamp } from "@/lib/format-date";
+import { RelativeTime } from "@/components/ui/relative-time";
 import { useTitle } from "@/lib/use-title";
 
 // slashdocs local: the documents app for a folder of HTML files that
@@ -189,7 +189,7 @@ function Entries({ entries }: { entries: Entry[] }) {
             <EntryName to={href(e.path)} folder={e.type === "folder"} title={e.title} />
           </td>
           <td className="px-4 py-3 text-[var(--color-fg-muted)]">
-            {formatTimestamp(e.modified)}
+            <RelativeTime iso={e.modified} />
           </td>
         </tr>
       ))}
