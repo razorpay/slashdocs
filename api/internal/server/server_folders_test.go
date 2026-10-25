@@ -353,11 +353,15 @@ func createFolder(t *testing.T, e *testEnv, body, principal string) string {
 	return jsonField(t, rr.Body.Bytes(), "id")
 }
 
-// TestMoveDeletedDocumentReturns404 verifies that the move endpoint returns 404
-// rather than 500 when the document is gone. The race this covers: RoleForDocument
-// swallows ErrNotFound (returns RoleNone), so for a non-owner editor needDocMove
-// reaches GetDocument — which is where the missing-document error is now caught.
-func TestMoveDeletedDocumentReturns404(t *testing.T) {
+// TestMoveDeletedDocumentNo500 is a regression guard: moving a deleted document
+// must never return 500. It does not cover the ErrNotFound branch in needDocMove
+// (lines 50-55 of handlers_folders.go) — that branch requires the caller to hold
+// RoleOwner at RoleForDocument time but the document be absent by GetDocument,
+// which is a TOCTOU race that the Postgres repo cannot reproduce without injection.
+// In practice the Postgres RoleForDocument returns RoleNone for deleted documents
+// even for the original owner (GetDocumentOwner returns no rows), so the caller
+// is stopped by the "editor role required" gate (403) before reaching GetDocument.
+func TestMoveDeletedDocumentNo500(t *testing.T) {
 	e := newTestEnv(t)
 	owner := principalHeader(fixtureOwner)
 	editor := principalHeader(fixtureEditor)
@@ -376,8 +380,8 @@ func TestMoveDeletedDocumentReturns404(t *testing.T) {
 	assertStatus(t, rr, http.StatusNoContent)
 
 	// Editor attempts to move the now-deleted doc. RoleForDocument returns RoleNone
-	// for deleted docs (grant rows are also gone), so the editor is blocked at the
-	// "editor role required" gate — but the endpoint must not 500 regardless.
+	// (grant rows gone, document row gone), so the request is rejected with 403 at
+	// the "editor role required" gate. The key invariant: it must not 500.
 	rr = do(t, e.h, http.MethodPost, "/v1/folders/"+destID+"/documents",
 		`{"document_id":"`+docID+`"}`,
 		map[string]string{"X-Test-Principal": editor, "Content-Type": "application/json"})
