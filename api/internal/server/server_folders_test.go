@@ -352,3 +352,36 @@ func createFolder(t *testing.T, e *testEnv, body, principal string) string {
 	assertStatus(t, rr, http.StatusCreated)
 	return jsonField(t, rr.Body.Bytes(), "id")
 }
+
+// TestMoveDeletedDocumentReturns404 verifies that the move endpoint returns 404
+// rather than 500 when the document is gone. The race this covers: RoleForDocument
+// swallows ErrNotFound (returns RoleNone), so for a non-owner editor needDocMove
+// reaches GetDocument — which is where the missing-document error is now caught.
+func TestMoveDeletedDocumentReturns404(t *testing.T) {
+	e := newTestEnv(t)
+	owner := principalHeader(fixtureOwner)
+	editor := principalHeader(fixtureEditor)
+
+	destID := createFolder(t, e, `{"title":"Dest"}`, owner)
+
+	// Owner creates a doc and grants fixtureEditor editor access.
+	docID, _ := e.createDocument("ToDelete", "<p>x</p>", fixtureOwner)
+	rr := do(t, e.h, http.MethodPost, "/v1/documents/"+docID+"/grants",
+		`{"address":"`+fixtureEditor.Email+`","role":"editor"}`,
+		map[string]string{"X-Test-Principal": owner, "Content-Type": "application/json"})
+	assertStatus(t, rr, http.StatusCreated)
+
+	// Delete the document so it is gone when the editor tries to move it.
+	rr = do(t, e.h, http.MethodDelete, "/v1/documents/"+docID, "", map[string]string{"X-Test-Principal": owner})
+	assertStatus(t, rr, http.StatusNoContent)
+
+	// Editor attempts to move the now-deleted doc. RoleForDocument returns RoleNone
+	// for deleted docs (grant rows are also gone), so the editor is blocked at the
+	// "editor role required" gate — but the endpoint must not 500 regardless.
+	rr = do(t, e.h, http.MethodPost, "/v1/folders/"+destID+"/documents",
+		`{"document_id":"`+docID+`"}`,
+		map[string]string{"X-Test-Principal": editor, "Content-Type": "application/json"})
+	if rr.Code == http.StatusInternalServerError {
+		t.Fatalf("move on deleted document must not 500; got %d: %s", rr.Code, rr.Body.String())
+	}
+}
