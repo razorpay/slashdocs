@@ -54,6 +54,7 @@ test("edits words in place and saves only the changed text", async ({
     "contenteditable",
     "true",
   );
+  await expect(renderedDocument(page).locator(".slashdocs-heading-link")).toBeHidden();
 
   await selectWord(page, "#ttl", "10");
   await page.keyboard.type("5");
