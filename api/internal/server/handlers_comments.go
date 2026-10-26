@@ -3,9 +3,12 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"regexp"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 
@@ -142,7 +145,7 @@ func (h handlers) createComment(c *gin.Context) {
 		return
 	}
 	in.Body = normalized
-	if in.VersionID == "" || in.Body == "" {
+	if in.VersionID == "" || blankCommentBody(in.Body) {
 		badRequest(c, "invalid comment")
 		return
 	}
@@ -265,7 +268,7 @@ func (h handlers) createCommentReply(c *gin.Context) {
 		return
 	}
 	in.Body = normalized
-	if in.Body == "" {
+	if blankCommentBody(in.Body) {
 		badRequest(c, "invalid reply")
 		return
 	}
@@ -346,7 +349,7 @@ func normalizePatchCommentRequest(in *patchCommentRequest) string {
 		in.Body = nil
 	}
 	switch {
-	case in.Body != nil && *in.Body == "":
+	case in.Body != nil && blankCommentBody(*in.Body):
 		return "comment body cannot be empty"
 	case in.Status != "" && in.Status != commentStatusOpen && in.Status != commentStatusResolved:
 		return "invalid comment status"
@@ -362,7 +365,20 @@ func normalizeCommentBodyInput(body string) (string, string) {
 	if normalized != body {
 		return "", "legacy mention markers are not supported; reload the client and try again"
 	}
+	if utf8.RuneCountInString(normalized) > maxCommentBodyRunes {
+		return "", fmt.Sprintf("comment is too long (at most %d characters)", maxCommentBodyRunes)
+	}
 	return normalized, ""
+}
+
+// maxCommentBodyRunes bounds a comment or reply body. Longer ones are pastes
+// by mistake, and they stretch the comments panel without end.
+const maxCommentBodyRunes = 20000
+
+// blankCommentBody reports whether body has nothing but white space, which
+// shows as an empty comment.
+func blankCommentBody(body string) bool {
+	return strings.TrimSpace(body) == ""
 }
 
 func commentMentions(items []commentMentionRequest) []repo.CommentMention {

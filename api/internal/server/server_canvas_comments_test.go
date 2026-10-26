@@ -315,3 +315,44 @@ func TestMCPCreatePointComment(t *testing.T) {
 		"document_id": docID, "version_id": versionID, "body": "No y", "x": 0.5,
 	}), "y")
 }
+
+func TestCommentBodyMustHaveText(t *testing.T) {
+	e := newTestEnv(t)
+	headers := map[string]string{"Content-Type": "application/json", "X-Test-Principal": principalHeader(fixtureCommenter)}
+	blank := fmt.Sprintf(`{"version_id":%q,"body":"  \n\t ","anchor":{"point":{"target":"t_mob","x":0.5,"y":0.5}}}`, e.ver.ID)
+	assertStatus(t, do(t, e.h, http.MethodPost, "/v1/documents/"+e.doc.ID+"/comments", blank, headers), http.StatusBadRequest)
+
+	rr := postComment(t, e, fixtureCommenter, `{"point":{"target":"t_mob","x":0.5,"y":0.5}}`)
+	assertStatus(t, rr, http.StatusCreated)
+	id := jsonField(t, rr.Body.Bytes(), "id")
+	assertStatus(t, do(t, e.h, http.MethodPost, "/v1/documents/"+e.doc.ID+"/comments/"+id+"/replies", `{"body":"   "}`, headers), http.StatusBadRequest)
+	assertStatus(t, do(t, e.h, http.MethodPatch, "/v1/documents/"+e.doc.ID+"/comments/"+id, `{"body":" \n "}`, headers), http.StatusBadRequest)
+	// A status change with the legacy empty body still works.
+	assertStatus(t, do(t, e.h, http.MethodPatch, "/v1/documents/"+e.doc.ID+"/comments/"+id, `{"body":"","status":"resolved"}`, headers), http.StatusOK)
+}
+
+func TestCommentBodyLengthLimit(t *testing.T) {
+	e := newTestEnv(t)
+	headers := map[string]string{"Content-Type": "application/json", "X-Test-Principal": principalHeader(fixtureCommenter)}
+	post := func(body string) *httptest.ResponseRecorder {
+		in := fmt.Sprintf(`{"version_id":%q,"body":%q,"anchor":{"point":{"target":"t_mob","x":0.5,"y":0.5}}}`, e.ver.ID, body)
+		return do(t, e.h, http.MethodPost, "/v1/documents/"+e.doc.ID+"/comments", in, headers)
+	}
+	// Characters, not bytes: 20000 two-byte runes fit.
+	assertStatus(t, post(strings.Repeat("é", 20000)), http.StatusCreated)
+	assertStatus(t, post(strings.Repeat("a", 20001)), http.StatusBadRequest)
+}
+
+func TestListCommentsStatusAll(t *testing.T) {
+	e := newTestEnv(t)
+	rr := postComment(t, e, fixtureCommenter, `{"point":{"target":"t_mob","x":0.5,"y":0.5}}`)
+	assertStatus(t, rr, http.StatusCreated)
+	id := jsonField(t, rr.Body.Bytes(), "id")
+	headers := map[string]string{"Content-Type": "application/json", "X-Test-Principal": principalHeader(fixtureCommenter)}
+	assertStatus(t, do(t, e.h, http.MethodPatch, "/v1/documents/"+e.doc.ID+"/comments/"+id, `{"status":"resolved"}`, headers), http.StatusOK)
+	all := listComments(t, e, "?status=all")
+	if len(all) != len(listComments(t, e, "")) || len(all) < 2 {
+		t.Fatalf("status=all listed %d comments, want every comment", len(all))
+	}
+	findComment(t, all, id)
+}

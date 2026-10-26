@@ -257,14 +257,17 @@ func compactRow(m map[string]any) string {
 // pointLabel renders a point anchor as <target or board>@<x>,<y>, or "" for a
 // text anchor or anything else.
 func pointLabel(anchor any) string {
-	a, _ := anchor.(map[string]any)
+	a, ok := anchor.(map[string]any)
+	if !ok {
+		return ""
+	}
 	p, ok := value(a, "point").(map[string]any)
 	if !ok {
 		return ""
 	}
-	target, _ := value(p, "target").(string)
-	if target == "" {
-		target = "board"
+	target := "board"
+	if t, ok := value(p, "target").(string); ok && t != "" {
+		target = t
 	}
 	return fmt.Sprintf("%s@%v,%v", target, value(p, "x"), value(p, "y"))
 }
