@@ -628,7 +628,7 @@
                         "cookieAuth": []
                     }
                 ],
-                "description": "Records the caller's decision on the latest version. Submitting again replaces the previous decision for that version. Returns 403 when the caller created a version of the document (nobody approves their own work) and 409 when a newer version exists.",
+                "description": "Records the caller's decision on the latest version. Submitting again replaces the previous decision for that version. A request for changes needs a note unless the caller has open comment threads on the document (the comments say what to change). Returns 403 when the caller created a version of the document (nobody approves their own work) and 409 when a newer version exists.",
                 "tags": [
                     "approvals"
                 ],
@@ -2409,6 +2409,13 @@
                 },
                 "carried_from_version_number": {
                     "description": "CarriedFromVersionNumber is the display number of the version that\nreceived the explicit decision, so the UI can say \"Approved on v3\"\ninstead of an opaque ID. Zero when the decision is not carried.",
+                    "type": "integer"
+                },
+                "comments_open": {
+                    "description": "CommentsOpen and CommentsTotal count the comment threads this approver\nstarted on the document, so a request for changes can say \"2 open of 3\".",
+                    "type": "integer"
+                },
+                "comments_total": {
                     "type": "integer"
                 },
                 "created_version": {

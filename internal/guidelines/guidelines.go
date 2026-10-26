@@ -478,8 +478,10 @@ Model:
     version (they show "approved on vN"); use it only for changes the approvers
     do not need to see again.
   - Approvers can revoke their decision at any time.
-  - Requesting changes requires a note saying what needs to change; a note is
-    optional when approving.
+  - Requesting changes needs either open comments of yours on the document (they
+    say what to change) or a note; a note is optional when approving. In the UI
+    this is the Reject button: it lists your open comments, and approving with
+    open comments asks you to confirm.
 
 Commands:
   slashdocs docs approvers add <doc_id> --to reviewer@org.example
@@ -487,7 +489,7 @@ Commands:
   slashdocs docs approvers remove <doc_id> <approver_id>
   slashdocs docs approvals list <doc_id> [--version <version_id>]
   slashdocs docs approve <doc_id> [--version <version_id>] [--note "..."]
-  slashdocs docs request-changes <doc_id> --note "what needs to change"
+  slashdocs docs request-changes <doc_id> [--note "what needs to change"]
   slashdocs docs revoke-approval <doc_id> [--version <version_id>]
   slashdocs docs push <doc_id> <file> --keep-approvals
 

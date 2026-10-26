@@ -90,6 +90,8 @@ type approvalItem struct {
 	CarriedFromVersionID     string  `json:"carried_from_version_id"`
 	CarriedFromVersionNumber int     `json:"carried_from_version_number"`
 	CreatedVersion           bool    `json:"created_version"`
+	CommentsOpen             int     `json:"comments_open"`
+	CommentsTotal            int     `json:"comments_total"`
 }
 
 type approvalsListResponse struct {
@@ -651,6 +653,7 @@ func TestRevokeUnknownDecision(t *testing.T) {
 // Decision notes
 // ---------------------------------------------------------------------------
 
+// A reviewer with no comments of their own must still say what to change.
 func TestRequestChangesRequiresNote(t *testing.T) {
 	e := newTestEnv(t)
 	mustAssignApprover(t, e, e.doc.ID, "viewer@example.com", fixtureOwner)
@@ -667,6 +670,54 @@ func TestRequestChangesRequiresNote(t *testing.T) {
 	if list.Status != "pending" {
 		t.Fatalf("status = %q, want pending after rejected decision", list.Status)
 	}
+}
+
+// The commenter fixture already has one open comment thread on the document
+// (e.cmt), so a request for changes needs no summary from them.
+func TestRequestChangesNeedsNoSummaryWhenTheReviewerHasOpenComments(t *testing.T) {
+	e := newTestEnv(t)
+	mustAssignApprover(t, e, e.doc.ID, "commenter@example.com", fixtureOwner)
+
+	rr := submitApprovalWithNote(t, e, e.doc.ID, e.ver.ID, "changes_requested", "", fixtureCommenter)
+	assertStatus(t, rr, http.StatusCreated)
+
+	list := listApprovals(t, e, e.doc.ID, "", fixtureOwner)
+	if len(list.Items) != 1 || list.Items[0].CommentsOpen != 1 || list.Items[0].CommentsTotal != 1 {
+		t.Fatalf("items = %+v, want 1 open of 1 comment for the reviewer", list.Items)
+	}
+}
+
+func TestRequestChangesNeedsASummaryOnceTheReviewersCommentsAreResolved(t *testing.T) {
+	e := newTestEnv(t)
+	mustAssignApprover(t, e, e.doc.ID, "commenter@example.com", fixtureOwner)
+	rr := do(t, e.h, http.MethodPatch, "/v1/documents/"+e.doc.ID+"/comments/"+e.cmt.ID, `{"status":"resolved"}`, map[string]string{
+		"Content-Type":     "application/json",
+		"X-Test-Principal": principalHeader(fixtureCommenter),
+	})
+	assertStatus(t, rr, http.StatusOK)
+
+	rr = submitApprovalWithNote(t, e, e.doc.ID, e.ver.ID, "changes_requested", "", fixtureCommenter)
+	assertStatus(t, rr, http.StatusBadRequest)
+	if !strings.Contains(rr.Body.String(), "Add a comment on the document or a summary") {
+		t.Fatalf("body = %s, want the add-a-comment-or-summary message", rr.Body.String())
+	}
+	// A summary is still enough on its own.
+	rr = submitApprovalWithNote(t, e, e.doc.ID, e.ver.ID, "changes_requested", "still needs a rollback plan", fixtureCommenter)
+	assertStatus(t, rr, http.StatusCreated)
+
+	list := listApprovals(t, e, e.doc.ID, "", fixtureOwner)
+	if list.Items[0].CommentsOpen != 0 || list.Items[0].CommentsTotal != 1 {
+		t.Fatalf("items = %+v, want 0 open of 1 comment after resolving", list.Items)
+	}
+}
+
+func TestOnlyTheReviewersOwnCommentsCount(t *testing.T) {
+	e := newTestEnv(t)
+	// The only open comment on the document is the commenter's. A viewer who
+	// is an approver has none of their own, so they still need to say why.
+	mustAssignApprover(t, e, e.doc.ID, "viewer@example.com", fixtureOwner)
+	rr := submitApprovalWithNote(t, e, e.doc.ID, e.ver.ID, "changes_requested", "", fixtureViewer)
+	assertStatus(t, rr, http.StatusBadRequest)
 }
 
 func TestRequestChangesStoresNote(t *testing.T) {

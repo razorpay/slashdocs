@@ -86,6 +86,10 @@ type approvalListItem struct {
 	// document. They cannot decide on it, so the document waits for the owner
 	// to replace them.
 	CreatedVersion bool `json:"created_version,omitempty"`
+	// CommentsOpen and CommentsTotal count the comment threads this approver
+	// started on the document, so a request for changes can say "2 open of 3".
+	CommentsOpen  int `json:"comments_open,omitempty"`
+	CommentsTotal int `json:"comments_total,omitempty"`
 }
 
 // approvalsListResponse is the payload of GET /v1/documents/{id}/approvals.
@@ -109,7 +113,38 @@ const (
 	errCreatedVersionApprover = "That person created a version of this document, so they can't approve it. Ask someone who hasn't worked on it."
 	errCreatedVersionDecider  = "You created a version of this document, so you can't approve it. Ask someone who hasn't worked on it."
 	errVersionSuperseded      = "A newer version of this document exists. Review the latest version before deciding."
+	errChangesNeedWords       = "Add a comment on the document or a summary saying what needs to change."
 )
+
+// commentCounts is how many comment threads one person started on a document.
+type commentCounts struct {
+	open  int
+	total int
+}
+
+// reviewerCommentCounts counts, per author (keyed by principalKey), the comment
+// threads they started on the document: those still open and all of them. A
+// reply is not a thread of its own.
+func (h handlers) reviewerCommentCounts(ctx context.Context, documentID string) (map[string]commentCounts, error) {
+	comments, err := h.deps.repository.ListComments(ctx, documentID, "", "")
+	if err != nil {
+		return nil, err
+	}
+	counts := make(map[string]commentCounts)
+	for _, cm := range comments {
+		if cm.ParentCommentID != "" {
+			continue
+		}
+		key := principalKey(cm.Author)
+		n := counts[key]
+		n.total++
+		if cm.Status != commentStatusResolved {
+			n.open++
+		}
+		counts[key] = n
+	}
+	return counts, nil
+}
 
 func principalKey(p auth.Principal) string {
 	return string(p.Type) + ":" + p.ID
@@ -268,7 +303,7 @@ func (h handlers) deleteApprover(c *gin.Context) {
 
 // CreateApproval godoc
 // @Summary Submit or update a decision
-// @Description Records the caller's decision on the latest version. Submitting again replaces the previous decision for that version. Returns 403 when the caller created a version of the document (nobody approves their own work) and 409 when a newer version exists.
+// @Description Records the caller's decision on the latest version. Submitting again replaces the previous decision for that version. A request for changes needs a note unless the caller has open comment threads on the document (the comments say what to change). Returns 403 when the caller created a version of the document (nobody approves their own work) and 409 when a newer version exists.
 // @Tags approvals
 // @Security bearerAuth
 // @Security cookieAuth
@@ -302,12 +337,6 @@ func (h handlers) createApproval(c *gin.Context) {
 		return
 	}
 	note := strings.TrimSpace(in.Note)
-	// Requesting changes without saying what to change leaves the author
-	// guessing, so the note is mandatory for that decision only.
-	if in.Decision == repo.DecisionChangesRequested && note == "" {
-		badRequest(c, "note is required when requesting changes: say what needs to change")
-		return
-	}
 	if len(note) > maxApprovalNote {
 		badRequest(c, "note is too long")
 		return
@@ -342,6 +371,20 @@ func (h handlers) createApproval(c *gin.Context) {
 	if d.CurrentVersionID != version.ID {
 		c.JSON(http.StatusConflict, errorResponse("version_superseded", errVersionSuperseded, versionConflictDetails{CurrentVersionID: d.CurrentVersionID}))
 		return
+	}
+	// Requesting changes without saying what to change leaves the author
+	// guessing. The reviewer's open comments on the document say it, so a
+	// summary is needed only when they have none.
+	if in.Decision == repo.DecisionChangesRequested && note == "" {
+		counts, err := h.reviewerCommentCounts(ctx, c.Param("id"))
+		if err != nil {
+			internalErr(c, err)
+			return
+		}
+		if counts[principalKey(*p)].open == 0 {
+			badRequest(c, errChangesNeedWords)
+			return
+		}
 	}
 	a, created, err := h.deps.repository.CreateOrUpdateApproval(ctx, c.Param("id"), in.VersionID, in.Decision, note, *p)
 	if errors.Is(err, repo.ErrNotFound) {
@@ -421,10 +464,20 @@ func (h handlers) listApprovals(c *gin.Context) {
 	if err != nil {
 		requestLogger(c).Warn("approval version creators", "error", err)
 	}
+	counts, err := h.reviewerCommentCounts(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		requestLogger(c).Warn("approval comment counts", "error", err)
+	}
 	summary := repo.ApprovalSummary{Total: len(requests)}
 	items := make([]approvalListItem, 0, len(requests))
 	for _, r := range requests {
-		item := approvalListItem{Approver: principalJSON(r.Approver), CreatedVersion: creators[principalKey(r.Approver)]}
+		n := counts[principalKey(r.Approver)]
+		item := approvalListItem{
+			Approver:       principalJSON(r.Approver),
+			CreatedVersion: creators[principalKey(r.Approver)],
+			CommentsOpen:   n.open,
+			CommentsTotal:  n.total,
+		}
 		if a, ok := decisionByApprover[string(r.Approver.Type)+":"+r.Approver.ID]; ok {
 			decision := a.Decision
 			item.ID = a.ID

@@ -113,11 +113,8 @@ func decisionCmd(g *globals, out io.Writer, use, short, decision, did string) *c
 		Short: short,
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Requesting changes without saying what to change leaves the
-			// author guessing, so the note is mandatory for that verb.
-			if decision == "changes_requested" && strings.TrimSpace(note) == "" {
-				return errors.New("--note is required: say what needs to change")
-			}
+			// The server decides whether the request says enough: a note, or
+			// open comments of yours on the document.
 			cl, err := client(g)
 			if err != nil {
 				return err
@@ -143,7 +140,7 @@ func decisionCmd(g *globals, out io.Writer, use, short, decision, did string) *c
 	cmd.Flags().StringVar(&ver, "version", "", "version ID (defaults to the current version)")
 	noteHelp := "note explaining the decision"
 	if decision == "changes_requested" {
-		noteHelp = "note explaining what needs to change (required)"
+		noteHelp = "note explaining what needs to change (required unless you have open comments on the document)"
 	}
 	cmd.Flags().StringVar(&note, "note", "", noteHelp)
 	return cmd
