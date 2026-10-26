@@ -161,6 +161,9 @@ export type ApprovalListItem = {
   carried_from_version_number?: number;
   // The approver created a version of the document, so they cannot decide.
   created_version?: boolean;
+  // Comment threads this approver started on the document.
+  comments_open?: number;
+  comments_total?: number;
 };
 export type ApprovalsList = {
   version_id: string;

@@ -310,11 +310,11 @@ slashdocs docs push <doc_id> <file> [--keep-approvals]
 
 ### UI components
 
-1. **Status badge in DocBar** — "Approvals: Approved", "Approvals: Pending 1/3", "Approvals: Changes requested", or hidden when no approvers. The badge always names its subject and is itself the button that opens the approvals dialog.
+1. **Status badge in DocBar** — "2 of 2 approved", "1 of 3 approved" (pending), "Rejected · 1 of 3 approved", or hidden when no approvers. The chip leads with how many approvers have approved, carries an icon so the status is not colour alone, has an accessible name that spells the status out, and is itself the button that opens the approvals dialog.
    When a document has no approvers, the owner sees a labelled **Request approval** button in the same place instead of a small chip.
 2. **Approvals dialog** — a dedicated modal, _not_ a tab in the comments sidebar (maintainer review, 2026-09-04: approvals are a different concern from discussion). Per-approver status; action buttons for assigned approvers; add/remove controls for the owner. An approver who created a version is shown as unable to approve, with the reason.
 3. **Add Approver field** — reuses the user search pattern from the share sheet and submits the raw address, so a bot (service-account) address resolves the same way an email does.
-4. **Request-changes note** — requesting changes opens a short note form and will not submit while it is empty.
+4. **Reject** — the UI's name for the `changes_requested` decision (the API value, CLI verb `request-changes` and database value are unchanged). It opens a dialog that lists the reviewer's own open comment threads (each links to its comment) and takes a reason. The reason is optional when the reviewer has open comments, and required when they have none. The dialogs carry no explanatory paragraph; the list heading and the field's placeholder say what is needed. Approving while the reviewer has open comments asks them to confirm; it does not block. The decision controls live only in the approvals dialog, next to the approver's own row (not duplicated in the comments panel, where a lone "Approve" beside a "Rejected" status read as contradictory). Each approver's row shows "N open of M comments", and a reviewer whose comments are all resolved is nudged to approve.
 
 ### Files
 
@@ -418,7 +418,7 @@ Per-key write gating (a considered KV extension) closes the authorization gap bu
 
 Devstack review by the maintainer moved four things out of "future work" and into this change:
 
-- **Decision notes** — a `note` column on `approvals` (migration `00025`), required when requesting changes and optional when approving, surfaced through the API, CLI (`--note`) and UI. Requesting changes without saying what to change left the author guessing.
+- **Decision notes** — a `note` column on `approvals` (migration `00025`), optional when approving, and required when requesting changes unless the reviewer has open comment threads on the document (those say what to change; this revision, 2026-10-26). Surfaced through the API, CLI (`--note`) and UI. Requesting changes without saying what to change left the author guessing. Comment counts per approver are computed when listed, not stored.
 - **Approvals live in a modal**, not the comments sidebar; the status badge is the trigger.
 - **Carried provenance names the version** — the list response carries `carried_from_version_number`, so the UI reads "Approved on v3" instead of an unattributed "carried forward".
 - **Version scoping is enforced** — `GET /approvals?version=` now 404s for an unknown or foreign version instead of returning an invented all-pending state.

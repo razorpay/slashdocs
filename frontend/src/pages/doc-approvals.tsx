@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Check, CircleDashed, ClipboardCheck, X } from "lucide-react";
 
 import {
   api,
+  type Comment,
   type ApprovalDecision,
   type ApprovalListItem,
   type ApprovalStatus,
@@ -15,12 +16,12 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input, Textarea } from "@/components/ui/input";
+import { COMMENT_STATUS } from "@/lib/constants";
 import { errorMessage } from "@/lib/errors";
 import { queryKeys } from "@/lib/queryKeys";
 import { samePrincipal } from "@/lib/principals";
@@ -28,21 +29,29 @@ import { useDoc } from "./doc-context";
 
 const STATUS_BADGE: Record<
   ApprovalStatus,
-  { label: string; variant: "success" | "warning" | "danger" }
+  { label: string; variant: "success" | "warning" | "danger"; Icon: typeof Check }
 > = {
-  approved: { label: "Approved", variant: "success" },
-  pending: { label: "Pending", variant: "warning" },
-  changes_requested: { label: "Changes requested", variant: "danger" },
+  approved: { label: "Approved", variant: "success", Icon: Check },
+  pending: { label: "Pending", variant: "warning", Icon: CircleDashed },
+  changes_requested: { label: "Rejected", variant: "danger", Icon: X },
 };
 
-// badgeText always names the subject. A bare "Pending (0/1)" chip in the
-// document bar does not say what the count is about.
+// badgeText leads with how many approvers have approved ("2 of 3 approved"):
+// the count is the useful part, and a bare "Approved" does not say who. When
+// someone rejected it, that comes first, because it blocks the rest.
 function badgeText(status: ApprovalStatus, approved?: number, total?: number) {
-  const { label } = STATUS_BADGE[status];
-  if (status === "pending" && total) {
-    return `Approvals: ${label} ${approved ?? 0}/${total}`;
+  const counts = total ? `${approved ?? 0} of ${total} approved` : "";
+  if (status === "changes_requested") {
+    return counts ? `Rejected · ${counts}` : "Rejected";
   }
-  return `Approvals: ${label}`;
+  return counts || STATUS_BADGE[status].label;
+}
+
+// badgeAria spells the status out. For approved and pending the visible text is
+// only the count, so the status would otherwise be carried by colour and icon.
+function badgeAria(status: ApprovalStatus, approved?: number, total?: number) {
+  const label = `Approval ${STATUS_BADGE[status].label.toLowerCase()}`;
+  return total ? `${label}: ${approved ?? 0} of ${total} approved` : label;
 }
 
 // ApprovalStatusBadge is the compact aggregate-status chip. Hidden entirely
@@ -51,14 +60,18 @@ export function ApprovalStatusBadge({
   status,
   approved,
   total,
+  className = "",
 }: {
   status?: ApprovalStatus;
   approved?: number;
   total?: number;
+  className?: string;
 }) {
   if (!status) return null;
+  const { Icon, variant } = STATUS_BADGE[status];
   return (
-    <Badge variant={STATUS_BADGE[status].variant} className="shrink-0">
+    <Badge variant={variant} className={`shrink-0 gap-1 ${className}`}>
+      <Icon className="h-3 w-3" aria-hidden="true" />
       {badgeText(status, approved, total)}
     </Badge>
   );
@@ -121,7 +134,7 @@ export function ApprovalsDialog({
             <span className="hidden sm:inline">Request approval</span>
           </Button>
         </DialogTrigger>
-        <ApprovalsDialogBody />
+        <ApprovalsDialogBody onClose={() => setOpen(false)} />
       </Dialog>
     );
   }
@@ -131,34 +144,32 @@ export function ApprovalsDialog({
       <DialogTrigger asChild>
         <button
           type="button"
-          aria-label={`${badgeText(shownStatus, shownApproved, shownTotal)}. Open approvals`}
+          aria-label={`${badgeAria(shownStatus, shownApproved, shownTotal)}. Open approvals`}
           className="shrink-0 rounded-full transition-transform duration-150 ease-out active:scale-[0.97] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
         >
-          <Badge
-            variant={STATUS_BADGE[shownStatus].variant}
+          <ApprovalStatusBadge
+            status={shownStatus}
+            approved={shownApproved}
+            total={shownTotal}
             className="cursor-pointer hover:opacity-90"
-          >
-            {badgeText(shownStatus, shownApproved, shownTotal)}
-          </Badge>
+          />
         </button>
       </DialogTrigger>
-      <ApprovalsDialogBody />
+      <ApprovalsDialogBody onClose={() => setOpen(false)} />
     </Dialog>
   );
 }
 
-function ApprovalsDialogBody() {
+function ApprovalsDialogBody({ onClose }: { onClose: () => void }) {
   return (
-    <DialogContent className="max-w-lg overflow-hidden p-0">
+    <DialogContent
+      className="max-w-lg overflow-hidden p-0"
+      aria-describedby={undefined}
+    >
       <DialogHeader className="mb-0 border-b border-[var(--color-border)] px-5 py-4">
         <DialogTitle className="text-sm font-semibold">Approvals</DialogTitle>
-        <DialogDescription>
-          Who has signed off on the version you are viewing. Changing the document
-          clears approvals, so approvers review the new version. Requesting changes
-          needs a note.
-        </DialogDescription>
       </DialogHeader>
-      <Approvals />
+      <Approvals onClose={onClose} />
     </DialogContent>
   );
 }
@@ -189,7 +200,7 @@ function decisionLabel(item: ApprovalListItem) {
   if (item.decision === "changes_requested") {
     return (
       <span className="flex items-center gap-1 text-xs font-medium text-red-700 dark:text-red-300">
-        <X className="h-3.5 w-3.5" /> Changes requested
+        <X className="h-3.5 w-3.5" /> Rejected
       </span>
     );
   }
@@ -200,41 +211,49 @@ function decisionLabel(item: ApprovalListItem) {
   );
 }
 
-// Approvals renders the per-approver decision list for the version being
-// viewed, with decision actions for the signed-in approver and assignment
-// controls for the owner.
-export function Approvals() {
-  const { docId, version, principal } = useDoc();
+function useInvalidateApprovals(docId: string) {
   const q = useQueryClient();
-  const [noteOpen, setNoteOpen] = useState(false);
-  const [note, setNote] = useState("");
-  const doc = useQuery({
-    queryKey: queryKeys.document(docId),
-    queryFn: () => api.getDocument(docId),
-  });
-  const isOwner = samePrincipal(principal, doc.data?.owner);
-  const latest = doc.data?.current_version_id;
-  const isCurrentVersion = !version || !latest || version === latest;
-  const approvals = useQuery({
-    queryKey: queryKeys.approvals(docId, version),
-    queryFn: () => api.listApprovals(docId, version),
-    enabled: !!docId,
-  });
-
-  const invalidate = () => {
+  return () => {
     q.invalidateQueries({ queryKey: queryKeys.approvalsAll(docId) });
     q.invalidateQueries({ queryKey: queryKeys.approvers(docId) });
     q.invalidateQueries({ queryKey: queryKeys.document(docId) });
     q.invalidateQueries({ queryKey: queryKeys.documents() });
   };
+}
 
+// ReviewActions is the signed-in approver's own controls: Approve, Reject and
+// Revoke. It renders nothing for anyone else, for an approver who created a
+// version (they cannot decide), or while an older version is on screen. It lives
+// only in the approvals dialog, beside the approver's own row, so the decision
+// and what it currently says are read together.
+export function ReviewActions({
+  className,
+  onNavigate,
+}: {
+  className?: string;
+  // Called when the reader jumps to a comment, so a surrounding dialog can close.
+  onNavigate?: () => void;
+}) {
+  const { docId, version, principal, comments, setActiveComment } = useDoc();
+  const invalidate = useInvalidateApprovals(docId);
+  const [requestOpen, setRequestOpen] = useState(false);
+  const [confirmApprove, setConfirmApprove] = useState(false);
+  const doc = useQuery({
+    queryKey: queryKeys.document(docId),
+    queryFn: () => api.getDocument(docId),
+  });
+  const approvals = useQuery({
+    queryKey: queryKeys.approvals(docId, version),
+    queryFn: () => api.listApprovals(docId, version),
+    enabled: !!docId,
+  });
   const decide = useMutation({
     mutationFn: (input: { decision: ApprovalDecision; note?: string }) =>
       api.createApproval(docId, version, input.decision, input.note),
     onSuccess: (a) => {
-      toast.success(a.decision === "approved" ? "Approved." : "Changes requested.");
-      setNoteOpen(false);
-      setNote("");
+      toast.success(a.decision === "approved" ? "Approved." : "Rejected.");
+      setRequestOpen(false);
+      setConfirmApprove(false);
       invalidate();
     },
     onError: (e) => {
@@ -253,6 +272,232 @@ export function Approvals() {
     onError: (e) => toast.error(errorMessage(e, "Could not revoke decision")),
   });
 
+  // The reviewer's own open comment threads: what a request for changes is
+  // about, so they need not retype it.
+  const mine = useMemo(
+    () =>
+      comments.filter(
+        (c) =>
+          !c.parent_comment_id &&
+          c.status !== COMMENT_STATUS.resolved &&
+          samePrincipal(c.author, principal),
+      ),
+    [comments, principal],
+  );
+
+  const own = approvals.data?.items.find((item) =>
+    samePrincipal(item.approver, principal),
+  );
+  const latest = doc.data?.current_version_id;
+  const isCurrentVersion = !version || !latest || version === latest;
+  if (!own || own.created_version || !isCurrentVersion) return null;
+
+  const allResolved =
+    own.decision === "changes_requested" &&
+    (own.comments_total ?? 0) > 0 &&
+    (own.comments_open ?? 0) === 0;
+  const plural = mine.length === 1 ? "comment" : "comments";
+
+  return (
+    <div className={className}>
+      {allResolved ? (
+        <p className="mb-2 text-xs text-[var(--color-fg-muted)]">
+          All your comments are resolved. Ready to approve?
+        </p>
+      ) : null}
+      {confirmApprove ? (
+        <div className="space-y-2">
+          <p className="text-xs">
+            You have {mine.length} open {plural}. Approve anyway?
+          </p>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              disabled={decide.isPending}
+              onClick={() => decide.mutate({ decision: "approved" })}
+            >
+              <Check className="h-3.5 w-3.5" /> Approve anyway
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={decide.isPending}
+              onClick={() => setConfirmApprove(false)}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {own.decision !== "approved" ? (
+            <Button
+              size="sm"
+              disabled={decide.isPending}
+              onClick={() =>
+                mine.length > 0
+                  ? setConfirmApprove(true)
+                  : decide.mutate({ decision: "approved" })
+              }
+            >
+              <Check className="h-3.5 w-3.5" /> Approve
+            </Button>
+          ) : null}
+          {own.decision !== "changes_requested" ? (
+            <Button
+              size="sm"
+              variant="danger"
+              disabled={decide.isPending}
+              onClick={() => setRequestOpen(true)}
+            >
+              Reject
+            </Button>
+          ) : null}
+          {own.decision && own.id ? (
+            <Button
+              size="sm"
+              variant="danger"
+              disabled={revoke.isPending}
+              onClick={() => revoke.mutate(own.id!)}
+            >
+              Revoke
+            </Button>
+          ) : null}
+        </div>
+      )}
+      <RejectDialog
+        open={requestOpen}
+        onOpenChange={setRequestOpen}
+        comments={mine}
+        pending={decide.isPending}
+        onSubmit={(note) =>
+          decide.mutate({ decision: "changes_requested", note: note || undefined })
+        }
+        onJump={(id) => {
+          setRequestOpen(false);
+          onNavigate?.();
+          setActiveComment(id);
+        }}
+      />
+    </div>
+  );
+}
+
+// RejectDialog lists the reviewer's open comments, which go with the
+// rejection, and takes an optional reason. With no comments the reason is
+// required: a bare rejection tells the author nothing.
+function RejectDialog({
+  open,
+  onOpenChange,
+  comments,
+  pending,
+  onSubmit,
+  onJump,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  comments: Comment[];
+  pending: boolean;
+  onSubmit: (note: string) => void;
+  onJump: (commentId: string) => void;
+}) {
+  const [note, setNote] = useState("");
+  useEffect(() => {
+    if (!open) setNote("");
+  }, [open]);
+  const hasComments = comments.length > 0;
+  const canSubmit = !pending && (hasComments || note.trim().length > 0);
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        className="max-w-lg overflow-hidden p-0"
+        aria-describedby={undefined}
+      >
+        <DialogHeader className="mb-0 border-b border-[var(--color-border)] px-5 py-4">
+          <DialogTitle className="text-sm font-semibold">Reject</DialogTitle>
+        </DialogHeader>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (canSubmit) onSubmit(note.trim());
+          }}
+        >
+          {hasComments ? (
+            <div className="max-h-48 overflow-y-auto border-b border-[var(--color-border)] p-3">
+              <p className="px-1 pb-1 text-xs font-medium">
+                Your open comments ({comments.length})
+              </p>
+              <ul className="space-y-0.5">
+                {comments.map((c) => (
+                  <li key={c.id}>
+                    <button
+                      type="button"
+                      onClick={() => onJump(c.id)}
+                      className="w-full rounded-md px-1.5 py-1.5 text-left hover:bg-[var(--color-surface-muted)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
+                    >
+                      <span className="block truncate text-xs font-medium">
+                        {c.selected_text || "Comment"}
+                      </span>
+                      <span className="block truncate text-xs text-[var(--color-fg-muted)]">
+                        {c.body}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          <div className="space-y-2 p-3">
+            <Textarea
+              autoFocus
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              maxLength={2000}
+              placeholder={
+                hasComments ? "Reason (optional)" : "Why are you rejecting this?"
+              }
+              aria-label="Reason"
+              className="min-h-[72px] text-xs"
+            />
+            <div className="flex gap-2">
+              <Button size="sm" type="submit" variant="danger" disabled={!canSubmit}>
+                Reject
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                type="button"
+                onClick={() => onOpenChange(false)}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Approvals renders the per-approver decision list for the version being
+// viewed, with decision actions for the signed-in approver and assignment
+// controls for the owner.
+export function Approvals({ onClose }: { onClose?: () => void }) {
+  const { docId, version, principal } = useDoc();
+  const invalidate = useInvalidateApprovals(docId);
+  const doc = useQuery({
+    queryKey: queryKeys.document(docId),
+    queryFn: () => api.getDocument(docId),
+  });
+  const isOwner = samePrincipal(principal, doc.data?.owner);
+  const latest = doc.data?.current_version_id;
+  const isCurrentVersion = !version || !latest || version === latest;
+  const approvals = useQuery({
+    queryKey: queryKeys.approvals(docId, version),
+    queryFn: () => api.listApprovals(docId, version),
+    enabled: !!docId,
+  });
+
   const items = approvals.data?.items || [];
   const summary = approvals.data?.summary;
   const own = items.find((item) => samePrincipal(item.approver, principal));
@@ -263,7 +508,9 @@ export function Approvals() {
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs text-[var(--color-fg-muted)]">
             {summary?.total
-              ? `${summary.approved}/${summary.total} approved`
+              ? approvals.data?.version_number
+                ? `On version ${approvals.data.version_number}`
+                : "On this version"
               : "No approvers assigned"}
           </p>
           <ApprovalStatusBadge
@@ -306,82 +553,10 @@ export function Approvals() {
           owner to assign someone else.
         </p>
       ) : null}
-      {own && !own.created_version && isCurrentVersion ? (
-        <div className="border-t border-[var(--color-border)] p-3">
-          {noteOpen ? (
-            <form
-              className="space-y-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (note.trim()) {
-                  decide.mutate({ decision: "changes_requested", note: note.trim() });
-                }
-              }}
-            >
-              <Textarea
-                autoFocus
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                maxLength={2000}
-                placeholder="What needs to change?"
-                className="min-h-[72px] text-xs"
-              />
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  type="submit"
-                  disabled={!note.trim() || decide.isPending}
-                >
-                  Request changes
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  type="button"
-                  onClick={() => {
-                    setNoteOpen(false);
-                    setNote("");
-                  }}
-                >
-                  Cancel
-                </Button>
-              </div>
-            </form>
-          ) : (
-            <div className="flex gap-2">
-              {own.decision !== "approved" ? (
-                <Button
-                  size="sm"
-                  disabled={decide.isPending}
-                  onClick={() => decide.mutate({ decision: "approved" })}
-                >
-                  <Check className="h-3.5 w-3.5" /> Approve
-                </Button>
-              ) : null}
-              {own.decision !== "changes_requested" ? (
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={decide.isPending}
-                  onClick={() => setNoteOpen(true)}
-                >
-                  Request changes
-                </Button>
-              ) : null}
-              {own.decision && own.id ? (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={revoke.isPending}
-                  onClick={() => revoke.mutate(own.id!)}
-                >
-                  Revoke
-                </Button>
-              ) : null}
-            </div>
-          )}
-        </div>
-      ) : null}
+      <ReviewActions
+        className="border-t border-[var(--color-border)] p-3"
+        onNavigate={onClose}
+      />
       {isOwner ? <AddApprover docId={docId} onAdded={invalidate} /> : null}
     </div>
   );
@@ -429,6 +604,12 @@ function ApproverRow({
         ) : (
           decisionLabel(item)
         )}
+        {item.comments_total ? (
+          <span className="block text-[11px] text-[var(--color-fg-muted)]">
+            {item.comments_open ?? 0} open of {item.comments_total}{" "}
+            {item.comments_total === 1 ? "comment" : "comments"}
+          </span>
+        ) : null}
         {item.note ? (
           <p className="mt-1 whitespace-pre-wrap break-words text-xs text-[var(--color-fg-muted)]">
             {item.note}
