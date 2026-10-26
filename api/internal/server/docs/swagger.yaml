@@ -198,6 +198,12 @@ definitions:
           received the explicit decision, so the UI can say "Approved on v3"
           instead of an opaque ID. Zero when the decision is not carried.
         type: integer
+      created_version:
+        description: |-
+          CreatedVersion is true when the approver created a version of this
+          document. They cannot decide on it, so the document waits for the owner
+          to replace them.
+        type: boolean
       decided_at:
         type: string
       decision:
@@ -236,6 +242,13 @@ definitions:
         type: string
       version_id:
         type: string
+      version_number:
+        description: |-
+          VersionNumber and VersionSHA256 name the exact content the decision was
+          made on.
+        type: integer
+      version_sha256:
+        type: string
     type: object
   server.approvalsListResponse:
     properties:
@@ -248,6 +261,10 @@ definitions:
       summary:
         $ref: '#/definitions/repo.ApprovalSummary'
       version_id:
+        type: string
+      version_number:
+        type: integer
+      version_sha256:
         type: string
     type: object
   server.cliExchangePrincipal:
@@ -1158,8 +1175,10 @@ paths:
       tags:
       - approvals
     post:
-      description: Records the caller's decision on a version. Submitting again replaces
-        the previous decision for that version.
+      description: Records the caller's decision on the latest version. Submitting
+        again replaces the previous decision for that version. Returns 403 when the
+        caller created a version of the document (nobody approves their own work)
+        and 409 when a newer version exists.
       parameters:
       - description: Document ID
         in: path
@@ -1226,7 +1245,8 @@ paths:
       - approvals
     post:
       description: Assigns a user or service account as an approver. The approver
-        must already have at least viewer access on the document.
+        must already have at least viewer access on the document, and must not have
+        created a version of it.
       parameters:
       - description: Document ID
         in: path
@@ -1697,10 +1717,11 @@ paths:
         in: formData
         name: change_summary
         type: string
-      - description: Set to true to skip carrying approved decisions forward (forces
-          a full re-review)
+      - description: Set to true to carry approved decisions forward to the new version.
+          By default a change of content resets every approval; re-uploading identical
+          content always keeps them.
         in: formData
-        name: reset_approvals
+        name: keep_approvals
         type: string
       - description: HTML file
         in: formData

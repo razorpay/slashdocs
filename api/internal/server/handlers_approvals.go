@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -41,9 +42,13 @@ const maxApprovalNote = 2000
 
 // approvalResponse is one decision in API responses.
 type approvalResponse struct {
-	ID                   string            `json:"id"`
-	DocumentID           string            `json:"document_id"`
-	VersionID            string            `json:"version_id"`
+	ID         string `json:"id"`
+	DocumentID string `json:"document_id"`
+	VersionID  string `json:"version_id"`
+	// VersionNumber and VersionSHA256 name the exact content the decision was
+	// made on.
+	VersionNumber        int               `json:"version_number,omitempty"`
+	VersionSHA256        string            `json:"version_sha256,omitempty"`
 	Approver             principalResponse `json:"approver"`
 	Decision             string            `json:"decision"`
 	Note                 string            `json:"note,omitempty"`
@@ -77,23 +82,56 @@ type approvalListItem struct {
 	// received the explicit decision, so the UI can say "Approved on v3"
 	// instead of an opaque ID. Zero when the decision is not carried.
 	CarriedFromVersionNumber int `json:"carried_from_version_number,omitempty"`
+	// CreatedVersion is true when the approver created a version of this
+	// document. They cannot decide on it, so the document waits for the owner
+	// to replace them.
+	CreatedVersion bool `json:"created_version,omitempty"`
 }
 
 // approvalsListResponse is the payload of GET /v1/documents/{id}/approvals.
 type approvalsListResponse struct {
-	VersionID string               `json:"version_id"`
-	Status    string               `json:"status,omitempty"`
-	Summary   repo.ApprovalSummary `json:"summary"`
-	Items     []approvalListItem   `json:"items"`
+	VersionID     string               `json:"version_id"`
+	VersionNumber int                  `json:"version_number,omitempty"`
+	VersionSHA256 string               `json:"version_sha256,omitempty"`
+	Status        string               `json:"status,omitempty"`
+	Summary       repo.ApprovalSummary `json:"summary"`
+	Items         []approvalListItem   `json:"items"`
 }
 
 func validApprovalDecision(d string) bool {
 	return d == repo.DecisionApproved || d == repo.DecisionChangesRequested
 }
 
+// Someone who created a version of a document wrote what is under review, so
+// they cannot be the one who approves it (as an author cannot approve their own
+// pull request).
+const (
+	errCreatedVersionApprover = "That person created a version of this document, so they can't approve it. Ask someone who hasn't worked on it."
+	errCreatedVersionDecider  = "You created a version of this document, so you can't approve it. Ask someone who hasn't worked on it."
+	errVersionSuperseded      = "A newer version of this document exists. Review the latest version before deciding."
+)
+
+func principalKey(p auth.Principal) string {
+	return string(p.Type) + ":" + p.ID
+}
+
+// versionCreators returns the principals that created any version of the
+// document, keyed by principalKey.
+func (h handlers) versionCreators(ctx context.Context, documentID string) (map[string]bool, error) {
+	versions, err := h.deps.repository.ListVersions(ctx, documentID)
+	if err != nil {
+		return nil, err
+	}
+	creators := make(map[string]bool, len(versions))
+	for _, v := range versions {
+		creators[principalKey(v.CreatedBy)] = true
+	}
+	return creators, nil
+}
+
 // CreateApprover godoc
 // @Summary Assign an approver
-// @Description Assigns a user or service account as an approver. The approver must already have at least viewer access on the document.
+// @Description Assigns a user or service account as an approver. The approver must already have at least viewer access on the document, and must not have created a version of it.
 // @Tags approvals
 // @Security bearerAuth
 // @Security cookieAuth
@@ -132,7 +170,7 @@ func (h handlers) createApprover(c *gin.Context) {
 		case errors.Is(err, errPrincipalIDRequired):
 			badRequest(c, "principal id, user email, or service account name is required")
 		case errors.Is(err, errUnknownUserEmail):
-			badRequest(c, "No aidocs user exists for that email. Ask them to sign in once, then try again.")
+			badRequest(c, "No slashdocs user exists for that email. Ask them to sign in once, then try again.")
 		case errors.Is(err, errGoogleGroupsDisabled), errors.Is(err, errGoogleGroupEmailRequired):
 			badRequest(c, "approvers must be users or service accounts")
 		case errors.Is(err, repo.ErrNotFound):
@@ -153,6 +191,15 @@ func (h handlers) createApprover(c *gin.Context) {
 	}
 	if !atLeast(role, repo.RoleViewer) {
 		badRequest(c, "approver must have at least viewer access on this document")
+		return
+	}
+	creators, err := h.versionCreators(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		internalErr(c, err)
+		return
+	}
+	if creators[principalKey(resolved)] {
+		badRequest(c, errCreatedVersionApprover)
 		return
 	}
 	req, err := h.deps.repository.CreateApprovalRequest(c.Request.Context(), c.Param("id"), resolved, *p)
@@ -221,7 +268,7 @@ func (h handlers) deleteApprover(c *gin.Context) {
 
 // CreateApproval godoc
 // @Summary Submit or update a decision
-// @Description Records the caller's decision on a version. Submitting again replaces the previous decision for that version.
+// @Description Records the caller's decision on the latest version. Submitting again replaces the previous decision for that version. Returns 403 when the caller created a version of the document (nobody approves their own work) and 409 when a newer version exists.
 // @Tags approvals
 // @Security bearerAuth
 // @Security cookieAuth
@@ -265,7 +312,38 @@ func (h handlers) createApproval(c *gin.Context) {
 		badRequest(c, "note is too long")
 		return
 	}
-	a, created, err := h.deps.repository.CreateOrUpdateApproval(c.Request.Context(), c.Param("id"), in.VersionID, in.Decision, note, *p)
+	ctx := c.Request.Context()
+	// An unknown or foreign version is a 404; a known one must also still be the
+	// latest, or the decision would be about content that has been replaced and
+	// would count for nothing.
+	version, err := h.deps.repository.GetVersion(ctx, in.VersionID)
+	if errors.Is(err, repo.ErrNotFound) || (err == nil && version.DocumentID != c.Param("id")) {
+		notFound(c)
+		return
+	}
+	if err != nil {
+		internalErr(c, err)
+		return
+	}
+	creators, err := h.versionCreators(ctx, c.Param("id"))
+	if err != nil {
+		internalErr(c, err)
+		return
+	}
+	if creators[principalKey(*p)] {
+		forbidden(c, errCreatedVersionDecider)
+		return
+	}
+	d, err := h.deps.repository.GetDocument(ctx, c.Param("id"))
+	if err != nil {
+		internalErr(c, err)
+		return
+	}
+	if d.CurrentVersionID != version.ID {
+		c.JSON(http.StatusConflict, errorResponse("version_superseded", errVersionSuperseded, versionConflictDetails{CurrentVersionID: d.CurrentVersionID}))
+		return
+	}
+	a, created, err := h.deps.repository.CreateOrUpdateApproval(ctx, c.Param("id"), in.VersionID, in.Decision, note, *p)
 	if errors.Is(err, repo.ErrNotFound) {
 		notFound(c)
 		return
@@ -283,7 +361,10 @@ func (h handlers) createApproval(c *gin.Context) {
 	if created {
 		status = http.StatusCreated
 	}
-	c.JSON(status, approvalJSON(a))
+	resp := approvalJSON(a)
+	resp.VersionNumber = version.Number
+	resp.VersionSHA256 = version.SHA256
+	c.JSON(status, resp)
 }
 
 // ListApprovals godoc
@@ -308,18 +389,17 @@ func (h handlers) listApprovals(c *gin.Context) {
 			return
 		}
 		versionID = d.CurrentVersionID
-	} else {
-		// An unknown or foreign version would otherwise return 200 with an
-		// invented all-pending state, so reject it outright.
-		v, err := h.deps.repository.GetVersion(c.Request.Context(), versionID)
-		if errors.Is(err, repo.ErrNotFound) || (err == nil && v.DocumentID != c.Param("id")) {
-			notFound(c)
-			return
-		}
-		if err != nil {
-			internalErr(c, err)
-			return
-		}
+	}
+	// An unknown or foreign version would otherwise return 200 with an
+	// invented all-pending state, so reject it outright.
+	version, err := h.deps.repository.GetVersion(c.Request.Context(), versionID)
+	if errors.Is(err, repo.ErrNotFound) || (err == nil && version.DocumentID != c.Param("id")) {
+		notFound(c)
+		return
+	}
+	if err != nil {
+		internalErr(c, err)
+		return
 	}
 	requests, err := h.deps.repository.ListApprovalRequests(c.Request.Context(), c.Param("id"))
 	if err != nil {
@@ -335,10 +415,16 @@ func (h handlers) listApprovals(c *gin.Context) {
 	for _, a := range decisions {
 		decisionByApprover[string(a.Approver.Type)+":"+a.Approver.ID] = a
 	}
+	// Best-effort, like the carried version numbers: without it the list just
+	// does not flag approvers who created a version.
+	creators, err := h.versionCreators(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		requestLogger(c).Warn("approval version creators", "error", err)
+	}
 	summary := repo.ApprovalSummary{Total: len(requests)}
 	items := make([]approvalListItem, 0, len(requests))
 	for _, r := range requests {
-		item := approvalListItem{Approver: principalJSON(r.Approver)}
+		item := approvalListItem{Approver: principalJSON(r.Approver), CreatedVersion: creators[principalKey(r.Approver)]}
 		if a, ok := decisionByApprover[string(r.Approver.Type)+":"+r.Approver.ID]; ok {
 			decision := a.Decision
 			item.ID = a.ID
@@ -359,10 +445,12 @@ func (h handlers) listApprovals(c *gin.Context) {
 	summary.Pending = summary.Total - summary.Approved - summary.ChangesRequested
 	summary.Status = repo.DeriveApprovalStatus(summary.Total, summary.Approved, summary.ChangesRequested)
 	c.JSON(http.StatusOK, approvalsListResponse{
-		VersionID: versionID,
-		Status:    summary.Status,
-		Summary:   summary,
-		Items:     items,
+		VersionID:     versionID,
+		VersionNumber: version.Number,
+		VersionSHA256: version.SHA256,
+		Status:        summary.Status,
+		Summary:       summary,
+		Items:         items,
 	})
 }
 

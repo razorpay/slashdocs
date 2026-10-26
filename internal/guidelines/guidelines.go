@@ -467,11 +467,16 @@ reader UI and document listings.
 
 Model:
   - The document owner assigns approvers. Approvers need viewer access first.
-  - Approvers approve or request changes on a specific version.
+  - Anyone who created a version of the document (including the owner who
+    published it) cannot be an approver or decide: they wrote what is reviewed.
+  - Approvers approve or request changes on a specific version, and only on
+    the latest one; a decision on an older version is refused.
   - The document is "approved" only when every assigned approver approved.
-  - Approved decisions carry forward to new versions automatically; only
-    approvers who requested changes (or never decided) reset to pending.
-  - Push with --reset-approvals to force a full re-review after big changes.
+  - A new version with changed content resets every approval: the approvers
+    review it again. Pushing identical content keeps them.
+  - Push with --keep-approvals to carry approved decisions onto a changed
+    version (they show "approved on vN"); use it only for changes the approvers
+    do not need to see again.
   - Approvers can revoke their decision at any time.
   - Requesting changes requires a note saying what needs to change; a note is
     optional when approving.
@@ -484,7 +489,7 @@ Commands:
   slashdocs docs approve <doc_id> [--version <version_id>] [--note "..."]
   slashdocs docs request-changes <doc_id> --note "what needs to change"
   slashdocs docs revoke-approval <doc_id> [--version <version_id>]
-  slashdocs docs push <doc_id> <file> --reset-approvals
+  slashdocs docs push <doc_id> <file> --keep-approvals
 
 The document response includes approval_status and approval_summary once
 approvers are assigned; use --json for machine-readable output.

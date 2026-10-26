@@ -11,40 +11,46 @@
 | 2026-07-13 | Dedicated tables over KV or grants (Approach A)                       | Brainstorm: approvals are a distinct domain concept                                                                                                                                                        |
 | 2026-07-16 | Confirmed: first-class flow, not a KV convention                      | Maintainer review (Slack): KV satisfies ~60% of requirements; per-action authorization, version-scoping, server-derived status, and atomic cleanup all need server enforcement. See "Why not KV" appendix. |
 | 2026-07-16 | Notifications fully out of scope                                      | Maintainer: notifications will start with comment mentions only; the HTML notify primitive idea is dropped                                                                                                 |
-| 2026-07-16 | Approved decisions carry forward across versions (replaces reset-all) | Maintainer concern: every small edit is a new version in aidocs; resetting all approvals on each push erodes the credibility of the system because people won't chase re-approvals                         |
+| 2026-07-16 | Approved decisions carry forward across versions (replaces reset-all) | **Superseded 2026-10-26.** Concern as noted by the author from a Slack discussion: every small edit is a new version, and resetting all approvals on each push means people won't chase re-approvals       |
+| 2026-10-26 | A change of content resets every approval; keeping them is opt-in     | Proposal, not yet reviewed by maintainers. An approval vouches for content, so it should not stand over content the approver has not seen. Identical content keeps approvals; `keep_approvals` carries them |
+| 2026-10-26 | Anyone who created a version of the document cannot approve it        | Proposal. As an author cannot approve their own pull request; here it covers every contributor, not only the last. Enforced when assigning and when deciding                                                |
+| 2026-10-26 | A decision on a version that is no longer the latest is refused (409) | Proposal. Otherwise an approval lands on replaced content, counts for nothing, and the approver is not told                                                                                                  |
 
 ## Summary
 
-Add optional, version-scoped document approvals to aidocs. Document owners assign approvers; approvers submit decisions (approved / changes requested) against specific versions. The document's approval status is derived from the current version's decisions. Approved decisions carry forward automatically when a new version is pushed; only approvers who requested changes (or never decided) need to act on the new version.
+Add optional, version-scoped document approvals to aidocs. Document owners assign approvers; approvers submit decisions (approved / changes requested) against specific versions. The document's approval status is derived from the current version's decisions. A new version with changed content resets every decision, so approvers review what changed; pushing identical content, or asking to keep approvals, carries approved decisions forward. Anyone who created a version of the document cannot approve it.
 
 ## Requirements
 
 - Only the document owner can assign or remove approvers.
 - Approvers must already have viewer+ access on the document.
-- Approvers can approve or request changes on a specific version.
+- Anyone who created a version of the document cannot be assigned as an approver or decide on it.
+- Approvers can approve or request changes on a specific version, and only on the latest one.
 - All assigned approvers must approve for the document status to be "approved."
 - Approvals are version-scoped — decisions are recorded against a specific version ID; history is preserved.
-- On a new version, approved decisions **carry forward** (with provenance); changes-requested decisions reset to pending.
-- The author can force a full re-review on push (`--reset-approvals`) for significant changes.
+- On a new version with changed content, every decision resets to pending. Approved decisions **carry forward** (with provenance) only when the content is identical to the base version or the publisher passes `keep_approvals` (`--keep-approvals`); changes-requested decisions always reset. A decision is never carried onto a version its own approver created.
 - An approver can change their decision on a given version (upsert) or **revoke** it entirely (back to pending).
 - Approval is entirely optional. Documents without approvers have no approval status.
 - Service accounts can be assigned as approvers for agent workflows.
 
-## Version Semantics (Carry-Forward)
+## Version Semantics (Reset by default)
 
-What happens to each decision when the author pushes a new version:
+What happens to each decision when someone pushes a new version:
 
-| Decision on previous version | Push (default)                           | Push with `--reset-approvals` |
-| ---------------------------- | ---------------------------------------- | ----------------------------- |
-| approved                     | Carried to new version (provenance kept) | pending                       |
-| changes_requested            | pending (author presumably addressed it) | pending                       |
-| (no decision)                | pending                                  | pending                       |
+| Decision on previous version | Push, content changed (default) | Push, identical content | Push with `--keep-approvals`             |
+| ---------------------------- | ------------------------------- | ----------------------- | ---------------------------------------- |
+| approved                     | pending                         | Carried (provenance)    | Carried to new version (provenance kept) |
+| changes_requested            | pending                         | pending                 | pending                                  |
+| (no decision)                | pending                         | pending                 | pending                                  |
+
+A decision is never carried onto a version its own approver created.
 
 Rules:
 
 - Carried rows are real `approvals` rows on the new version, created in the same transaction as the version insert. `decided_at` keeps the original decision time; `carried_from_version_id` points to the version where the **explicit** decision was made (propagates through chains: v3 → v4 → v5 still points at v3).
-- Any approver can revoke their decision at any time (`DELETE`), returning themselves to pending. This is the safety valve for "all approved, then author pushed a big change that auto-carried."
-- Trade-off accepted: a changes-requested decision is cleared by any push (like GitHub's dismiss-stale-reviews). The author can't push their way to "approved" though — that still requires every approver's explicit or carried approval.
+- Any approver can revoke their decision at any time (`DELETE`), returning themselves to pending.
+- Trade-off: because every edit is a new version, resetting on any change can make approvals churn when documents are revised often (the concern behind the original carry-forward default). `--keep-approvals` is the escape hatch for changes approvers do not need to see again; the status then shows "approved on vN", so a reader can tell which version the approver actually reviewed. GitHub's own default is to keep approvals and offer "dismiss stale approvals" as a branch rule; this proposal inverts it because the document owner, who pushes, is the person the approval is meant to check.
+- A decision on a version that is no longer the latest is refused with 409 (`version_superseded`), so an approver who was reading v2 when v3 was pushed is told to review v3 instead of silently approving content that has been replaced.
 
 ## Data Model
 
@@ -132,15 +138,15 @@ DELETE /v1/documents/:id/approvals/:apv_id  revoke own decision
 
 ### Version push
 
-`POST /v1/documents/:id/versions` gains an optional multipart form field `reset_approvals=true` to skip carry-forward.
+`POST /v1/documents/:id/versions` gains an optional multipart form field `keep_approvals=true` to carry approved decisions onto the new version. Without it, a change of content resets approvals; identical content (same `sha256` as the base version) keeps them.
 
 ### Authorization
 
 | Action                 | Required                            |
 | ---------------------- | ----------------------------------- |
-| Assign/remove approver | Owner role                          |
+| Assign/remove approver | Owner role; the person must not have created a version of the document |
 | List approvers         | Viewer+ role                        |
-| Submit decision        | Assigned approver with viewer+ role |
+| Submit decision        | Assigned approver with viewer+ role who has not created a version of the document, on the latest version |
 | Revoke decision        | The decision's author only          |
 | List decisions         | Viewer+ role                        |
 
@@ -223,7 +229,7 @@ Both fields are omitted entirely (not null) when no approvers are assigned — b
 | `api/internal/repo/repo.go`                | Types, 7 new Repository interface methods, carry-forward in `CreateVersion`, Memory impl                                                  |
 | `api/internal/repo/postgres/postgres.go`   | Postgres impl (carry-forward inside the CreateVersion transaction)                                                                        |
 | `api/internal/server/server.go`            | Register 6 routes                                                                                                                         |
-| `api/internal/server/handlers_versions.go` | Parse `reset_approvals` form field                                                                                                        |
+| `api/internal/server/handlers_versions.go` | Parse `keep_approvals` form field                                                                                                         |
 | `api/internal/server/metrics.go`           | Approval counters                                                                                                                         |
 | `api/internal/server/server_test.go`       | Handler tests                                                                                                                             |
 | `cli/internal/cmd_guidelines.go`           | Update `review`/`kv` guideline pages: native approvals are the recommended flow; KV `approval:*` examples become generic tracker examples |
@@ -247,7 +253,7 @@ ListApprovals(ctx, documentID, versionID string) ([]Approval, error)
 DocumentApprovalSummary(ctx, documentID, versionID string) (*ApprovalSummary, error)
 ```
 
-Modified: `CreateVersion` gains a `resetApprovals bool` parameter. Unless set, it copies `decision = 'approved'` rows from the base version to the new version inside the same transaction, preserving `decided_at` and propagating the original `carried_from_version_id`.
+Modified: `CreateVersion` gains a `keepApprovals bool` parameter. When it is set, or the new content has the same `sha256` as the base version, it copies `decision = 'approved'` rows from the base version to the new version inside the same transaction, preserving `decided_at` and propagating the original `carried_from_version_id`. A row whose approver created the new version is not copied. Otherwise nothing is carried.
 
 Performance note: `ListDocuments` enrichment must be a single batched query (`GROUP BY document_id` over the page of documents), not one summary query per document.
 
@@ -293,7 +299,7 @@ slashdocs docs approvals list <doc_id> [--version <version_id>]
 slashdocs docs approve <doc_id> [--version <version_id>]
 slashdocs docs request-changes <doc_id> [--version <version_id>]
 slashdocs docs revoke-approval <doc_id> [--version <version_id>]
-slashdocs docs push <doc_id> <file> [--reset-approvals]
+slashdocs docs push <doc_id> <file> [--keep-approvals]
 ```
 
 - `--version` defaults to the current version (or the version remembered from `slashdocs docs pull`).
@@ -305,7 +311,8 @@ slashdocs docs push <doc_id> <file> [--reset-approvals]
 ### UI components
 
 1. **Status badge in DocBar** — "Approvals: Approved", "Approvals: Pending 1/3", "Approvals: Changes requested", or hidden when no approvers. The badge always names its subject and is itself the button that opens the approvals dialog.
-2. **Approvals dialog** — a dedicated modal, _not_ a tab in the comments sidebar (maintainer review, 2026-09-04: approvals are a different concern from discussion). Per-approver status; action buttons for assigned approvers; add/remove controls for the owner.
+   When a document has no approvers, the owner sees a labelled **Request approval** button in the same place instead of a small chip.
+2. **Approvals dialog** — a dedicated modal, _not_ a tab in the comments sidebar (maintainer review, 2026-09-04: approvals are a different concern from discussion). Per-approver status; action buttons for assigned approvers; add/remove controls for the owner. An approver who created a version is shown as unable to approve, with the reason.
 3. **Add Approver field** — reuses the user search pattern from the share sheet and submits the raw address, so a bot (service-account) address resolves the same way an email does.
 4. **Request-changes note** — requesting changes opens a short note form and will not submit while it is empty.
 
@@ -316,7 +323,7 @@ slashdocs docs push <doc_id> <file> [--reset-approvals]
 | `frontend/src/pages/doc-bar.tsx`            | Approval status badge                        |
 | `frontend/src/pages/doc-page.tsx`           | Comments sidebar left unchanged by approvals |
 | New: `frontend/src/pages/doc-approvals.tsx` | Approvals dialog and status badge            |
-| `frontend/src/pages/doc-upload-version.tsx` | "Reset approvals" checkbox on version upload |
+| `frontend/src/pages/doc-upload-version.tsx` | "Keep existing approvals" checkbox on version upload |
 | `frontend/src/api.ts`                       | Approval API methods                         |
 | `frontend/src/lib/queryKeys.ts`             | Approval query keys                          |
 
@@ -344,15 +351,17 @@ slashdocs docs push <doc_id> <file> [--reset-approvals]
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ---- |
 | Assign user without doc access        | Reject — "user must have viewer access"                                                                              | 400  |
 | Assign same user twice                | Reject                                                                                                               | 409  |
-| Owner assigns themselves              | Allowed                                                                                                              | 201  |
+| Owner assigns themselves              | Reject if they created a version (they always did if they published it)                                              | 400  |
+| Assign someone who created a version  | Reject — "they created a version of this document, so they can't approve it"                                         | 400  |
+| Approver later creates a version      | Request stays; they can no longer decide (403) and are listed as `created_version`; owner should replace them        | 403  |
 | Approver loses access (grant deleted) | Request stays; they can't view/act; counts as pending; owner should remove                                           | —    |
-| Decision on non-current version       | Allowed; doc status only reflects current version                                                                    | 201  |
+| Decision on non-current version       | Refused — "a newer version exists"; nothing is recorded                                                              | 409  |
 | Decision on non-existent version      | Not found                                                                                                            | 404  |
 | Non-approver submits decision         | Forbidden                                                                                                            | 403  |
-| Push new version (default)            | Approved decisions carried with provenance; changes_requested/pending → pending                                      | —    |
-| Push with reset_approvals             | Nothing carried; everyone pending                                                                                    | —    |
+| Push new version (default)            | Content changed: everyone pending. Identical content: approved decisions carried with provenance                     | —    |
+| Push with keep_approvals              | Approved decisions carried with provenance (not onto a version their approver created); the rest pending             | —    |
 | Carried chain v3→v4→v5                | `carried_from_version_id` always points to v3 (original explicit approval)                                           | —    |
-| Approve races with concurrent push    | Decision lands on the old version; not carried (copy already ran); approver re-approves current. Visible in history. | 201  |
+| Approve races with concurrent push    | The decision names the version the approver was reading; if a newer one exists it is refused and they review that.   | 409  |
 | Revoke own decision                   | Row deleted; approver back to pending; status recalculates                                                           | 204  |
 | Revoke someone else's decision        | Forbidden                                                                                                            | 403  |
 | Remove approver who already approved  | Request + all their approval rows deleted; summary recalculates                                                      | 204  |
@@ -370,16 +379,20 @@ Handler tests (in-memory repo): assign/duplicate/no-access/not-owner; list order
 
 Carry-forward tests:
 
-- `TestNewVersion_CarriesApprovals` — approved rows copied, decided_at preserved, provenance set
-- `TestNewVersion_DoesNotCarryChangesRequested` — requester resets to pending
-- `TestNewVersion_ResetApprovalsFlag` — nothing carried
+- `TestNewVersionCarriesApprovals` — with `keep_approvals`: approved rows copied, decided_at preserved, provenance set
+- `TestNewVersionDoesNotCarryChangesRequested` — requester resets to pending
+- `TestNewVersionResetsApprovalsByDefault` — a change of content carries nothing
+- `TestIdenticalContentKeepsApprovals` — the same bytes keep approvals
+- `TestDecisionIsNotCarriedOntoAVersionItsApproverCreated`
+- `TestCreatorOfTheFirstVersionCannotBeAssignedAsApprover` / `TestEditorWhoPushedAVersionCannotBeAssignedAsApprover` / `TestApproverWhoThenCreatesAVersionCannotDecide`
+- `TestDecisionOnASupersededVersionIsRefused`
 - `TestCarriedFrom_PropagatesOrigin` — chain points to original version
 - `TestRevokeApproval_OwnDecision` / `TestRevokeApproval_OthersDecision`
 - `TestExplicitReapproval_ClearsCarriedProvenance`
 
 Postgres integration tests: unique constraints, CASCADE on document/version deletion, SET NULL on carried_from, upsert semantics, carry-forward inside CreateVersion transaction, summary correctness.
 
-CLI E2E: full lifecycle including push-with-carry, revoke, `--reset-approvals`, JSON output.
+CLI E2E: full lifecycle including push with `--keep-approvals`, revoke, JSON output.
 
 ## Migration & Rollout
 

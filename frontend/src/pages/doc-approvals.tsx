@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Check, CircleDashed, X } from "lucide-react";
+import { Check, CircleDashed, ClipboardCheck, X } from "lucide-react";
 
 import {
   api,
@@ -104,21 +104,22 @@ export function ApprovalsDialog({
 
   // With no approvers the API omits the status entirely. The owner still
   // needs a way in, because this dialog is the only place approvers can be
-  // assigned; without a trigger the first approver could never be added.
+  // assigned; without a trigger the first approver could never be added. It is
+  // a real button, not a chip: asking for a review is the point of the feature.
   if (!shownStatus) {
     if (!isOwner) return null;
     return (
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogTrigger asChild>
-          <button
-            type="button"
-            aria-label="Set up approvals"
-            className="shrink-0 rounded-full transition-transform duration-150 ease-out active:scale-[0.97] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
+          <Button
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            aria-label="Request approval"
           >
-            <Badge variant="muted" className="cursor-pointer hover:opacity-90">
-              Set up approvals
-            </Badge>
-          </button>
+            <ClipboardCheck className="h-4 w-4" />
+            <span className="hidden sm:inline">Request approval</span>
+          </Button>
         </DialogTrigger>
         <ApprovalsDialogBody />
       </Dialog>
@@ -152,8 +153,9 @@ function ApprovalsDialogBody() {
       <DialogHeader className="mb-0 border-b border-[var(--color-border)] px-5 py-4">
         <DialogTitle className="text-sm font-semibold">Approvals</DialogTitle>
         <DialogDescription>
-          Who has signed off on the version you are viewing. Approved decisions carry
-          forward to new versions; requesting changes needs a note.
+          Who has signed off on the version you are viewing. Changing the document
+          clears approvals, so approvers review the new version. Requesting changes
+          needs a note.
         </DialogDescription>
       </DialogHeader>
       <Approvals />
@@ -235,7 +237,12 @@ export function Approvals() {
       setNote("");
       invalidate();
     },
-    onError: (e) => toast.error(errorMessage(e, "Could not record decision")),
+    onError: (e) => {
+      toast.error(errorMessage(e, "Could not record decision"));
+      // A newer version may have been pushed while this one was open: reload
+      // the document and decisions so the next click is on the latest one.
+      invalidate();
+    },
   });
   const revoke = useMutation({
     mutationFn: (approvalId: string) => api.deleteApproval(docId, approvalId),
@@ -277,7 +284,9 @@ export function Approvals() {
         ) : items.length === 0 ? (
           <p className="px-1 text-xs text-[var(--color-fg-muted)]">
             No approvers yet.
-            {isOwner ? " Assign someone below to request a review." : ""}
+            {isOwner
+              ? " Add someone who has not worked on this document to request a review."
+              : ""}
           </p>
         ) : (
           items.map((item) => (
@@ -291,7 +300,13 @@ export function Approvals() {
           ))
         )}
       </div>
-      {own && isCurrentVersion ? (
+      {own?.created_version ? (
+        <p className="border-t border-[var(--color-border)] p-3 text-xs text-[var(--color-fg-muted)]">
+          You created a version of this document, so you can&apos;t approve it. Ask the
+          owner to assign someone else.
+        </p>
+      ) : null}
+      {own && !own.created_version && isCurrentVersion ? (
         <div className="border-t border-[var(--color-border)] p-3">
           {noteOpen ? (
             <form
@@ -406,7 +421,14 @@ function ApproverRow({
       <Avatar name={label} src={item.approver.picture_url} size={24} />
       <div className="min-w-0 flex-1">
         <div className="truncate text-xs font-medium">{label}</div>
-        {decisionLabel(item)}
+        {item.created_version ? (
+          <span className="text-xs text-[var(--color-fg-muted)]">
+            Created a version, can&apos;t approve
+            {isOwner ? ". Remove them and ask someone else." : ""}
+          </span>
+        ) : (
+          decisionLabel(item)
+        )}
         {item.note ? (
           <p className="mt-1 whitespace-pre-wrap break-words text-xs text-[var(--color-fg-muted)]">
             {item.note}
@@ -474,6 +496,10 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
           Add
         </Button>
       </div>
+      <p className="mt-1.5 text-[11px] text-[var(--color-fg-muted)]">
+        Approvers need access to this document. Anyone who has uploaded a version,
+        including you if you published it, can&apos;t approve it.
+      </p>
       {address && items.length > 0 ? (
         <div className="mt-1 overflow-hidden rounded-md border border-[var(--color-border)]">
           {items.slice(0, 5).map((u) => (

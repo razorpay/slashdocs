@@ -473,10 +473,13 @@ type Repository interface {
 	ListGrants(ctx context.Context, documentID string) ([]Grant, error)
 	UpdateGrant(ctx context.Context, documentID, grantID string, role Role, updatedBy auth.Principal) (Grant, error)
 	DeleteGrant(ctx context.Context, documentID, grantID string, deletedBy auth.Principal) error
-	// CreateVersion writes a new immutable version. Unless resetApprovals is
-	// set, active approved decisions on the base version are copied forward to
-	// the new version (with provenance) in the same transaction.
-	CreateVersion(ctx context.Context, documentID, baseVersionID, changeSummary string, html []byte, createdBy auth.Principal, resetApprovals bool) (Version, error)
+	// CreateVersion writes a new immutable version. A change of content resets
+	// every approval: the approvers decide again on the new version. Only when
+	// keepApprovals is set, or the content is byte-identical to the base
+	// version, are active approved decisions on the base version copied forward
+	// to the new version (with provenance) in the same transaction. A decision
+	// is never carried onto a version its own approver created.
+	CreateVersion(ctx context.Context, documentID, baseVersionID, changeSummary string, html []byte, createdBy auth.Principal, keepApprovals bool) (Version, error)
 	ListVersions(ctx context.Context, documentID string) ([]Version, error)
 	GetVersion(ctx context.Context, id string) (Version, error)
 	GetVersionHTML(ctx context.Context, id string) ([]byte, error)

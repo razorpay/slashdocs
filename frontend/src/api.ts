@@ -143,6 +143,8 @@ export type Approval = {
   id: string;
   document_id: string;
   version_id: string;
+  version_number?: number;
+  version_sha256?: string;
   approver: Principal;
   decision: ApprovalDecision;
   note?: string;
@@ -157,9 +159,13 @@ export type ApprovalListItem = {
   decided_at?: string;
   carried_from_version_id?: string;
   carried_from_version_number?: number;
+  // The approver created a version of the document, so they cannot decide.
+  created_version?: boolean;
 };
 export type ApprovalsList = {
   version_id: string;
+  version_number?: number;
+  version_sha256?: string;
   status?: ApprovalStatus;
   summary: ApprovalSummary;
   items: ApprovalListItem[];
@@ -389,12 +395,12 @@ export const api = {
     base: string,
     summary: string,
     file: File,
-    resetApprovals = false,
+    keepApprovals = false,
   ) => {
     const fd = new FormData();
     fd.set("base_version_id", base);
     fd.set("change_summary", summary);
-    if (resetApprovals) fd.set("reset_approvals", "true");
+    if (keepApprovals) fd.set("keep_approvals", "true");
     fd.set("file", file);
     return request<Version>(`/v1/documents/${doc}/versions`, {
       method: "POST",

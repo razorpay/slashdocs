@@ -184,13 +184,20 @@ func (s *Store) DocumentApprovalSummaries(ctx context.Context, documentIDs []str
 // carryForwardApprovals copies active approved decisions from the base
 // version onto a freshly inserted version, preserving the original decision
 // time and the version that received the explicit decision. Runs inside the
-// CreateVersion transaction. Returns the number of copied rows.
-func carryForwardApprovals(ctx context.Context, q *dbsqlc.Queries, documentID, baseVersionID, newVersionID string) (int, error) {
+// CreateVersion transaction. A decision is not copied onto a version its own
+// approver created: nobody approves their own work. Returns the number of
+// copied rows.
+func carryForwardApprovals(ctx context.Context, q *dbsqlc.Queries, documentID, baseVersionID, newVersionID string, createdBy auth.Principal) (int, error) {
 	rows, err := q.ListCarryForwardApprovals(ctx, dbsqlc.ListCarryForwardApprovalsParams{DocumentID: documentID, VersionID: baseVersionID})
 	if err != nil {
 		return 0, err
 	}
+	carried := 0
 	for _, r := range rows {
+		if r.ApproverType == string(createdBy.Type) && r.ApproverID == createdBy.ID {
+			continue
+		}
+		carried++
 		if err := q.InsertCarriedApproval(ctx, dbsqlc.InsertCarriedApprovalParams{
 			ID:                   newID("apv"),
 			DocumentID:           documentID,
@@ -204,5 +211,5 @@ func carryForwardApprovals(ctx context.Context, q *dbsqlc.Queries, documentID, b
 			return 0, err
 		}
 	}
-	return len(rows), nil
+	return carried, nil
 }

@@ -635,7 +635,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "Records the caller's decision on a version. Submitting again replaces the previous decision for that version.",
+                "description": "Records the caller's decision on the latest version. Submitting again replaces the previous decision for that version. Returns 403 when the caller created a version of the document (nobody approves their own work) and 409 when a newer version exists.",
                 "tags": [
                     "approvals"
                 ],
@@ -744,7 +744,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "Assigns a user or service account as an approver. The approver must already have at least viewer access on the document.",
+                "description": "Assigns a user or service account as an approver. The approver must already have at least viewer access on the document, and must not have created a version of it.",
                 "tags": [
                     "approvals"
                 ],
@@ -1496,8 +1496,8 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Set to true to skip carrying approved decisions forward (forces a full re-review)",
-                        "name": "reset_approvals",
+                        "description": "Set to true to carry approved decisions forward to the new version. By default a change of content resets every approval; re-uploading identical content always keeps them.",
+                        "name": "keep_approvals",
                         "in": "formData"
                     },
                     {
@@ -2418,6 +2418,10 @@ const docTemplate = `{
                     "description": "CarriedFromVersionNumber is the display number of the version that\nreceived the explicit decision, so the UI can say \"Approved on v3\"\ninstead of an opaque ID. Zero when the decision is not carried.",
                     "type": "integer"
                 },
+                "created_version": {
+                    "description": "CreatedVersion is true when the approver created a version of this\ndocument. They cannot decide on it, so the document waits for the owner\nto replace them.",
+                    "type": "boolean"
+                },
                 "decided_at": {
                     "type": "string"
                 },
@@ -2475,6 +2479,13 @@ const docTemplate = `{
                 },
                 "version_id": {
                     "type": "string"
+                },
+                "version_number": {
+                    "description": "VersionNumber and VersionSHA256 name the exact content the decision was\nmade on.",
+                    "type": "integer"
+                },
+                "version_sha256": {
+                    "type": "string"
                 }
             }
         },
@@ -2494,6 +2505,12 @@ const docTemplate = `{
                     "$ref": "#/definitions/repo.ApprovalSummary"
                 },
                 "version_id": {
+                    "type": "string"
+                },
+                "version_number": {
+                    "type": "integer"
+                },
+                "version_sha256": {
                     "type": "string"
                 }
             }

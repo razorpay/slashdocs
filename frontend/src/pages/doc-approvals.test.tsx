@@ -3,7 +3,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { ApprovalStatus, Principal } from "@/api";
+import type { ApprovalListItem, ApprovalStatus, Principal } from "@/api";
 import { ApprovalsDialog } from "./doc-approvals";
 import { DocProvider, type DocContextValue } from "./doc-context";
 
@@ -21,7 +21,12 @@ type FetchOptions = {
   // Decisions keyed by the version the approvals endpoint is asked about.
   approvalsByVersion?: Record<
     string,
-    { status: ApprovalStatus; approved: number; total: number }
+    {
+      status: ApprovalStatus;
+      approved: number;
+      total: number;
+      items?: ApprovalListItem[];
+    }
   >;
 };
 
@@ -53,7 +58,7 @@ function installFetch(options: FetchOptions = {}) {
             changes_requested: 0,
             pending: found.total - found.approved,
           },
-          items: [],
+          items: found.items ?? [],
         });
       }
       if (url.startsWith("/v1/documents/doc_1/approvers")) {
@@ -118,11 +123,13 @@ describe("ApprovalsDialog", () => {
 
     // Without approvers the API omits approval_status; the owner still needs
     // a trigger, since the dialog is the only place to assign the first one.
-    const trigger = await screen.findByRole("button", { name: "Set up approvals" });
+    const trigger = await screen.findByRole("button", { name: "Request approval" });
     await userEvent.click(trigger);
     expect(
       await screen.findByPlaceholderText("Add approver by email or bot address…"),
     ).toBeTruthy();
+    // The form says who cannot approve, so the owner is not surprised by a 400.
+    expect(screen.getByText(/Anyone who has uploaded a version/)).toBeTruthy();
   });
 
   it("shows nothing to a non-owner when no approvers are assigned", async () => {
@@ -131,7 +138,31 @@ describe("ApprovalsDialog", () => {
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: /approval/i })).toBeNull(),
     );
-    expect(screen.queryByText("Set up approvals")).toBeNull();
+    expect(screen.queryByText("Request approval")).toBeNull();
+  });
+
+  it("tells an approver who created a version that they cannot approve", async () => {
+    installFetch({
+      approvalsByVersion: {
+        ver_2: {
+          status: "pending",
+          approved: 0,
+          total: 1,
+          items: [{ approver: OWNER, decision: null, created_version: true }],
+        },
+      },
+    });
+    renderDialog({ status: "pending", approved: 0, total: 1 });
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Open approvals/ }),
+    );
+
+    expect(
+      await screen.findByText(/You created a version of this document/),
+    ).toBeTruthy();
+    // No decision controls for someone who cannot decide.
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Request changes" })).toBeNull();
   });
 
   it("scopes the chip to the version on screen, not the latest one", async () => {

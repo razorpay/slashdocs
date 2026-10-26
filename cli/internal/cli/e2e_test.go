@@ -309,6 +309,39 @@ func TestJSONOutputStaysMachineReadable(t *testing.T) {
 	}
 }
 
+// TestPushKeepApprovalsFlag locks in that approvals are kept only when asked:
+// a plain push sends no keep_approvals field, and --keep-approvals sends it.
+func TestPushKeepApprovalsFlag(t *testing.T) {
+	var got []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/documents/doc_1/versions", func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Fatalf("parse multipart: %v", err)
+		}
+		got = append(got, r.FormValue("keep_approvals"))
+		writeTestJSON(t, w, map[string]any{"id": "ver_2", "number": 2, "sha256": "abc"})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	t.Setenv("SLASHDOCS_TOKEN", "tok")
+	t.Setenv("SLASHDOCS_SERVER", srv.URL)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	html := filepath.Join(t.TempDir(), "x.html")
+	writeTestFile(t, html, []byte("<h1>x</h1>"))
+
+	for _, args := range [][]string{
+		{"docs", "push", "doc_1", html, "--base-version", "ver_1"},
+		{"docs", "push", "doc_1", html, "--base-version", "ver_1", "--keep-approvals"},
+	} {
+		if _, err := Execute(args); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+	}
+	if len(got) != 2 || got[0] != "" || got[1] != "true" {
+		t.Fatalf("keep_approvals sent = %q, want [\"\" \"true\"]", got)
+	}
+}
+
 // TestJSONIncludesDocumentURL locks in that --json carries the same canonical
 // document URL the human output prints, so agents never have to construct one.
 func TestJSONIncludesDocumentURLAndNudge(t *testing.T) {

@@ -41,16 +41,16 @@ export function UploadVersionSheet({
 }) {
   const q = useQueryClient();
   const [summary, setSummary] = useState("");
-  const [resetApprovals, setResetApprovals] = useState(false);
+  const [keepApprovals, setKeepApprovals] = useState(false);
   const { file, setFile, reset } = useStagedFile();
   const m = useMutation({
     mutationFn: () =>
-      api.createVersion(docId, baseVersion, summary, file!, resetApprovals),
+      api.createVersion(docId, baseVersion, summary, file!, keepApprovals),
     onSuccess: () => {
       toast.success("Version uploaded.");
       onOpenChange(false);
       setSummary("");
-      setResetApprovals(false);
+      setKeepApprovals(false);
       reset();
       q.invalidateQueries({ queryKey: queryKeys.versions(docId) });
       q.invalidateQueries({ queryKey: queryKeys.document(docId) });
@@ -79,14 +79,20 @@ export function UploadVersionSheet({
               onChange={(e) => setSummary(e.target.value)}
             />
             <HtmlFileInput file={file} onFile={setFile} />
-            <label className="flex items-center gap-2 text-xs text-[var(--color-fg-muted)]">
-              <input
-                type="checkbox"
-                checked={resetApprovals}
-                onChange={(e) => setResetApprovals(e.target.checked)}
-              />
-              Require everyone to re-approve (don&apos;t carry approvals forward)
-            </label>
+            <div className="space-y-1">
+              <label className="flex items-center gap-2 text-xs text-[var(--color-fg-muted)]">
+                <input
+                  type="checkbox"
+                  checked={keepApprovals}
+                  onChange={(e) => setKeepApprovals(e.target.checked)}
+                />
+                Keep existing approvals
+              </label>
+              <p className="pl-6 text-[11px] text-[var(--color-fg-muted)]">
+                Approvals are cleared when the content changes, so approvers review the
+                new version. Keep them only for changes they do not need to see again.
+              </p>
+            </div>
             <Button type="submit" disabled={!file || m.isPending}>
               {m.isPending ? "Uploading…" : "Upload version"}
             </Button>
