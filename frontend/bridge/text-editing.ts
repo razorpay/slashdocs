@@ -79,16 +79,41 @@ export function startTextEditing(
   observer.observe(body, { characterData: true, childList: true, subtree: true });
 
   const onBeforeInput = (event: InputEvent) => {
-    if (event.inputType === "insertFromPaste") {
-      // Paste as plain text on one line, so pasting never adds markup.
-      event.preventDefault();
-      const text = event.dataTransfer?.getData("text/plain") || "";
-      if (text) d.execCommand("insertText", false, text.replace(/\s*\n\s*/g, " "));
-      return;
-    }
     if (STRUCTURAL_INPUT.test(event.inputType)) {
       event.preventDefault();
       callbacks.onRefused();
+      return;
+    }
+    const target = event.inputType.startsWith("history") ? null : targetRange(d, event);
+    if (target) {
+      const text = trimToText(d, target);
+      // Backspace at the start of a block, a selection over two paragraphs or
+      // select-all would merge or remove blocks rather than change words.
+      const edges = text || target;
+      if (blockOf(edges.startContainer) !== blockOf(edges.endContainer)) {
+        event.preventDefault();
+        callbacks.onRefused();
+        return;
+      }
+      // A triple click selects up to the start of the next block; typing over
+      // it would pull that block in. Keep the selection to the text it shows.
+      if (text && !sameRange(text, target)) {
+        event.preventDefault();
+        const selection = d.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(text);
+        const data = event.inputType.startsWith("delete")
+          ? ""
+          : (event.data ?? event.dataTransfer?.getData("text/plain") ?? "");
+        if (data) insertPlainText(d, data);
+        else d.execCommand("delete");
+        return;
+      }
+    }
+    if (event.inputType === "insertFromPaste") {
+      // Paste as plain text on one line, so pasting never adds markup.
+      event.preventDefault();
+      insertPlainText(d, event.dataTransfer?.getData("text/plain") || "");
     }
   };
   const onDrop = (event: DragEvent) => {
@@ -142,4 +167,75 @@ export function startTextEditing(
 // A node that left the document lost its text.
 function textOf(node: Text): string {
   return node.isConnected ? node.data : "";
+}
+
+function insertPlainText(d: Document, text: string) {
+  if (text) d.execCommand("insertText", false, text.replace(/\s*\n\s*/g, " "));
+}
+
+// The range the input will change: the browser's target range, or the
+// selection when it does not report one.
+function targetRange(d: Document, event: InputEvent): Range | null {
+  const target = event.getTargetRanges?.()[0];
+  if (target) {
+    const range = d.createRange();
+    range.setStart(target.startContainer, target.startOffset);
+    range.setEnd(target.endContainer, target.endOffset);
+    return range;
+  }
+  const selection = d.getSelection();
+  return selection && selection.rangeCount ? selection.getRangeAt(0) : null;
+}
+
+// trimToText narrows a range to the first and last words it covers, dropping
+// block boundaries and whitespace at its edges. It returns a collapsed range
+// as it is, and null when the range covers no words.
+function trimToText(d: Document, range: Range): Range | null {
+  if (range.collapsed) return range;
+  const root =
+    range.commonAncestorContainer.nodeType === Node.TEXT_NODE
+      ? range.commonAncestorContainer.parentNode!
+      : range.commonAncestorContainer;
+  const walker = d.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let first: { node: Text; offset: number } | null = null;
+  let last: { node: Text; offset: number } | null = null;
+  for (
+    let node = walker.nextNode() as Text | null;
+    node;
+    node = walker.nextNode() as Text | null
+  ) {
+    if (!range.intersectsNode(node)) continue;
+    const start = node === range.startContainer ? range.startOffset : 0;
+    const end = node === range.endContainer ? range.endOffset : node.data.length;
+    // Whitespace between blocks is source formatting, not words.
+    if (!node.data.slice(start, end).trim()) continue;
+    first ??= { node, offset: start };
+    last = { node, offset: end };
+  }
+  if (!first || !last) return null;
+  const text = d.createRange();
+  text.setStart(first.node, first.offset);
+  text.setEnd(last.node, last.offset);
+  return text;
+}
+
+function sameRange(a: Range, b: Range): boolean {
+  return (
+    a.startContainer === b.startContainer &&
+    a.startOffset === b.startOffset &&
+    a.endContainer === b.endContainer &&
+    a.endOffset === b.endOffset
+  );
+}
+
+// The nearest ancestor laid out as a block, such as a paragraph or list item.
+function blockOf(node: Node): Element | null {
+  let element =
+    node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+  const view = node.ownerDocument?.defaultView;
+  while (element && view) {
+    if (!view.getComputedStyle(element).display.startsWith("inline")) return element;
+    element = element.parentElement;
+  }
+  return element;
 }
