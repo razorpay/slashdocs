@@ -85,6 +85,74 @@ test("edits words in place and saves only the changed text", async ({
   );
 });
 
+test("typing over a triple-clicked paragraph keeps the next one", async ({
+  page,
+  slashdocs,
+}) => {
+  const title = uniqueName("Text editing triple click");
+  const html = documentHTML(title);
+  const document = await slashdocs.createDocument(title, html);
+
+  await page.goto(`/app/d/${document.id}`);
+  await expect(renderedDocument(page).locator("#ttl")).toBeVisible();
+  await page.getByRole("button", { name: "Edit text" }).click();
+  const editing = page.getByRole("group", { name: "Editing text" });
+  await expect(renderedDocument(page).locator("body")).toHaveAttribute(
+    "contenteditable",
+    "true",
+  );
+
+  // A triple click selects up to the start of the next paragraph.
+  await renderedDocument(page).locator("#ttl").click({ clickCount: 3 });
+  await page.keyboard.type("Entries live in Redis for an hour.");
+  await expect(renderedDocument(page).locator("#retry")).toHaveText(
+    "Clients retry twice before giving up.",
+  );
+  await expect(editing.getByText("1 change")).toBeVisible();
+
+  const saved = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === `/v1/documents/${document.id}/edits`,
+  );
+  await editing.getByRole("button", { name: "Save" }).click();
+  expect((await saved).status()).toBe(201);
+  const latest = await slashdocs.getDocument(document.id);
+  const source = await page.request.get(
+    `/v1/documents/${document.id}/versions/${latest.current_version_id}/html`,
+  );
+  expect(await source.text()).toBe(
+    html.replace(
+      "Entries live in Redis with a TTL of 10 minutes.",
+      "Entries live in Redis for an hour.",
+    ),
+  );
+});
+
+test("refuses joining paragraphs with backspace", async ({ page, slashdocs }) => {
+  const title = uniqueName("Text editing join");
+  const document = await slashdocs.createDocument(title, documentHTML(title));
+
+  await page.goto(`/app/d/${document.id}`);
+  await expect(renderedDocument(page).locator("#retry")).toBeVisible();
+  await page.getByRole("button", { name: "Edit text" }).click();
+  await expect(renderedDocument(page).locator("body")).toHaveAttribute(
+    "contenteditable",
+    "true",
+  );
+
+  await renderedDocument(page).locator("#retry").click();
+  await page.keyboard.press("Home");
+  await page.keyboard.press("Backspace");
+  await expect(
+    page.getByText("Only words can be edited here.", { exact: false }),
+  ).toBeVisible();
+  await expect(renderedDocument(page).locator("p")).toHaveCount(2);
+  await expect(renderedDocument(page).locator("#retry")).toHaveText(
+    "Clients retry twice before giving up.",
+  );
+});
+
 test("refuses structural changes and cancel restores the text", async ({
   page,
   slashdocs,
