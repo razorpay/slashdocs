@@ -1,7 +1,7 @@
 // Text editing lets a reader change the words of a rendered document in
-// place. Only the text of existing text nodes may change: new paragraphs,
-// pasted markup and dropped content are refused. When asked, the editor
-// reports each changed node as its text before and after, and the app turns
+// place. Only text may change: new paragraphs, pasted markup and dropped
+// content are refused. When asked, the editor reports each text node of the
+// source as its text before and after, and the app turns
 // those into exact find-and-replace edits on the document source. The DOM is
 // never serialized back into HTML.
 
@@ -42,40 +42,87 @@ export function startTextEditing(
         ? NodeFilter.FILTER_REJECT
         : NodeFilter.FILTER_ACCEPT,
   });
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    originals.set(node as Text, (node as Text).data);
+  const parents = new Map<Text, Node | null>();
+  for (
+    let node = walker.nextNode() as Text | null;
+    node;
+    node = walker.nextNode() as Text | null
+  ) {
+    originals.set(node, node.data);
+    parents.set(node, node.parentNode);
   }
 
-  const touched = new Set<Text>();
-  let unsupported = false;
+  // Nodes the browser added while editing. Replacing all of a node's text
+  // makes Chrome drop the node and type into a new one, so new text is
+  // attributed to the original it replaced or sits next to; only added
+  // elements are structure.
+  const addedText = new Set<Text>();
+  const addedElements = new Set<Element>();
   const observer = new MutationObserver((records) => {
     for (const record of records) {
-      if (record.type === "characterData" && originals.has(record.target as Text)) {
-        touched.add(record.target as Text);
-      }
       for (const node of Array.from(record.addedNodes)) {
-        // Browsers add a <br> to keep an emptied block open; it is not text.
-        if (node.nodeName === "BR") continue;
-        if (node.nodeType === Node.TEXT_NODE && originals.has(node as Text)) continue;
-        if (node.nodeType === Node.TEXT_NODE && !(node as Text).data) continue;
-        unsupported = true;
-      }
-      for (const node of Array.from(record.removedNodes)) {
-        if (node.nodeType === Node.TEXT_NODE && originals.has(node as Text)) {
-          touched.add(node as Text);
+        if (node.nodeType === Node.TEXT_NODE) {
+          if (!originals.has(node as Text)) addedText.add(node as Text);
         } else if (node.nodeType === Node.ELEMENT_NODE) {
-          // A removed element takes its text with it.
-          const inner = d.createTreeWalker(node, NodeFilter.SHOW_TEXT);
-          for (let n = inner.nextNode(); n; n = inner.nextNode()) {
-            if (originals.has(n as Text)) touched.add(n as Text);
-          }
+          addedElements.add(node as Element);
         }
       }
     }
-    let dirty = 0;
-    for (const node of touched) if (textOf(node) !== originals.get(node)) dirty++;
-    callbacks.onDirty(dirty + (unsupported ? 1 : 0));
+    const { changes, unsupported } = diff();
+    callbacks.onDirty(changes.length + (unsupported ? 1 : 0));
   });
+
+  // filler is markup the browser adds that the source never had: a <br>
+  // keeping an emptied block open, or an empty text node.
+  const filler = (node: Node) =>
+    (node.nodeName === "BR" && addedElements.has(node as Element)) ||
+    (node.nodeType === Node.TEXT_NODE && !(node as Text).data);
+  const isAdded = (node: Node | null): node is Text =>
+    !!node && addedText.has(node as Text) && !!(node as Text).data;
+
+  function diff(): { changes: TextChange[]; unsupported: boolean } {
+    const claimed = new Set<Text>();
+    // The added text nodes around node on one side, up to the first node that
+    // came from the source.
+    const run = (node: Node, forward: boolean) => {
+      let text = "";
+      for (
+        let n = forward ? node.nextSibling : node.previousSibling;
+        n && (filler(n) || isAdded(n));
+        n = forward ? n.nextSibling : n.previousSibling
+      ) {
+        if (!isAdded(n) || claimed.has(n)) continue;
+        claimed.add(n);
+        text = forward ? text + n.data : n.data + text;
+      }
+      return text;
+    };
+    const changes: TextChange[] = [];
+    for (const [node, before] of originals) {
+      let after: string;
+      if (node.isConnected) {
+        after = run(node, false) + node.data + run(node, true);
+      } else {
+        // The node is gone: take the new text typed where it was.
+        const parent = parents.get(node);
+        const first = parent?.isConnected
+          ? Array.from(parent.childNodes).find(
+              (n): n is Text => isAdded(n) && !claimed.has(n),
+            )
+          : undefined;
+        if (first) claimed.add(first);
+        after = first ? first.data + run(first, true) : "";
+        // Browsers drop whitespace between elements as they edit; it was
+        // never text the reader could see.
+        if (!after && !before.trim()) continue;
+      }
+      if (after !== before) changes.push({ before, after });
+    }
+    const unsupported =
+      Array.from(addedElements).some((el) => el.isConnected && !filler(el)) ||
+      Array.from(addedText).some((n) => n.isConnected && n.data && !claimed.has(n));
+    return { changes, unsupported };
+  }
   observer.observe(body, { characterData: true, childList: true, subtree: true });
 
   const onBeforeInput = (event: InputEvent) => {
@@ -141,18 +188,7 @@ export function startTextEditing(
   }
 
   return {
-    collect() {
-      const changes: TextChange[] = [];
-      for (const [node, before] of originals) {
-        const after = textOf(node);
-        if (after === before) continue;
-        // Browsers drop whitespace between elements as they edit; it was
-        // never text the reader could see.
-        if (!node.isConnected && !before.trim()) continue;
-        changes.push({ before, after });
-      }
-      return { changes, unsupported };
-    },
+    collect: diff,
     stop() {
       observer.disconnect();
       d.removeEventListener("beforeinput", onBeforeInput, true);
@@ -165,11 +201,6 @@ export function startTextEditing(
       d.getElementById(STYLE_ID)?.remove();
     },
   };
-}
-
-// A node that left the document lost its text.
-function textOf(node: Text): string {
-  return node.isConnected ? node.data : "";
 }
 
 function insertPlainText(d: Document, text: string) {
