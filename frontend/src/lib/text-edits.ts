@@ -97,10 +97,55 @@ export function editFor(
         if (count > 1) reason = "ambiguous";
       }
     }
-    if (lo === 0 && hi === before.length) return reason;
+    if (lo === 0 && hi === before.length) break;
     lo = widenLeft(before, lo);
     hi = widenRight(before, hi);
   }
+  if (reason !== "ambiguous") return reason;
+  // The whole text is in the source more than once, as when a heading
+  // repeats the <title>. Rendered text comes from the body, so if only one
+  // occurrence is there, take in the tags around it until it is unique.
+  for (const spell of SPELLINGS) {
+    const edit = inBody(
+      source,
+      spell(before),
+      spell(before.slice(0, prefix)) +
+        newText(typed, before) +
+        spell(before.slice(before.length - suffix)),
+    );
+    if (edit) return edit;
+  }
+  return reason;
+}
+
+// inBody places the whole text of a node: the one run of it in the body that
+// sits between two tags.
+function inBody(source: string, old: string, replacement: string): TextEdit | null {
+  const body = /<body\b[^>]*>|<\/head\s*>/i.exec(source);
+  const start = body ? body.index + body[0].length : 0;
+  const runs: number[] = [];
+  for (
+    let i = source.indexOf(old, start);
+    old && i >= 0;
+    i = source.indexOf(old, i + 1)
+  ) {
+    if (source[i - 1] === ">" && source[i + old.length] === "<") runs.push(i);
+  }
+  if (runs.length !== 1) return null;
+  const at = runs[0];
+  let lo = at;
+  let hi = at + old.length;
+  while (occurrences(source, source.slice(lo, hi)) > 1) {
+    const left = source.lastIndexOf("<", lo - 1);
+    const right = source.indexOf(">", hi);
+    if (left < 0 && right < 0) return null;
+    if (left >= 0) lo = left;
+    if (right >= 0) hi = right + 1;
+  }
+  return {
+    old_string: source.slice(lo, hi),
+    new_string: source.slice(lo, at) + replacement + source.slice(at + old.length, hi),
+  };
 }
 
 // buildEdits maps every change to an edit. Each edit is matched against the

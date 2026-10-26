@@ -53,6 +53,21 @@ describe("editFor", () => {
     });
   });
 
+  it("places text the head repeats by the tags around it in the body", () => {
+    const source =
+      "<html><head><title>Cache plan</title></head><body>\n<h1>Cache plan</h1>\n<p>Cache plan details.</p></body></html>";
+    expect(editFor(source, { before: "Cache plan", after: "Cards" })).toEqual({
+      old_string: "<h1>Cache plan</h1>",
+      new_string: "<h1>Cards</h1>",
+    });
+    expect(
+      editFor("<title>Yes</title><body><p>Yes</p><p>Yes</p>", {
+        before: "Yes",
+        after: "No",
+      }),
+    ).toBe("ambiguous");
+  });
+
   it("reports text it cannot place", () => {
     expect(editFor("<p>Yes</p><p>Yes</p>", { before: "Yes", after: "No" })).toBe(
       "ambiguous",

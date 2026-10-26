@@ -130,6 +130,55 @@ test("typing over a triple-clicked paragraph keeps the next one", async ({
   );
 });
 
+test("replaces all of a heading's and a paragraph's text", async ({
+  page,
+  slashdocs,
+  context,
+}) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const title = uniqueName("Text editing replace");
+  const html = documentHTML(title);
+  const document = await slashdocs.createDocument(title, html);
+
+  await page.goto(`/app/d/${document.id}`);
+  await expect(renderedDocument(page).locator("#ttl")).toBeVisible();
+  await page.getByRole("button", { name: "Edit text" }).click();
+  const editing = page.getByRole("group", { name: "Editing text" });
+  await expect(renderedDocument(page).locator("body")).toHaveAttribute(
+    "contenteditable",
+    "true",
+  );
+
+  // Emptying a node makes the browser type into a new one.
+  await renderedDocument(page).locator("h1").click({ clickCount: 3 });
+  await page.keyboard.press("Backspace");
+  await page.keyboard.type("Cache notes");
+  await renderedDocument(page).locator("#ttl").click({ clickCount: 3 });
+  await page.evaluate(() => navigator.clipboard.writeText("https://example.com/ttl"));
+  await page.keyboard.press("ControlOrMeta+v");
+  await expect(editing.getByText("2 changes")).toBeVisible();
+
+  const saved = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === `/v1/documents/${document.id}/edits`,
+  );
+  await editing.getByRole("button", { name: "Save" }).click();
+  expect((await saved).status()).toBe(201);
+  const latest = await slashdocs.getDocument(document.id);
+  const source = await page.request.get(
+    `/v1/documents/${document.id}/versions/${latest.current_version_id}/html`,
+  );
+  expect(await source.text()).toBe(
+    html
+      .replace(`<h1>${title}</h1>`, "<h1>Cache notes</h1>")
+      .replace(
+        "Entries live in Redis with a TTL of 10 minutes.",
+        "https://example.com/ttl",
+      ),
+  );
+});
+
 test("refuses joining paragraphs with backspace", async ({ page, slashdocs }) => {
   const title = uniqueName("Text editing join");
   const document = await slashdocs.createDocument(title, documentHTML(title));
