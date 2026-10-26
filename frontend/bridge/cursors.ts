@@ -57,9 +57,21 @@ export const MAX_VIEW_FRACTION = 1000;
 export const MAX_CURSOR_MESSAGE = 100;
 // A sent cursor chat message stays this long after Enter.
 const MESSAGE_LINGER = 5000;
+// The cursor chat field and labels keep this far from the window's edges.
+const EDGE = 8;
+// After a resize, the followed view is put back once this long has passed.
+const RESIZE_SETTLE = 150;
+// Where a cursor's label sits from its pointer's tip.
+const LABEL_X = 12;
+const LABEL_Y = 16;
 
 // The zoom that a spot records is clamped to this, like the server does.
 const MAX_ZOOM = 100;
+// A zoom this close to 1 is rounding, not zoom.
+const ZOOM_EPSILON = 0.01;
+// Control characters, which the server refuses in a cursor chat message.
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
 
 // zoomOf tells how much larger an element shows than its layout size, as on
 // a canvas that zooms with a CSS transform. 1 means that it is not zoomed.
@@ -69,9 +81,11 @@ function zoomOf(el: Element): number {
   while (node && !((node as HTMLElement).offsetWidth > 0)) node = node.parentElement;
   if (!node) return 1;
   const zoom = node.getBoundingClientRect().width / (node as HTMLElement).offsetWidth;
-  return Number.isFinite(zoom) && zoom > 0
-    ? Math.min(MAX_ZOOM, Math.max(1e-3, Math.round(zoom * 1e3) / 1e3))
-    : 1;
+  // offsetWidth rounds to whole pixels, so an element with a fractional width
+  // reads a little off 1 without any zoom.
+  if (!Number.isFinite(zoom) || zoom <= 0 || Math.abs(zoom - 1) < ZOOM_EPSILON)
+    return 1;
+  return Math.min(MAX_ZOOM, Math.max(1e-3, Math.round(zoom * 1e3) / 1e3));
 }
 
 // elementAt gives the document element under a point in the viewport that
@@ -130,6 +144,9 @@ export type PointerTracker = {
   setMessage: (message: string) => void;
 };
 
+// A spot for a pointer outside the document, which may still carry the view.
+const LEFT = { path: "", x: 0, y: 0, hidden: true } as const;
+
 // trackPointer reports where this viewer's pointer is, in v the place at the
 // center of their view with its zoom, which those who follow them show, and in
 // m their cursor chat message. It reports at most once a frame and only when
@@ -137,6 +154,9 @@ export type PointerTracker = {
 export function trackPointer(
   d: Document,
   report: (spot: CursorSpot | null) => void,
+  // viewCenter gives the center of the part of the window that shows the
+  // document's content, such as a canvas's viewport; the window's by default.
+  viewCenter: () => { x: number; y: number } | null = () => null,
 ): PointerTracker | undefined {
   const view = d.defaultView;
   if (!view) return;
@@ -149,8 +169,9 @@ export function trackPointer(
   // named by the last zoomed element, so that it keeps its zoom.
   let anchor: Element | null = null;
   const center = () => {
-    const x = view.innerWidth / 2;
-    const y = view.innerHeight / 2;
+    const at = viewCenter();
+    const x = at?.x ?? view.innerWidth / 2;
+    const y = at?.y ?? view.innerHeight / 2;
     const el = elementAt(d, x, y);
     const keep = anchor?.isConnected && zoomOf(anchor) !== 1 && el && zoomOf(el) === 1;
     if (!keep) anchor = el;
@@ -159,12 +180,16 @@ export function trackPointer(
   const send = () => {
     frame = 0;
     const at = pointer && cursorSpot(d, pointer.x, pointer.y);
-    const centerPlace = at && center();
-    const spot: CursorSpot | null = at && {
-      ...at,
-      ...(centerPlace && { v: centerPlace }),
-      ...(message && { m: message }),
-    };
+    const centerPlace = center();
+    // With the pointer out of the document, the view is still sent, so that
+    // followers keep following while this viewer zooms by key or reads.
+    const spot: CursorSpot | null = at
+      ? {
+          ...at,
+          ...(centerPlace && { v: centerPlace }),
+          ...(message && { m: message }),
+        }
+      : centerPlace && { ...LEFT, v: centerPlace };
     const key = JSON.stringify(spot);
     if (key === reported) return;
     reported = key;
@@ -190,14 +215,12 @@ export function trackPointer(
   // Content moves under a resting pointer, and the view changes, while the
   // page scrolls, and while a canvas pans or zooms, which it may animate.
   for (const type of ["scroll", "wheel", "keyup", "transitionend"])
-    d.addEventListener(type, () => pointer && schedule(), {
-      capture: true,
-      passive: true,
-    });
+    d.addEventListener(type, schedule, { capture: true, passive: true });
+  view.addEventListener("resize", schedule);
   return {
     position: () => pointer,
     setMessage: (next) => {
-      message = next.trim().slice(0, MAX_CURSOR_MESSAGE);
+      message = next.replace(CONTROL_CHARS, " ").trim().slice(0, MAX_CURSOR_MESSAGE);
       schedule();
     },
   };
@@ -226,17 +249,25 @@ export function createCursorChat(
   box.id = "slashdocs-cursor-chat";
   box.className = "slashdocs-chat";
   box.hidden = true;
-  const input = document.createElement("input");
-  input.type = "text";
+  // A textarea, so the sender sees the message wrap as others do.
+  const input = document.createElement("textarea");
+  input.rows = 1;
   input.maxLength = MAX_CURSOR_MESSAGE;
   input.placeholder = "Say something";
   input.setAttribute("aria-label", "Cursor chat message");
   box.appendChild(input);
   document.body.appendChild(box);
   let linger = 0;
+  // place keeps the field by the pointer, and flips it to the pointer's
+  // other side near the right or bottom edge so it never goes off screen.
   const place = () => {
     const at = pointer.position();
-    if (at) box.style.transform = `translate(${at.x + 14}px,${at.y + 18}px)`;
+    if (!at) return;
+    const w = box.offsetWidth;
+    const h = box.offsetHeight;
+    const x = at.x + 14 + w > window.innerWidth - EDGE ? at.x - 6 - w : at.x + 14;
+    const y = at.y + 18 + h > window.innerHeight - EDGE ? at.y - 6 - h : at.y + 18;
+    box.style.transform = `translate(${Math.max(EDGE, x)}px,${Math.max(EDGE, y)}px)`;
   };
   const close = (keep: boolean) => {
     if (box.hidden) return;
@@ -249,19 +280,24 @@ export function createCursorChat(
       linger = window.setTimeout(() => pointer.setMessage(""), MESSAGE_LINGER);
     d.defaultView?.focus();
   };
+  // open shows the field at the pointer, if the pointer is in the document.
+  const open = () => {
+    if (!pointer.position()) return false;
+    window.clearTimeout(linger);
+    pointer.setMessage("");
+    const own = color();
+    if (own) box.style.setProperty("--c", own);
+    box.hidden = false;
+    place();
+    input.focus();
+    return true;
+  };
   d.addEventListener(
     "keydown",
     (e) => {
       if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
-      if (isTextEditing(e.target) || !pointer.position()) return;
-      e.preventDefault();
-      window.clearTimeout(linger);
-      pointer.setMessage("");
-      const own = color();
-      if (own) box.style.setProperty("--c", own);
-      place();
-      box.hidden = false;
-      input.focus();
+      if (isTextEditing(e.target)) return;
+      if (open()) e.preventDefault();
     },
     true,
   );
@@ -269,15 +305,23 @@ export function createCursorChat(
     capture: true,
     passive: true,
   });
-  input.addEventListener("input", () => pointer.setMessage(input.value));
+  input.addEventListener("input", () => {
+    // One line: a pasted line break becomes a space.
+    if (/[\r\n]/.test(input.value)) input.value = input.value.replace(/[\r\n]+/g, " ");
+    pointer.setMessage(input.value);
+    place();
+  });
   input.addEventListener("keydown", (e) => {
     e.stopPropagation();
+    // Enter that ends an IME composition picks the text; it does not send.
+    if (e.isComposing || e.keyCode === 229) return;
     if (e.key === "Enter" || e.key === "Escape") {
       e.preventDefault();
       close(e.key === "Enter");
     }
   });
   input.addEventListener("blur", () => close(true));
+  return { open };
 }
 
 // A track holds a cursor's points that playback has not passed. offset maps
@@ -364,6 +408,12 @@ type Cursor = {
   view?: CursorPlace;
   // The viewer's name, which the label shows unless they chat.
   name: string;
+  // The place the cursor heads for and where it was on the last frame, to
+  // tell this view's own pans and zooms from the remote viewer's movement.
+  anchor?: { place: CursorPlace; x: number; y: number };
+  // The label's size, and to which sides of the pointer it is flipped.
+  labelSize: { w: number; h: number };
+  flip: string;
 };
 
 export type RemoteCursor = {
@@ -386,8 +436,8 @@ const BRIDGE_CSS = `
 .slashdocs-follow svg{width:12px;height:12px;opacity:.85}
 @media (hover:hover) and (pointer:fine){.slashdocs-follow button:hover{filter:brightness(.92)}}
 .slashdocs-chat{position:fixed;left:0;top:0;z-index:2147483647;pointer-events:none}
-.slashdocs-chat input{all:unset;box-sizing:border-box;field-sizing:content;min-width:120px;max-width:280px;padding:5px 10px;border-radius:3px 12px 12px 12px;background:var(--c,#27272a);color:#fff;font:500 13px/18px system-ui,-apple-system,sans-serif;box-shadow:0 1px 3px rgba(0,0,0,.2);caret-color:#fff}
-.slashdocs-chat input::placeholder{color:rgba(255,255,255,.7)}
+.slashdocs-chat textarea{all:unset;display:block;box-sizing:border-box;field-sizing:content;min-width:120px;max-width:260px;padding:5px 10px;border-radius:3px 12px 12px 12px;background:var(--c,#27272a);color:#fff;font:500 13px/18px system-ui,-apple-system,sans-serif;white-space:pre-wrap;overflow-wrap:anywhere;resize:none;box-shadow:0 1px 3px rgba(0,0,0,.2);caret-color:#fff}
+.slashdocs-chat textarea::placeholder{color:rgba(255,255,255,.7)}
 `;
 
 // createCursorLayer draws other viewers' cursors over the document frame,
@@ -412,6 +462,9 @@ export function createCursorLayer(
   // The session whose view this view follows, if any, when this view last
   // moved to it, and a timer for the next move.
   let followed: string | null = null;
+  // The newest view of each session that sent one, kept after its cursor
+  // goes, so a viewer whose pointer is outside the document can be followed.
+  const views = new Map<string, { view: CursorPlace; name: string; color: string }>();
   let followMoved = -Infinity;
   let followTimer = 0;
 
@@ -468,8 +521,7 @@ export function createCursorLayer(
     arrow.setAttribute("stroke-linejoin", "round");
     svg.appendChild(arrow);
     const label = document.createElement("span");
-    label.style.cssText =
-      "position:absolute;left:12px;top:16px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px 7px;border-radius:3px 9px 9px 9px;color:#fff;font:500 12px/16px system-ui,-apple-system,sans-serif;box-shadow:0 1px 3px rgba(0,0,0,.2);transform-origin:0 0";
+    label.style.cssText = `position:absolute;left:${LABEL_X}px;top:${LABEL_Y}px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px 7px;border-radius:3px 9px 9px 9px;color:#fff;font:500 12px/16px system-ui,-apple-system,sans-serif;box-shadow:0 1px 3px rgba(0,0,0,.2);transform-origin:0 0`;
     el.append(svg, label);
     layer.appendChild(el);
     const cursor = {
@@ -481,6 +533,8 @@ export function createCursorLayer(
       x: 0,
       y: 0,
       name: "",
+      labelSize: { w: 0, h: 0 },
+      flip: "",
     };
     cursors.set(session, cursor);
     return cursor;
@@ -515,10 +569,32 @@ export function createCursorLayer(
       }
       const x = from.x + (to.x - from.x) * at.f + scrollX;
       const y = from.y + (to.y - from.y) * at.f + scrollY;
+      // When this view pans or zooms (a canvas moving under the cursor), the
+      // same place moved on screen: carry the cursor with it at once, and
+      // smooth only the remote viewer's own movement.
+      const toX = to.x + scrollX;
+      const toY = to.y + scrollY;
+      if (cursor.anchor?.place === at.to) {
+        cursor.x += toX - cursor.anchor.x;
+        cursor.y += toY - cursor.anchor.y;
+      }
+      cursor.anchor = { place: at.to, x: toX, y: toY };
       const step = cursor.shown ? smooth : 1;
       cursor.x += (x - cursor.x) * step;
       cursor.y += (y - cursor.y) * step;
       cursor.el.style.transform = `translate3d(${cursor.x - scrollX}px,${cursor.y - scrollY}px,0)`;
+      // Near the right or bottom edge the label goes to the pointer's other
+      // side, so a message is never cut off.
+      const { w, h } = cursor.labelSize;
+      const flipX = cursor.x - scrollX + LABEL_X + w > window.innerWidth - EDGE;
+      const flipY = cursor.y - scrollY + LABEL_Y + h > window.innerHeight - EDGE;
+      // The key holds the size too: a label that grows into a message bubble
+      // on a flipped side moves further.
+      const flip = `${flipX ? "x" : ""}${flipY ? "y" : ""}${w}x${h}`;
+      if (cursor.flip !== flip) {
+        cursor.flip = flip;
+        cursor.label.style.translate = `${flipX ? -w - LABEL_X - 4 : 0}px ${flipY ? -h - LABEL_Y - 4 : 0}px`;
+      }
       show(cursor, true);
       moving ||=
         !played(cursor.track) ||
@@ -541,18 +617,34 @@ export function createCursorLayer(
     // A cursor chat message shows in the label, in the viewer's color.
     const message = points.at(-1)?.m ?? "";
     const text = message || name;
+    // The label grows into a bubble when a message starts and back when it
+    // ends; a quick settle from slightly smaller hides the jump in size.
+    // Keystrokes within a message change the text only.
+    const chatting = cursor.label.style.whiteSpace === "normal";
+    if (!!message !== chatting && cursor.label.textContent && !reducedMotion())
+      cursor.label.animate(
+        [
+          { transform: "scale(.94)", opacity: 0.6 },
+          { transform: "scale(1)", opacity: 1 },
+        ],
+        { duration: 160, easing: "cubic-bezier(.23,1,.32,1)" },
+      );
     if (cursor.label.textContent !== text) cursor.label.textContent = text;
     cursor.label.style.whiteSpace = message ? "normal" : "nowrap";
+    // A long word wraps instead of running under the edge.
+    cursor.label.style.overflowWrap = message ? "anywhere" : "";
     cursor.label.style.maxWidth = message ? "260px" : "200px";
     cursor.label.style.width = message ? "max-content" : "";
     cursor.label.style.fontSize = message ? "13px" : "12px";
     cursor.label.style.padding = message ? "5px 10px" : "2px 7px";
     cursor.label.style.background = color;
     cursor.arrow.setAttribute("fill", color);
+    cursor.labelSize = { w: cursor.label.offsetWidth, h: cursor.label.offsetHeight };
     addPoints(cursor.track, points, performance.now());
     let view: CursorPlace | undefined;
     for (const point of points) view = point.v ?? view;
     if (view) cursor.view = view;
+    if (cursor.view) views.set(session, { view: cursor.view, name, color });
     if (session === followed) {
       showFollowing(name, color);
       if (view) scheduleFollow();
@@ -560,7 +652,14 @@ export function createCursorLayer(
     refresh();
   }
 
+  // viewOf gives the newest view of a session, also after its cursor went
+  // away because the pointer left the document.
+  function viewOf(session: string) {
+    return cursors.get(session)?.view ?? views.get(session)?.view;
+  }
+
   function clear() {
+    views.clear();
     for (const cursor of cursors.values()) cursor.el.remove();
     cursors.clear();
   }
@@ -611,7 +710,7 @@ export function createCursorLayer(
     const wait = Math.max(0, followMoved + FOLLOW_REST - performance.now());
     followTimer = window.setTimeout(() => {
       followTimer = 0;
-      const view = followed && cursors.get(followed)?.view;
+      const view = followed && viewOf(followed);
       if (view) moveTo(view, performance.now());
     }, wait);
   }
@@ -628,24 +727,35 @@ export function createCursorLayer(
   // not send their view is followed to their cursor once.
   function follow(session: string) {
     const cursor = cursors.get(session);
+    const kept = views.get(session);
     const point = cursor?.track.points.at(-1);
-    const target = cursor?.view ?? (point && !point.hidden ? point : undefined);
-    if (!cursor || !target || !locate(target)) return;
+    const view = viewOf(session);
+    const shown = point && !point.hidden ? point : undefined;
+    const target = view ?? shown;
+    // Nothing to go to: say so, so the app does not show this as followed.
+    if (!target || !locate(target)) {
+      unfollowed();
+      return;
+    }
     moveTo(target, performance.now());
-    if (!cursor.view) {
+    if (!view) {
       unfollowed();
       return;
     }
     followed = session;
-    showFollowing(cursor.name, cursor.label.style.background);
-    if (!reducedMotion())
+    showFollowing(
+      cursor?.name ?? kept?.name ?? "",
+      cursor?.label.style.background || kept?.color || "",
+    );
+    // One short pulse as the view lands says whose view this is.
+    if (cursor && !reducedMotion())
       cursor.label.animate(
         [
           { transform: "scale(1)" },
-          { transform: "scale(1.25)" },
+          { transform: "scale(1.15)" },
           { transform: "scale(1)" },
         ],
-        { duration: 600, delay: 300, easing: "ease-in-out" },
+        { duration: 320, delay: 250, easing: "cubic-bezier(.77,0,.175,1)" },
       );
   }
 
@@ -670,11 +780,24 @@ export function createCursorLayer(
     d.addEventListener(
       "keydown",
       (e) => {
-        if (!["Shift", "Control", "Alt", "Meta"].includes(e.key)) stop();
+        // "/" opens cursor chat, which a follower may use while following.
+        if (!["Shift", "Control", "Alt", "Meta", "/"].includes(e.key)) stop();
       },
       true,
     );
   }
 
-  return { receive, clear, follow, unfollow, watchInput, refresh };
+  // refollow puts the followed view back after this window changes size,
+  // once the document has laid itself out again (a canvas refits on resize).
+  function refollow() {
+    if (!followed) return;
+    window.clearTimeout(followTimer);
+    followTimer = window.setTimeout(() => {
+      followTimer = 0;
+      const view = followed && viewOf(followed);
+      if (view) moveTo(view, performance.now());
+    }, RESIZE_SETTLE);
+  }
+
+  return { receive, clear, follow, unfollow, watchInput, refresh, refollow };
 }

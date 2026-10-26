@@ -678,6 +678,32 @@ export function RenderFrame() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [canvasMode, placingPin, setPlacingPin]);
+  // "/" opens cursor chat at the pointer even when the app has the focus, as
+  // right after clicking an avatar to follow someone. The document opens it
+  // only when the pointer is over it.
+  useEffect(() => {
+    if (!ready) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented)
+        return;
+      const target = e.target instanceof Element ? e.target : null;
+      if (
+        target?.closest(
+          'input,textarea,select,[contenteditable="true"],[contenteditable=""]',
+        )
+      )
+        return;
+      if (
+        document.querySelector(
+          '[role="dialog"][data-state="open"],[role="menu"][data-state="open"]',
+        )
+      )
+        return;
+      postToFrame({ type: "slashdocs:open-cursor-chat" });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [ready, postToFrame]);
   // Esc leaves placing from anywhere, the comment box included.
   useEffect(() => {
     if (!placingPin) return;

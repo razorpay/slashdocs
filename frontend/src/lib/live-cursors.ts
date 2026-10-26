@@ -37,8 +37,16 @@ function parsePlace(value: unknown, limit = { min: 0, max: 1 }): CursorPlace | n
 
 // parseCursorSpot accepts a spot from the render frame, which also runs the
 // document's own scripts. Anything else means that the pointer left. An
-// invalid view or message is dropped.
+// invalid view or message is dropped. A spot for a pointer that left keeps
+// only its view, and is null without one.
 export function parseCursorSpot(value: unknown): CursorSpot | null {
+  if ((value as { hidden?: unknown } | null)?.hidden === true) {
+    const view = parsePlace((value as { v?: unknown }).v, {
+      min: -MAX_VIEW_FRACTION,
+      max: MAX_VIEW_FRACTION,
+    });
+    return view && { ...HIDDEN, v: view };
+  }
   const spot = parsePlace(value);
   const { m } = (value ?? {}) as { m?: unknown };
   const message =
@@ -60,6 +68,7 @@ export function parseCursorSpot(value: unknown): CursorSpot | null {
 export function createCursorBatch(send: (points: CursorPoint[]) => Promise<unknown>) {
   let queue: CursorPoint[] = [];
   let hidden = true;
+  let last: CursorSpot | null = null;
   let lastPoint = -Infinity;
   let lastSend = -Infinity;
   let sending = false;
@@ -95,12 +104,23 @@ export function createCursorBatch(send: (points: CursorPoint[]) => Promise<unkno
     timer = setTimeout(flush, wait);
   }
 
-  // add records where the pointer is now. Null means that the pointer left.
+  // add records where the pointer is now. Null means that the pointer left;
+  // a hidden spot means the same but still names the view.
   function add(spot: CursorSpot | null) {
     if (!spot && hidden) return;
-    hidden = !spot;
+    last = spot;
+    hidden = !spot || !!spot.hidden;
     lastPoint = Math.max(lastPoint + 1, Math.round(performance.now()));
     queue = [...queue, { t: lastPoint, ...(spot ?? HIDDEN) }].slice(-MAX_BATCH_POINTS);
+    schedule();
+  }
+
+  // resend sends the newest spot again, for viewers who just arrived: cursors
+  // are relayed, not stored, so they would see nothing until it moves.
+  function resend() {
+    if (!last) return;
+    lastPoint = Math.max(lastPoint + 1, Math.round(performance.now()));
+    queue = [...queue, { t: lastPoint, ...last }].slice(-MAX_BATCH_POINTS);
     schedule();
   }
 
@@ -110,5 +130,5 @@ export function createCursorBatch(send: (points: CursorPoint[]) => Promise<unkno
     queue = [];
   }
 
-  return { add, stop };
+  return { add, resend, stop };
 }

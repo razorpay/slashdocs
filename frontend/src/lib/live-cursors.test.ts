@@ -56,6 +56,39 @@ describe("createCursorBatch", () => {
     expect(batches[0].at(-1)).toMatchObject({ hidden: true });
     expect(batches[0].filter((point) => point.hidden)).toHaveLength(1);
   });
+
+  it("sends the view of a pointer that left, and resends the newest spot", async () => {
+    const batches: CursorPoint[][] = [];
+    const batch = createCursorBatch(async (points) => {
+      batches.push(points);
+    });
+    const view = { path: "3", x: 0.5, y: -2, z: 0.4 };
+    batch.add({ path: "", x: 0, y: 0, hidden: true, v: view });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(batches[0]).toEqual([expect.objectContaining({ hidden: true, v: view })]);
+
+    batch.resend();
+    await vi.advanceTimersByTimeAsync(CURSOR_BATCH_INTERVAL);
+    expect(batches[1]).toEqual([expect.objectContaining({ hidden: true, v: view })]);
+    expect(batches[1][0].t).toBeGreaterThan(batches[0][0].t);
+  });
+});
+
+describe("parseCursorSpot of a pointer that left", () => {
+  it("keeps only a valid view", () => {
+    expect(
+      parseCursorSpot({
+        path: "9.9",
+        x: 0.3,
+        y: 0.3,
+        hidden: true,
+        m: "hi",
+        v: { path: "1", x: 2, y: 0.5 },
+      }),
+    ).toEqual({ path: "", x: 0, y: 0, hidden: true, v: { path: "1", x: 2, y: 0.5 } });
+    expect(parseCursorSpot({ hidden: true })).toBeNull();
+    expect(parseCursorSpot({ hidden: true, v: { path: "x", x: 0, y: 0 } })).toBeNull();
+  });
 });
 
 describe("createCursorBatch views", () => {

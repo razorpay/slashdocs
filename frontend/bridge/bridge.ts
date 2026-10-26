@@ -111,6 +111,9 @@ type Theme = "dark" | "light";
   const frame = document.getElementById("slashdocs-doc") as HTMLIFrameElement;
   // This viewer's cursor color, from the app, for the cursor chat field.
   let cursorColor: string | undefined;
+  // The cursor chat of the current document, which the app can open when "/"
+  // is pressed outside the document, as after clicking an avatar.
+  let chat: { open: () => boolean } | null = null;
   const cursors = createCursorLayer(doc, () =>
     parent.postMessage({ type: "slashdocs:unfollowed" }, targetOrigin()),
   );
@@ -1923,13 +1926,16 @@ type Theme = "dark" | "light";
     d.addEventListener("scroll", scheduleViewport, { capture: true, passive: true });
     d.addEventListener("scroll", cursors.refresh, { capture: true, passive: true });
     d.defaultView?.addEventListener("resize", cursors.refresh);
+    d.defaultView?.addEventListener("resize", cursors.refollow);
     cursors.watchInput(d);
-    const pointer = trackPointer(d, (spot) =>
-      parent.postMessage({ type: "slashdocs:pointer", spot }, targetOrigin()),
+    const pointer = trackPointer(
+      d,
+      (spot) => parent.postMessage({ type: "slashdocs:pointer", spot }, targetOrigin()),
+      () => canvas.viewportCenter(),
     );
     if (canvasEnabled) canvas.start(d);
     else canvas.stop();
-    if (pointer) createCursorChat(d, pointer, () => cursorColor);
+    chat = pointer ? createCursorChat(d, pointer, () => cursorColor) : null;
     parent.postMessage({ type: "slashdocs:ready" }, targetOrigin());
     scheduleViewport();
     hydrateKV();
@@ -2061,6 +2067,8 @@ type Theme = "dark" | "light";
       canvas.watch(typeof e.data.id === "string" ? e.data.id : null);
     } else if (e.data.type === "slashdocs:canvas-place-mode") {
       canvas.setPlacing(e.data.on === true, false);
+    } else if (e.data.type === "slashdocs:open-cursor-chat") {
+      chat?.open();
     } else if (e.data.type === "slashdocs:clear-cursors") {
       cursors.clear();
     } else if (e.data.type === "slashdocs:follow-cursor") {
