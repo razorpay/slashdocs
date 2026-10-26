@@ -36,13 +36,53 @@ const PLACE_SLOP = 4;
 export const CLUSTER_RADIUS = 28;
 // A cluster click fits its pins with this much room around them.
 const CLUSTER_PADDING = 80;
+// The highest zoom canvases allow (the slash-canvas engine's limit). Pins
+// that stay within CLUSTER_RADIUS at this zoom fan out instead.
+const MAX_CANVAS_SCALE = 3;
+// A fanned cluster's pins sit on a ring about this far from its spot.
+const FAN_RADIUS = 26;
 const MAX_PINS = 500;
-// While placing, the cursor is a small pin whose tip (bottom left) marks the
-// spot, with a crosshair fallback.
+// While placing, the cursor is a pin of the same size and shape as the pins
+// it leaves, whose tip (bottom left) marks the spot, with a crosshair fallback.
 const PLACE_CURSOR = `url("data:image/svg+xml,${encodeURIComponent(
-  '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="M2 22V12a10 10 0 1 1 10 10z" fill="#2563eb" stroke="white" stroke-width="1.5"/><path d="M12 8v8M8 12h8" stroke="white" stroke-width="1.8" stroke-linecap="round"/></svg>',
-)}") 2 22, crosshair`;
-const PIN_SIZE = 32;
+  '<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><path d="M1 14A13 13 0 0 1 27 14A13 13 0 0 1 14 27H4A3 3 0 0 1 1 24Z" fill="#2563eb" stroke="white" stroke-width="2"/><path d="M14 9.5v9M9.5 14h9" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>',
+)}") 1 27, crosshair`;
+const PIN_SIZE = 28;
+// A drawn plus for a draft pin: a "+" glyph sits off its box's centre.
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+// plusIcon draws the "+" an unsent pin shows.
+function plusIcon(doc: Document): SVGSVGElement {
+  const svg = doc.createElementNS(SVG_NS, "svg");
+  for (const [k, v] of [
+    ["width", "12"],
+    ["height", "12"],
+    ["viewBox", "0 0 12 12"],
+    ["aria-hidden", "true"],
+  ])
+    svg.setAttribute(k, v);
+  const path = doc.createElementNS(SVG_NS, "path");
+  for (const [k, v] of [
+    ["d", "M6 1.5v9M1.5 6h9"],
+    ["stroke", "currentColor"],
+    ["stroke-width", "1.75"],
+    ["stroke-linecap", "round"],
+  ])
+    path.setAttribute(k, v);
+  svg.appendChild(path);
+  return svg;
+}
+
+// pinLabel names a pin for assistive tech.
+function pinLabel(pin: {
+  draft?: boolean;
+  resolved?: boolean;
+  replies: number;
+}): string {
+  if (pin.draft) return "Unsent comment";
+  const replies = pin.replies === 1 ? "1 reply" : `${pin.replies} replies`;
+  return `Comment${pin.resolved ? ", resolved" : ""}${pin.replies ? `, ${replies}` : ""}`;
+}
 
 // parseCanvasMeta reads the opt-in tag. Unknown keys are ignored; a missing
 // or oversized selector turns canvas mode off.
@@ -128,31 +168,37 @@ export function clusterPins<T extends { id: string; x: number; y: number }>(
   return clusters;
 }
 
+// One shape for pins and clusters: a 28px bubble with its tip at the bottom
+// left, a 2px white rim, a 24px face. Glyphs are centred on their cap height
+// (text-box), so initials, digits and "+" sit in the optical middle.
+const SHADOW =
+  "0 0 0 .5px rgba(0,0,0,.14),0 1px 2px rgba(0,0,0,.12),0 3px 8px rgba(0,0,0,.1)";
+const DARK_SHADOW =
+  "0 0 0 .5px rgba(255,255,255,.2),0 1px 2px rgba(0,0,0,.4),0 3px 8px rgba(0,0,0,.4)";
 const CSS = `
 .sd-pins{position:fixed;inset:0;pointer-events:none;z-index:2147483645;overflow:hidden}
-.sd-pin,.sd-cluster{all:unset;position:absolute;left:0;top:0;box-sizing:border-box;width:${PIN_SIZE}px;height:${PIN_SIZE}px;margin-top:-${PIN_SIZE}px;padding:3px;border-radius:50% 50% 50% 4px;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.08),0 2px 6px rgba(0,0,0,.16);pointer-events:auto;cursor:pointer;will-change:translate;transform-origin:0 100%;transition:box-shadow 150ms ease,scale 150ms cubic-bezier(.23,1,.32,1),opacity 150ms ease}
+.sd-pin,.sd-cluster{all:unset;position:absolute;left:0;top:0;box-sizing:border-box;width:${PIN_SIZE}px;height:${PIN_SIZE}px;margin-top:-${PIN_SIZE}px;padding:2px;border-radius:${PIN_SIZE / 2}px ${PIN_SIZE / 2}px ${PIN_SIZE / 2}px 3px;background:#fff;box-shadow:${SHADOW};pointer-events:auto;cursor:pointer;will-change:translate;transform-origin:0 100%;transition:box-shadow 150ms ease,scale 150ms cubic-bezier(.23,1,.32,1),opacity 150ms ease}
 .sd-pin:focus-visible,.sd-cluster:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
-.sd-pin>b,.sd-cluster>b{display:flex;align-items:center;justify-content:center;width:100%;height:100%;border-radius:50%;background:var(--c,#6366f1);color:#fff;font:600 10px/1 system-ui,-apple-system,sans-serif;letter-spacing:.02em}
-.sd-pin[data-active]{box-shadow:0 0 0 2px #fff,0 0 0 4px #2563eb,0 4px 12px rgba(37,99,235,.3)}
-.sd-pin[data-resolved]{opacity:.55}
+.sd-pin>b,.sd-cluster>b{display:grid;place-items:center;width:100%;height:100%;border-radius:50%;background:var(--c,#6366f1);color:#fff;font:600 11px/1 system-ui,-apple-system,sans-serif;font-variant-numeric:tabular-nums;text-box:trim-both cap alphabetic}
+.sd-cluster>b{background:#18181b}
+.sd-cluster[data-many]>b{font-size:9.5px;letter-spacing:-.02em}
+.sd-pin[data-active]{box-shadow:0 0 0 2px #fff,0 0 0 3.5px #2563eb,0 3px 10px rgba(37,99,235,.3)}
+.sd-pin[data-resolved]{opacity:.6}
 .sd-pin[data-resolved]>b{filter:saturate(.3)}
-.sd-pin[data-resolved]::after{content:"";position:absolute;right:-4px;bottom:-2px;width:14px;height:14px;border-radius:50%;background:#16a34a url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M4 7.2l2 2 4-4.4' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/14px no-repeat;box-shadow:0 0 0 2px #fff}
-.sd-pin[data-draft]>b{background:#fff;color:var(--c,#2563eb);box-shadow:inset 0 0 0 1.5px currentColor;font-size:16px;font-weight:500}
-.sd-pin>i{position:absolute;right:-6px;top:-6px;min-width:16px;height:16px;padding:0 4px;box-sizing:border-box;border-radius:8px;background:#18181b;color:#fff;font:600 10px/16px system-ui,-apple-system,sans-serif;font-style:normal;text-align:center;box-shadow:0 0 0 2px #fff}
-.sd-cluster{box-shadow:3px -3px 0 -1px #fff,3px -3px 0 0 rgba(0,0,0,.12),0 0 0 1px rgba(0,0,0,.08),0 2px 6px rgba(0,0,0,.16)}
-.sd-cluster>b{background:#18181b;font-size:11px}
-.sd-pin[data-pressed],.sd-cluster:active{scale:.96}
-.sd-pin[data-dragging]{cursor:grabbing;scale:1.1;transition:none;box-shadow:0 0 0 2px #fff,0 0 0 4px #2563eb,0 12px 24px rgba(0,0,0,.25)}
-@media (hover:hover) and (pointer:fine){.sd-pin:not([data-pressed]):not([data-dragging]):hover,.sd-cluster:hover{scale:1.06}}
-[data-theme=dark] .sd-pin,[data-theme=dark] .sd-cluster{background:#27272a;box-shadow:0 0 0 1px rgba(255,255,255,.14),0 2px 6px rgba(0,0,0,.5)}
-[data-theme=dark] .sd-cluster{box-shadow:3px -3px 0 -1px #27272a,3px -3px 0 0 rgba(255,255,255,.18),0 0 0 1px rgba(255,255,255,.14),0 2px 6px rgba(0,0,0,.5)}
-[data-theme=dark] .sd-cluster>b{background:#e4e4e7;color:#18181b}
-[data-theme=dark] .sd-pin[data-active]{box-shadow:0 0 0 2px #27272a,0 0 0 4px #60a5fa}
-[data-theme=dark] .sd-pin>i,[data-theme=dark] .sd-pin[data-resolved]::after{box-shadow:0 0 0 2px #27272a}
+.sd-pin[data-resolved]::after{content:"";position:absolute;right:-3px;bottom:-1px;width:12px;height:12px;border-radius:50%;background:#16a34a url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3.4 6.2l1.7 1.7 3.5-3.8' fill='none' stroke='white' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/12px no-repeat;box-shadow:0 0 0 1.5px #fff}
+.sd-pin[data-draft]>b{background:#fff;color:var(--c,#2563eb);box-shadow:inset 0 0 0 1.5px currentColor}
 [data-theme=dark] .sd-pin[data-draft]>b{background:#27272a}
+.sd-pin>i{position:absolute;right:-5px;top:-4px;display:grid;place-items:center;min-width:14px;height:14px;padding:0 3px;box-sizing:border-box;border-radius:7px;background:#ef4444;color:#fff;font:600 9px/1 system-ui,-apple-system,sans-serif;font-style:normal;font-variant-numeric:tabular-nums;text-box:trim-both cap alphabetic;box-shadow:0 0 0 1.5px #fff}
+.sd-pin[data-pressed],.sd-cluster:active{scale:.96}
+.sd-pin[data-dragging]{cursor:grabbing;scale:1.1;transition:none;box-shadow:0 0 0 2px #fff,0 0 0 3.5px #2563eb,0 10px 22px rgba(0,0,0,.22)}
+@media (hover:hover) and (pointer:fine){.sd-pin:not([data-pressed]):not([data-dragging]):hover,.sd-cluster:hover{scale:1.06}}
+[data-theme=dark] .sd-pin,[data-theme=dark] .sd-cluster{background:#27272a;box-shadow:${DARK_SHADOW}}
+[data-theme=dark] .sd-cluster>b{background:#e4e4e7;color:#18181b}
+[data-theme=dark] .sd-pin[data-active]{box-shadow:0 0 0 2px #27272a,0 0 0 3.5px #60a5fa}
+[data-theme=dark] .sd-pin>i,[data-theme=dark] .sd-pin[data-resolved]::after{box-shadow:0 0 0 1.5px #27272a}
 @media (prefers-reduced-motion:no-preference){.sd-pin[data-new]{animation:sd-pin-in 180ms cubic-bezier(.23,1,.32,1)}}
 @media (prefers-reduced-motion:reduce){.sd-pin,.sd-cluster{transition:none}}
-@keyframes sd-pin-in{from{opacity:0;scale:.8}}
+@keyframes sd-pin-in{from{opacity:0;scale:.9}}
 `;
 
 type Placed = { pin: CanvasPin; wx: number; wy: number };
@@ -177,6 +223,9 @@ function onPress(button: HTMLElement, action: () => void) {
 export type CanvasHost = {
   doc: () => Document | null;
   post: (message: Record<string, unknown>) => void;
+  // moved is told each frame the canvas pans or zooms, which moves no
+  // scroll position, so other overlays (live cursors) can follow at once.
+  moved?: () => void;
 };
 
 // createCanvasLayer runs canvas mode for one bridge. start enters it for a
@@ -229,6 +278,17 @@ export function createCanvasLayer(host: CanvasHost) {
   // The drag in progress, which the app can cancel when the pointer is let
   // go outside the frame, where the frame hears no release.
   let cancelDrag: (() => void) | null = null;
+  // The pin held down, from press to release. Its button must not be
+  // replaced meanwhile, or the capture, the drag and the click are lost, so
+  // a regroup asked for then waits for the release.
+  let holding: string | null = null;
+  let renderWaiting = false;
+  // A cluster whose pins sit too close to split by zooming, spread in a ring
+  // around its spot until the zoom or the pins change.
+  let fanned: Set<string> | null = null;
+  const fanOffset = new Map<string, { dx: number; dy: number }>();
+  // The zoom the fan opened at; another zoom closes it.
+  let fannedAt = "";
   // The pin the app shows a popover for, and its last reported rect.
   let watched: string | null = null;
   let lastRect = "";
@@ -242,17 +302,18 @@ export function createCanvasLayer(host: CanvasHost) {
   // camera gives the world's scale and on-screen origin, read live, so it is
   // right during animated moves too.
   function camera() {
-    const r = world!.getBoundingClientRect();
-    const s = world!.offsetWidth > 0 ? r.width / world!.offsetWidth : 1;
+    if (!world) return { left: 0, top: 0, s: 1 };
+    const r = world.getBoundingClientRect();
+    const s = world.offsetWidth > 0 ? r.width / world.offsetWidth : 1;
     return { left: r.left, top: r.top, s };
   }
 
   // worldPoint finds a pin's spot in untransformed world px, or null when its
   // target is not in this version.
   function worldPoint(p: PinPoint, cam: ReturnType<typeof camera>) {
-    if (!p.target)
-      return { wx: p.x * world!.offsetWidth, wy: p.y * world!.offsetHeight };
-    const el = world!.querySelector(`[data-slashdocs-target="${p.target}"]`);
+    if (!world) return null;
+    if (!p.target) return { wx: p.x * world.offsetWidth, wy: p.y * world.offsetHeight };
+    const el = world.querySelector(`[data-slashdocs-target="${p.target}"]`);
     if (!el) return null;
     const t = el.getBoundingClientRect();
     return {
@@ -268,7 +329,7 @@ export function createCanvasLayer(host: CanvasHost) {
     const results: { id: string; placed: boolean; label?: string }[] = [];
     for (const pin of pins) {
       const at = worldPoint(pin.point, cam);
-      results.push({ id: pin.id, placed: !!at, label: targetLabel(pin.point.target) });
+      results.push({ id: pin.id, placed: !!at });
       if (at && placed.length < MAX_PINS) placed.push({ pin, ...at });
     }
     host.post({ type: "slashdocs:canvas-pins-result", results });
@@ -277,10 +338,10 @@ export function createCanvasLayer(host: CanvasHost) {
   }
 
   function draw() {
-    if (!on()) return;
+    const view = d?.defaultView;
+    if (!view || !viewport || !world) return;
     const cam = camera();
-    const vr = viewport!.getBoundingClientRect();
-    const view = d!.defaultView!;
+    const vr = viewport.getBoundingClientRect();
     layer.style.clipPath = `inset(${Math.max(0, vr.top)}px ${Math.max(0, view.innerWidth - vr.right)}px ${Math.max(0, view.innerHeight - vr.bottom)}px ${Math.max(0, vr.left)}px)`;
     const key = `${cam.left.toFixed(1)},${cam.top.toFixed(1)},${cam.s.toFixed(4)}`;
     if (key === lastKey) {
@@ -288,6 +349,7 @@ export function createCanvasLayer(host: CanvasHost) {
       return;
     }
     stable = 0;
+    host.moved?.();
     const scaleChanged = !lastKey || lastKey.split(",")[2] !== cam.s.toFixed(4);
     lastKey = key;
     const screen = placed.map((p) => ({
@@ -296,9 +358,16 @@ export function createCanvasLayer(host: CanvasHost) {
       x: cam.left + p.wx * cam.s,
       y: cam.top + p.wy * cam.s,
     }));
-    // Clusters depend on zoom and the pins; regroup when either changes.
+    // Clusters depend on zoom and the pins; regroup when either changes. A
+    // fanned cluster closes when the zoom changes.
+    if (fanned && cam.s.toFixed(4) !== fannedAt) fanned = null;
     if (scaleChanged || layer.childElementCount === 0) render(screen);
-    const byId = new Map(screen.map((at) => [at.id, at]));
+    const byId = new Map(
+      screen.map((at) => {
+        const off = fanOffset.get(at.id);
+        return [at.id, off ? { ...at, x: at.x + off.dx, y: at.y + off.dy } : at];
+      }),
+    );
     for (const el of Array.from(layer.children) as HTMLElement[]) {
       const at = byId.get(el.dataset.id ?? "");
       // The translate property, not transform: the scale used for hover,
@@ -310,13 +379,28 @@ export function createCanvasLayer(host: CanvasHost) {
   }
 
   function render(screen: { id: string; p: Placed; x: number; y: number }[]) {
+    if (holding) {
+      renderWaiting = true;
+      return;
+    }
     const keep = new Set<string>(pins.filter((p) => p.draft).map((p) => p.id));
     if (active) keep.add(active);
     // Group every pin the same way whatever is open, then lift the open pin
     // and drafts out of their groups, so opening one does not regroup its
     // neighbours.
+    fanOffset.clear();
     const clusters = clusterPins(screen, CLUSTER_RADIUS).flatMap(
       ({ seed, members }) => {
+        const fan = fanned;
+        if (fan && members.length > 1 && members.every((m) => fan.has(m.id))) {
+          // Newest at the top, then round the ring clockwise.
+          const ring = FAN_RADIUS + members.length * 2;
+          members.forEach((m, i) => {
+            const a = -Math.PI / 2 + (i / members.length) * Math.PI * 2;
+            fanOffset.set(m.id, { dx: Math.cos(a) * ring, dy: Math.sin(a) * ring });
+          });
+          return members.map((m) => ({ seed: m, members: [m] }));
+        }
         const lifted = members.filter((m) => keep.has(m.id));
         if (!lifted.length) return [{ seed, members }];
         const rest = members.filter((m) => !keep.has(m.id));
@@ -341,6 +425,7 @@ export function createCanvasLayer(host: CanvasHost) {
               pin.resolved,
               pin.draft,
               pin.id === active,
+              fanOffset.has(pin.id),
             ].join(":"),
           )
           .join("+"),
@@ -349,6 +434,10 @@ export function createCanvasLayer(host: CanvasHost) {
     if (signature === lastSignature && layer.childElementCount > 0) return;
     lastSignature = signature;
     const next = new Set<string>();
+    // A rebuilt button takes the keyboard focus over from the old one.
+    const focused = layer.contains(document.activeElement)
+      ? (document.activeElement as HTMLElement).dataset.id
+      : undefined;
     layer.replaceChildren(
       ...clusters.map(({ seed, members }) => {
         if (members.length === 1) {
@@ -362,6 +451,10 @@ export function createCanvasLayer(host: CanvasHost) {
         );
       }),
     );
+    if (focused)
+      (Array.from(layer.children) as HTMLElement[])
+        .find((el) => el.dataset.id === focused)
+        ?.focus({ preventScroll: true });
     shown = next;
   }
 
@@ -376,7 +469,8 @@ export function createCanvasLayer(host: CanvasHost) {
     if (fresh) b.dataset.new = "";
     if (pin.color) b.style.setProperty("--c", pin.color);
     const face = document.createElement("b");
-    face.textContent = pin.draft ? "+" : pin.initials || "?";
+    if (pin.draft) face.appendChild(plusIcon(document));
+    else face.textContent = pin.initials || "?";
     b.appendChild(face);
     if (pin.replies > 0) {
       const count = document.createElement("i");
@@ -395,12 +489,7 @@ export function createCanvasLayer(host: CanvasHost) {
     b.addEventListener("pointerleave", () =>
       host.post({ type: "slashdocs:canvas-pin-hover", id: null }),
     );
-    b.setAttribute(
-      "aria-label",
-      pin.draft
-        ? "Unsent comment"
-        : `Comment${pin.resolved ? ", resolved" : ""}${pin.replies ? `, ${pin.replies} ${pin.replies === 1 ? "reply" : "replies"}` : ""}`,
-    );
+    b.setAttribute("aria-label", pinLabel(pin));
     // A press opens the thread (a draft pin reopens its unsent comment, for
     // example after a reload); a press that moves drags the pin.
     pressOrDrag(b, pin);
@@ -416,11 +505,26 @@ export function createCanvasLayer(host: CanvasHost) {
     // so a cluster never covers the pins around it.
     const count = document.createElement("b");
     count.textContent = members.length > 99 ? "99+" : String(members.length);
+    if (members.length > 99) b.dataset.many = "";
     b.appendChild(count);
     b.setAttribute("aria-label", `${members.length} comment threads`);
     onPress(b, () => {
       const xs = members.map((m) => m.wx);
       const ys = members.map((m) => m.wy);
+      // Pins this close stay one cluster even at the canvas's highest zoom,
+      // so spread them out instead of zooming.
+      const span = Math.max(
+        Math.max(...xs) - Math.min(...xs),
+        Math.max(...ys) - Math.min(...ys),
+      );
+      if (span * MAX_CANVAS_SCALE < CLUSTER_RADIUS) {
+        fanned = new Set(members.map((m) => m.pin.id));
+        fannedAt = camera().s.toFixed(4);
+        lastSignature = "";
+        lastKey = "";
+        schedule();
+        return;
+      }
       const pad = CLUSTER_PADDING / Math.max(camera().s, 0.05);
       focusRect({
         x: Math.min(...xs) - pad,
@@ -465,6 +569,10 @@ export function createCanvasLayer(host: CanvasHost) {
       e.preventDefault();
       e.stopPropagation();
       b.setPointerCapture(e.pointerId);
+      holding = pin.id;
+      // The pointer is captured from here, so the pin hears no leave: close
+      // its hover preview now, or it stays behind while the pin is dragged.
+      host.post({ type: "slashdocs:canvas-pin-hover", id: null });
       // Pressed look set here, not by :active, which sticks when the release
       // happens outside the frame.
       b.dataset.pressed = "";
@@ -477,6 +585,18 @@ export function createCanvasLayer(host: CanvasHost) {
       };
       let to: { x: number; y: number } | null = null;
       let done = false;
+      // Esc while dragging puts the pin back.
+      const key = (ev: KeyboardEvent) => {
+        if (ev.key !== "Escape" || !to) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        to = null;
+        finish();
+        layout();
+      };
+      const views: Window[] = [window];
+      if (d?.defaultView && d.defaultView !== window) views.push(d.defaultView);
+      for (const v of views) v.addEventListener("keydown", key, true);
       const move = (ev: PointerEvent) => {
         if (!pin.movable || !origin) return;
         const dx = ev.clientX - start.x;
@@ -511,16 +631,28 @@ export function createCanvasLayer(host: CanvasHost) {
       const finish = () => {
         if (done) return;
         done = true;
+        for (const v of views) v.removeEventListener("keydown", key, true);
+        if (b.hasPointerCapture(e.pointerId)) b.releasePointerCapture(e.pointerId);
         b.removeEventListener("pointermove", move);
         delete b.dataset.dragging;
         delete b.dataset.pressed;
+        holding = null;
+        const regroup = () => {
+          if (!renderWaiting) return;
+          renderWaiting = false;
+          lastSignature = "";
+          lastKey = "";
+          schedule();
+        };
         if (cancelDrag) {
           cancelDrag = null;
           host.post({ type: "slashdocs:canvas-dragging", on: false });
           if (to) drop(pin, to);
+          regroup();
           return;
         }
         host.post({ type: "slashdocs:activate", id: pin.id });
+        regroup();
       };
       b.addEventListener("pointermove", move);
       b.addEventListener("pointerup", finish, { once: true });
@@ -531,22 +663,18 @@ export function createCanvasLayer(host: CanvasHost) {
   // drop moves a pin to the spot under its point, or puts it back when that
   // is outside the canvas. The move shows at once; the app saves it.
   function drop(pin: CanvasPin, at: { x: number; y: number }) {
-    const vr = viewport!.getBoundingClientRect();
+    if (!d || !viewport) return;
+    const vr = viewport.getBoundingClientRect();
     const inside =
       at.x >= vr.left && at.x <= vr.right && at.y >= vr.top && at.y <= vr.bottom;
-    const point = inside ? anchorAt(at.x, at.y, d!.elementFromPoint(at.x, at.y)) : null;
+    const point = inside ? anchorAt(at.x, at.y, d.elementFromPoint(at.x, at.y)) : null;
     if (!point) {
       layout();
       return;
     }
     pins = pins.map((p) => (p.id === pin.id ? { ...p, point } : p));
     layout();
-    host.post({
-      type: "slashdocs:canvas-move",
-      id: pin.id,
-      point,
-      label: targetLabel(point.target),
-    });
+    host.post({ type: "slashdocs:canvas-move", id: pin.id, point });
   }
 
   function tick() {
@@ -560,18 +688,6 @@ export function createCanvasLayer(host: CanvasHost) {
     if (!on()) return;
     stable = 0;
     frame ||= requestAnimationFrame(tick);
-  }
-
-  // targetLabel names a target for the panel: its aria-label, else its first
-  // heading or bold text, else nothing (the panel then uses the id).
-  function targetLabel(target: string): string | undefined {
-    if (!target || !world) return undefined;
-    const el = world.querySelector(`[data-slashdocs-target="${target}"]`);
-    const text =
-      el?.getAttribute("aria-label") ||
-      el?.querySelector("h1,h2,h3,h4,h5,h6,b,strong")?.textContent ||
-      "";
-    return text.replace(/\s+/g, " ").trim().slice(0, 80) || undefined;
   }
 
   // focusRect asks the canvas to bring a world rect into view. It tells
@@ -598,7 +714,7 @@ export function createCanvasLayer(host: CanvasHost) {
     const p = placed.find((x) => x.pin.id === id);
     if (!p) return;
     const target = p.pin.point.target;
-    const el = target && world!.querySelector(`[data-slashdocs-target="${target}"]`);
+    const el = target && world?.querySelector(`[data-slashdocs-target="${target}"]`);
     if (el) {
       const cam = camera();
       const t = el.getBoundingClientRect();
@@ -617,15 +733,15 @@ export function createCanvasLayer(host: CanvasHost) {
   }
 
   function setPlacing(next: boolean, tell = true) {
-    if (!on() || placing === next) return;
+    if (!on() || !d || !current || placing === next) return;
     placing = next;
     placeStyle?.remove();
     placeStyle = null;
     if (placing) {
-      placeStyle = d!.createElement("style");
+      placeStyle = d.createElement("style");
       placeStyle.setAttribute("data-slashdocs-injected", "");
-      placeStyle.textContent = `${current!.viewport},${current!.viewport} *{cursor:${PLACE_CURSOR}!important;user-select:none!important}`;
-      d!.head.appendChild(placeStyle);
+      placeStyle.textContent = `${current.viewport},${current.viewport} *{cursor:${PLACE_CURSOR}!important;user-select:none!important}`;
+      d.head.appendChild(placeStyle);
     }
     if (tell) host.post({ type: "slashdocs:canvas-place-mode", on: placing });
   }
@@ -636,7 +752,8 @@ export function createCanvasLayer(host: CanvasHost) {
     const el = under?.closest?.("[data-slashdocs-target]");
     const id = el?.getAttribute("data-slashdocs-target") ?? "";
     const clamp = (n: number) => Math.round(Math.min(1, Math.max(0, n)) * 1e4) / 1e4;
-    if (el && world!.contains(el) && TARGET_ID.test(id)) {
+    if (!world) return null;
+    if (el && world.contains(el) && TARGET_ID.test(id)) {
       const r = el.getBoundingClientRect();
       if (r.width > 0 && r.height > 0)
         return {
@@ -645,8 +762,10 @@ export function createCanvasLayer(host: CanvasHost) {
           y: clamp((y - r.top) / r.height),
         };
     }
-    const w = world!.getBoundingClientRect();
+    const w = world.getBoundingClientRect();
     if (w.width <= 0 || w.height <= 0) return null;
+    // Off the board is nowhere: a pin there could only be clamped to an edge.
+    if (x < w.left || x > w.right || y < w.top || y > w.bottom) return null;
     return {
       target: "",
       x: clamp((x - w.left) / w.width),
@@ -681,12 +800,12 @@ export function createCanvasLayer(host: CanvasHost) {
     world = wd;
     current = config;
     layer.hidden = false;
-    const view = doc.defaultView!;
+    const view = doc.defaultView;
     observer = new MutationObserver(schedule);
     observer.observe(wd, { attributes: true, attributeFilter: ["style", "class"] });
     for (const type of ["transitionrun", "transitionend"])
       wd.addEventListener(type, schedule);
-    view.addEventListener("resize", layout);
+    view?.addEventListener("resize", layout);
     doc.addEventListener("scroll", schedule, { capture: true, passive: true });
     doc.addEventListener("wheel", schedule, { capture: true, passive: true });
     doc.addEventListener(
@@ -710,12 +829,7 @@ export function createCanvasLayer(host: CanvasHost) {
         const point = anchorAt(e.clientX, e.clientY, e.target as Element | null);
         e.preventDefault();
         e.stopImmediatePropagation();
-        if (point)
-          host.post({
-            type: "slashdocs:canvas-place",
-            point,
-            label: targetLabel(point.target),
-          });
+        if (point) host.post({ type: "slashdocs:canvas-place", point });
       },
       true,
     );
@@ -755,6 +869,13 @@ export function createCanvasLayer(host: CanvasHost) {
       // Pins that were there keep their place; new ones animate in.
       shown = new Set([...shown].filter((id) => before.has(id)));
       layout();
+    },
+    // viewportCenter is the middle of the canvas's viewport, which the
+    // canvas centers on when it follows a view, or null when not on.
+    viewportCenter() {
+      if (!on() || !viewport) return null;
+      const r = viewport.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
     },
     // releaseOutside puts a dragged pin back when the pointer was let go
     // outside the frame.

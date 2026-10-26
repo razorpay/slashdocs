@@ -10,8 +10,6 @@ export type CommentDraft = {
   // Empty for a pin on a canvas, which has anchor.point instead.
   quote: string;
   anchor?: Partial<Anchor>;
-  // The canvas's name for a pin's target.
-  label?: string;
   // Document offset of the selection, used until the highlight reports its
   // own position.
   top?: number;

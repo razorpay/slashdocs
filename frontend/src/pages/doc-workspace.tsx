@@ -9,6 +9,7 @@ import {
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { api, type AnchorPoint, type CommentMention, type Principal } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { useCommentDrafts } from "@/lib/comment-drafts";
@@ -133,7 +134,6 @@ export function DocWorkspace({
     useState<CommentFilter>(DEFAULT_COMMENT_FILTER);
   const [activeComment, setActiveComment] = useState<string>();
   const [canvasMode, setCanvasMode] = useState(false);
-  const [pinLabels, setPinLabels] = useState<ReadonlyMap<string, string>>(new Map());
   const [placingPin, setPlacingPin] = useState(false);
   const [unanchoredComments, setUnanchoredComments] = useState<ReadonlySet<string>>(
     new Set(),
@@ -216,8 +216,12 @@ export function DocWorkspace({
     const root = comments.data.items.find(
       (c) => c.id === linkedComment || c.replies?.some((r) => r.id === linkedComment),
     );
-    if (!root) return;
     handledCommentLink.current = key;
+    // A link to a deleted thread says so instead of doing nothing.
+    if (!root) {
+      toast("That comment was deleted or is no longer available.");
+      return;
+    }
     setCommentFilter(
       root.status === COMMENT_STATUS.resolved
         ? COMMENT_STATUS.resolved
@@ -361,14 +365,13 @@ export function DocWorkspace({
     [updateDrafts],
   );
   const moveDraft = useCallback(
-    (draftId: string, point: AnchorPoint, label?: string) =>
+    (draftId: string, point: AnchorPoint) =>
       updateDrafts((list) =>
         list.map((d) =>
           d.id === draftId
             ? {
                 ...d,
                 anchor: { ...d.anchor, kind: "point", point },
-                label,
                 updatedAt: Date.now(),
               }
             : d,
@@ -571,8 +574,6 @@ export function DocWorkspace({
       setPlacingPin,
       registerPinRevealer,
       revealPin,
-      pinLabels,
-      setPinLabels,
       pinsShown: isMobile || commentsOpen,
       moveDraft,
     }),
@@ -612,7 +613,6 @@ export function DocWorkspace({
       placingPin,
       registerPinRevealer,
       revealPin,
-      pinLabels,
       isMobile,
       commentsOpen,
       moveDraft,

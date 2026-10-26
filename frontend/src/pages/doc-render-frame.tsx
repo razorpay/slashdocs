@@ -26,6 +26,10 @@ const FORWARDED_KEYS = new Set<string>([
   ...CHORD_KEYS.map((item) => item.key),
 ]);
 const VIM_KEYS = new Set(["j", "k", "g", "G"]);
+// A pin's preview opens after the pointer rests this long, or at once when
+// another preview closed less than PREVIEW_WARM ago.
+const PREVIEW_DELAY = 300;
+const PREVIEW_WARM = 500;
 
 // Renders the sandboxed document iframe for the document page. useBridgeHost
 // serves the theme and KV; this adds comments, selection, zoom, and links.
@@ -58,7 +62,6 @@ export function RenderFrame() {
     placingPin,
     setPlacingPin,
     registerPinRevealer,
-    setPinLabels,
     pinsShown,
     setActiveComment,
     principal,
@@ -148,13 +151,9 @@ export function RenderFrame() {
   // through the API. A failed save puts the pin back on the next refresh.
   const queryClient = useQueryClient();
   const movePin = useCallback(
-    (id: string, point: AnchorPoint, label: unknown) => {
+    (id: string, point: AnchorPoint) => {
       if (drafts.some((d) => d.id === id)) {
-        moveDraft(
-          id,
-          point,
-          typeof label === "string" ? label.slice(0, 80) : undefined,
-        );
+        moveDraft(id, point);
         return;
       }
       api
@@ -186,7 +185,6 @@ export function RenderFrame() {
     lastUnanchored.current = key;
     setUnanchoredComments(new Set(ids));
   }, [setUnanchoredComments]);
-  const lastPinLabels = useRef("");
 
   useDocumentExport(ref, frameOrigin, ready, registerDocumentPrinter);
 
@@ -196,7 +194,6 @@ export function RenderFrame() {
     setUnanchoredComments(new Set());
     unplaced.current = { text: new Set(), pins: new Set() };
     lastUnanchored.current = "";
-    lastPinLabels.current = "";
     setCommentPositions(new Map());
     setCommentViewport({ scrollTop: 0, scrollHeight: 1 });
     setCanvasMode(false);
@@ -456,8 +453,20 @@ export function RenderFrame() {
         const rect = parsePinRect(e.data.rect);
         if (typeof e.data.id === "string" && rect) {
           const id = e.data.id.slice(0, 200);
-          hoverTimer.current = window.setTimeout(() => setHover({ id, rect }), 300);
-        } else setHover(undefined);
+          // Like tooltips: the first preview waits, so passing over pins
+          // shows nothing; once one has shown, the next opens at once.
+          if (performance.now() - previewSeen.current < PREVIEW_WARM)
+            setHover({ id, rect, instant: true });
+          else
+            hoverTimer.current = window.setTimeout(
+              () => setHover({ id, rect, instant: false }),
+              PREVIEW_DELAY,
+            );
+        } else
+          setHover((h) => {
+            if (h) previewSeen.current = performance.now();
+            return undefined;
+          });
       }
       if (e.data?.type === "slashdocs:canvas-place") {
         const p = e.data.point as Record<string, unknown> | undefined;
@@ -470,8 +479,6 @@ export function RenderFrame() {
               kind: "point",
               point: { target: p.target.slice(0, 128), x: p.x, y: p.y },
             },
-            label:
-              typeof e.data.label === "string" ? e.data.label.slice(0, 80) : undefined,
           });
       }
       // A pin dragged out of the frame is let go over the app, where the
@@ -486,11 +493,7 @@ export function RenderFrame() {
         const frac = (n: unknown): n is number =>
           typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 1;
         if (p && typeof p.target === "string" && frac(p.x) && frac(p.y))
-          movePin(
-            e.data.id,
-            { target: p.target.slice(0, 128), x: p.x, y: p.y },
-            e.data.label,
-          );
+          movePin(e.data.id, { target: p.target.slice(0, 128), x: p.x, y: p.y });
       }
       if (
         e.data?.type === "slashdocs:canvas-pins-result" &&
@@ -500,15 +503,6 @@ export function RenderFrame() {
         const results = (
           e.data.results as Array<{ id?: unknown; placed?: unknown }>
         ).slice(0, 10_000);
-        const labels = new Map<string, string>();
-        for (const r of results as Array<{ id?: unknown; label?: unknown }>)
-          if (r && typeof r.id === "string" && typeof r.label === "string")
-            labels.set(r.id, r.label.slice(0, 80));
-        const labelsKey = JSON.stringify([...labels]);
-        if (labelsKey !== lastPinLabels.current) {
-          lastPinLabels.current = labelsKey;
-          setPinLabels(labels);
-        }
         unplaced.current.pins = new Set(
           results
             .filter((r) => r && r.placed === false && typeof r.id === "string")
@@ -624,7 +618,6 @@ export function RenderFrame() {
     setCanvasMode,
     setPlacingPin,
     reportUnanchored,
-    setPinLabels,
     movePin,
   ]);
 
@@ -710,8 +703,10 @@ export function RenderFrame() {
     if (ready && canvasMode)
       postToFrame({ type: "slashdocs:canvas-watch", id: watchedId ?? null });
   }, [ready, canvasMode, watchedId, postToFrame]);
-  const [hover, setHover] = useState<{ id: string; rect: PinRect }>();
+  const [hover, setHover] = useState<{ id: string; rect: PinRect; instant: boolean }>();
   const hoverTimer = useRef<number | undefined>(undefined);
+  // When the last preview closed, to open the next one without waiting.
+  const previewSeen = useRef(-Infinity);
   useEffect(() => () => window.clearTimeout(hoverTimer.current), []);
   const hovered =
     hover && hover.id !== watchedId && comments.find((c) => c.id === hover.id);
@@ -806,7 +801,12 @@ export function RenderFrame() {
         />
       )}
       {hover && hovered && pinsShown && (
-        <PinPreview frameRef={ref} pin={hover.rect} comment={hovered} />
+        <PinPreview
+          frameRef={ref}
+          pin={hover.rect}
+          comment={hovered}
+          instant={hover.instant}
+        />
       )}
       {showZoomBadge && (
         <button

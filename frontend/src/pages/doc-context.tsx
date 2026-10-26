@@ -73,11 +73,8 @@ export type DocContextValue = {
   // Pins show while the comments panel does (always on mobile, where pins
   // open the sheet), and while placing one.
   pinsShown: boolean;
-  // The canvas's names for the targets of pinned comments, by comment id.
-  pinLabels: ReadonlyMap<string, string>;
-  setPinLabels: (labels: ReadonlyMap<string, string>) => void;
   // moveDraft moves an unsent pin comment to a new spot.
-  moveDraft: (id: string, point: AnchorPoint, label?: string) => void;
+  moveDraft: (id: string, point: AnchorPoint) => void;
   // revealPin brings a canvas comment's pin into view.
   registerPinRevealer: (reveal: ((id: string) => void) | null) => void;
   revealPin: (id: string) => void;

@@ -113,9 +113,20 @@ type Theme = "dark" | "light";
   // Canvas mode starts only after the app enables it, and only for documents
   // that opt in with the slashdocs:canvas meta tag.
   let canvasEnabled = false;
+  // A focused comment pin sits in this window, over the document, so its
+  // keys reach this window, not the document. Give them the document's
+  // shortcuts (Esc, C, the Esc chords) but leave the button its own keys.
+  let documentKeys: ((ev: KeyboardEvent) => void) | null = null;
+  document.addEventListener("keydown", (ev) => {
+    const target = ev.target as Element | null;
+    if (!target?.closest?.(".sd-pins")) return;
+    if (ev.key === "Enter" || ev.key === " " || ev.key === "Tab") return;
+    documentKeys?.(ev);
+  });
   const canvas = createCanvasLayer({
     doc,
     post: (message) => parent.postMessage(message, targetOrigin()),
+    moved: () => cursors.refresh(),
   });
   let kvRequestID = 0;
   const kvPending: Record<string, KVPendingRequest> = {};
@@ -1783,7 +1794,7 @@ type Theme = "dark" | "light";
           behavior,
         });
     };
-    d.addEventListener("keydown", (ev) => {
+    const onKey = (ev: KeyboardEvent) => {
       if (ev.key === "Escape") dismissSelectionAction();
       const modified = ev.metaKey || ev.ctrlKey || ev.altKey;
       // On a canvas, C without a selection toggles placing a comment pin,
@@ -1869,7 +1880,9 @@ type Theme = "dark" | "light";
         runVimScroll(vim.action, ev.repeat);
       }
       handleKVUndoRedoShortcut(ev);
-    });
+    };
+    d.addEventListener("keydown", onKey);
+    documentKeys = onKey;
     // Forward trackpad pinch-to-zoom (wheel + ctrlKey) to parent so the
     // app can scale only the document iframe instead of browser-zooming.
     d.addEventListener(
