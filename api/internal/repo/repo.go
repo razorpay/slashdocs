@@ -87,6 +87,28 @@ const (
 	DecisionChangesRequested = "changes_requested"
 )
 
+// Approval event types, one per kind of change to a document's approvals. A
+// rejection is the `changes_requested` decision. A new version is an event
+// because it can reset or carry approvals without any approval row changing.
+const (
+	ApprovalEventRequested      = "requested"
+	ApprovalEventRemoved        = "removed"
+	ApprovalEventApproved       = "approved"
+	ApprovalEventRejected       = "rejected"
+	ApprovalEventRevoked        = "revoked"
+	ApprovalEventVersionCreated = "version_created"
+)
+
+// ApprovalEvent says that something changed in a document's approvals. It
+// carries no names, notes or decisions: a reader learns that the document
+// changed and then reads its real state.
+type ApprovalEvent struct {
+	ID         int64  `json:"id"`
+	DocumentID string `json:"document_id"`
+	EventType  string `json:"event_type"`
+	CreatedAt  string `json:"created_at"`
+}
+
 type Document struct {
 	ID               string            `json:"id"`
 	Title            string            `json:"title"`
@@ -538,4 +560,9 @@ type Repository interface {
 	// for its current version. Documents without assigned approvers are absent
 	// from the result map.
 	DocumentApprovalSummaries(ctx context.Context, documentIDs []string) (map[string]ApprovalSummary, error)
+	// ListApprovalEvents returns up to limit events with an id above afterID,
+	// oldest first. Every change to a document's approvals (an approver assigned
+	// or removed, a decision made or revoked, a new version of a document with
+	// approvers) writes one in the same transaction as the change.
+	ListApprovalEvents(ctx context.Context, afterID int64, limit int32) ([]ApprovalEvent, error)
 }

@@ -335,6 +335,23 @@ slashdocs docs push <doc_id> <file> [--keep-approvals]
 - Viewing a historical version shows that version's approvals read-only.
 - Tab label includes count: "Approvals (2/3)".
 
+## Approval events
+
+Other systems need to know when a document's approvals change (for example a work tracker that files a review task per approver). Slashdocs records that in `approval_events`, an **insert-only log** written in the same transaction as the change, so a change and its event commit together or not at all.
+
+| Column        | Meaning                                                                                      |
+| ------------- | -------------------------------------------------------------------------------------------- |
+| `id`          | `BIGSERIAL` primary key. A reader keeps the last id it has seen as its cursor.               |
+| `document_id` | The document whose approvals changed (`ON DELETE CASCADE`).                                  |
+| `event_type`  | `requested` (approver assigned), `removed`, `approved`, `rejected`, `revoked`, `version_created`. |
+| `created_at`  | When the change was committed.                                                               |
+
+- **A signal, not a record.** A row carries no names, notes or decisions. A reader learns that the document changed and then reads its real state from the API; the approvals tables remain the history.
+- **`version_created`** is written only for a document that has approvers. A new version can reset or carry their approvals without any approval row changing, so it is an event of its own. Documents without approvers write nothing.
+- **Written at:** assigning an approver (`requested`), removing one (`removed`), a decision (`approved`, or `rejected` for the `changes_requested` decision; changing a decision writes another event), revoking it (`revoked`), and creating a version.
+- **Retention:** each write drops events older than 90 days, so the log stays bounded without a job.
+- **Reading it:** `Repository.ListApprovalEvents(afterID, limit)` returns events after a cursor, oldest first. How the events are delivered (a webhook worker, a feed endpoint, a change-data-capture connector reading the table) is a separate decision; the table is shaped for any of them. A connector should publish **inserts only** (a Postgres publication created `WITH (publish = 'insert')`), so the retention deletes are not emitted.
+
 ## Observability
 
 | Metric                              | Type    | Labels                       | Description                              |

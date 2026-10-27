@@ -119,6 +119,42 @@ func (q *Queries) HasActiveApprovalRequest(ctx context.Context, arg HasActiveApp
 	return exists, err
 }
 
+const insertApprovalEvent = `-- name: InsertApprovalEvent :exec
+INSERT INTO approval_events(document_id, event_type)
+VALUES($1, $2)
+`
+
+type InsertApprovalEventParams struct {
+	DocumentID string
+	EventType  string
+}
+
+func (q *Queries) InsertApprovalEvent(ctx context.Context, arg InsertApprovalEventParams) error {
+	_, err := q.db.Exec(ctx, insertApprovalEvent, arg.DocumentID, arg.EventType)
+	return err
+}
+
+const insertApprovalEventIfApprovers = `-- name: InsertApprovalEventIfApprovers :exec
+INSERT INTO approval_events(document_id, event_type)
+SELECT $1::text, $2::text
+WHERE EXISTS (
+  SELECT 1 FROM approval_requests
+  WHERE document_id = $1::text AND revoked_at IS NULL
+)
+`
+
+type InsertApprovalEventIfApproversParams struct {
+	DocumentID string
+	EventType  string
+}
+
+// A new version only matters to a document that has approvers: without them it
+// has no approval state to reset or carry.
+func (q *Queries) InsertApprovalEventIfApprovers(ctx context.Context, arg InsertApprovalEventIfApproversParams) error {
+	_, err := q.db.Exec(ctx, insertApprovalEventIfApprovers, arg.DocumentID, arg.EventType)
+	return err
+}
+
 const insertApprovalRequest = `-- name: InsertApprovalRequest :exec
 INSERT INTO approval_requests(id, document_id, approver_type, approver_id, requested_by_type, requested_by_id)
 VALUES($1, $2, $3, $4, $5, $6)
@@ -173,6 +209,45 @@ func (q *Queries) InsertCarriedApproval(ctx context.Context, arg InsertCarriedAp
 		arg.CarriedFromVersionID,
 	)
 	return err
+}
+
+const listApprovalEvents = `-- name: ListApprovalEvents :many
+SELECT id, document_id, event_type, created_at
+FROM approval_events
+WHERE id > $1
+ORDER BY id
+LIMIT $2
+`
+
+type ListApprovalEventsParams struct {
+	AfterID int64
+	MaxRows int32
+}
+
+// Events after a cursor, oldest first: the feed a reader pages through.
+func (q *Queries) ListApprovalEvents(ctx context.Context, arg ListApprovalEventsParams) ([]ApprovalEvent, error) {
+	rows, err := q.db.Query(ctx, listApprovalEvents, arg.AfterID, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ApprovalEvent
+	for rows.Next() {
+		var i ApprovalEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.DocumentID,
+			&i.EventType,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listApprovalRequests = `-- name: ListApprovalRequests :many
@@ -375,6 +450,15 @@ func (q *Queries) ListVersionApprovals(ctx context.Context, arg ListVersionAppro
 		return nil, err
 	}
 	return items, nil
+}
+
+const pruneApprovalEvents = `-- name: PruneApprovalEvents :exec
+DELETE FROM approval_events WHERE created_at < now() - interval '90 days'
+`
+
+func (q *Queries) PruneApprovalEvents(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, pruneApprovalEvents)
+	return err
 }
 
 const revokeApproval = `-- name: RevokeApproval :execrows

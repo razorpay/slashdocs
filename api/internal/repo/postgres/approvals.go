@@ -15,7 +15,13 @@ import (
 
 func (s *Store) CreateApprovalRequest(ctx context.Context, documentID string, approver, requestedBy auth.Principal) (repo.ApprovalRequest, error) {
 	id := newID("apr")
-	err := s.q.InsertApprovalRequest(ctx, dbsqlc.InsertApprovalRequestParams{
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return repo.ApprovalRequest{}, err
+	}
+	defer rollback(ctx, tx)
+	q := s.q.WithTx(tx)
+	err = q.InsertApprovalRequest(ctx, dbsqlc.InsertApprovalRequestParams{
 		ID:              id,
 		DocumentID:      documentID,
 		ApproverType:    string(approver.Type),
@@ -30,7 +36,44 @@ func (s *Store) CreateApprovalRequest(ctx context.Context, documentID string, ap
 		}
 		return repo.ApprovalRequest{}, err
 	}
+	if err := recordApprovalEvent(ctx, q, documentID, repo.ApprovalEventRequested); err != nil {
+		return repo.ApprovalRequest{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return repo.ApprovalRequest{}, err
+	}
 	return repo.ApprovalRequest{ID: id, DocumentID: documentID, Approver: approver, RequestedBy: requestedBy}, nil
+}
+
+// recordApprovalEvent writes one event for a change to a document's approvals,
+// in the transaction of the change, and drops events past their retention.
+func recordApprovalEvent(ctx context.Context, q *dbsqlc.Queries, documentID, eventType string) error {
+	if err := q.InsertApprovalEvent(ctx, dbsqlc.InsertApprovalEventParams{DocumentID: documentID, EventType: eventType}); err != nil {
+		return err
+	}
+	return q.PruneApprovalEvents(ctx)
+}
+
+// recordVersionEvent writes a `version_created` event for a document that has
+// approvers: a new version resets or carries their approvals, which no approval
+// row records. A document without approvers has nothing to tell.
+func recordVersionEvent(ctx context.Context, q *dbsqlc.Queries, documentID string) error {
+	if err := q.InsertApprovalEventIfApprovers(ctx, dbsqlc.InsertApprovalEventIfApproversParams{DocumentID: documentID, EventType: repo.ApprovalEventVersionCreated}); err != nil {
+		return err
+	}
+	return q.PruneApprovalEvents(ctx)
+}
+
+func (s *Store) ListApprovalEvents(ctx context.Context, afterID int64, limit int32) ([]repo.ApprovalEvent, error) {
+	rows, err := s.q.ListApprovalEvents(ctx, dbsqlc.ListApprovalEventsParams{AfterID: afterID, MaxRows: limit})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]repo.ApprovalEvent, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, repo.ApprovalEvent{ID: r.ID, DocumentID: r.DocumentID, EventType: r.EventType, CreatedAt: pgTimeRFC3339(r.CreatedAt)})
+	}
+	return out, nil
 }
 
 func (s *Store) ListApprovalRequests(ctx context.Context, documentID string) ([]repo.ApprovalRequest, error) {
@@ -72,6 +115,9 @@ func (s *Store) DeleteApprovalRequest(ctx context.Context, documentID, requestID
 	}); err != nil {
 		return err
 	}
+	if err := recordApprovalEvent(ctx, q, documentID, repo.ApprovalEventRemoved); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 
@@ -94,7 +140,13 @@ func (s *Store) CreateOrUpdateApproval(ctx context.Context, documentID, versionI
 	if !assigned {
 		return repo.Approval{}, false, repo.ErrForbidden
 	}
-	row, err := s.q.UpsertApproval(ctx, dbsqlc.UpsertApprovalParams{
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return repo.Approval{}, false, err
+	}
+	defer rollback(ctx, tx)
+	q := s.q.WithTx(tx)
+	row, err := q.UpsertApproval(ctx, dbsqlc.UpsertApprovalParams{
 		ID:           newID("apv"),
 		DocumentID:   documentID,
 		VersionID:    versionID,
@@ -104,6 +156,12 @@ func (s *Store) CreateOrUpdateApproval(ctx context.Context, documentID, versionI
 		Note:         note,
 	})
 	if err != nil {
+		return repo.Approval{}, false, err
+	}
+	if err := recordApprovalEvent(ctx, q, documentID, approvalDecisionEvent(decision)); err != nil {
+		return repo.Approval{}, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return repo.Approval{}, false, err
 	}
 	return repo.Approval{
@@ -128,14 +186,32 @@ func (s *Store) DeleteApproval(ctx context.Context, documentID, approvalID strin
 	if row.ApproverType != string(approver.Type) || row.ApproverID != approver.ID {
 		return repo.ErrForbidden
 	}
-	revoked, err := s.q.RevokeApproval(ctx, approvalID)
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer rollback(ctx, tx)
+	q := s.q.WithTx(tx)
+	revoked, err := q.RevokeApproval(ctx, approvalID)
 	if err != nil {
 		return err
 	}
 	if revoked == 0 {
 		return repo.ErrNotFound
 	}
-	return nil
+	if err := recordApprovalEvent(ctx, q, documentID, repo.ApprovalEventRevoked); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// approvalDecisionEvent is the event type for a decision. A rejection is the
+// `changes_requested` decision.
+func approvalDecisionEvent(decision string) string {
+	if decision == repo.DecisionChangesRequested {
+		return repo.ApprovalEventRejected
+	}
+	return repo.ApprovalEventApproved
 }
 
 func (s *Store) ListApprovals(ctx context.Context, documentID, versionID string) ([]repo.Approval, error) {
