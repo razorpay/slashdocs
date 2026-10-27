@@ -315,10 +315,8 @@ func TestPushKeepApprovalsFlag(t *testing.T) {
 	var got []string
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/documents/doc_1/versions", func(w http.ResponseWriter, r *http.Request) {
-		if err := r.ParseMultipartForm(1 << 20); err != nil {
-			t.Fatalf("parse multipart: %v", err)
-		}
-		got = append(got, r.FormValue("keep_approvals"))
+		requireMultipart(t, r)
+		got = append(got, strings.Join(r.MultipartForm.Value["keep_approvals"], ","))
 		writeTestJSON(t, w, map[string]any{"id": "ver_2", "number": 2, "sha256": "abc"})
 	})
 	srv := httptest.NewServer(mux)

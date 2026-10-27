@@ -494,6 +494,23 @@ func clearGrantedAccessRequests(ctx context.Context, tx pgx.Tx, resourceType, re
 	return err
 }
 
+// keepsApprovals decides whether a new version carries the base version's
+// approved decisions forward: when the publisher asked for it, or when nothing
+// changed (the same bytes as the base version).
+func keepsApprovals(ctx context.Context, q *dbsqlc.Queries, baseVersionID, newSHA256 string, asked bool) (bool, error) {
+	if asked {
+		return true, nil
+	}
+	base, err := q.GetVersion(ctx, baseVersionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return base.Sha256 == newSHA256, nil
+}
+
 func (s *Store) CreateVersion(ctx context.Context, documentID, baseVersionID, changeSummary string, html []byte, createdBy auth.Principal, keepApprovals bool) (repo.Version, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -536,13 +553,9 @@ func (s *Store) CreateVersion(ctx context.Context, documentID, baseVersionID, ch
 	// approvers who requested changes (or never decided) start pending on the
 	// new version either way.
 	carried := 0
-	keep := keepApprovals
-	if !keep {
-		base, baseErr := q.GetVersion(ctx, baseVersionID)
-		if baseErr != nil && !errors.Is(baseErr, pgx.ErrNoRows) {
-			return repo.Version{}, baseErr
-		}
-		keep = baseErr == nil && base.Sha256 == sum
+	keep, err := keepsApprovals(ctx, q, baseVersionID, sum, keepApprovals)
+	if err != nil {
+		return repo.Version{}, err
 	}
 	if keep {
 		carried, err = carryForwardApprovals(ctx, q, documentID, baseVersionID, id, createdBy)
