@@ -1278,8 +1278,8 @@ func (s *Store) UpdateComment(ctx context.Context, id string, update repo.Commen
 			return repo.Comment{}, err
 		}
 	}
-	comment.Body = effectiveBody
-	if update.Status != "" || bodyChanged {
+	comment.Body, comment.Edited = effectiveBody, comment.Edited || bodyChanged
+	if update.Status != "" {
 		updated, err := q.GetComment(ctx, id)
 		if err != nil {
 			return repo.Comment{}, err

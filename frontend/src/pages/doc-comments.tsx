@@ -69,6 +69,13 @@ import type { CommentDraft } from "@/lib/comment-drafts";
 import { useDoc } from "./doc-context";
 import { ReactionBar } from "./doc-comment-reactions";
 
+function submitOnModEnter(event: KeyboardEvent<HTMLTextAreaElement>) {
+  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+    event.preventDefault();
+    event.currentTarget.form?.requestSubmit();
+  }
+}
+
 function MentionTextarea({
   draft,
   onChange,
@@ -613,7 +620,7 @@ function CommentComposer({ draft }: { draft: CommentDraft }) {
       )}
       onSubmit={(event) => {
         event.preventDefault();
-        create.mutate();
+        if (text.body.trim() && !create.isPending) create.mutate();
       }}
     >
       {unanchoredComments.has(draft.id) && (
@@ -626,12 +633,7 @@ function CommentComposer({ draft }: { draft: CommentDraft }) {
         rows={3}
         draft={text}
         onChange={edit}
-        onKeyDown={(event) => {
-          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-            event.preventDefault();
-            if (text.body.trim() && !create.isPending) create.mutate();
-          }
-        }}
+        onKeyDown={submitOnModEnter}
         placeholder="Add a comment…"
       />
       <div className="flex justify-end gap-2">
@@ -1019,6 +1021,7 @@ function CommentCard({
     onSuccess: () => q.invalidateQueries({ queryKey: queryKeys.comments(docId) }),
     onError: (e) => toast.error(errorMessage(e, "Could not update comment")),
   });
+  const mine = samePrincipal(principal, c.author);
   const resolved = c.status === COMMENT_STATUS.resolved;
   const toggleActive = () => setActiveComment(active ? undefined : c.id);
   const replies = c.replies || [];
@@ -1097,14 +1100,8 @@ function CommentCard({
         <ReactionBar c={c} docId={docId}>
           {replies.length === 0 && replyButton}
           <CopyCommentLink commentId={c.id} />
-          {samePrincipal(principal, c.author) && !editing && (
-            <EditCommentButton onEdit={() => setEditing(true)} />
-          )}
-          <DeleteCommentButton
-            c={c}
-            docId={docId}
-            canDelete={samePrincipal(principal, c.author)}
-          />
+          {mine && !editing && <EditCommentButton onEdit={() => setEditing(true)} />}
+          <DeleteCommentButton c={c} docId={docId} canDelete={mine} />
           <Button
             variant="ghost"
             size="icon"
@@ -1137,7 +1134,7 @@ function CommentCard({
               key={r.id}
               r={r}
               docId={docId}
-              canDelete={samePrincipal(principal, r.author)}
+              mine={samePrincipal(principal, r.author)}
             >
               {index === replies.length - 1 && replyButton}
             </ReplyItem>
@@ -1160,12 +1157,12 @@ function CommentCard({
 function ReplyItem({
   r,
   docId,
-  canDelete,
+  mine,
   children,
 }: {
   r: Comment;
   docId: string;
-  canDelete: boolean;
+  mine: boolean;
   children?: ReactNode;
 }) {
   const [editing, setEditing] = useState(false);
@@ -1189,10 +1186,8 @@ function ReplyItem({
         <ReactionBar c={r} docId={docId}>
           {children}
           <CopyCommentLink commentId={r.id} />
-          {canDelete && !editing && (
-            <EditCommentButton onEdit={() => setEditing(true)} />
-          )}
-          <DeleteCommentButton c={r} docId={docId} canDelete={canDelete} />
+          {mine && !editing && <EditCommentButton onEdit={() => setEditing(true)} />}
+          <DeleteCommentButton c={r} docId={docId} canDelete={mine} />
         </ReactionBar>
       </div>
     </div>
@@ -1255,12 +1250,7 @@ function CommentEditForm({
         rows={3}
         draft={draft}
         onChange={setDraft}
-        onKeyDown={(event) => {
-          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-            event.preventDefault();
-            event.currentTarget.form?.requestSubmit();
-          }
-        }}
+        onKeyDown={submitOnModEnter}
       />
       <div className="mt-2 flex justify-end gap-2">
         <Button
@@ -1339,12 +1329,7 @@ function ReplyComposer({
         draft={draft}
         onChange={setDraft}
         placeholder="Reply…"
-        onKeyDown={(event) => {
-          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-            event.preventDefault();
-            event.currentTarget.form?.requestSubmit();
-          }
-        }}
+        onKeyDown={submitOnModEnter}
         className="min-h-9 text-sm"
       />
       <Button
