@@ -3,6 +3,7 @@ import {
   useId,
   type KeyboardEvent,
   type ReactNode,
+  type RefObject,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -14,7 +15,7 @@ import { useSearchParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { errorMessage } from "@/lib/errors";
-import { MessageSquareText, X } from "lucide-react";
+import { MessageSquareText, MessageSquarePlus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Center, EmptyState, Skeleton } from "@/components/ui/misc";
@@ -47,13 +48,13 @@ import type { CommentDraft } from "@/lib/comment-drafts";
 import { useDoc } from "./doc-context";
 import {
   ComposeField,
+  PersonAvatar,
+  useSelf,
   Message,
   MoreMenu,
-  PersonAvatar,
   ReplyRow,
   Replies,
   ResolveButton,
-  useSelf,
 } from "./doc-comment-parts";
 
 export function MentionTextarea({
@@ -396,7 +397,14 @@ export function Comments({ mobile = false }: { mobile?: boolean }) {
     setCommentFilter: setFilter,
     setActiveComment,
     scrollDocumentTo,
+    canvasMode,
+    placingPin,
+    setPlacingPin,
   } = useDoc();
+  // A canvas pans and zooms, so its threads are a plain list, as on mobile.
+  const list = mobile || canvasMode;
+  // A canvas pin's new comment opens beside the pin, not in the list.
+  const listDrafts = drafts.filter((draft) => !(canvasMode && draft.anchor?.point));
   const headerRef = useRef<HTMLDivElement>(null);
   const [headerHeight, setHeaderHeight] = useState(0);
 
@@ -444,11 +452,23 @@ export function Comments({ mobile = false }: { mobile?: boolean }) {
               {items.length}
             </span>
           )}
-          {notifications && (
-            <div className="ml-auto">
-              <NotificationToggle documentId={docId} />
-            </div>
-          )}
+          <div className="ml-auto flex items-center gap-1">
+            {canvasMode && (
+              <Button
+                type="button"
+                variant={placingPin ? "primary" : "ghost"}
+                size="sm"
+                aria-pressed={placingPin}
+                aria-keyshortcuts="C"
+                title={placingPin ? "Stop placing (Esc)" : "Comment on the canvas (C)"}
+                onClick={() => setPlacingPin(!placingPin)}
+              >
+                <MessageSquarePlus className="h-4 w-4" />
+                {placingPin ? "Click the canvas" : "Comment"}
+              </Button>
+            )}
+            {notifications && <NotificationToggle documentId={docId} />}
+          </div>
         </div>
         <div
           role="group"
@@ -473,14 +493,14 @@ export function Comments({ mobile = false }: { mobile?: boolean }) {
           ))}
         </div>
       </div>
-      {mobile ? (
+      {list ? (
         <div
           data-comment-scroll
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
         >
-          {drafts.length > 0 ? (
+          {listDrafts.length > 0 ? (
             <div className="space-y-3 p-4">
-              {drafts.map((draft) => (
+              {listDrafts.map((draft) => (
                 <CommentComposer key={draft.id} draft={draft} />
               ))}
             </div>
@@ -493,9 +513,9 @@ export function Comments({ mobile = false }: { mobile?: boolean }) {
           ) : commentsError ? (
             <Center>Could not load comments.</Center>
           ) : items.length === 0 ? (
-            drafts.length === 0 && (
+            listDrafts.length === 0 && (
               <div className="p-4">
-                <CommentsEmptyState filter={filter} />
+                <CommentsEmptyState filter={filter} canvas={canvasMode} />
               </div>
             )
           ) : (
@@ -515,7 +535,13 @@ export function Comments({ mobile = false }: { mobile?: boolean }) {
   );
 }
 
-function CommentsEmptyState({ filter }: { filter: CommentFilter }) {
+function CommentsEmptyState({
+  filter,
+  canvas = false,
+}: {
+  filter: CommentFilter;
+  canvas?: boolean;
+}) {
   return (
     <EmptyState
       icon={<MessageSquareText className="h-5 w-5" />}
@@ -529,7 +555,9 @@ function CommentsEmptyState({ filter }: { filter: CommentFilter }) {
       description={
         filter === COMMENT_STATUS.resolved
           ? "Resolved conversations will appear here."
-          : "Select text in the document to start a thread."
+          : canvas
+            ? "Press C, then click anywhere on the canvas."
+            : "Select text in the document to start a thread."
       }
     />
   );
@@ -539,7 +567,14 @@ function CommentsEmptyState({ filter }: { filter: CommentFilter }) {
 // keystroke does not re-render the whole page.
 const DRAFT_SAVE_DELAY = 300;
 
-function CommentComposer({ draft }: { draft: CommentDraft }) {
+export function CommentComposer({
+  draft,
+  compact = false,
+}: {
+  draft: CommentDraft;
+  // compact is the one-line box beside a new pin, as in Figma.
+  compact?: boolean;
+}) {
   const {
     docId,
     activeComment,
@@ -549,7 +584,7 @@ function CommentComposer({ draft }: { draft: CommentDraft }) {
     discardDraft,
   } = useDoc();
   const q = useQueryClient();
-  const formRef = useRef<HTMLDivElement>(null);
+  const formRef = useRef<HTMLElement>(null);
   const [text, setText] = useState<MentionDraft>(() => ({
     body: draft.body,
     mentions: draft.mentions,
@@ -604,11 +639,30 @@ function CommentComposer({ draft }: { draft: CommentDraft }) {
 
   const self = useSelf();
   const { quote } = draft;
+  const point = draft.anchor?.point;
+  if (compact)
+    return (
+      <div
+        ref={formRef as RefObject<HTMLDivElement>}
+        onFocusCapture={() => setActiveComment(draft.id)}
+        className="rounded-md bg-[var(--color-surface)] p-2 shadow-lg ring-1 ring-[var(--color-border)]"
+      >
+        <ComposeField
+          value={text}
+          onChange={edit}
+          onSubmit={() => create.mutate()}
+          pending={create.isPending}
+          placeholder="Add a comment…"
+          sendLabel="Post comment"
+          autoFocus
+        />
+      </div>
+    );
   // Laid out like a thread card: who is writing, what they picked, then the
   // same field and send button as a reply.
   return (
     <div
-      ref={formRef}
+      ref={formRef as RefObject<HTMLDivElement>}
       onFocusCapture={() => setActiveComment(draft.id)}
       onKeyDown={discardOnEscape}
       className={cn(
@@ -635,10 +689,10 @@ function CommentComposer({ draft }: { draft: CommentDraft }) {
         </div>
         {unanchoredComments.has(draft.id) && (
           <Badge variant="warning" className="ml-7 mt-1">
-            Text not found in this version
+            {point ? "Not on this version" : "Text not found in this version"}
           </Badge>
         )}
-        {quote ? (
+        {!point && quote ? (
           <blockquote className="ml-7 mt-1 rounded-r-md border-l-2 border-[var(--color-accent)] bg-[var(--color-surface-muted)] py-1.5 pl-2 pr-2 text-xs leading-relaxed break-words text-[var(--color-fg-muted)]">
             {quote.length > 160 ? quote.slice(0, 160) + "…" : quote}
           </blockquote>
@@ -977,7 +1031,7 @@ function MeasuredRailItem({
   );
 }
 
-function CommentCard({
+export function CommentCard({
   c,
   docId,
   autoReveal = true,
@@ -986,7 +1040,14 @@ function CommentCard({
   docId: string;
   autoReveal?: boolean;
 }) {
-  const { activeComment, setActiveComment, signIn, unanchoredComments } = useDoc();
+  const {
+    activeComment,
+    setActiveComment,
+    signIn,
+    unanchoredComments,
+    canvasMode,
+    revealPin,
+  } = useDoc();
   const cardRef = useRef<HTMLElement>(null);
   const active = activeComment === c.id;
   const [linkParams] = useSearchParams();
@@ -1004,9 +1065,14 @@ function CommentCard({
       target.getBoundingClientRect().top - container.getBoundingClientRect().top - 16;
   }, [active, autoReveal, linkedComment]);
   const resolved = c.status === COMMENT_STATUS.resolved;
-  const toggleActive = () => setActiveComment(active ? undefined : c.id);
-  // The reply field is always there on an open thread; on a resolved one,
-  // once the thread is picked.
+  // On a canvas, a second click on a thread goes back to its pin instead of
+  // closing it, since the reader may have moved away.
+  const toggleActive = () => {
+    if (active && canvasMode && c.anchor?.point) revealPin(c.id);
+    else setActiveComment(active ? undefined : c.id);
+  };
+  // The reply field is always there on an open thread and stays put: it
+  // never moves away when clicked.
   const showReply = !signIn && (!resolved || active);
   return (
     <article
@@ -1015,7 +1081,7 @@ function CommentCard({
       role="button"
       tabIndex={0}
       aria-current={active || undefined}
-      // A card: the thread's messages, then the reply field.
+      // A card like the thread beside a pin: messages, then the reply field.
       className={cn(
         "group cursor-pointer overflow-hidden rounded-xl bg-[var(--color-surface)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]",
         // Fill only, no stroke or shadow: the picked one gets a thin accent ring.
@@ -1023,7 +1089,10 @@ function CommentCard({
       )}
       onClick={toggleActive}
       onFocusCapture={(event) => {
-        if (event.target instanceof HTMLTextAreaElement) setActiveComment(c.id);
+        // Typing a reply marks the thread in a text document. On a canvas it
+        // would fly the canvas to the pin and open its popover mid-typing.
+        if (event.target instanceof HTMLTextAreaElement && !canvasMode)
+          setActiveComment(c.id);
       }}
       onKeyDown={(e) => {
         // Only toggle when the card itself is focused, not when typing in the
@@ -1038,7 +1107,9 @@ function CommentCard({
       <div className="px-3 py-3">
         {unanchoredComments.has(c.id) && (
           <Badge variant="warning" className="mb-2">
-            Highlight not currently visible
+            {c.anchor?.point
+              ? "Not on this version"
+              : "Highlight not currently visible"}
           </Badge>
         )}
         <Message

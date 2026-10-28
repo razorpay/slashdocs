@@ -13,6 +13,7 @@ import {
   highlightRange,
   refreshSVGRects,
 } from "./highlight.ts";
+import { createCanvasLayer, parsePins } from "./canvas.ts";
 import { createCursorLayer, trackPointer } from "./cursors.ts";
 import { CHORD_KEYS } from "../src/lib/esc-chord.ts";
 import {
@@ -109,6 +110,24 @@ type Theme = "dark" | "light";
   const appOrigin = window.__SLASHDOCS_APP_ORIGIN__ || "*";
   const frame = document.getElementById("slashdocs-doc") as HTMLIFrameElement;
   const cursors = createCursorLayer(doc);
+  // Canvas mode starts only after the app enables it, and only for documents
+  // that opt in with the slashdocs:canvas meta tag.
+  let canvasEnabled = false;
+  // A focused comment pin sits in this window, over the document, so its
+  // keys reach this window, not the document. Give them the document's
+  // shortcuts (Esc, C, the Esc chords) but leave the button its own keys.
+  let documentKeys: ((ev: KeyboardEvent) => void) | null = null;
+  document.addEventListener("keydown", (ev) => {
+    const target = ev.target as Element | null;
+    if (!target?.closest?.(".sd-pins")) return;
+    if (ev.key === "Enter" || ev.key === " " || ev.key === "Tab") return;
+    documentKeys?.(ev);
+  });
+  const canvas = createCanvasLayer({
+    doc,
+    post: (message) => parent.postMessage(message, targetOrigin()),
+    moved: () => cursors.refresh(),
+  });
   let kvRequestID = 0;
   const kvPending: Record<string, KVPendingRequest> = {};
   let githubRequestID = 0;
@@ -1192,6 +1211,7 @@ type Theme = "dark" | "light";
     if (t !== "dark" && t !== "light") return;
     curTheme = t;
     const d = doc();
+    canvas.setTheme(t);
     if (!d || !d.documentElement) return;
     for (const name of PUBLIC_NAMES) {
       d.documentElement.setAttribute(`data-${name}-theme`, t);
@@ -1774,9 +1794,26 @@ type Theme = "dark" | "light";
           behavior,
         });
     };
-    d.addEventListener("keydown", (ev) => {
+    const onKey = (ev: KeyboardEvent) => {
       if (ev.key === "Escape") dismissSelectionAction();
       const modified = ev.metaKey || ev.ctrlKey || ev.altKey;
+      // On a canvas, C without a selection toggles placing a comment pin,
+      // as in Figma, and Esc leaves it before any Esc chord.
+      if (canvas.isOn() && !modified && !isTextEditingTarget(ev.target)) {
+        if (ev.key === "Escape" && canvas.isPlacing()) {
+          ev.preventDefault();
+          canvas.setPlacing(false);
+          return;
+        }
+        // Only a C within the Esc chord's window belongs to the chord.
+        const inChord = chordArmedAt > 0 && Date.now() - chordArmedAt <= 800;
+        if (ev.key === "c" && !inChord && !selectedRange(d.getSelection())) {
+          chordArmedAt = 0;
+          ev.preventDefault();
+          canvas.setPlacing(!canvas.isPlacing());
+          return;
+        }
+      }
       // C comments on the selected text, as in Figma. Esc then C still
       // toggles the comments panel.
       if (
@@ -1843,7 +1880,9 @@ type Theme = "dark" | "light";
         runVimScroll(vim.action, ev.repeat);
       }
       handleKVUndoRedoShortcut(ev);
-    });
+    };
+    d.addEventListener("keydown", onKey);
+    documentKeys = onKey;
     // Forward trackpad pinch-to-zoom (wheel + ctrlKey) to parent so the
     // app can scale only the document iframe instead of browser-zooming.
     d.addEventListener(
@@ -1851,6 +1890,8 @@ type Theme = "dark" | "light";
       function (ev) {
         if (!ev.ctrlKey) return;
         ev.preventDefault();
+        // A canvas zooms itself; scaling the frame too would zoom twice.
+        if (canvas.isOn()) return;
         parent.postMessage(
           {
             type: "slashdocs:zoom",
@@ -1881,6 +1922,8 @@ type Theme = "dark" | "light";
     trackPointer(d, (spot) =>
       parent.postMessage({ type: "slashdocs:pointer", spot }, targetOrigin()),
     );
+    if (canvasEnabled) canvas.start(d);
+    else canvas.stop();
     parent.postMessage({ type: "slashdocs:ready" }, targetOrigin());
     scheduleViewport();
     hydrateKV();
@@ -1992,6 +2035,26 @@ type Theme = "dark" | "light";
       emitKVChange(e.data.detail || {});
     } else if (e.data.type === "slashdocs:cursor") {
       cursors.receive(e.data.cursor);
+    } else if (e.data.type === "slashdocs:canvas-enable") {
+      canvasEnabled = true;
+      const d = doc();
+      if (d && !canvas.isOn()) canvas.start(d);
+    } else if (e.data.type === "slashdocs:canvas-pins") {
+      canvas.setPins(
+        parsePins(e.data.pins),
+        typeof e.data.active === "string" ? e.data.active : undefined,
+      );
+    } else if (
+      e.data.type === "slashdocs:canvas-focus" &&
+      typeof e.data.id === "string"
+    ) {
+      canvas.focus(e.data.id);
+    } else if (e.data.type === "slashdocs:canvas-release-outside") {
+      canvas.releaseOutside();
+    } else if (e.data.type === "slashdocs:canvas-watch") {
+      canvas.watch(typeof e.data.id === "string" ? e.data.id : null);
+    } else if (e.data.type === "slashdocs:canvas-place-mode") {
+      canvas.setPlacing(e.data.on === true, false);
     } else if (e.data.type === "slashdocs:clear-cursors") {
       cursors.clear();
     } else if (e.data.type === "slashdocs:follow-cursor") {

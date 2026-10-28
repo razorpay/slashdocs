@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import type { Anchor, Comment, CursorSpot, Principal } from "@/api";
+import type { Anchor, AnchorPoint, Comment, CursorSpot, Principal } from "@/api";
 import type { CommentFilter } from "@/lib/constants";
 import type { CommentDraft } from "@/lib/comment-drafts";
 import type { CursorListener, DocumentKVListener } from "./use-document-stream";
@@ -10,6 +10,8 @@ export type PendingSelection = {
   quote: string;
   anchor?: Partial<Anchor>;
   top?: number;
+  // The canvas's name for a pin's target, such as a screen's title.
+  label?: string;
 };
 
 export type CommentPosition = {
@@ -64,6 +66,21 @@ export type DocContextValue = {
   // The cursor of the viewer the reader asked to go to. Each request is a new
   // object, so the same viewer can be followed again.
   followedCursor?: { session: string };
+  // The rendered document is a canvas with comment pins: the panel lists
+  // threads instead of lining them up beside highlights.
+  canvasMode: boolean;
+  setCanvasMode: (on: boolean) => void;
+  // Pins show while the comments panel does (always on mobile, where pins
+  // open the sheet), and while placing one.
+  pinsShown: boolean;
+  // moveDraft moves an unsent pin comment to a new spot.
+  moveDraft: (id: string, point: AnchorPoint) => void;
+  // revealPin brings a canvas comment's pin into view.
+  registerPinRevealer: (reveal: ((id: string) => void) | null) => void;
+  revealPin: (id: string) => void;
+  // The reader is placing a comment pin on the canvas.
+  placingPin: boolean;
+  setPlacingPin: (on: boolean) => void;
 };
 
 const DocContext = createContext<DocContextValue | null>(null);

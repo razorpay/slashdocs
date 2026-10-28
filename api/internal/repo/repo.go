@@ -308,6 +308,8 @@ type CommentUpdate struct {
 	Body     *string
 	Status   string
 	Mentions *[]CommentMention
+	// Anchor moves a pinned comment to a new spot. Callers validate it.
+	Anchor *Anchor
 }
 
 type DocumentKVSnapshot struct {

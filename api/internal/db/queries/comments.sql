@@ -66,6 +66,9 @@ UPDATE comments SET body=$1, edited=true WHERE id=$2;
 -- name: UpdateCommentStatus :exec
 UPDATE comments SET status=$1, resolved_at=CASE WHEN $1='resolved' THEN now() ELSE NULL END WHERE id=$2;
 
+-- name: UpdateCommentAnchor :exec
+UPDATE comments SET anchor_json=$1 WHERE id=$2;
+
 -- name: DeleteComment :exec
 DELETE FROM comments WHERE id=$1;
 

@@ -34,6 +34,7 @@ export type ServerConfig = {
   provider_name: string;
   google_groups_enabled: boolean;
   labels_enabled: boolean;
+  canvas_comments_enabled?: boolean;
 };
 export type GoogleGroup = { id: string; email: string; name: string };
 export type Version = {
@@ -65,7 +66,13 @@ export type Anchor = {
   dom_path?: string;
   start_offset?: number;
   end_offset?: number;
+  // "point" for a comment pinned on a canvas; absent for text.
+  kind?: string;
+  point?: AnchorPoint;
 };
+// A spot on a canvas: an element by its data-slashdocs-target value ("" for
+// the board itself) and fractions of its box.
+export type AnchorPoint = { target: string; x: number; y: number };
 // REACTION_EMOJI is the closed set the server accepts. Values are stable ASCII
 // slugs rather than literal emoji, so each client picks its own glyph.
 export const REACTION_EMOJI = [
@@ -116,6 +123,8 @@ export type CommentPatch = {
   body?: string;
   status?: string;
   mentions?: CommentMention[];
+  // Moves a pinned canvas comment to a new spot.
+  anchor?: { kind: "point"; point: AnchorPoint };
 };
 
 const COMMENT_MENTIONS_MEDIA_TYPE = "application/vnd.slashdocs.comment-mentions+json";
@@ -428,16 +437,19 @@ export const api = {
         version_id: version,
         body,
         mentions: mentionPayload(mentions),
-        // Use the anchor captured from the render bridge, falling back to a
-        // placeholder when the bridge supplied no selection offsets.
-        anchor: {
-          quote,
-          prefix: anchor?.prefix ?? "",
-          suffix: anchor?.suffix ?? "",
-          dom_path: anchor?.dom_path ?? "body",
-          start_offset: anchor?.start_offset ?? 0,
-          end_offset: anchor?.end_offset ?? quote.length,
-        },
+        // A canvas pin sends only its point. Text uses the anchor captured
+        // from the render bridge, falling back to a placeholder when the
+        // bridge supplied no selection offsets.
+        anchor: anchor?.point
+          ? { kind: "point", point: anchor.point }
+          : {
+              quote,
+              prefix: anchor?.prefix ?? "",
+              suffix: anchor?.suffix ?? "",
+              dom_path: anchor?.dom_path ?? "body",
+              start_offset: anchor?.start_offset ?? 0,
+              end_offset: anchor?.end_offset ?? quote.length,
+            },
       }),
     }),
   createCommentReply: (

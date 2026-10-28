@@ -9,7 +9,8 @@ import {
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
-import { api, type CommentMention, type Principal } from "@/api";
+import { toast } from "sonner";
+import { api, type AnchorPoint, type CommentMention, type Principal } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { useCommentDrafts } from "@/lib/comment-drafts";
 import { Center } from "@/components/ui/misc";
@@ -19,7 +20,7 @@ import { useTheme } from "@/lib/theme";
 import { useEscChord } from "@/lib/use-esc-chord";
 import { createPersistentStore } from "@/lib/persistent-store";
 import { cursorsShownStore } from "@/lib/live-cursors";
-import { isChordBlocked, type ChordKey } from "@/lib/esc-chord";
+import { CHORD_WINDOW_MS, isChordBlocked, type ChordKey } from "@/lib/esc-chord";
 import {
   COMMENT_STATUS,
   DEFAULT_COMMENT_FILTER,
@@ -41,6 +42,10 @@ const THEME_LABELS = { light: "Light", dark: "Dark", system: "System" } as const
 
 // The desktop comments panel stays as the reader left it, across documents
 // and visits. The mobile sheet always starts closed.
+// How long after a pin comment loses focus it is checked for being empty;
+// longer than the composer's save delay.
+const EMPTY_PIN_GRACE = 500;
+
 const commentsOpenStore = createPersistentStore<boolean>(
   "slashdocs:comments-open",
   true,
@@ -128,6 +133,8 @@ export function DocWorkspace({
   const [commentFilter, setCommentFilter] =
     useState<CommentFilter>(DEFAULT_COMMENT_FILTER);
   const [activeComment, setActiveComment] = useState<string>();
+  const [canvasMode, setCanvasMode] = useState(false);
+  const [placingPin, setPlacingPin] = useState(false);
   const [unanchoredComments, setUnanchoredComments] = useState<ReadonlySet<string>>(
     new Set(),
   );
@@ -155,6 +162,11 @@ export function DocWorkspace({
   const scrollDocumentTo = useCallback((top: number) => {
     documentScrollerRef.current?.(top);
   }, []);
+  const pinRevealerRef = useRef<((id: string) => void) | null>(null);
+  const registerPinRevealer = useCallback((reveal: ((id: string) => void) | null) => {
+    pinRevealerRef.current = reveal;
+  }, []);
+  const revealPin = useCallback((id: string) => pinRevealerRef.current?.(id), []);
   const commentRailSyncRef = useRef<((top: number) => void) | null>(null);
   const registerCommentRailSync = useCallback(
     (sync: ((top: number) => void) | null) => {
@@ -204,8 +216,12 @@ export function DocWorkspace({
     const root = comments.data.items.find(
       (c) => c.id === linkedComment || c.replies?.some((r) => r.id === linkedComment),
     );
-    if (!root) return;
     handledCommentLink.current = key;
+    // A link to a deleted thread says so instead of doing nothing.
+    if (!root) {
+      toast("That comment was deleted or is no longer available.");
+      return;
+    }
     setCommentFilter(
       root.status === COMMENT_STATUS.resolved
         ? COMMENT_STATUS.resolved
@@ -289,11 +305,21 @@ export function DocWorkspace({
       if (signIn) return signIn();
       let draftId = `draft:${crypto.randomUUID()}`;
       updateDrafts((list) => {
-        const same = list.find(
-          (draft) =>
-            draft.version === version &&
-            draft.quote === selection.quote &&
-            draft.anchor?.start_offset === selection.anchor?.start_offset,
+        // A pin draft is the same spot on the same target; a text draft is
+        // the same quote at the same offset.
+        const point = selection.anchor?.point;
+        const near = (a?: number, b?: number) =>
+          a !== undefined && b !== undefined && Math.abs(a - b) < 0.001;
+        const same = list.find((draft) =>
+          draft.version !== version
+            ? false
+            : point
+              ? draft.anchor?.point?.target === point.target &&
+                near(draft.anchor.point.x, point.x) &&
+                near(draft.anchor.point.y, point.y)
+              : !draft.anchor?.point &&
+                draft.quote === selection.quote &&
+                draft.anchor?.start_offset === selection.anchor?.start_offset,
         );
         if (same) {
           draftId = same.id;
@@ -338,6 +364,21 @@ export function DocWorkspace({
       ),
     [updateDrafts],
   );
+  const moveDraft = useCallback(
+    (draftId: string, point: AnchorPoint) =>
+      updateDrafts((list) =>
+        list.map((d) =>
+          d.id === draftId
+            ? {
+                ...d,
+                anchor: { ...d.anchor, kind: "point", point },
+                updatedAt: Date.now(),
+              }
+            : d,
+        ),
+      ),
+    [updateDrafts],
+  );
   const discardDraft = useCallback(
     (draftId: string) => {
       updateDrafts((list) => list.filter((d) => d.id !== draftId));
@@ -347,6 +388,36 @@ export function DocWorkspace({
     },
     [updateDrafts, peekDraft],
   );
+
+  const latestDrafts = useRef(drafts);
+  latestDrafts.current = drafts;
+  const activeCommentRef = useRef(activeComment);
+  activeCommentRef.current = activeComment;
+  // Empty pin comments left from an earlier visit go when the page opens;
+  // none of them is being written.
+  useEffect(() => {
+    for (const d of latestDrafts.current)
+      if (d.anchor?.point && !d.body.trim()) discardDraft(d.id);
+    // Only when a document opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docId]);
+  // A pin comment left empty goes away when the reader moves on, as in
+  // Figma. The check waits for the composer to save what it holds.
+  const previousActive = useRef(activeComment);
+  useEffect(() => {
+    const previous = previousActive.current;
+    previousActive.current = activeComment;
+    if (!previous || previous === activeComment) return;
+    window.setTimeout(() => {
+      const draft = latestDrafts.current.find((d) => d.id === previous);
+      if (
+        draft?.anchor?.point &&
+        !draft.body.trim() &&
+        previousActive.current !== previous
+      )
+        discardDraft(previous);
+    }, EMPTY_PIN_GRACE);
+  }, [activeComment, discardDraft]);
 
   const exitFullscreen = useCallback(() => {
     setSearchParams(
@@ -439,9 +510,20 @@ export function DocWorkspace({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
+  // The Esc that stops placing a pin only does that: it must not also close
+  // the thread a moment later, when the Esc chord gives up.
+  const placingEndedAt = useRef(0);
+  useEffect(() => {
+    if (placingPin) return;
+    placingEndedAt.current = Date.now();
+    // Stopping with an empty pin comment open closes it, and so it goes.
+    const draft = latestDrafts.current.find((d) => d.id === activeCommentRef.current);
+    if (draft?.anchor?.point && !draft.body.trim()) setActiveComment(undefined);
+  }, [placingPin]);
   const onBareEscape = useCallback(() => {
     if (fullscreen) exitFullscreen();
-    else setActiveComment(undefined);
+    else if (Date.now() - placingEndedAt.current > CHORD_WINDOW_MS + 200)
+      setActiveComment(undefined);
   }, [fullscreen, exitFullscreen]);
   const chord = useEscChord({
     available: chordKeys,
@@ -486,6 +568,14 @@ export function DocWorkspace({
       moveCursor: stream.moveCursor,
       subscribeCursors: stream.subscribeCursors,
       followedCursor,
+      canvasMode,
+      setCanvasMode,
+      placingPin,
+      setPlacingPin,
+      registerPinRevealer,
+      revealPin,
+      pinsShown: isMobile || commentsOpen,
+      moveDraft,
     }),
     [
       docId,
@@ -519,6 +609,13 @@ export function DocWorkspace({
       stream.moveCursor,
       stream.subscribeCursors,
       followedCursor,
+      canvasMode,
+      placingPin,
+      registerPinRevealer,
+      revealPin,
+      isMobile,
+      commentsOpen,
+      moveDraft,
     ],
   );
 
