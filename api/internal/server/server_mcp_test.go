@@ -23,6 +23,7 @@ var expectedMCPTools = []string{
 	"create_comment",
 	"create_document",
 	"create_folder",
+	"create_point_comment",
 	"create_service_account_transfer",
 	"decline_service_account_transfer",
 	"delete_comment",

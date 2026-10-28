@@ -50,6 +50,10 @@ type Config struct {
 	// programmatic users of server.New retain the existing feature set unless
 	// the application entrypoint explicitly disables labels.
 	DisableLabels bool
+	// DisableCanvasComments is a temporary rollout switch for point comments.
+	// It defaults to false so programmatic users of server.New get the feature
+	// unless the application entrypoint explicitly disables it.
+	DisableCanvasComments bool
 }
 
 // Server wraps the gin engine.
@@ -87,6 +91,7 @@ type dependencies struct {
 	googleGroupDirectory      googlegroups.GoogleGroupDirectory
 	googleGroupResolver       *googlegroups.Resolver
 	labelsEnabled             bool
+	canvasCommentsEnabled     bool
 }
 
 // Option configures the Server.
@@ -145,22 +150,23 @@ func (denyAllAuthenticator) Authenticate(_ *http.Request) (*auth.Principal, erro
 func New(cfg Config, opts ...Option) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	deps := dependencies{
-		authenticator:        denyAllAuthenticator{},
-		stateStore:           auth.NewStateStore(),
-		oidc:                 cfg.OIDC,
-		oidcProviderName:     cfg.OIDCProviderName,
-		sessionSecret:        cfg.SessionSecret,
-		appOrigin:            cfg.AppOrigin,
-		renderOrigin:         cfg.RenderOrigin,
-		allowedOAuthDomains:  cfg.AllowedOAuthDomains,
-		deployment:           cfg.Deployment,
-		orgName:              cfg.OrgName,
-		defaultDocPermission: cfg.DefaultDocPermission,
-		featured:             cfg.Featured,
-		githubHTTPClient:     http.DefaultClient,
-		githubAccessChecks:   new(singleflight.Group),
-		googleGroupsEnabled:  cfg.GoogleGroupsEnabled,
-		labelsEnabled:        !cfg.DisableLabels,
+		authenticator:         denyAllAuthenticator{},
+		stateStore:            auth.NewStateStore(),
+		oidc:                  cfg.OIDC,
+		oidcProviderName:      cfg.OIDCProviderName,
+		sessionSecret:         cfg.SessionSecret,
+		appOrigin:             cfg.AppOrigin,
+		renderOrigin:          cfg.RenderOrigin,
+		allowedOAuthDomains:   cfg.AllowedOAuthDomains,
+		deployment:            cfg.Deployment,
+		orgName:               cfg.OrgName,
+		defaultDocPermission:  cfg.DefaultDocPermission,
+		featured:              cfg.Featured,
+		githubHTTPClient:      http.DefaultClient,
+		githubAccessChecks:    new(singleflight.Group),
+		googleGroupsEnabled:   cfg.GoogleGroupsEnabled,
+		labelsEnabled:         !cfg.DisableLabels,
+		canvasCommentsEnabled: !cfg.DisableCanvasComments,
 	}
 	if cfg.GitHubClientID != "" && cfg.GitHubClientSecret != "" && cfg.AppOrigin != "" {
 		deps.githubOAuth = &oauth2.Config{

@@ -72,6 +72,8 @@ spec:
               value: {{ ternary "true" "false" .Values.googleGroups.enabled | quote }}
             - name: SLASHDOCS_LABELS_ENABLED
               value: {{ ternary "true" "false" .Values.features.labels | quote }}
+            - name: SLASHDOCS_CANVAS_COMMENTS_ENABLED
+              value: {{ ternary "true" "false" .Values.features.canvasComments | quote }}
             {{- if .Values.googleGroups.enabled }}
             - name: GOOGLE_GROUPS_CUSTOMER_ID
               value: {{ required "googleGroups.customerID is required" .Values.googleGroups.customerID | quote }}

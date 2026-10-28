@@ -544,6 +544,29 @@ func docsPushCmd(g *globals, out io.Writer) *cobra.Command {
 	return cmd
 }
 
+// commentCreateAnchor builds the anchor for `comments create`: a text anchor
+// from --quote, or a point anchor from --target/--x/--y. The two are exclusive.
+func commentCreateAnchor(cmd *cobra.Command, quote, prefix, suffix, target string, x, y float64) (map[string]any, error) {
+	f := cmd.Flags()
+	point := f.Changed("target") || f.Changed("x") || f.Changed("y")
+	if !point {
+		if quote == "" {
+			return nil, errors.New("--body (or --body-file), --version, and --quote are required (or --x and --y for a point comment)")
+		}
+		return map[string]any{"quote": quote, "prefix": prefix, "suffix": suffix}, nil
+	}
+	if quote != "" || prefix != "" || suffix != "" {
+		return nil, errors.New("--target/--x/--y cannot be combined with --quote, --prefix, or --suffix")
+	}
+	if !f.Changed("x") || !f.Changed("y") {
+		return nil, errors.New("a point comment needs both --x and --y")
+	}
+	if x < 0 || x > 1 || y < 0 || y > 1 {
+		return nil, errors.New("--x and --y must be between 0 and 1")
+	}
+	return map[string]any{"kind": "point", "point": map[string]any{"target": target, "x": x, "y": y}}, nil
+}
+
 func commentsCmd(g *globals, out io.Writer) *cobra.Command {
 	c := &cobra.Command{Use: "comments", Short: "Manage document review comments"}
 
@@ -567,7 +590,8 @@ func commentsCmd(g *globals, out io.Writer) *cobra.Command {
 	list.Flags().StringVar(&listStatus, "status", "", "filter by thread status: open, resolved, orphaned or all")
 	list.Flags().StringVar(&listVersion, "version", "", "filter by version ID")
 
-	var createBody, createQuote, createPrefix, createSuffix, createVersion string
+	var createBody, createQuote, createPrefix, createSuffix, createVersion, createTarget string
+	var createX, createY float64
 	var createMentions []string
 	var createBodyFile string
 	create := &cobra.Command{Use: "create <doc_id>", Short: "Create a document comment", Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
@@ -576,11 +600,15 @@ func commentsCmd(g *globals, out io.Writer) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		if createBody == "" || createVersion == "" || createQuote == "" {
-			return errors.New("--body (or --body-file), --version, and --quote are required")
+		anchor, err := commentCreateAnchor(cmd, createQuote, createPrefix, createSuffix, createTarget, createX, createY)
+		if err != nil {
+			return err
+		}
+		if createBody == "" || createVersion == "" {
+			return errors.New("--body (or --body-file) and --version are required")
 		}
 		return action(g, out, func(c *Client) ([]byte, error) {
-			return c.commentJSON("POST", apiPath("/v1/documents/%s/comments", args[0]), map[string]any{"body": createBody, "version_id": createVersion, "anchor": map[string]any{"quote": createQuote, "prefix": createPrefix, "suffix": createSuffix}}, createMentions, false)
+			return c.commentJSON("POST", apiPath("/v1/documents/%s/comments", args[0]), map[string]any{"body": createBody, "version_id": createVersion, "anchor": anchor}, createMentions, false)
 		}, func(m map[string]any) string {
 			return "Added comment " + fmt.Sprint(value(m, "id")) + " on " + args[0] + "."
 		})
@@ -591,6 +619,9 @@ func commentsCmd(g *globals, out io.Writer) *cobra.Command {
 	create.Flags().StringVar(&createQuote, "quote", "", "anchor: the exact quoted text")
 	create.Flags().StringVar(&createPrefix, "prefix", "", "anchor: text immediately before the quote")
 	create.Flags().StringVar(&createSuffix, "suffix", "", "anchor: text immediately after the quote")
+	create.Flags().StringVar(&createTarget, "target", "", "point anchor: data-slashdocs-target of the canvas element to pin on (omit to pin on the board); needs --x and --y")
+	create.Flags().Float64Var(&createX, "x", 0, "point anchor: horizontal position as a fraction of the target, 0 to 1")
+	create.Flags().Float64Var(&createY, "y", 0, "point anchor: vertical position as a fraction of the target, 0 to 1")
 	create.Flags().StringVar(&createVersion, "version", "", "version ID the comment anchors to")
 
 	var replyBody string

@@ -45,13 +45,14 @@ type discoveryAuth struct {
 
 // configResponse is the payload of GET /v1/config.
 type configResponse struct {
-	Deployment           string `json:"deployment"`
-	OrgName              string `json:"org_name"`
-	EveryoneLabel        string `json:"everyone_label"`
-	ProviderName         string `json:"provider_name"`
-	DefaultDocPermission string `json:"default_doc_permission"`
-	GoogleGroupsEnabled  bool   `json:"google_groups_enabled"`
-	LabelsEnabled        bool   `json:"labels_enabled"`
+	Deployment            string `json:"deployment"`
+	OrgName               string `json:"org_name"`
+	EveryoneLabel         string `json:"everyone_label"`
+	ProviderName          string `json:"provider_name"`
+	DefaultDocPermission  string `json:"default_doc_permission"`
+	GoogleGroupsEnabled   bool   `json:"google_groups_enabled"`
+	LabelsEnabled         bool   `json:"labels_enabled"`
+	CanvasCommentsEnabled bool   `json:"canvas_comments_enabled"`
 }
 
 // meResponse is the payload of GET /v1/me. Exactly one of User and
@@ -476,13 +477,14 @@ func (h handlers) config(c *gin.Context) {
 		deployment = DeploymentPublic
 	}
 	c.JSON(http.StatusOK, configResponse{
-		Deployment:           deployment,
-		OrgName:              h.deps.orgName,
-		EveryoneLabel:        everyoneLabel(deployment, h.deps.orgName),
-		ProviderName:         defaultProviderName(h.deps.oidcProviderName),
-		DefaultDocPermission: defaultDocPermissionLabel(h.deps.defaultDocPermission),
-		GoogleGroupsEnabled:  h.deps.googleGroupsEnabled,
-		LabelsEnabled:        h.deps.labelsEnabled,
+		Deployment:            deployment,
+		OrgName:               h.deps.orgName,
+		EveryoneLabel:         everyoneLabel(deployment, h.deps.orgName),
+		ProviderName:          defaultProviderName(h.deps.oidcProviderName),
+		DefaultDocPermission:  defaultDocPermissionLabel(h.deps.defaultDocPermission),
+		GoogleGroupsEnabled:   h.deps.googleGroupsEnabled,
+		LabelsEnabled:         h.deps.labelsEnabled,
+		CanvasCommentsEnabled: h.deps.canvasCommentsEnabled,
 	})
 }
 

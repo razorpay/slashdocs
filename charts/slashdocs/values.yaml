@@ -82,9 +82,12 @@ deployment:
   featured: ""
 
 # Feature rollout switches. Labels are temporarily disabled by default; set
-# labels to true to re-enable them.
+# labels to true to re-enable them. Canvas comments (point comments pinned to a
+# spot on a canvas) are disabled by default; set canvasComments to true to
+# enable them.
 features:
   labels: false
+  canvasComments: false
 
 # Kubernetes Deployment rollout strategy. Keep RollingUpdate normally. The
 # structured-mentions upgrade documented in docs/self-hosting.md requires one

@@ -33,6 +33,7 @@ func registerMCPDocumentTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 	registerMCPDocumentMoveTool(server, api)
 	registerMCPVersionTools(server, api)
 	registerMCPCommentTools(server, api)
+	registerMCPPointCommentTool(server, api)
 	registerMCPCommentMutationTools(server, api)
 	registerMCPDocumentAccessTools(server, api)
 }
@@ -338,6 +339,44 @@ func registerMCPCommentTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 		return api.json(ctx, http.MethodPost, "/v1/documents/"+doc+"/comments/"+comment+"/replies", map[string]any{"body": body}, mcpParams("id", doc, "comment_id", comment), api.handlers.createCommentReply)
 	})
 
+}
+
+// registerMCPPointCommentTool adds create_point_comment as its own tool so the
+// schema of create_comment, which clients cache, stays unchanged.
+func registerMCPPointCommentTool(server *mcpserver.MCPServer, api mcpAPIAdapter) {
+	server.AddTool(mcp.NewTool("create_point_comment", mutationOptions(false, false,
+		mcp.WithDescription("Create a review comment pinned to a spot on a canvas: an element by its data-slashdocs-target value (omit target to pin on the board itself) and x, y fractions of that element's box."),
+		mcpDocumentID(), mcpVersionID(true),
+		mcp.WithString("body", mcp.Required(), mcp.Description("Comment text.")),
+		mcp.WithString("target", mcp.Description("Value of the element's data-slashdocs-target attribute. Omit to pin on the board itself.")),
+		mcp.WithNumber("x", mcp.Required(), mcp.Min(0), mcp.Max(1), mcp.Description("Horizontal position as a fraction of the target's box, 0 (left) to 1 (right).")),
+		mcp.WithNumber("y", mcp.Required(), mcp.Min(0), mcp.Max(1), mcp.Description("Vertical position as a fraction of the target's box, 0 (top) to 1 (bottom).")),
+	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		doc, invalid := mcpRequired(request, "document_id")
+		if invalid != nil {
+			return invalid, nil
+		}
+		version, invalid := mcpRequired(request, "version_id")
+		if invalid != nil {
+			return invalid, nil
+		}
+		body, invalid := mcpRequired(request, "body")
+		if invalid != nil {
+			return invalid, nil
+		}
+		x, err := request.RequireFloat("x")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		y, err := request.RequireFloat("y")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		payload := map[string]any{"version_id": version, "body": body, "anchor": map[string]any{
+			"kind": "point", "point": map[string]any{"target": request.GetString("target", ""), "x": x, "y": y},
+		}}
+		return api.json(ctx, http.MethodPost, "/v1/documents/"+doc+"/comments", payload, mcpParams("id", doc), api.handlers.createComment)
+	})
 }
 
 func registerMCPCommentMutationTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
