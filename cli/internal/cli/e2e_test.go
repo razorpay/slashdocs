@@ -61,6 +61,56 @@ func e2eMux(t *testing.T) *http.ServeMux {
 		w.Header().Set("Content-Type", "text/html")
 		writeTestString(t, w, "<h1>ok</h1>")
 	})
+	mux.HandleFunc("/v1/documents/doc_1/approvers", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			var in map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			if in["address"] == nil && in["principal"] == nil {
+				t.Fatalf("approver create sent no principal or address: %#v", in)
+			}
+			writeTestJSON(t, w, map[string]any{"id": "apr_new", "document_id": "doc_1", "approver": map[string]any{"type": "user", "id": "usr_2", "email": "rev@example.com"}})
+			return
+		}
+		writeTestJSON(t, w, map[string]any{"items": []any{map[string]any{"id": "apr_1", "document_id": "doc_1", "approver": map[string]any{"type": "user", "id": "usr_2", "email": "rev@example.com"}}}})
+	})
+	mux.HandleFunc("/v1/documents/doc_1/approvers/apr_1", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "DELETE" {
+			w.WriteHeader(405)
+			return
+		}
+		w.WriteHeader(204)
+	})
+	mux.HandleFunc("/v1/documents/doc_1/approvals", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			var in map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			if in["version_id"] != "ver_1" {
+				t.Fatalf("approval used wrong version payload: %#v", in)
+			}
+			if in["decision"] != "approved" && in["decision"] != "changes_requested" {
+				t.Fatalf("approval sent bad decision: %#v", in)
+			}
+			writeTestJSON(t, w, map[string]any{"id": "apv_new", "document_id": "doc_1", "version_id": "ver_1", "decision": in["decision"]})
+			return
+		}
+		writeTestJSON(t, w, map[string]any{
+			"version_id": "ver_1",
+			"status":     "pending",
+			"summary":    map[string]any{"total": 1, "approved": 1, "changes_requested": 0, "pending": 0},
+			"items": []any{map[string]any{
+				"id":       "apv_1",
+				"approver": map[string]any{"type": "user", "id": "usr_1", "email": "me@example.com"},
+				"decision": "approved",
+			}},
+		})
+	})
+	mux.HandleFunc("/v1/documents/doc_1/approvals/apv_1", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "DELETE" {
+			w.WriteHeader(405)
+			return
+		}
+		w.WriteHeader(204)
+	})
 	mux.HandleFunc("/v1/documents/doc_1/comments", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "POST" {
 			var in map[string]any
@@ -162,7 +212,7 @@ func TestCLICommandsE2E(t *testing.T) {
 	html := filepath.Join(t.TempDir(), "x.html")
 	writeTestFile(t, html, []byte("<h1>x</h1>"))
 	out := filepath.Join(t.TempDir(), "out.html")
-	cmds := [][]string{{"auth", "whoami"}, {"docs", "list"}, {"docs", "list", `incident from:alice@example.com label:api,review in:"Product Specs"`}, {"docs", "labels", "list", "doc_1"}, {"docs", "labels", "set", "doc_1", "API,review"}, {"docs", "labels", "clear", "doc_1"}, {"docs", "create", html}, {"docs", "show", "doc_1"}, {"docs", "update", "doc_1", "--title", "New"}, {"docs", "versions", "list", "doc_1"}, {"docs", "versions", "show", "doc_1", "ver_1"}, {"docs", "versions", "html", "doc_1", "ver_1"}, {"docs", "pull", "doc_1", "--out", out}, {"docs", "push", "doc_1", html}, {"docs", "comments", "list", "doc_1"}, {"docs", "comments", "create", "doc_1", "--body", "hi", "--quote", "x", "--version", "ver_1"}, {"docs", "comments", "reply", "doc_1", "cmt_1", "--body", "reply"}, {"docs", "comments", "update", "doc_1", "cmt_1", "--status", "resolved"}, {"docs", "comments", "update", "doc_1", "cmt_1", "--body", "revised"}, {"docs", "comments", "delete", "doc_1", "cmt_1"}, {"docs", "comments", "resolve", "doc_1", "cmt_1"}, {"docs", "comments", "reopen", "doc_1", "cmt_1"}, {"docs", "grants", "list", "doc_1"}, {"docs", "grants", "add", "doc_1", "--principal", "user:a@b.com", "--role", "viewer"}, {"docs", "grants", "update", "doc_1", "gr_1", "--role", "editor"}, {"docs", "grants", "revoke", "doc_1", "gr_1"}, {"sa", "list"}, {"sa", "create", "bot"}, {"sa", "update", "sa_1", "--disable"}, {"sa", "key", "list", "sa_1"}, {"sa", "key", "create", "sa_1"}, {"sa", "key", "revoke", "sa_1", "sak_1"}, {"sa", "transfer", "sa_1", "--to", "new@example.com"}, {"sa", "transfers", "list"}, {"sa", "transfer", "accept", "xfer_1"}, {"sa", "transfer", "decline", "xfer_1"}, {"context", "list"}, {"context", "use", srv.URL}, {"skills", "update"}, {"open", "doc_1"}}
+	cmds := [][]string{{"auth", "whoami"}, {"docs", "list"}, {"docs", "list", `incident from:alice@example.com label:api,review in:"Product Specs"`}, {"docs", "labels", "list", "doc_1"}, {"docs", "labels", "set", "doc_1", "API,review"}, {"docs", "labels", "clear", "doc_1"}, {"docs", "create", html}, {"docs", "show", "doc_1"}, {"docs", "update", "doc_1", "--title", "New"}, {"docs", "versions", "list", "doc_1"}, {"docs", "versions", "show", "doc_1", "ver_1"}, {"docs", "versions", "html", "doc_1", "ver_1"}, {"docs", "pull", "doc_1", "--out", out}, {"docs", "push", "doc_1", html}, {"docs", "comments", "list", "doc_1"}, {"docs", "comments", "create", "doc_1", "--body", "hi", "--quote", "x", "--version", "ver_1"}, {"docs", "comments", "reply", "doc_1", "cmt_1", "--body", "reply"}, {"docs", "comments", "update", "doc_1", "cmt_1", "--status", "resolved"}, {"docs", "comments", "update", "doc_1", "cmt_1", "--body", "revised"}, {"docs", "comments", "delete", "doc_1", "cmt_1"}, {"docs", "comments", "resolve", "doc_1", "cmt_1"}, {"docs", "comments", "reopen", "doc_1", "cmt_1"}, {"docs", "grants", "list", "doc_1"}, {"docs", "grants", "add", "doc_1", "--principal", "user:a@b.com", "--role", "viewer"}, {"docs", "grants", "update", "doc_1", "gr_1", "--role", "editor"}, {"docs", "grants", "revoke", "doc_1", "gr_1"}, {"sa", "list"}, {"sa", "create", "bot"}, {"sa", "update", "sa_1", "--disable"}, {"sa", "key", "list", "sa_1"}, {"sa", "key", "create", "sa_1"}, {"sa", "key", "revoke", "sa_1", "sak_1"}, {"sa", "transfer", "sa_1", "--to", "new@example.com"}, {"sa", "transfers", "list"}, {"sa", "transfer", "accept", "xfer_1"}, {"sa", "transfer", "decline", "xfer_1"}, {"docs", "approvers", "list", "doc_1"}, {"docs", "approvers", "add", "doc_1", "--to", "rev@example.com"}, {"docs", "approvers", "remove", "doc_1", "apr_1"}, {"docs", "approvals", "list", "doc_1"}, {"docs", "approvals", "list", "doc_1", "--version", "ver_1"}, {"docs", "approve", "doc_1", "--version", "ver_1"}, {"docs", "request-changes", "doc_1", "--version", "ver_1", "--note", "needs a rollback plan"}, {"docs", "revoke-approval", "doc_1", "--version", "ver_1"}, {"context", "list"}, {"context", "use", srv.URL}, {"skills", "update"}, {"open", "doc_1"}}
 	for _, c := range cmds {
 		t.Run(strings.Join(c, " "), func(t *testing.T) {
 			if _, err := Execute(c); err != nil {
@@ -208,6 +258,11 @@ func TestCommandOutputsAreConversational(t *testing.T) {
 		{[]string{"docs", "grants", "add", "doc_1", "--to", "a@b.com", "--role", "viewer"}, []string{"Shared", "a@b.com", "viewer"}},
 		{[]string{"docs", "grants", "add", "doc_1", "--everyone", "--role", "viewer"}, []string{"Shared", "viewer"}},
 		{[]string{"docs", "grants", "revoke", "doc_1", "gr_1"}, []string{"Revoked grant", "gr_1"}},
+		{[]string{"docs", "approvers", "add", "doc_1", "--to", "rev@example.com"}, []string{"Assigned", "rev@example.com", "approver"}},
+		{[]string{"docs", "approvers", "remove", "doc_1", "apr_1"}, []string{"Removed approver", "apr_1"}},
+		{[]string{"docs", "approve", "doc_1", "--version", "ver_1"}, []string{"Approved", "ver_1", "doc_1"}},
+		{[]string{"docs", "request-changes", "doc_1", "--version", "ver_1", "--note", "needs a rollback plan"}, []string{"Requested changes", "ver_1"}},
+		{[]string{"docs", "revoke-approval", "doc_1", "--version", "ver_1"}, []string{"Revoked your decision", "ver_1"}},
 		{[]string{"sa", "update", "sa_1", "--disable"}, []string{"Disabled service account", "sa_1"}},
 		{[]string{"sa", "key", "create", "sa_1"}, []string{"Created key", "Copy this key"}},
 		{[]string{"sa", "key", "revoke", "sa_1", "sak_1"}, []string{"Revoked key", "sak_1"}},
@@ -251,6 +306,37 @@ func TestJSONOutputStaysMachineReadable(t *testing.T) {
 	var m map[string]any
 	if json.Unmarshal([]byte(got), &m) != nil {
 		t.Fatalf("--json output is not valid JSON: %q", got)
+	}
+}
+
+// TestPushKeepApprovalsFlag locks in that approvals are kept only when asked:
+// a plain push sends no keep_approvals field, and --keep-approvals sends it.
+func TestPushKeepApprovalsFlag(t *testing.T) {
+	var got []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/documents/doc_1/versions", func(w http.ResponseWriter, r *http.Request) {
+		requireMultipart(t, r)
+		got = append(got, strings.Join(r.MultipartForm.Value["keep_approvals"], ","))
+		writeTestJSON(t, w, map[string]any{"id": "ver_2", "number": 2, "sha256": "abc"})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	t.Setenv("SLASHDOCS_TOKEN", "tok")
+	t.Setenv("SLASHDOCS_SERVER", srv.URL)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	html := filepath.Join(t.TempDir(), "x.html")
+	writeTestFile(t, html, []byte("<h1>x</h1>"))
+
+	for _, args := range [][]string{
+		{"docs", "push", "doc_1", html, "--base-version", "ver_1"},
+		{"docs", "push", "doc_1", html, "--base-version", "ver_1", "--keep-approvals"},
+	} {
+		if _, err := Execute(args); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+	}
+	if len(got) != 2 || got[0] != "" || got[1] != "true" {
+		t.Fatalf("keep_approvals sent = %q, want [\"\" \"true\"]", got)
 	}
 }
 

@@ -42,6 +42,17 @@ definitions:
       suffix:
         type: string
     type: object
+  repo.ApprovalSummary:
+    properties:
+      approved:
+        type: integer
+      changes_requested:
+        type: integer
+      pending:
+        type: integer
+      total:
+        type: integer
+    type: object
   repo.CLICredential:
     properties:
       id:
@@ -51,6 +62,13 @@ definitions:
     type: object
   repo.Document:
     properties:
+      approval_status:
+        description: |-
+          ApprovalStatus and ApprovalSummary are handler-populated (like
+          ParentFolder) and only present when the document has assigned approvers.
+        type: string
+      approval_summary:
+        $ref: '#/definitions/repo.ApprovalSummary'
       current_version_id:
         type: string
       id:
@@ -166,6 +184,94 @@ definitions:
       number:
         type: integer
       sha256:
+        type: string
+    type: object
+  server.approvalListItem:
+    properties:
+      approver:
+        $ref: '#/definitions/server.principalResponse'
+      carried_from_version_id:
+        type: string
+      carried_from_version_number:
+        description: |-
+          CarriedFromVersionNumber is the display number of the version that
+          received the explicit decision, so the UI can say "Approved on v3"
+          instead of an opaque ID. Zero when the decision is not carried.
+        type: integer
+      comments_open:
+        description: |-
+          CommentsOpen and CommentsTotal count the comment threads this approver
+          started on the document, so a request for changes can say "2 open of 3".
+        type: integer
+      comments_total:
+        type: integer
+      created_version:
+        description: |-
+          CreatedVersion is true when the approver created a version of this
+          document. They cannot decide on it, so the document waits for the owner
+          to replace them.
+        type: boolean
+      decided_at:
+        type: string
+      decision:
+        type: string
+      id:
+        type: string
+      note:
+        type: string
+    type: object
+  server.approvalRequestResponse:
+    properties:
+      approver:
+        $ref: '#/definitions/server.principalResponse'
+      document_id:
+        type: string
+      id:
+        type: string
+      requested_by:
+        $ref: '#/definitions/server.requestedByJSON'
+    type: object
+  server.approvalResponse:
+    properties:
+      approver:
+        $ref: '#/definitions/server.principalResponse'
+      carried_from_version_id:
+        type: string
+      decided_at:
+        type: string
+      decision:
+        type: string
+      document_id:
+        type: string
+      id:
+        type: string
+      note:
+        type: string
+      version_id:
+        type: string
+      version_number:
+        description: |-
+          VersionNumber and VersionSHA256 name the exact content the decision was
+          made on.
+        type: integer
+      version_sha256:
+        type: string
+    type: object
+  server.approvalsListResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/server.approvalListItem'
+        type: array
+      status:
+        type: string
+      summary:
+        $ref: '#/definitions/repo.ApprovalSummary'
+      version_id:
+        type: string
+      version_number:
+        type: integer
+      version_sha256:
         type: string
     type: object
   server.cliExchangePrincipal:
@@ -562,6 +668,13 @@ definitions:
           $ref: '#/definitions/repo.Version'
         type: array
     type: object
+  server.listResponse-server_approvalRequestResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/server.approvalRequestResponse'
+        type: array
+    type: object
   server.listResponse-server_commentResponse:
     properties:
       items:
@@ -646,6 +759,13 @@ definitions:
       token:
         type: string
       url:
+        type: string
+    type: object
+  server.requestedByJSON:
+    properties:
+      email:
+        type: string
+      id:
         type: string
     type: object
   server.serviceAccountKey:
@@ -1036,6 +1156,147 @@ paths:
       summary: Request access to a document
       tags:
       - documents
+  /v1/documents/{id}/approvals:
+    get:
+      description: Per-approver decisions for a version (current version by default),
+        merged with pending approvers, plus the derived aggregate status.
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Version ID (defaults to the current version)
+        in: query
+        name: version
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/server.approvalsListResponse'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: List decisions and aggregate status
+      tags:
+      - approvals
+    post:
+      description: Records the caller's decision on the latest version. Submitting
+        again replaces the previous decision for that version. A request for changes
+        needs a note unless the caller has open comment threads on the document (the
+        comments say what to change). Returns 403 when the caller created a version
+        of the document (nobody approves their own work) and 409 when a newer version
+        exists.
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/server.approvalResponse'
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/server.approvalResponse'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Submit or update a decision
+      tags:
+      - approvals
+  /v1/documents/{id}/approvals/{approval_id}:
+    delete:
+      description: Removes the caller's decision on a version, returning them to pending.
+        Assignment is unaffected.
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Approval ID
+        in: path
+        name: approval_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Revoke own decision
+      tags:
+      - approvals
+  /v1/documents/{id}/approvers:
+    get:
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/server.listResponse-server_approvalRequestResponse'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: List assigned approvers
+      tags:
+      - approvals
+    post:
+      description: Assigns a user or service account as an approver. The approver
+        must already have at least viewer access on the document, and must not have
+        created a version of it.
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/server.approvalRequestResponse'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Assign an approver
+      tags:
+      - approvals
+  /v1/documents/{id}/approvers/{approver_id}:
+    delete:
+      description: Removes the assignment and revokes all of that approver's decisions
+        on the document.
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Approval request ID
+        in: path
+        name: approver_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Remove an approver
+      tags:
+      - approvals
   /v1/documents/{id}/comments:
     get:
       parameters:
@@ -1464,6 +1725,12 @@ paths:
       - description: Change summary
         in: formData
         name: change_summary
+        type: string
+      - description: Set to true to carry approved decisions forward to the new version.
+          By default a change of content resets every approval; re-uploading identical
+          content always keeps them.
+        in: formData
+        name: keep_approvals
         type: string
       - description: HTML file
         in: formData

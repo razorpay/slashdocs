@@ -43,7 +43,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetTrigger } from "@/components/ui/sheet";
 import { DeleteDocumentDialog } from "@/components/delete-document-dialog";
-import { api, type Principal, type Version } from "@/api";
+import {
+  api,
+  type Principal,
+  type Version,
+  type ApprovalStatus,
+  type ApprovalSummary,
+} from "@/api";
 import { canManageSharing, ROLE_RANK } from "@/lib/constants";
 import { changeSummaryLines } from "@/lib/change-summary";
 import { formatTimestamp } from "@/lib/format-date";
@@ -51,6 +57,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import { cursorsShownStore } from "@/lib/live-cursors";
 import { principalColor, samePrincipal } from "@/lib/principals";
 import { ShareSheet } from "./doc-share-sheet";
+import { ApprovalsDialog } from "./doc-approvals";
 import { useDoc } from "./doc-context";
 import { UploadVersionMenuItem, UploadVersionSheet } from "./doc-upload-version";
 import type { Viewer } from "./use-document-stream";
@@ -74,6 +81,8 @@ export function DocBar({
   commentsOpen,
   onToggleComments,
   onShowShortcuts,
+  approvalStatus,
+  approvalSummary,
   shareOpen,
   onShareOpenChange,
 }: {
@@ -93,6 +102,8 @@ export function DocBar({
   commentsOpen: boolean;
   onToggleComments: () => void;
   onShowShortcuts: () => void;
+  approvalStatus?: ApprovalStatus;
+  approvalSummary?: ApprovalSummary;
   shareOpen: boolean;
   onShareOpenChange: (open: boolean) => void;
 }) {
@@ -148,6 +159,12 @@ export function DocBar({
         )
       }
     >
+      <ApprovalsDialog
+        status={approvalStatus}
+        approved={approvalSummary?.approved}
+        total={approvalSummary?.total}
+        isOwner={canManage}
+      />
       <Viewers viewers={viewers} versions={versions} onFollow={onFollowViewer} />
       {viewers.length ? <CursorsToggle /> : null}
       {isViewingOlder ? (

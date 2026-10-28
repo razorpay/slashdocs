@@ -37,6 +37,11 @@ func docsCmd(g *globals, out io.Writer) *cobra.Command {
 		commentsCmd(g, out),
 		documentLabelsCmd(g, out),
 		grantsCmd(g, out),
+		approversCmd(g, out),
+		approvalsCmd(g, out),
+		decisionCmd(g, out, "approve", "Approve a document version", "approved", "Approved"),
+		decisionCmd(g, out, "request-changes", "Request changes on a document version", "changes_requested", "Requested changes on"),
+		revokeApprovalCmd(g, out),
 	)
 	return c
 }
@@ -507,6 +512,7 @@ func recordBaseVersion(g *globals, docID, versionID string) error {
 
 func docsPushCmd(g *globals, out io.Writer) *cobra.Command {
 	var base, summary string
+	var keepApprovals bool
 	cmd := &cobra.Command{Use: "push <doc_id> <file>", Short: "Upload a new document version", Example: "  slashdocs docs push doc_123 report.html --base-version ver_123\n  slashdocs docs push doc_123 report.html --summary 'Address comments'", Args: exactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 		doc, file := args[0], args[1]
 		data, fn, err := readFileArg(file)
@@ -524,7 +530,11 @@ func docsPushCmd(g *globals, out io.Writer) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		b, err := cl.multipart(apiPath("/v1/documents/%s/versions", doc), map[string]string{"base_version_id": base, "change_summary": summary}, "file", fn, data)
+		fields := map[string]string{"base_version_id": base, "change_summary": summary}
+		if keepApprovals {
+			fields["keep_approvals"] = "true"
+		}
+		b, err := cl.multipart(apiPath("/v1/documents/%s/versions", doc), fields, "file", fn, data)
 		if err != nil {
 			return err
 		}
@@ -541,6 +551,7 @@ func docsPushCmd(g *globals, out io.Writer) *cobra.Command {
 	}}
 	cmd.Flags().StringVar(&base, "base-version", "", "base version ID")
 	cmd.Flags().StringVar(&summary, "summary", "", "change summary, one change per line")
+	cmd.Flags().BoolVar(&keepApprovals, "keep-approvals", false, "carry approved decisions forward to the new version; by default a change of content resets them and every approver reviews again (identical content always keeps them)")
 	return cmd
 }
 

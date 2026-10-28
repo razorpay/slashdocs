@@ -150,4 +150,8 @@ grafana.dashboard.new('slashdocs App Overview')
     prom('histogram_quantile(0.50, sum(rate(slashdocs_mcp_request_duration_seconds_bucket[$__rate_interval])) by (le, method))', 'p50 {{method}}'),
     prom('histogram_quantile(0.95, sum(rate(slashdocs_mcp_request_duration_seconds_bucket[$__rate_interval])) by (le, method))', 'p95 {{method}}'),
   ], 's', 3),
+
+  timeseries('Approval events', 0, 72, 12, 8, [
+    prom('sum(rate(slashdocs_approval_events_total[$__rate_interval])) by (event, decision, actor_type)', '{{event}} {{decision}} {{actor_type}}'),
+  ], 'ops', 2),
 ])
