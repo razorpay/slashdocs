@@ -156,25 +156,48 @@ export function DocumentPage() {
     });
   }, [latest, current]);
 
-  // Show the version another viewer reads, at their cursor, or else at the
-  // passage they look at.
+  // Show the version another viewer reads, and follow their cursor, or else
+  // show the passage they look at. Choosing the followed viewer again stops.
   const cursorsShown = cursorsShownStore.useStore();
   const [followedCursor, setFollowedCursor] = useState<{ session: string }>();
   const { cursorVersion } = stream;
+  const unfollow = useCallback(() => setFollowedCursor(undefined), []);
   const followViewer = useCallback(
     (viewer: Viewer) => {
+      if (followedCursor?.session === viewer.session) {
+        setFollowedCursor(undefined);
+        return;
+      }
       const version = cursorsShown && cursorVersion(viewer.session);
       if (version) {
         setSelectedVersion(version);
         setFollowedCursor({ session: viewer.session });
         return;
       }
+      setFollowedCursor(undefined);
       if (viewer.version) setSelectedVersion(viewer.version);
       const hash = textLinkFragment(viewer.anchor);
       if (hash) nav({ search: location.search, hash }, { replace: true });
     },
-    [cursorsShown, cursorVersion, nav, location.search],
+    [followedCursor, cursorsShown, cursorVersion, nav, location.search],
   );
+  // Following stops when the viewer leaves, when cursors are hidden, and on
+  // Esc outside the document. Inside it, the bridge stops on any key.
+  const followedGone =
+    !!followedCursor &&
+    (!cursorsShown ||
+      !stream.viewers.some((v) => v.session === followedCursor.session));
+  useEffect(() => {
+    if (followedGone) setFollowedCursor(undefined);
+  }, [followedGone]);
+  useEffect(() => {
+    if (!followedCursor) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFollowedCursor(undefined);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [followedCursor]);
 
   if (doc.isLoading) {
     return (
@@ -228,6 +251,7 @@ export function DocumentPage() {
       signIn={signIn}
       stream={stream}
       followedCursor={followedCursor}
+      onUnfollowCursor={unfollow}
       onDocumentClick={closeShare}
       bar={(controls) => (
         <DocBar
@@ -245,6 +269,7 @@ export function DocumentPage() {
           onSelectVersion={setSelectedVersion}
           viewers={stream.viewers}
           onFollowViewer={followViewer}
+          followedSession={followedCursor?.session}
           shareOpen={shareOpen}
           onShareOpenChange={setShareOpen}
         />

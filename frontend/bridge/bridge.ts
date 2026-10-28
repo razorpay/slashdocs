@@ -109,7 +109,9 @@ type Theme = "dark" | "light";
 (function bridge(): void {
   const appOrigin = window.__SLASHDOCS_APP_ORIGIN__ || "*";
   const frame = document.getElementById("slashdocs-doc") as HTMLIFrameElement;
-  const cursors = createCursorLayer(doc);
+  const cursors = createCursorLayer(doc, () =>
+    parent.postMessage({ type: "slashdocs:unfollowed" }, targetOrigin()),
+  );
   // Canvas mode starts only after the app enables it, and only for documents
   // that opt in with the slashdocs:canvas meta tag.
   let canvasEnabled = false;
@@ -1919,6 +1921,7 @@ type Theme = "dark" | "light";
     d.addEventListener("scroll", scheduleViewport, { capture: true, passive: true });
     d.addEventListener("scroll", cursors.refresh, { capture: true, passive: true });
     d.defaultView?.addEventListener("resize", cursors.refresh);
+    cursors.watchInput(d);
     trackPointer(d, (spot) =>
       parent.postMessage({ type: "slashdocs:pointer", spot }, targetOrigin()),
     );
@@ -2059,6 +2062,8 @@ type Theme = "dark" | "light";
       cursors.clear();
     } else if (e.data.type === "slashdocs:follow-cursor") {
       cursors.follow(String(e.data.session || ""));
+    } else if (e.data.type === "slashdocs:unfollow-cursor") {
+      cursors.unfollow();
     }
   });
 })();

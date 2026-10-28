@@ -100,6 +100,7 @@ export function DocWorkspace({
   notifications = true,
   stream = NO_STREAM,
   followedCursor,
+  onUnfollowCursor,
   onDocumentClick,
   bar,
 }: {
@@ -117,6 +118,7 @@ export function DocWorkspace({
     subscribeCursors: DocContextValue["subscribeCursors"];
   };
   followedCursor?: DocContextValue["followedCursor"];
+  onUnfollowCursor?: DocContextValue["onUnfollowCursor"];
   onDocumentClick?: () => void;
   bar: (controls: DocBarControls) => ReactNode;
 }) {
@@ -576,6 +578,7 @@ export function DocWorkspace({
       revealPin,
       pinsShown: isMobile || commentsOpen,
       moveDraft,
+      onUnfollowCursor,
     }),
     [
       docId,
@@ -616,6 +619,7 @@ export function DocWorkspace({
       isMobile,
       commentsOpen,
       moveDraft,
+      onUnfollowCursor,
     ],
   );
 

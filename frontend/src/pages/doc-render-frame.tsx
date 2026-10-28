@@ -66,6 +66,7 @@ export function RenderFrame() {
     setActiveComment,
     principal,
     moveDraft,
+    onUnfollowCursor,
   } = useDoc();
   const config = useQuery({ queryKey: queryKeys.config(), queryFn: api.getConfig });
   const canvasEnabled = config.data?.canvas_comments_enabled === true;
@@ -510,6 +511,9 @@ export function RenderFrame() {
         );
         reportUnanchored();
       }
+      if (e.data?.type === "slashdocs:unfollowed") {
+        onUnfollowCursor?.();
+      }
       if (e.data?.type === "slashdocs:document-click") {
         handleRenderedDocumentClick();
       }
@@ -619,6 +623,7 @@ export function RenderFrame() {
     setPlacingPin,
     reportUnanchored,
     movePin,
+    onUnfollowCursor,
   ]);
 
   // Canvas mode: the app enables it, the frame enters it for canvases, and
@@ -740,13 +745,17 @@ export function RenderFrame() {
     };
   }, [ready, cursorsShown, subscribeCursors, postToFrame]);
 
-  // Go to a followed cursor once the frame shows its version. The effect above
+  // Follow a cursor once the frame shows its version, or stop. The effect above
   // gave the frame the cursor first.
   const followed = useRef(followedCursor);
   useEffect(() => {
-    if (!ready || !followedCursor || followed.current === followedCursor) return;
+    if (!ready || followed.current === followedCursor) return;
     followed.current = followedCursor;
-    postToFrame({ type: "slashdocs:follow-cursor", session: followedCursor.session });
+    postToFrame(
+      followedCursor
+        ? { type: "slashdocs:follow-cursor", session: followedCursor.session }
+        : { type: "slashdocs:unfollow-cursor" },
+    );
   }, [ready, followedCursor, postToFrame]);
 
   // Push fresh paint data once the frame is ready and whenever it changes.

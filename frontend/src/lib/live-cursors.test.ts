@@ -58,6 +58,33 @@ describe("createCursorBatch", () => {
   });
 });
 
+describe("createCursorBatch views", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("sends only the newest view in a batch", async () => {
+    const batches: CursorPoint[][] = [];
+    let finish = () => {};
+    const batch = createCursorBatch((points) => {
+      batches.push(points);
+      return new Promise<void>((resolve) => (finish = resolve));
+    });
+    const view = (x: number) => ({ path: "0", x, y: 0.5 });
+    batch.add({ ...spot(0), v: view(0) });
+    await vi.advanceTimersByTimeAsync(0);
+    batch.add({ ...spot(0.25), v: view(0.25) });
+    batch.add({ ...spot(0.5), v: view(0.5) });
+    batch.add(spot(0.75));
+    finish();
+    await vi.advanceTimersByTimeAsync(CURSOR_BATCH_INTERVAL);
+    expect(batches[1].map((point) => point.v?.x)).toEqual([undefined, 0.5, undefined]);
+  });
+});
+
 describe("parseCursorSpot", () => {
   it("accepts only a valid spot", () => {
     expect(parseCursorSpot(spot(1))).toEqual(spot(1));
@@ -69,5 +96,19 @@ describe("parseCursorSpot", () => {
       { path: "1", x: "0", y: 0 },
     ])
       expect(parseCursorSpot(value)).toBeNull();
+  });
+
+  it("keeps a valid view and drops an invalid one", () => {
+    const view = { path: "0.1", x: 0.5, y: 0.5, z: 2 };
+    expect(parseCursorSpot({ ...spot(1), v: view })).toEqual({ ...spot(1), v: view });
+    expect(parseCursorSpot({ ...spot(1), v: { path: "0..1", x: 0, y: 0 } })).toEqual(
+      spot(1),
+    );
+  });
+
+  it("keeps a valid zoom and drops any other", () => {
+    expect(parseCursorSpot({ ...spot(1), z: 2.5 })).toEqual({ ...spot(1), z: 2.5 });
+    for (const z of [0, -1, 101, "2", NaN])
+      expect(parseCursorSpot({ ...spot(1), z })).toEqual(spot(1));
   });
 });

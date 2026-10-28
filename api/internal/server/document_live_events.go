@@ -27,7 +27,10 @@ const (
 	maxPresenceVersionSize = 64
 	maxCursorBytes         = 4 * 1024
 	maxCursorPoints        = 16
-	liveEventWriteTimeout  = 5 * time.Second
+	maxCursorZoom          = 100
+	// A view's place may lie outside its element, up to this many times its size.
+	maxViewFraction       = 1000
+	liveEventWriteTimeout = 5 * time.Second
 )
 
 var (
@@ -61,7 +64,9 @@ func (p presence) valid() bool {
 // names an element by its child indexes under the document body, and a place
 // in that element as fractions of its width and height. A hidden point means
 // that the pointer left the document. T is the time of the point in
-// milliseconds on the clock of the session.
+// milliseconds on the clock of the session. Z, when set, is how much larger
+// the element shows than its layout size, as on a zoomed canvas. V, when set,
+// is the place at the center of the viewer's view, which followers show.
 type cursor struct {
 	Session string        `json:"session"`
 	Version string        `json:"version"`
@@ -69,11 +74,27 @@ type cursor struct {
 }
 
 type cursorPoint struct {
-	T      int64   `json:"t"`
-	Path   string  `json:"path"`
-	X      float64 `json:"x"`
-	Y      float64 `json:"y"`
-	Hidden bool    `json:"hidden,omitempty"`
+	T      int64        `json:"t"`
+	Path   string       `json:"path"`
+	X      float64      `json:"x"`
+	Y      float64      `json:"y"`
+	Z      float64      `json:"z,omitempty"`
+	V      *cursorPlace `json:"v,omitempty"`
+	Hidden bool         `json:"hidden,omitempty"`
+}
+
+// cursorPlace is a place in the document, named like a cursor point.
+type cursorPlace struct {
+	Path string  `json:"path"`
+	X    float64 `json:"x"`
+	Y    float64 `json:"y"`
+	Z    float64 `json:"z,omitempty"`
+}
+
+// valid checks a place whose fractions lie between lo and hi.
+func (p cursorPlace) valid(lo, hi float64) bool {
+	return p.X >= lo && p.X <= hi && p.Y >= lo && p.Y <= hi && p.Z >= 0 && p.Z <= maxCursorZoom &&
+		cursorPathPattern.MatchString(p.Path)
 }
 
 func (c cursor) valid() bool {
@@ -82,7 +103,8 @@ func (c cursor) valid() bool {
 		return false
 	}
 	for _, p := range c.Points {
-		if p.T < 0 || p.X < 0 || p.X > 1 || p.Y < 0 || p.Y > 1 || !cursorPathPattern.MatchString(p.Path) {
+		place := cursorPlace{Path: p.Path, X: p.X, Y: p.Y, Z: p.Z}
+		if p.T < 0 || !place.valid(0, 1) || (p.V != nil && !p.V.valid(-maxViewFraction, maxViewFraction)) {
 			return false
 		}
 	}

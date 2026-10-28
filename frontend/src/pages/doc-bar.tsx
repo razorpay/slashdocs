@@ -71,6 +71,7 @@ export function DocBar({
   onSelectVersion,
   viewers,
   onFollowViewer,
+  followedSession,
   commentsOpen,
   onToggleComments,
   onShowShortcuts,
@@ -90,6 +91,8 @@ export function DocBar({
   onSelectVersion: (versionID: string) => void;
   viewers: Viewer[];
   onFollowViewer: (viewer: Viewer) => void;
+  // The session of the viewer the reader follows, if any.
+  followedSession?: string;
   commentsOpen: boolean;
   onToggleComments: () => void;
   onShowShortcuts: () => void;
@@ -148,7 +151,12 @@ export function DocBar({
         )
       }
     >
-      <Viewers viewers={viewers} versions={versions} onFollow={onFollowViewer} />
+      <Viewers
+        viewers={viewers}
+        versions={versions}
+        onFollow={onFollowViewer}
+        followedSession={followedSession}
+      />
       {viewers.length ? <CursorsToggle /> : null}
       {isViewingOlder ? (
         <Button
@@ -318,10 +326,12 @@ function Viewers({
   viewers,
   versions,
   onFollow,
+  followedSession,
 }: {
   viewers: Viewer[];
   versions: Version[];
   onFollow: (viewer: Viewer) => void;
+  followedSession?: string;
 }) {
   if (!viewers.length) return null;
   const hidden = viewers.length - MAX_VIEWER_AVATARS;
@@ -334,14 +344,18 @@ function Viewers({
       {viewers.slice(0, MAX_VIEWER_AVATARS).map((viewer) => {
         const name = principalLabel(viewer.principal);
         const number = versions.find((v) => v.id === viewer.version)?.number;
+        const following = viewer.session === followedSession;
+        let label = number ? `${name} · viewing v${number}` : name;
+        if (following) label = `Following ${name} · click to stop`;
         return (
           <Tooltip
             key={`${viewer.principal.type}:${viewer.principal.id}`}
-            label={number ? `${name} · viewing v${number}` : name}
+            label={label}
           >
             <button
               type="button"
-              aria-label={`Go to where ${name} is viewing`}
+              aria-label={following ? `Stop following ${name}` : `Follow ${name}`}
+              aria-pressed={following}
               onClick={() => onFollow(viewer)}
               style={{
                 boxShadow: `0 0 0 2px ${principalColor(viewer.principal)}, 0 0 0 4px var(--color-surface)`,
