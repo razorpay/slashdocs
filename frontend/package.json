@@ -69,5 +69,9 @@
     "esbuild@0.28.1": true,
     "fsevents@2.3.2": true,
     "fsevents@2.3.3": true
+  },
+  "overrides": {
+    "baseline-browser-mapping": "2.11.0",
+    "undici": "7.30.1"
   }
 }
