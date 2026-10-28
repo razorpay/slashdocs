@@ -22,13 +22,26 @@ import (
 //go:embed all:frontend_dist
 var frontendFS embed.FS
 
-func registerFrontendRoutes(r *gin.Engine, appOrigin, renderOrigin string) {
+// shellTitle is the <title> of the built index.html. A document page replaces
+// it with the document's head.
+const shellTitle = "<title>slashdocs</title>"
+
+// embeddedFrontend returns the embedded Vite build.
+func embeddedFrontend() fs.FS {
 	dist, err := fs.Sub(frontendFS, "frontend_dist")
 	if err != nil {
+		return nil
+	}
+	return dist
+}
+
+func registerFrontendRoutes(r *gin.Engine, h handlers) {
+	dist := h.deps.frontend
+	if dist == nil {
 		return
 	}
 	fileServer := http.FileServer(http.FS(dist))
-	appOrigin = strings.TrimRight(appOrigin, "/")
+	appOrigin, renderOrigin := strings.TrimRight(h.deps.appOrigin, "/"), h.deps.renderOrigin
 
 	r.GET("/assets/*filepath", gin.WrapH(http.StripPrefix("/assets/", http.FileServer(http.FS(subOrEmpty(dist, "assets"))))))
 	r.NoRoute(func(c *gin.Context) {
@@ -55,8 +68,21 @@ func registerFrontendRoutes(r *gin.Engine, appOrigin, renderOrigin string) {
 			return
 		}
 		index = bytes.ReplaceAll(index, []byte("__SLASHDOCS_PUBLIC_URL_VALUE__"), []byte(appOrigin))
+		if id, ok := documentPageID(urlPath); ok {
+			// The head depends on who asks, so no cache may keep the page.
+			c.Header("Cache-Control", "no-store")
+			if head := h.documentHead(c.Request, id); head != nil {
+				index = bytes.Replace(index, []byte(shellTitle), head, 1)
+			}
+		}
 		c.Data(http.StatusOK, "text/html; charset=utf-8", index)
 	})
+}
+
+// documentPageID returns the document ID of a cleaned "app/d/{id}" path.
+func documentPageID(urlPath string) (string, bool) {
+	id, ok := strings.CutPrefix(urlPath, "app/d/")
+	return id, ok && id != "" && !strings.Contains(id, "/")
 }
 
 // subOrEmpty returns a sub-filesystem rooted at dir. If dir does not exist it

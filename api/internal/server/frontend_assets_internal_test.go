@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/fstest"
 
 	"github.com/gin-gonic/gin"
 )
@@ -12,7 +13,11 @@ func TestFrontendRoutesRedirectRenderHost(t *testing.T) {
 	r := gin.New()
 	r.GET("/v/:id/:version_id", func(c *gin.Context) { c.Status(http.StatusOK) })
 	r.GET("/print/:id/:version_id", func(c *gin.Context) { c.Status(http.StatusOK) })
-	registerFrontendRoutes(r, "https://app.example", "https://render.example")
+	registerFrontendRoutes(r, handlers{deps: dependencies{
+		appOrigin:    "https://app.example",
+		renderOrigin: "https://render.example",
+		frontend:     fstest.MapFS{"index.html": {Data: []byte(shellTitle)}},
+	}})
 
 	for _, tc := range []struct {
 		method, target, location string
