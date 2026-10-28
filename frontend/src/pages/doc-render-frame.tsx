@@ -17,6 +17,7 @@ import { cursorsShownStore, parseCursorSpot } from "@/lib/live-cursors";
 import { useDocumentExport } from "./use-document-export";
 import { useDoc } from "./doc-context";
 import { useBridgeHost } from "./use-bridge-host";
+import { parseTableEdits } from "@/lib/table-edits";
 
 const FORWARDED_KEYS = new Set<string>([
   "Escape",
@@ -44,6 +45,10 @@ export function RenderFrame() {
     setCommentViewport,
     registerDocumentScroller,
     registerDocumentPrinter,
+    tableResizing,
+    revertTables,
+    setTableCount,
+    setTableEdits,
     syncCommentRail,
     handleRenderedDocumentClick,
     subscribeDocumentKV,
@@ -331,6 +336,16 @@ export function RenderFrame() {
         url.hash = e.data.id;
         window.history.replaceState(window.history.state, "", url);
       }
+      if (
+        e.data?.type === "slashdocs:tables" &&
+        Number.isInteger(e.data.count) &&
+        e.data.count >= 0
+      ) {
+        setTableCount(e.data.count);
+      }
+      if (e.data?.type === "slashdocs:table-edits") {
+        setTableEdits(parseTableEdits(e.data.edits));
+      }
       if (e.data?.type === "slashdocs:activate" && typeof e.data.id === "string") {
         handleDocCommentClick(e.data.id);
       }
@@ -439,6 +454,8 @@ export function RenderFrame() {
     setCommentPositions,
     setCommentViewport,
     syncCommentRail,
+    setTableCount,
+    setTableEdits,
     applyZoom,
   ]);
 
@@ -465,6 +482,17 @@ export function RenderFrame() {
     followed.current = followedCursor;
     postToFrame({ type: "slashdocs:follow-cursor", session: followedCursor.session });
   }, [ready, followedCursor, postToFrame]);
+
+  // A frame that loads while resizing is on, such as a new version, starts
+  // resizing too.
+  useEffect(() => {
+    if (!ready) return;
+    postToFrame({
+      type: "slashdocs:table-resize",
+      on: tableResizing,
+      revert: !tableResizing && revertTables,
+    });
+  }, [ready, tableResizing, revertTables, postToFrame]);
 
   // Push fresh paint data once the frame is ready and whenever it changes.
   useEffect(() => {

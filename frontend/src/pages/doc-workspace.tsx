@@ -8,9 +8,12 @@ import {
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { api, type CommentMention, type Principal } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
+import { errorMessage } from "@/lib/errors";
+import { applyTableEdits, type TableEdit } from "@/lib/table-edits";
 import { useCommentDrafts } from "@/lib/comment-drafts";
 import { Center } from "@/components/ui/misc";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -36,6 +39,7 @@ import { RenderFrame } from "./doc-render-frame";
 import { Comments } from "./doc-comments";
 import { Keycast } from "./doc-keycast";
 import { ShortcutsDialog } from "./doc-shortcuts";
+import { TableResizeBar } from "./doc-table-resize";
 
 const THEME_LABELS = { light: "Light", dark: "Dark", system: "System" } as const;
 
@@ -80,6 +84,9 @@ export type DocBarControls = {
   commentsOpen: boolean;
   onToggleComments: () => void;
   onShowShortcuts: () => void;
+  // Set when the document has tables to resize. Only a reader who can push
+  // versions should be offered it.
+  onResizeTables?: () => void;
 };
 
 // DocWorkspace is a rendered document with its comments: the comment rail,
@@ -166,6 +173,50 @@ export function DocWorkspace({
     commentRailSyncRef.current?.(top);
   }, []);
   const isMobile = useIsMobile();
+  const q = useQueryClient();
+  const [tableCount, setTableCount] = useState(0);
+  const [tableResizing, setTableResizing] = useState(false);
+  const [revertTables, setRevertTables] = useState(false);
+  const [tableEdits, setTableEdits] = useState<TableEdit[]>([]);
+  const startTableResize = useCallback(() => {
+    setRevertTables(false);
+    setTableEdits([]);
+    setTableResizing(true);
+  }, []);
+  const cancelTableResize = useCallback(() => {
+    setRevertTables(true);
+    setTableResizing(false);
+    setTableEdits([]);
+  }, []);
+  // The sizes go into the stored HTML of the version shown, which becomes
+  // the base of the new version: a newer version makes the push fail rather
+  // than overwrite it.
+  const saveTables = useMutation({
+    mutationFn: async () => {
+      const html = await api.versionHTML(docId, version);
+      const result = applyTableEdits(html, tableEdits);
+      if (!result.applied) {
+        throw new Error(
+          "These tables are drawn by the document's scripts, so their sizes cannot be saved.",
+        );
+      }
+      const file = new File([result.html], "document.html", { type: "text/html" });
+      await api.createVersion(docId, version, "Resized tables", file);
+      return result;
+    },
+    onSuccess: (result) => {
+      toast.success(
+        result.skipped
+          ? "Saved a new version. Tables drawn by scripts kept their sizes."
+          : "Saved a new version with the new table sizes.",
+      );
+      setRevertTables(false);
+      setTableResizing(false);
+      setTableEdits([]);
+      void q.invalidateQueries();
+    },
+    onError: (e) => toast.error(errorMessage(e, "Could not save the table sizes")),
+  });
   // A comment started while the comments are hidden shows them only until it
   // is posted or discarded.
   const [peekDraft, setPeekDraft] = useState<string>();
@@ -274,6 +325,10 @@ export function DocWorkspace({
   useEffect(() => {
     setCommentPositions(new Map());
     setCommentViewport({ scrollTop: 0, scrollHeight: 1 });
+    // Sizes belong to the version they were set on.
+    setTableCount(0);
+    setTableResizing(false);
+    setTableEdits([]);
   }, [version]);
 
   const [drafts, updateDrafts] = useCommentDrafts(docId);
@@ -479,6 +534,10 @@ export function DocWorkspace({
       scrollDocumentTo,
       registerCommentRailSync,
       syncCommentRail,
+      tableResizing,
+      revertTables,
+      setTableCount,
+      setTableEdits,
       handleDocCommentClick,
       handleRenderedDocumentClick,
       subscribeDocumentKV: stream.subscribeKV,
@@ -512,6 +571,8 @@ export function DocWorkspace({
       scrollDocumentTo,
       registerCommentRailSync,
       syncCommentRail,
+      tableResizing,
+      revertTables,
       handleDocCommentClick,
       handleRenderedDocumentClick,
       stream.subscribeKV,
@@ -555,10 +616,22 @@ export function DocWorkspace({
               commentsOpen: isMobile ? mobilePanelOpen : commentsOpen,
               onToggleComments: toggleComments,
               onShowShortcuts: () => setShortcutsOpen(true),
+              onResizeTables:
+                tableCount > 0 && !tableResizing && !isMobile
+                  ? startTableResize
+                  : undefined,
             })}
           </motion.div>
           <motion.div variants={contentFade} className="flex flex-1 overflow-hidden">
             <section className="relative min-w-0 flex-1 bg-[var(--color-surface-muted)]">
+              {tableResizing && (
+                <TableResizeBar
+                  changed={tableEdits.length > 0}
+                  saving={saveTables.isPending}
+                  onCancel={cancelTableResize}
+                  onSave={() => saveTables.mutate()}
+                />
+              )}
               {frame}
             </section>
             <AnimatePresence initial={false}>

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Toaster, toast } from "sonner";
 import { BrowserRouter, Link, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { ChevronRight, ExternalLink, FolderIcon, Search } from "lucide-react";
+import { ChevronRight, ExternalLink, FolderIcon, Search, Table2 } from "lucide-react";
 import { ThemeProvider } from "@/lib/theme";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
@@ -210,7 +210,7 @@ function DocumentPage({ doc }: { doc: Doc }) {
       principal={me.data?.principal}
       home="/"
       notifications={false}
-      bar={({ commentsOpen, onToggleComments }) => (
+      bar={({ commentsOpen, onToggleComments, onResizeTables }) => (
         <DocBarFrame
           home="/"
           folder={folder ? { to: href(folder), title: base(folder) } : undefined}
@@ -232,6 +232,18 @@ function DocumentPage({ doc }: { doc: Doc }) {
               <ExternalLink className="h-4 w-4" />
             </a>
           </Button>
+          {onResizeTables && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="shrink-0"
+              tooltip="Resize tables"
+              aria-label="Resize tables"
+              onClick={onResizeTables}
+            >
+              <Table2 className="h-4 w-4" />
+            </Button>
+          )}
           <CommentsToggle open={commentsOpen} onToggle={onToggleComments} />
         </DocBarFrame>
       )}

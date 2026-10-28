@@ -3,6 +3,7 @@ import type { Anchor, Comment, CursorSpot, Principal } from "@/api";
 import type { CommentFilter } from "@/lib/constants";
 import type { CommentDraft } from "@/lib/comment-drafts";
 import type { CursorListener, DocumentKVListener } from "./use-document-stream";
+import type { TableEdit } from "@/lib/table-edits";
 
 // A text selection captured from the render bridge that a new comment will
 // anchor to. `anchor` is present only when the bridge supplies real offsets.
@@ -53,6 +54,12 @@ export type DocContextValue = {
   printDocument: () => void;
   registerDocumentScroller: (scroller: ((top: number) => void) | null) => void;
   scrollDocumentTo: (top: number) => void;
+  // Table resizing: the bridge reports the tables and the sizes the reader
+  // set; the frame turns resizing on and off.
+  tableResizing: boolean;
+  revertTables: boolean;
+  setTableCount: (count: number) => void;
+  setTableEdits: (edits: TableEdit[]) => void;
   registerCommentRailSync: (sync: ((top: number) => void) | null) => void;
   syncCommentRail: (top: number) => void;
   handleDocCommentClick: (id: string) => void;

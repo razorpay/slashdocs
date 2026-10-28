@@ -354,6 +354,9 @@ export const api = {
       body: fd,
     });
   },
+  // The stored HTML of a version, as uploaded.
+  versionHTML: (doc: string, version: string) =>
+    request<string>(`/v1/documents/${doc}/versions/${version}/html`),
   renderToken: (doc: string, version: string) =>
     request<{ token: string; url: string }>(
       `/v1/documents/${doc}/versions/${version}/render-token`,

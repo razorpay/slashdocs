@@ -53,6 +53,7 @@ import { principalColor, samePrincipal } from "@/lib/principals";
 import { ShareSheet } from "./doc-share-sheet";
 import { useDoc } from "./doc-context";
 import { UploadVersionMenuItem, UploadVersionSheet } from "./doc-upload-version";
+import { ResizeTablesMenuItem } from "./doc-table-resize";
 import type { Viewer } from "./use-document-stream";
 
 const MAX_VIEWER_AVATARS = 4;
@@ -74,6 +75,7 @@ export function DocBar({
   commentsOpen,
   onToggleComments,
   onShowShortcuts,
+  onResizeTables,
   shareOpen,
   onShareOpenChange,
 }: {
@@ -93,6 +95,7 @@ export function DocBar({
   commentsOpen: boolean;
   onToggleComments: () => void;
   onShowShortcuts: () => void;
+  onResizeTables?: () => void;
   shareOpen: boolean;
   onShareOpenChange: (open: boolean) => void;
 }) {
@@ -259,6 +262,9 @@ export function DocBar({
           >
             <ExternalLink className="h-4 w-4" /> Open raw HTML
           </DropdownItem>
+          {onResizeTables && canEdit && !isViewingOlder && !signIn ? (
+            <ResizeTablesMenuItem onSelect={onResizeTables} />
+          ) : null}
           <DropdownItem onSelect={() => void exportPDF()}>
             <FileDown className="h-4 w-4" /> Export as PDF
           </DropdownItem>

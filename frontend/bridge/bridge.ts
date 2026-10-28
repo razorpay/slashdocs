@@ -14,6 +14,7 @@ import {
   refreshSVGRects,
 } from "./highlight.ts";
 import { createCursorLayer, trackPointer } from "./cursors.ts";
+import { createTableResizer } from "./table-resize.ts";
 import { CHORD_KEYS } from "../src/lib/esc-chord.ts";
 import {
   reduceVimScroll,
@@ -995,6 +996,7 @@ type Theme = "dark" | "light";
     if (mutationObserver) mutationObserver.disconnect();
     mutationObserver = new MutationObserver(() => {
       prepareHeadings(d);
+      scheduleTableCount();
       scheduleTextNavigation();
       scheduleMutationScan();
       scheduleCommentPositions();
@@ -1499,6 +1501,37 @@ type Theme = "dark" | "light";
     if (pendingHeading) navigateHeading(pendingHeading);
   }
 
+  // The reader can resize tables and save the sizes as a new version. The
+  // app offers it only for a document with tables.
+  const tableResizer = createTableResizer({
+    doc,
+    quietly(write) {
+      suspendMutationObserver();
+      try {
+        write();
+      } finally {
+        resumeMutationObserver();
+      }
+    },
+    report(edits) {
+      parent.postMessage({ type: "slashdocs:table-edits", edits }, targetOrigin());
+    },
+  });
+  let tableCount = -1;
+  let tableCountTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function postTableCount(): void {
+    const count = doc()?.querySelectorAll("table").length ?? 0;
+    if (count === tableCount) return;
+    tableCount = count;
+    parent.postMessage({ type: "slashdocs:tables", count }, targetOrigin());
+  }
+
+  function scheduleTableCount(): void {
+    clearTimeout(tableCountTimer);
+    tableCountTimer = setTimeout(postTableCount, 250);
+  }
+
   function navigateHeading(id: string): void {
     pendingText = null;
     textVisibilityObserver?.disconnect();
@@ -1882,6 +1915,9 @@ type Theme = "dark" | "light";
       parent.postMessage({ type: "slashdocs:pointer", spot }, targetOrigin()),
     );
     parent.postMessage({ type: "slashdocs:ready" }, targetOrigin());
+    tableResizer.reset();
+    tableCount = -1;
+    postTableCount();
     scheduleViewport();
     hydrateKV();
   }
@@ -1962,6 +1998,8 @@ type Theme = "dark" | "light";
         );
     } else if (e.data.type === "slashdocs:navigate-text") {
       navigateText(e.data.anchor);
+    } else if (e.data.type === "slashdocs:table-resize") {
+      tableResizer.setEnabled(e.data.on === true, e.data.revert === true);
     } else if (e.data.type === "slashdocs:navigate-heading") {
       navigateHeading(String(e.data.id || ""));
     } else if (e.data.type === "slashdocs:request-comment-positions") {
