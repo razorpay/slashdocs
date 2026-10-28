@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -87,6 +88,7 @@ type dependencies struct {
 	googleGroupDirectory      googlegroups.GoogleGroupDirectory
 	googleGroupResolver       *googlegroups.Resolver
 	labelsEnabled             bool
+	frontend                  fs.FS
 }
 
 // Option configures the Server.
@@ -107,6 +109,9 @@ func (s *Server) RunCommentNotifications(ctx context.Context) {
 }
 
 func WithRepository(r repo.Repository) Option { return func(d *dependencies) { d.repository = r } }
+
+// WithFrontend serves the web app from fsys instead of the embedded build.
+func WithFrontend(fsys fs.FS) Option { return func(d *dependencies) { d.frontend = fsys } }
 
 func WithGoogleGroupDirectory(directory googlegroups.GoogleGroupDirectory) Option {
 	return func(d *dependencies) { d.googleGroupDirectory = directory }
@@ -161,6 +166,7 @@ func New(cfg Config, opts ...Option) *Server {
 		githubAccessChecks:   new(singleflight.Group),
 		googleGroupsEnabled:  cfg.GoogleGroupsEnabled,
 		labelsEnabled:        !cfg.DisableLabels,
+		frontend:             embeddedFrontend(),
 	}
 	if cfg.GitHubClientID != "" && cfg.GitHubClientSecret != "" && cfg.AppOrigin != "" {
 		deps.githubOAuth = &oauth2.Config{
@@ -249,7 +255,7 @@ func (s *Server) routes(deps dependencies) {
 	registerAPIDocsRoutes(s.engine, deps)
 	s.engine.GET("/v/:id/:version_id", h.renderVersion)
 	s.engine.GET("/print/:id/:version_id", h.renderPrintVersion)
-	registerFrontendRoutes(s.engine, deps.appOrigin)
+	registerFrontendRoutes(s.engine, deps.frontend, deps.appOrigin, h.documentHead)
 
 	s.engine.GET("/livez", h.livez)
 	s.engine.GET("/readyz", h.readyz)

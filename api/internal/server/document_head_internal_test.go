@@ -1,6 +1,8 @@
 package server
 
 import (
+	"bytes"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -8,6 +10,16 @@ import (
 	"github.com/razorpay/slashdocs/api/internal/auth"
 	"github.com/razorpay/slashdocs/api/internal/repo"
 )
+
+func TestShellTitleMatchesTheWebApp(t *testing.T) {
+	index, err := os.ReadFile("../../../frontend/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(index, []byte(shellTitle)) {
+		t.Fatalf("frontend/index.html lacks %s, which document pages replace", shellTitle)
+	}
+}
 
 func TestDocumentExcerpt(t *testing.T) {
 	for _, tc := range []struct {

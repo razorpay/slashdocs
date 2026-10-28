@@ -22,9 +22,21 @@ import (
 //go:embed all:frontend_dist
 var frontendFS embed.FS
 
-func registerFrontendRoutes(r *gin.Engine, publicURL string) {
+// shellTitle is the <title> of the built index.html. A document page replaces
+// it with the document's head.
+const shellTitle = "<title>slashdocs</title>"
+
+// embeddedFrontend returns the embedded Vite build.
+func embeddedFrontend() fs.FS {
 	dist, err := fs.Sub(frontendFS, "frontend_dist")
 	if err != nil {
+		return nil
+	}
+	return dist
+}
+
+func registerFrontendRoutes(r *gin.Engine, dist fs.FS, publicURL string, documentHead func(*http.Request, string) []byte) {
+	if dist == nil {
 		return
 	}
 	fileServer := http.FileServer(http.FS(dist))
@@ -47,8 +59,21 @@ func registerFrontendRoutes(r *gin.Engine, publicURL string) {
 			return
 		}
 		index = bytes.ReplaceAll(index, []byte("__SLASHDOCS_PUBLIC_URL_VALUE__"), []byte(publicURL))
+		if id, ok := documentPageID(urlPath); ok {
+			// The head depends on who asks, so no cache may keep the page.
+			c.Header("Cache-Control", "no-store")
+			if head := documentHead(c.Request, id); head != nil {
+				index = bytes.Replace(index, []byte(shellTitle), head, 1)
+			}
+		}
 		c.Data(http.StatusOK, "text/html; charset=utf-8", index)
 	})
+}
+
+// documentPageID returns the document ID of a cleaned "app/d/{id}" path.
+func documentPageID(urlPath string) (string, bool) {
+	id, ok := strings.CutPrefix(urlPath, "app/d/")
+	return id, ok && id != "" && !strings.Contains(id, "/")
 }
 
 // subOrEmpty returns a sub-filesystem rooted at dir. If dir does not exist it

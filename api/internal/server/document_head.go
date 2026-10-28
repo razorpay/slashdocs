@@ -1,11 +1,103 @@
 package server
 
 import (
+	"bytes"
+	"context"
+	"errors"
+	"html/template"
+	"log/slog"
+	"net/http"
+	"net/url"
 	"strings"
+	"time"
 	"unicode"
 
+	"github.com/razorpay/slashdocs/api/internal/auth"
 	"github.com/razorpay/slashdocs/api/internal/repo"
 )
+
+// documentHeadTemplate replaces the generic <title> of the web app shell on
+// a document page. html/template escapes each value for its context.
+var documentHeadTemplate = template.Must(template.New("document head").Parse(`<title>{{.Title}} · slashdocs</title>
+    <meta name="description" content="{{.Description}}" />
+    <meta property="og:site_name" content="slashdocs" />
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="{{.Title}}" />
+    <meta property="og:description" content="{{.Description}}" />
+{{- if .URL}}
+    <meta property="og:url" content="{{.URL}}" />
+{{- end}}
+    <meta name="twitter:card" content="summary" />`))
+
+type documentHeadData struct{ Title, Description, URL string }
+
+// documentHeadTimeout bounds the lookups behind the head of a document page,
+// so that a slow database or group directory delays the page by at most this
+// much. The page then loads as it does for a caller who may not read the
+// document.
+const documentHeadTimeout = time.Second
+
+// documentHead returns the <head> fragment of a document page, or nil to keep
+// the generic shell when the caller may not read the document or a lookup
+// fails. Unlike GET /v1/documents/:id, it records nothing.
+func (h handlers) documentHead(r *http.Request, documentID string) []byte {
+	ctx, cancel := context.WithTimeout(r.Context(), documentHeadTimeout)
+	defer cancel()
+	data, err := h.documentHeadData(r.WithContext(ctx), documentID)
+	if err != nil {
+		slog.WarnContext(ctx, "document head lookup failed", slog.String("document_id", documentID), slog.Any("error", err))
+		return nil
+	}
+	if data == nil {
+		return nil
+	}
+	var b bytes.Buffer
+	if err := documentHeadTemplate.Execute(&b, data); err != nil {
+		slog.WarnContext(ctx, "document head render failed", slog.String("document_id", documentID), slog.Any("error", err))
+		return nil
+	}
+	return b.Bytes()
+}
+
+// documentHeadData authorizes the caller as GET /v1/documents/:id does and
+// returns what the head shows. It returns nil data and no error when the
+// caller may not read the document.
+func (h handlers) documentHeadData(r *http.Request, documentID string) (*documentHeadData, error) {
+	ctx := r.Context()
+	p, err := h.deps.readerAuthenticator().Authenticate(r)
+	if errors.Is(err, auth.ErrUnauthorized) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if h.deps.googleGroupResolver != nil {
+		p = h.deps.googleGroupResolver.Resolve(ctx, p)
+	}
+	if groupMembershipUnavailable(p) {
+		return nil, nil
+	}
+	role, err := h.deps.repository.RoleForDocument(ctx, *p, documentID)
+	if err != nil {
+		return nil, err
+	}
+	if !atLeast(role, repo.RoleViewer) {
+		return nil, nil
+	}
+	d, err := h.deps.repository.GetDocument(ctx, documentID)
+	if err != nil {
+		return nil, err
+	}
+	preview, err := h.deps.repository.DocumentPreview(ctx, documentID)
+	if err != nil {
+		return nil, err
+	}
+	data := &documentHeadData{Title: d.Title, Description: documentDescription(d, preview)}
+	if origin := strings.TrimRight(h.deps.appOrigin, "/"); origin != "" {
+		data.URL = origin + "/app/d/" + url.PathEscape(d.ID)
+	}
+	return data, nil
+}
 
 // maxDescriptionRunes caps a link preview description, ellipsis included.
 const maxDescriptionRunes = 200
