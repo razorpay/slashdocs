@@ -113,6 +113,10 @@ export function useDocumentStream({
   // can draw it. A cursor on another version than this one is hidden here.
   const cursors = useRef(new Map<string, { cursor: RemoteCursor; version: string }>());
   const cursorListeners = useRef(new Set<CursorListener>());
+  // The sessions seen so far, to tell when someone arrives, and how to send
+  // them this viewer's cursor then.
+  const knownSessions = useRef(new Set<string>());
+  const resendCursor = useRef<() => void>(() => {});
   const shownCursor = useCallback(
     (cursor: RemoteCursor, on: string) =>
       on === place.current.version ? cursor : hiddenCursor(cursor),
@@ -125,7 +129,10 @@ export function useDocumentStream({
   useDocumentEvents(
     docId,
     {
-      open: () => setSessions(new Map()),
+      open: () => {
+        knownSessions.current.clear();
+        setSessions(new Map());
+      },
       kv: (event) => kvListeners.current.forEach((listener) => listener(event)),
       comments: () => q.invalidateQueries({ queryKey: queryKeys.comments(docId) }),
       document: (event) => {
@@ -138,6 +145,12 @@ export function useDocumentStream({
         const viewer = event.updated_by;
         if (!presence?.session || presence.session === session || !viewer) return;
         const key = `${viewer.type}:${viewer.id}:${presence.session}`;
+        // Someone new sees this viewer's cursor and view at once.
+        if (!presence.left && !knownSessions.current.has(presence.session)) {
+          knownSessions.current.add(presence.session);
+          resendCursor.current();
+        }
+        if (presence.left) knownSessions.current.delete(presence.session);
         setSessions((current) => {
           const next = new Map(current);
           if (presence.left) next.delete(key);
@@ -246,6 +259,9 @@ export function useDocumentStream({
     [docId, session],
   );
   useEffect(() => () => cursorBatch.stop(), [cursorBatch]);
+  useEffect(() => {
+    resendCursor.current = cursorBatch.resend;
+  }, [cursorBatch]);
   const moveCursor = useCallback(
     (spot: CursorSpot | null) => {
       if (signedIn) cursorBatch.add(spot);
@@ -267,10 +283,11 @@ export function useDocumentStream({
   );
 
   // The version that a viewer's cursor is on, while the cursor is in the
-  // document.
+  // document or the viewer still sends their view.
   const cursorVersion = useCallback((id: string) => {
     const entry = cursors.current.get(id);
-    return entry && !entry.cursor.points[0].hidden ? entry.version : undefined;
+    const point = entry?.cursor.points[0];
+    return point && (!point.hidden || point.v) ? entry.version : undefined;
   }, []);
 
   const subscribeKV = useCallback((listener: DocumentKVListener) => {

@@ -210,12 +210,17 @@ export type DocumentPresence = {
 // fractions of its box. z is how much larger the element shows than its layout
 // size, as on a zoomed canvas. It is absent when the element is not zoomed.
 export type CursorPlace = { path: string; x: number; y: number; z?: number };
-// Where a viewer's pointer is, and in v the place at the center of their view,
-// which those who follow them show.
-export type CursorSpot = CursorPlace & { v?: CursorPlace };
-// A pointer position at time t, in milliseconds on the sender's clock. A
-// hidden point means that the pointer left the document.
-export type CursorPoint = CursorSpot & { t: number; hidden?: boolean };
+// Where a viewer's pointer is, in v the place at the center of their view,
+// which those who follow them show, and in m their cursor chat message. A
+// hidden spot means that the pointer left the document; it may still carry
+// the view.
+export type CursorSpot = CursorPlace & {
+  v?: CursorPlace;
+  m?: string;
+  hidden?: boolean;
+};
+// A pointer position at time t, in milliseconds on the sender's clock.
+export type CursorPoint = CursorSpot & { t: number };
 // A batch of pointer positions from one viewer session.
 export type DocumentCursor = {
   session: string;

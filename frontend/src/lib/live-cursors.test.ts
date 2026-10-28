@@ -56,6 +56,39 @@ describe("createCursorBatch", () => {
     expect(batches[0].at(-1)).toMatchObject({ hidden: true });
     expect(batches[0].filter((point) => point.hidden)).toHaveLength(1);
   });
+
+  it("sends the view of a pointer that left, and resends the newest spot", async () => {
+    const batches: CursorPoint[][] = [];
+    const batch = createCursorBatch(async (points) => {
+      batches.push(points);
+    });
+    const view = { path: "3", x: 0.5, y: -2, z: 0.4 };
+    batch.add({ path: "", x: 0, y: 0, hidden: true, v: view });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(batches[0]).toEqual([expect.objectContaining({ hidden: true, v: view })]);
+
+    batch.resend();
+    await vi.advanceTimersByTimeAsync(CURSOR_BATCH_INTERVAL);
+    expect(batches[1]).toEqual([expect.objectContaining({ hidden: true, v: view })]);
+    expect(batches[1][0].t).toBeGreaterThan(batches[0][0].t);
+  });
+});
+
+describe("parseCursorSpot of a pointer that left", () => {
+  it("keeps only a valid view", () => {
+    expect(
+      parseCursorSpot({
+        path: "9.9",
+        x: 0.3,
+        y: 0.3,
+        hidden: true,
+        m: "hi",
+        v: { path: "1", x: 2, y: 0.5 },
+      }),
+    ).toEqual({ path: "", x: 0, y: 0, hidden: true, v: { path: "1", x: 2, y: 0.5 } });
+    expect(parseCursorSpot({ hidden: true })).toBeNull();
+    expect(parseCursorSpot({ hidden: true, v: { path: "x", x: 0, y: 0 } })).toBeNull();
+  });
 });
 
 describe("createCursorBatch views", () => {
@@ -83,6 +116,22 @@ describe("createCursorBatch views", () => {
     await vi.advanceTimersByTimeAsync(CURSOR_BATCH_INTERVAL);
     expect(batches[1].map((point) => point.v?.x)).toEqual([undefined, 0.5, undefined]);
   });
+
+  it("sends the message only on the newest point", async () => {
+    const batches: CursorPoint[][] = [];
+    let finish = () => {};
+    const batch = createCursorBatch((points) => {
+      batches.push(points);
+      return new Promise<void>((resolve) => (finish = resolve));
+    });
+    batch.add({ ...spot(0), m: "h" });
+    await vi.advanceTimersByTimeAsync(0);
+    batch.add({ ...spot(0), m: "hi" });
+    batch.add({ ...spot(0), m: "hi!" });
+    finish();
+    await vi.advanceTimersByTimeAsync(CURSOR_BATCH_INTERVAL);
+    expect(batches[1].map((point) => point.m)).toEqual([undefined, "hi!"]);
+  });
 });
 
 describe("parseCursorSpot", () => {
@@ -104,6 +153,15 @@ describe("parseCursorSpot", () => {
     expect(parseCursorSpot({ ...spot(1), v: { path: "0..1", x: 0, y: 0 } })).toEqual(
       spot(1),
     );
+  });
+
+  it("keeps a short text message and drops any other", () => {
+    expect(parseCursorSpot({ ...spot(1), m: "Look here" })).toEqual({
+      ...spot(1),
+      m: "Look here",
+    });
+    for (const m of ["a".repeat(101), "bell\u0007", 5, ""])
+      expect(parseCursorSpot({ ...spot(1), m })).toEqual(spot(1));
   });
 
   it("keeps a valid zoom and drops any other", () => {

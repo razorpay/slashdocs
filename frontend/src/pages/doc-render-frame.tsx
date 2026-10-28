@@ -678,6 +678,32 @@ export function RenderFrame() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [canvasMode, placingPin, setPlacingPin]);
+  // "/" opens cursor chat at the pointer even when the app has the focus, as
+  // right after clicking an avatar to follow someone. The document opens it
+  // only when the pointer is over it.
+  useEffect(() => {
+    if (!ready) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented)
+        return;
+      const target = e.target instanceof Element ? e.target : null;
+      if (
+        target?.closest(
+          'input,textarea,select,[contenteditable="true"],[contenteditable=""]',
+        )
+      )
+        return;
+      if (
+        document.querySelector(
+          '[role="dialog"][data-state="open"],[role="menu"][data-state="open"]',
+        )
+      )
+        return;
+      postToFrame({ type: "slashdocs:open-cursor-chat" });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [ready, postToFrame]);
   // Esc leaves placing from anywhere, the comment box included.
   useEffect(() => {
     if (!placingPin) return;
@@ -744,6 +770,13 @@ export function RenderFrame() {
       postToFrame({ type: "slashdocs:clear-cursors" });
     };
   }, [ready, cursorsShown, subscribeCursors, postToFrame]);
+
+  // The cursor chat field shows in this reader's cursor color.
+  const ownColor = principal ? principalColor(principal) : undefined;
+  useEffect(() => {
+    if (ready && ownColor)
+      postToFrame({ type: "slashdocs:cursor-color", color: ownColor });
+  }, [ready, ownColor, postToFrame]);
 
   // Follow a cursor once the frame shows its version, or stop. The effect above
   // gave the frame the cursor first.

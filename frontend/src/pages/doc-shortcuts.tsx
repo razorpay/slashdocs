@@ -37,6 +37,10 @@ const SECTIONS: { title: string; rows: [keys: string[], label: string][] }[] = [
       [[MOD, "Enter"], "Post a comment"],
     ],
   },
+  {
+    title: "Cursors",
+    rows: [[["/"], "Chat at your cursor"]],
+  },
 ];
 
 export function ShortcutsDialog({

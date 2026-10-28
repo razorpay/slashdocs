@@ -358,9 +358,12 @@ function Viewers({
               aria-pressed={following}
               onClick={() => onFollow(viewer)}
               style={{
-                boxShadow: `0 0 0 2px ${principalColor(viewer.principal)}, 0 0 0 4px var(--color-surface)`,
+                // Followed: a gap, then the viewer's color, as a pressed state.
+                boxShadow: following
+                  ? `0 0 0 2px var(--color-surface), 0 0 0 4px ${principalColor(viewer.principal)}`
+                  : `0 0 0 2px ${principalColor(viewer.principal)}, 0 0 0 4px var(--color-surface)`,
               }}
-              className="relative rounded-full transition-transform duration-150 ease-out hover:z-10 hover:-translate-y-0.5 focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)] motion-reduce:transition-none"
+              className="relative rounded-full transition-[translate,scale,box-shadow] duration-150 ease-out hover:z-10 hover:-translate-y-0.5 active:translate-y-0 active:scale-95 focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)] motion-reduce:transition-none"
             >
               <Avatar size={28} name={name} src={viewer.principal.picture_url} />
             </button>
@@ -368,15 +371,49 @@ function Viewers({
         );
       })}
       {hidden > 0 ? (
-        <span
-          title={viewers
-            .slice(MAX_VIEWER_AVATARS)
-            .map((viewer) => principalLabel(viewer.principal))
-            .join(", ")}
-          className="relative flex h-7 min-w-7 items-center justify-center rounded-full bg-[var(--color-surface-muted)] px-1.5 text-xs font-medium tabular-nums text-[var(--color-fg-muted)] ring-2 ring-[var(--color-surface)]"
-        >
-          +{hidden}
-        </span>
+        // The rest are in a menu, where any of them can be followed too.
+        <Dropdown>
+          <DropdownTrigger asChild>
+            <button
+              type="button"
+              aria-label={`${hidden} more ${hidden === 1 ? "viewer" : "viewers"}`}
+              aria-pressed={viewers
+                .slice(MAX_VIEWER_AVATARS)
+                .some((viewer) => viewer.session === followedSession)}
+              className="relative flex h-7 min-w-7 items-center justify-center rounded-full bg-[var(--color-surface-muted)] px-1.5 text-xs font-medium tabular-nums text-[var(--color-fg-muted)] ring-2 ring-[var(--color-surface)] transition-[translate,scale] duration-150 ease-out hover:z-10 hover:-translate-y-0.5 hover:text-[var(--color-fg)] active:translate-y-0 active:scale-95 aria-pressed:text-[var(--color-fg)] aria-pressed:ring-[var(--color-accent)] focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)] motion-reduce:transition-none"
+            >
+              +{hidden}
+            </button>
+          </DropdownTrigger>
+          <DropdownContent>
+            {viewers.slice(MAX_VIEWER_AVATARS).map((viewer) => {
+              const name = principalLabel(viewer.principal);
+              const following = viewer.session === followedSession;
+              return (
+                <DropdownItem
+                  key={`${viewer.principal.type}:${viewer.principal.id}`}
+                  onSelect={() => onFollow(viewer)}
+                  aria-label={following ? `Stop following ${name}` : `Follow ${name}`}
+                >
+                  <span
+                    className="rounded-full"
+                    style={{
+                      boxShadow: `0 0 0 2px ${principalColor(viewer.principal)}`,
+                    }}
+                  >
+                    <Avatar size={22} name={name} src={viewer.principal.picture_url} />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{name}</span>
+                  {following ? (
+                    <span className="text-xs text-[var(--color-fg-muted)]">
+                      Following
+                    </span>
+                  ) : null}
+                </DropdownItem>
+              );
+            })}
+          </DropdownContent>
+        </Dropdown>
       ) : null}
     </div>
   );
