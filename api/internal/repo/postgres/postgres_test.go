@@ -65,6 +65,54 @@ func TestPostgresRepositoryDocumentGrantVersionCommentFlow(t *testing.T) {
 	}
 }
 
+func TestPostgresCreateGrantDoesNotUpdateProfiles(t *testing.T) {
+	ctx := context.Background()
+	store := newStore(t)
+	owner, err := store.UpsertGoogleUser(ctx, "grant_owner", "grant-owner@example.com", "Owner", "grant-owner-sub", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipient, err := store.UpsertGoogleUser(ctx, "grant_recipient", "grant-recipient@example.com", "Recipient", "grant-recipient-sub", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, _, err := store.CreateDocument(ctx, owner, "Document", []byte("<p>Test</p>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder, err := store.CreateFolder(ctx, owner, "Folder", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, resource := range []struct{ kind, id string }{{"document", doc.ID}, {"folder", folder.ID}} {
+		t.Run(resource.kind, func(t *testing.T) {
+			for _, tc := range []struct {
+				name             string
+				principal, actor auth.Principal
+			}{
+				{"forged profiles",
+					auth.Principal{Type: auth.PrincipalUser, ID: recipient.ID, Email: "forged-recipient@example.com", Name: "Forged recipient"},
+					auth.Principal{Type: auth.PrincipalUser, ID: owner.ID, Email: "forged-owner@example.com", Name: "Forged owner"}},
+				{"id only",
+					auth.Principal{Type: auth.PrincipalUser, ID: recipient.ID},
+					auth.Principal{Type: auth.PrincipalUser, ID: owner.ID}},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					if _, err := store.CreateGrant(ctx, resource.kind, resource.id, tc.principal, repo.RoleViewer, tc.actor); err != nil {
+						t.Fatal(err)
+					}
+					for _, want := range []auth.Principal{owner, recipient} {
+						got, err := store.ResolveUser(ctx, want.ID)
+						if err != nil || got.Email != want.Email || got.Name != want.Name {
+							t.Fatalf("stored profile = %+v, err = %v, want %+v", got, err, want)
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
 // A public ("anyone") grant gives a stranger access to the document via the
 // link, but it only joins their workspace listing once they open it -- and an
 // explicit grant lists the document without needing an open.
@@ -103,7 +151,10 @@ func TestPostgresAnyoneGrantListsAfterOpen(t *testing.T) {
 	}
 
 	// A second user with an explicit grant sees it without opening.
-	invitee := auth.Principal{Type: auth.PrincipalUser, ID: "usr_pg_anyone_invitee", Email: "invitee@example.com", Name: "Invitee"}
+	invitee, err := store.UpsertGoogleUser(ctx, "usr_pg_anyone_invitee", "invitee@example.com", "Invitee", "invitee-sub", "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := store.CreateGrant(ctx, "document", doc.ID, invitee, repo.RoleViewer, owner); err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +257,10 @@ func TestPostgresSearchDocumentsViaFolderGrant(t *testing.T) {
 	ctx := context.Background()
 
 	owner := auth.Principal{Type: auth.PrincipalUser, ID: "usr_pg_search_folder_owner", Email: "search-folder-owner@test.com", Name: "Owner"}
-	viewer := auth.Principal{Type: auth.PrincipalUser, ID: "usr_pg_search_folder_viewer", Email: "search-folder-viewer@test.com", Name: "Viewer"}
+	viewer, err := store.UpsertGoogleUser(ctx, "usr_pg_search_folder_viewer", "search-folder-viewer@test.com", "Viewer", "search-folder-viewer-sub", "")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	folder, err := store.CreateFolder(ctx, owner, "Payments Platform", "")
 	if err != nil {

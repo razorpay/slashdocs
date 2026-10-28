@@ -420,6 +420,7 @@ func (s *Store) PrincipalExists(ctx context.Context, p auth.Principal) (bool, er
 		return false, nil
 	}
 }
+// CreateGrant changes access without creating or updating user profiles.
 func (s *Store) CreateGrant(ctx context.Context, resourceType, resourceID string, principal auth.Principal, role repo.Role, grantedBy auth.Principal) (repo.Grant, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -427,16 +428,6 @@ func (s *Store) CreateGrant(ctx context.Context, resourceType, resourceID string
 	}
 	defer rollback(ctx, tx)
 	q := s.q.WithTx(tx)
-	if grantedBy.Type == auth.PrincipalUser {
-		if err := upsertUser(ctx, q, grantedBy); err != nil {
-			return repo.Grant{}, err
-		}
-	}
-	if principal.Type == auth.PrincipalUser {
-		if err := upsertUser(ctx, q, principal); err != nil {
-			return repo.Grant{}, err
-		}
-	}
 	before, err := documentGrantAccessSnapshot(ctx, tx, resourceType, resourceID, principal)
 	if err != nil {
 		return repo.Grant{}, err
