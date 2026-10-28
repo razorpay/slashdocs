@@ -41,7 +41,7 @@ import { Center, EmptyState, Skeleton } from "@/components/ui/misc";
 import { Textarea } from "@/components/ui/input";
 import { api, type Comment, type UserPrincipal } from "@/api";
 import { cn } from "@/lib/cn";
-import { formatTimestamp } from "@/lib/format-date";
+import { RelativeTime } from "@/components/ui/relative-time";
 import { queryKeys } from "@/lib/queryKeys";
 import { layoutCommentRail } from "@/lib/comment-rail";
 import { samePrincipal } from "@/lib/principals";
@@ -1079,9 +1079,9 @@ function CommentCard({
       </div>
       {(c.created_at || (resolved && c.resolved_at)) && (
         <div className="mb-1 flex flex-wrap gap-x-3 text-[11px] text-[var(--color-fg-muted)]">
-          {c.created_at ? <span>Added {formatTimestamp(c.created_at)}</span> : null}
+          {c.created_at ? <RelativeTime iso={c.created_at} prefix="Added" /> : null}
           {resolved && c.resolved_at ? (
-            <span>Resolved {formatTimestamp(c.resolved_at)}</span>
+            <RelativeTime iso={c.resolved_at} prefix="Resolved" />
           ) : null}
         </div>
       )}
@@ -1178,7 +1178,7 @@ function ReplyItem({
       </div>
       {r.created_at ? (
         <div className="mb-1 text-[11px] text-[var(--color-fg-muted)]">
-          {formatTimestamp(r.created_at)}
+          <RelativeTime iso={r.created_at} />
         </div>
       ) : null}
       <EditableComment c={r} docId={docId} editing={editing} setEditing={setEditing} />
