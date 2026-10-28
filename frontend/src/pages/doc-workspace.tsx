@@ -32,6 +32,8 @@ import {
   type DocContextValue,
   type PendingSelection,
 } from "./doc-context";
+import { DocOutline } from "./doc-outline";
+import { outlineOpenStore, type OutlineHeading } from "@/lib/outline";
 import { RenderFrame } from "./doc-render-frame";
 import { Comments } from "./doc-comments";
 import { Keycast } from "./doc-keycast";
@@ -79,6 +81,8 @@ const NO_STREAM = {
 export type DocBarControls = {
   commentsOpen: boolean;
   onToggleComments: () => void;
+  // Set when the document has headings to show in the outline.
+  outline?: { open: boolean; onToggle: () => void };
   onShowShortcuts: () => void;
 };
 
@@ -166,6 +170,20 @@ export function DocWorkspace({
     commentRailSyncRef.current?.(top);
   }, []);
   const isMobile = useIsMobile();
+  const [outline, setOutline] = useState<OutlineHeading[]>([]);
+  const [activeHeading, setActiveHeading] = useState("");
+  const outlineOpen = outlineOpenStore.useStore();
+  const headingNavigatorRef = useRef<((id: string) => void) | null>(null);
+  const registerHeadingNavigator = useCallback(
+    (navigate: ((id: string) => void) | null) => {
+      headingNavigatorRef.current = navigate;
+    },
+    [],
+  );
+  const toggleOutline = useCallback(
+    () => outlineOpenStore.write(!outlineOpen),
+    [outlineOpen],
+  );
   // A comment started while the comments are hidden shows them only until it
   // is posted or discarded.
   const [peekDraft, setPeekDraft] = useState<string>();
@@ -274,6 +292,8 @@ export function DocWorkspace({
   useEffect(() => {
     setCommentPositions(new Map());
     setCommentViewport({ scrollTop: 0, scrollHeight: 1 });
+    setOutline([]);
+    setActiveHeading("");
   }, [version]);
 
   const [drafts, updateDrafts] = useCommentDrafts(docId);
@@ -479,6 +499,9 @@ export function DocWorkspace({
       scrollDocumentTo,
       registerCommentRailSync,
       syncCommentRail,
+      setOutline,
+      setActiveHeading,
+      registerHeadingNavigator,
       handleDocCommentClick,
       handleRenderedDocumentClick,
       subscribeDocumentKV: stream.subscribeKV,
@@ -512,6 +535,7 @@ export function DocWorkspace({
       scrollDocumentTo,
       registerCommentRailSync,
       syncCommentRail,
+      registerHeadingNavigator,
       handleDocCommentClick,
       handleRenderedDocumentClick,
       stream.subscribeKV,
@@ -554,10 +578,34 @@ export function DocWorkspace({
             {bar({
               commentsOpen: isMobile ? mobilePanelOpen : commentsOpen,
               onToggleComments: toggleComments,
+              outline: outline.length
+                ? { open: outlineOpen, onToggle: toggleOutline }
+                : undefined,
               onShowShortcuts: () => setShortcutsOpen(true),
             })}
           </motion.div>
           <motion.div variants={contentFade} className="flex flex-1 overflow-hidden">
+            <AnimatePresence initial={false}>
+              {outlineOpen && outline.length > 0 && !isMobile && (
+                <motion.aside
+                  key="outline"
+                  initial={{ width: 0, opacity: 0 }}
+                  animate={{ width: 260, opacity: 1 }}
+                  exit={{ width: 0, opacity: 0 }}
+                  transition={{ type: "spring", duration: 0.35, bounce: 0 }}
+                  className="relative hidden shrink-0 overflow-hidden border-r border-[var(--color-border)] bg-[var(--color-chrome)] md:block"
+                >
+                  <div className="h-full w-[260px]">
+                    <DocOutline
+                      headings={outline}
+                      active={activeHeading}
+                      onNavigate={(id) => headingNavigatorRef.current?.(id)}
+                      onHide={() => outlineOpenStore.write(false)}
+                    />
+                  </div>
+                </motion.aside>
+              )}
+            </AnimatePresence>
             <section className="relative min-w-0 flex-1 bg-[var(--color-surface-muted)]">
               {frame}
             </section>

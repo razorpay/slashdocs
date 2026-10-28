@@ -20,7 +20,11 @@ import {
   Trash2,
 } from "lucide-react";
 import { AccountMenu } from "@/components/layout/topbar";
-import { CommentsToggle, DocBarFrame } from "@/components/layout/doc-bar-frame";
+import {
+  CommentsToggle,
+  DocBarFrame,
+  OutlineToggle,
+} from "@/components/layout/doc-bar-frame";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar } from "@/components/ui/misc";
@@ -73,6 +77,7 @@ export function DocBar({
   onFollowViewer,
   commentsOpen,
   onToggleComments,
+  outline,
   onShowShortcuts,
   shareOpen,
   onShareOpenChange,
@@ -92,6 +97,7 @@ export function DocBar({
   onFollowViewer: (viewer: Viewer) => void;
   commentsOpen: boolean;
   onToggleComments: () => void;
+  outline?: { open: boolean; onToggle: () => void };
   onShowShortcuts: () => void;
   shareOpen: boolean;
   onShareOpenChange: (open: boolean) => void;
@@ -228,6 +234,7 @@ export function DocBar({
           />
         </Sheet>
       )}
+      {outline && <OutlineToggle open={outline.open} onToggle={outline.onToggle} />}
       <CommentsToggle open={commentsOpen} onToggle={onToggleComments} />
       <Dropdown>
         <DropdownTrigger asChild>

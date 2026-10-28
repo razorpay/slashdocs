@@ -14,6 +14,12 @@ import {
   refreshSVGRects,
 } from "./highlight.ts";
 import { createCursorLayer, trackPointer } from "./cursors.ts";
+import {
+  activeHeading,
+  collectOutline,
+  sameOutline,
+  type OutlineHeading,
+} from "./outline.ts";
 import { CHORD_KEYS } from "../src/lib/esc-chord.ts";
 import {
   reduceVimScroll,
@@ -995,6 +1001,7 @@ type Theme = "dark" | "light";
     if (mutationObserver) mutationObserver.disconnect();
     mutationObserver = new MutationObserver(() => {
       prepareHeadings(d);
+      scheduleOutline();
       scheduleTextNavigation();
       scheduleMutationScan();
       scheduleCommentPositions();
@@ -1499,6 +1506,49 @@ type Theme = "dark" | "light";
     if (pendingHeading) navigateHeading(pendingHeading);
   }
 
+  // The app shows the outline beside the document. A document that renders
+  // its headings with a script sends a new outline when they change.
+  let outline: OutlineHeading[] = [];
+  let outlineTimer: ReturnType<typeof setTimeout> | undefined;
+  let outlineActive = "";
+  let outlineActiveFrame = 0;
+
+  function postOutline(force: boolean): void {
+    const d = doc();
+    if (!d) return;
+    const next = collectOutline(d);
+    if (force || !sameOutline(outline, next)) {
+      outline = next;
+      parent.postMessage(
+        { type: "slashdocs:outline", headings: outline },
+        targetOrigin(),
+      );
+    }
+    postActiveHeading(force);
+  }
+
+  function scheduleOutline(): void {
+    clearTimeout(outlineTimer);
+    outlineTimer = setTimeout(() => postOutline(false), 250);
+  }
+
+  function postActiveHeading(force: boolean): void {
+    const d = doc();
+    if (!d) return;
+    const id = activeHeading(d, outline);
+    if (!force && id === outlineActive) return;
+    outlineActive = id;
+    parent.postMessage({ type: "slashdocs:outline-active", id }, targetOrigin());
+  }
+
+  function scheduleActiveHeading(): void {
+    if (outlineActiveFrame) return;
+    outlineActiveFrame = requestAnimationFrame(() => {
+      outlineActiveFrame = 0;
+      postActiveHeading(false);
+    });
+  }
+
   function navigateHeading(id: string): void {
     pendingText = null;
     textVisibilityObserver?.disconnect();
@@ -1881,7 +1931,14 @@ type Theme = "dark" | "light";
     trackPointer(d, (spot) =>
       parent.postMessage({ type: "slashdocs:pointer", spot }, targetOrigin()),
     );
+    d.addEventListener("scroll", scheduleActiveHeading, {
+      capture: true,
+      passive: true,
+    });
     parent.postMessage({ type: "slashdocs:ready" }, targetOrigin());
+    outline = [];
+    outlineActive = "";
+    postOutline(true);
     scheduleViewport();
     hydrateKV();
   }

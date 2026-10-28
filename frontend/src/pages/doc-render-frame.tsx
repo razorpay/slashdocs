@@ -17,6 +17,7 @@ import { cursorsShownStore, parseCursorSpot } from "@/lib/live-cursors";
 import { useDocumentExport } from "./use-document-export";
 import { useDoc } from "./doc-context";
 import { useBridgeHost } from "./use-bridge-host";
+import { parseOutline } from "@/lib/outline";
 
 const FORWARDED_KEYS = new Set<string>([
   "Escape",
@@ -44,6 +45,9 @@ export function RenderFrame() {
     setCommentViewport,
     registerDocumentScroller,
     registerDocumentPrinter,
+    registerHeadingNavigator,
+    setOutline,
+    setActiveHeading,
     syncCommentRail,
     handleRenderedDocumentClick,
     subscribeDocumentKV,
@@ -203,6 +207,24 @@ export function RenderFrame() {
     [postToFrame],
   );
 
+  // The outline goes to a heading even when it is already in the URL, so the
+  // fragment is set without the navigation the hash effect above would make.
+  const navigateHeading = useCallback(
+    (id: string) => {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("comment");
+      url.hash = id;
+      window.history.replaceState(window.history.state, "", url);
+      postToFrame({ type: "slashdocs:navigate-heading", id });
+    },
+    [postToFrame],
+  );
+
+  useEffect(() => {
+    registerHeadingNavigator(navigateHeading);
+    return () => registerHeadingNavigator(null);
+  }, [registerHeadingNavigator, navigateHeading]);
+
   useEffect(() => {
     registerDocumentScroller(scrollDocumentTo);
     return () => registerDocumentScroller(null);
@@ -331,6 +353,16 @@ export function RenderFrame() {
         url.hash = e.data.id;
         window.history.replaceState(window.history.state, "", url);
       }
+      if (e.data?.type === "slashdocs:outline") {
+        setOutline(parseOutline(e.data.headings));
+      }
+      if (
+        e.data?.type === "slashdocs:outline-active" &&
+        typeof e.data.id === "string" &&
+        e.data.id.length <= 1024
+      ) {
+        setActiveHeading(e.data.id);
+      }
       if (e.data?.type === "slashdocs:activate" && typeof e.data.id === "string") {
         handleDocCommentClick(e.data.id);
       }
@@ -439,6 +471,8 @@ export function RenderFrame() {
     setCommentPositions,
     setCommentViewport,
     syncCommentRail,
+    setOutline,
+    setActiveHeading,
     applyZoom,
   ]);
 

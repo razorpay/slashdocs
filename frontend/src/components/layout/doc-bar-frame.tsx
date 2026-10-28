@@ -1,6 +1,12 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, FolderIcon, PanelRightClose, PanelRightOpen } from "lucide-react";
+import {
+  ArrowLeft,
+  FolderIcon,
+  ListTree,
+  PanelRightClose,
+  PanelRightOpen,
+} from "lucide-react";
 import { Logo } from "./logo";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -90,6 +96,29 @@ export function CommentsToggle({
       ) : (
         <PanelRightOpen className="h-4 w-4" />
       )}
+    </Button>
+  );
+}
+
+// OutlineToggle shows or hides the outline of headings left of the document.
+export function OutlineToggle({
+  open,
+  onToggle,
+}: {
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={onToggle}
+      aria-label={open ? "Hide outline" : "Show outline"}
+      tooltip={open ? "Hide outline" : "Show outline"}
+      aria-pressed={open}
+      className="hidden shrink-0 md:inline-flex"
+    >
+      <ListTree className="h-4 w-4" />
     </Button>
   );
 }

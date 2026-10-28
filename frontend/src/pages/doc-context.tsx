@@ -3,6 +3,7 @@ import type { Anchor, Comment, CursorSpot, Principal } from "@/api";
 import type { CommentFilter } from "@/lib/constants";
 import type { CommentDraft } from "@/lib/comment-drafts";
 import type { CursorListener, DocumentKVListener } from "./use-document-stream";
+import type { OutlineHeading } from "@/lib/outline";
 
 // A text selection captured from the render bridge that a new comment will
 // anchor to. `anchor` is present only when the bridge supplies real offsets.
@@ -53,6 +54,9 @@ export type DocContextValue = {
   printDocument: () => void;
   registerDocumentScroller: (scroller: ((top: number) => void) | null) => void;
   scrollDocumentTo: (top: number) => void;
+  setOutline: (headings: OutlineHeading[]) => void;
+  setActiveHeading: (id: string) => void;
+  registerHeadingNavigator: (navigate: ((id: string) => void) | null) => void;
   registerCommentRailSync: (sync: ((top: number) => void) | null) => void;
   syncCommentRail: (top: number) => void;
   handleDocCommentClick: (id: string) => void;

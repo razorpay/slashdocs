@@ -8,7 +8,11 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import { Center, EmptyState, Skeleton } from "@/components/ui/misc";
 import { TopBar } from "@/components/layout/topbar";
-import { CommentsToggle, DocBarFrame } from "@/components/layout/doc-bar-frame";
+import {
+  CommentsToggle,
+  DocBarFrame,
+  OutlineToggle,
+} from "@/components/layout/doc-bar-frame";
 import { DocWorkspace } from "@/pages/doc-workspace";
 import { api } from "@/api";
 import { errorMessage } from "@/lib/errors";
@@ -210,7 +214,7 @@ function DocumentPage({ doc }: { doc: Doc }) {
       principal={me.data?.principal}
       home="/"
       notifications={false}
-      bar={({ commentsOpen, onToggleComments }) => (
+      bar={({ commentsOpen, onToggleComments, outline }) => (
         <DocBarFrame
           home="/"
           folder={folder ? { to: href(folder), title: base(folder) } : undefined}
@@ -232,6 +236,7 @@ function DocumentPage({ doc }: { doc: Doc }) {
               <ExternalLink className="h-4 w-4" />
             </a>
           </Button>
+          {outline && <OutlineToggle open={outline.open} onToggle={outline.onToggle} />}
           <CommentsToggle open={commentsOpen} onToggle={onToggleComments} />
         </DocBarFrame>
       )}
