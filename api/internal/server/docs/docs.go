@@ -611,7 +611,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "open|resolved|stale|orphaned|all",
+                        "description": "Thread filter: open, resolved, orphaned or all. Empty means all.",
                         "name": "status",
                         "in": "query"
                     },
@@ -2318,6 +2318,9 @@ const docTemplate = `{
                 },
                 "current_placement": {
                     "$ref": "#/definitions/server.commentPlacementResponse"
+                },
+                "edited": {
+                    "type": "boolean"
                 },
                 "id": {
                     "type": "string"
