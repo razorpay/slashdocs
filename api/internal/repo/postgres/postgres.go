@@ -1256,11 +1256,11 @@ func (s *Store) UpdateComment(ctx context.Context, id string, update repo.Commen
 	if err != nil {
 		return repo.Comment{}, err
 	}
-	comment := commentFromUpdate(row)
-	effectiveBody, bodyChanged, err := commentBodyForUpdate(comment.Body, update.Body)
+	effectiveBody, bodyChanged, err := commentBodyForUpdate(row.Body, update.Body)
 	if err != nil {
 		return repo.Comment{}, err
 	}
+	comment := commentFromUpdate(row, bodyChanged)
 	previousMentionsByID, err := commentMentionsByID(ctx, q, []string{id})
 	if err != nil {
 		return repo.Comment{}, err
@@ -1278,7 +1278,7 @@ func (s *Store) UpdateComment(ctx context.Context, id string, update repo.Commen
 			return repo.Comment{}, err
 		}
 	}
-	comment.Body, comment.Edited = effectiveBody, comment.Edited || bodyChanged
+	comment.Body = effectiveBody
 	if update.Status != "" {
 		updated, err := q.GetComment(ctx, id)
 		if err != nil {
@@ -1681,8 +1681,8 @@ func commentFromReply(r dbsqlc.GetCommentForReplyRow) repo.Comment {
 	_ = json.Unmarshal(r.AnchorJson, &c.Anchor)
 	return c
 }
-func commentFromUpdate(r dbsqlc.GetCommentForUpdateRow) repo.Comment {
-	c := repo.Comment{ID: r.ID, DocumentID: r.DocumentID, VersionID: r.CreatedOnVersionID, Author: auth.Principal{Type: auth.PrincipalType(r.AuthorType), ID: r.AuthorID, Email: r.AuthorEmail, Name: r.AuthorName}, Body: r.Body, SelectedText: r.SelectedText, Status: r.Status, RootCommentID: r.RootCommentID, CreatedAt: pgTimeRFC3339(r.CreatedAt), ResolvedAt: pgTimeRFC3339(r.ResolvedAt), Edited: r.Edited}
+func commentFromUpdate(r dbsqlc.GetCommentForUpdateRow, bodyChanged bool) repo.Comment {
+	c := repo.Comment{ID: r.ID, DocumentID: r.DocumentID, VersionID: r.CreatedOnVersionID, Author: auth.Principal{Type: auth.PrincipalType(r.AuthorType), ID: r.AuthorID, Email: r.AuthorEmail, Name: r.AuthorName}, Body: r.Body, SelectedText: r.SelectedText, Status: r.Status, RootCommentID: r.RootCommentID, CreatedAt: pgTimeRFC3339(r.CreatedAt), ResolvedAt: pgTimeRFC3339(r.ResolvedAt), Edited: r.Edited || bodyChanged}
 	if r.ParentCommentID.Valid {
 		c.ParentCommentID = r.ParentCommentID.String
 	}
