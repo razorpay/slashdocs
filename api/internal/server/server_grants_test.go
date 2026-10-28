@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
 func TestGrantDocumentAccessToServiceAccount(t *testing.T) {
@@ -50,6 +52,66 @@ func TestGrantDocumentAccessToUserByEmail(t *testing.T) {
 	  "role": "commenter",
 	  "granted_by": { "id": "owner_1", "email": "owner@example.com" }
 	}`, grantID, e.doc.ID))
+}
+
+func TestUserGrantsUseStoredProfile(t *testing.T) {
+	for _, resource := range []string{"documents", "folders"} {
+		t.Run(resource, func(t *testing.T) {
+			for _, tc := range []struct {
+				name      string
+				principal string
+				status    int
+			}{
+				{"forged profile", fmt.Sprintf(`{"type":"user","id":%q,"email":"forged@example.com","name":"Forged"}`, fixtureUser.ID), http.StatusCreated},
+				{"email collision", fmt.Sprintf(`{"type":"user","id":%q,"email":%q,"name":"Forged"}`, fixtureUser.ID, fixtureOwner.Email), http.StatusCreated},
+				{"id only", fmt.Sprintf(`{"type":"user","id":%q}`, fixtureUser.ID), http.StatusCreated},
+				{"email only", fmt.Sprintf(`{"type":"user","email":%q,"name":"Forged"}`, fixtureUser.Email), http.StatusCreated},
+				{"unknown id", fmt.Sprintf(`{"type":"user","id":"missing","email":%q}`, fixtureUser.Email), http.StatusNotFound},
+				{"missing id and email", `{"type":"user","name":"Forged"}`, http.StatusBadRequest},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					e := newTestEnv(t)
+					id := e.doc.ID
+					if resource == "folders" {
+						id = createFolder(t, e, `{"title":"Shared"}`, principalHeader(fixtureEditor))
+					}
+					rr := do(t, e.h, http.MethodPost, "/v1/"+resource+"/"+id+"/grants",
+						`{"principal":`+tc.principal+`,"role":"viewer"}`, map[string]string{
+							"Content-Type":     "application/json",
+							"X-Test-Principal": principalHeader(fixtureEditor),
+						})
+					assertStatus(t, rr, tc.status)
+					if tc.status == http.StatusCreated {
+						var out struct {
+							Principal auth.Principal `json:"principal"`
+						}
+						if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+							t.Fatal(err)
+						}
+						if out.Principal.Type != fixtureUser.Type || out.Principal.ID != fixtureUser.ID || out.Principal.Email != fixtureUser.Email || out.Principal.Name != fixtureUser.Name {
+							t.Fatalf("principal = %+v, want %+v", out.Principal, fixtureUser)
+						}
+						var role repo.Role
+						var err error
+						if resource == "documents" {
+							role, err = e.store.RoleForDocument(context.Background(), fixtureUser, id)
+						} else {
+							role, err = e.store.RoleForFolder(context.Background(), fixtureUser, id)
+						}
+						if err != nil || role != repo.RoleViewer {
+							t.Fatalf("role = %q, err = %v, want viewer", role, err)
+						}
+					}
+					for _, want := range []auth.Principal{fixtureUser, fixtureEditor, fixtureOwner} {
+						got, err := e.store.ResolveUser(context.Background(), want.ID)
+						if err != nil || got.ID != want.ID || got.Email != want.Email || got.Name != want.Name {
+							t.Fatalf("stored profile = %+v, err = %v, want %+v", got, err, want)
+						}
+					}
+				})
+			}
+		})
+	}
 }
 
 func TestGrantDocumentAccessRejectsUnknownUserEmail(t *testing.T) {
