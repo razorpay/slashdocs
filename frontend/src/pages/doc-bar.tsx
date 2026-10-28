@@ -20,7 +20,11 @@ import {
   Trash2,
 } from "lucide-react";
 import { AccountMenu } from "@/components/layout/topbar";
-import { CommentsToggle, DocBarFrame } from "@/components/layout/doc-bar-frame";
+import {
+  CommentsToggle,
+  DarkDocumentToggle,
+  DocBarFrame,
+} from "@/components/layout/doc-bar-frame";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar } from "@/components/ui/misc";
@@ -228,6 +232,7 @@ export function DocBar({
           />
         </Sheet>
       )}
+      <DarkDocumentToggle />
       <CommentsToggle open={commentsOpen} onToggle={onToggleComments} />
       <Dropdown>
         <DropdownTrigger asChild>

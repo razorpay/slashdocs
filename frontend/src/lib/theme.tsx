@@ -3,6 +3,15 @@ import { createPersistentStore } from "./persistent-store";
 
 type Theme = "light" | "dark" | "system";
 
+// documentDarkStore is the reader's choice of a dark document. It is
+// separate from the app theme: a document that ignores the theme stays
+// paper white in a dark app unless the reader asks for it to be dark.
+export const documentDarkStore = createPersistentStore<boolean>(
+  "slashdocs:document-dark",
+  false,
+  (parsed) => parsed === true,
+);
+
 const store = createPersistentStore<Theme>("slashdocs.theme", "system", (parsed) =>
   parsed === "light" || parsed === "dark" ? parsed : "system",
 );

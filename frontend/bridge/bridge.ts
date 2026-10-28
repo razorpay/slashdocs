@@ -14,6 +14,7 @@ import {
   refreshSVGRects,
 } from "./highlight.ts";
 import { createCursorLayer, trackPointer } from "./cursors.ts";
+import { applyDark } from "./dark.ts";
 import { CHORD_KEYS } from "../src/lib/esc-chord.ts";
 import {
   reduceVimScroll,
@@ -1199,6 +1200,36 @@ type Theme = "dark" | "light";
     try {
       dispatchPublicEvent(d.defaultView!, "theme", { detail: { theme: t } });
     } catch (e) {}
+    scheduleDark();
+  }
+
+  // The reader can ask for a dark document. The app then sends the dark
+  // theme, and a document that ignores it is inverted once its own theme
+  // handlers have painted.
+  let darkDocument = (() => {
+    try {
+      return new URLSearchParams(location.search).get("slashdocs_dark") === "1";
+    } catch (e) {
+      return false;
+    }
+  })();
+  let darkFrame = 0;
+
+  function scheduleDark(): void {
+    cancelAnimationFrame(darkFrame);
+    darkFrame = requestAnimationFrame(() => {
+      darkFrame = requestAnimationFrame(() => {
+        darkFrame = 0;
+        const d = doc();
+        if (!d || !d.documentElement) return;
+        suspendMutationObserver();
+        try {
+          applyDark(d, darkDocument);
+        } finally {
+          resumeMutationObserver();
+        }
+      });
+    });
   }
 
   // Return the selection's range, merging multiple ranges (a Firefox quirk:
@@ -1940,7 +1971,10 @@ type Theme = "dark" | "light";
     }
     if (e.data.type === "slashdocs:paint") paint(e.data.comments, e.data.active);
     else if (e.data.type === "slashdocs:theme") applyTheme(e.data.theme);
-    else if (e.data.type === "slashdocs:kv-response") {
+    else if (e.data.type === "slashdocs:dark") {
+      darkDocument = e.data.on === true;
+      scheduleDark();
+    } else if (e.data.type === "slashdocs:kv-response") {
       const requestId = String(e.data.requestId || "");
       const pending = kvPending[requestId];
       if (!pending) return;

@@ -1,9 +1,17 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, FolderIcon, PanelRightClose, PanelRightOpen } from "lucide-react";
+import {
+  ArrowLeft,
+  FolderIcon,
+  Moon,
+  PanelRightClose,
+  PanelRightOpen,
+  Sun,
+} from "lucide-react";
 import { Logo } from "./logo";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
+import { documentDarkStore } from "@/lib/theme";
 
 // The bar above a document: back, home, the folder, and the title. The meta
 // follows the title, and the children are the actions on the right.
@@ -90,6 +98,26 @@ export function CommentsToggle({
       ) : (
         <PanelRightOpen className="h-4 w-4" />
       )}
+    </Button>
+  );
+}
+
+// DarkDocumentToggle turns dark mode for the document on or off. A document
+// that ignores the theme is shown inverted while it is on.
+export function DarkDocumentToggle() {
+  const dark = documentDarkStore.useStore();
+  const label = dark ? "Turn off dark mode" : "Turn on dark mode";
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={() => documentDarkStore.write(!dark)}
+      aria-label={label}
+      tooltip={label}
+      aria-pressed={dark}
+      className="shrink-0"
+    >
+      {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
     </Button>
   );
 }

@@ -14,6 +14,7 @@ import { matchesCommentFilter } from "@/lib/constants";
 import { Center } from "@/components/ui/misc";
 import { CHORD_KEYS } from "@/lib/esc-chord";
 import { cursorsShownStore, parseCursorSpot } from "@/lib/live-cursors";
+import { documentDarkStore } from "@/lib/theme";
 import { useDocumentExport } from "./use-document-export";
 import { useDoc } from "./doc-context";
 import { useBridgeHost } from "./use-bridge-host";
@@ -53,6 +54,7 @@ export function RenderFrame() {
     followedCursor,
   } = useDoc();
   const cursorsShown = cursorsShownStore.useStore();
+  const dark = documentDarkStore.useStore();
   const versionRef = useRef(version);
   versionRef.current = version;
   const location = useLocation();
@@ -500,8 +502,10 @@ export function RenderFrame() {
             transform: `scale(${scale})`,
             transformOrigin: "0 0",
             // Paper white: theming is opt-in, so a document that ignores the
-            // theme keeps its light look in a dark app.
-            background: "#fff",
+            // theme keeps its light look in a dark app. In dark mode the
+            // bridge inverts such a document, and a transparent dark-themed
+            // one needs dark paper.
+            background: dark ? "#18181b" : "#fff",
           }}
           src={frameSrc}
           sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"

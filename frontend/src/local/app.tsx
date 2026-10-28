@@ -8,7 +8,11 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import { Center, EmptyState, Skeleton } from "@/components/ui/misc";
 import { TopBar } from "@/components/layout/topbar";
-import { CommentsToggle, DocBarFrame } from "@/components/layout/doc-bar-frame";
+import {
+  CommentsToggle,
+  DarkDocumentToggle,
+  DocBarFrame,
+} from "@/components/layout/doc-bar-frame";
 import { DocWorkspace } from "@/pages/doc-workspace";
 import { api } from "@/api";
 import { errorMessage } from "@/lib/errors";
@@ -232,6 +236,7 @@ function DocumentPage({ doc }: { doc: Doc }) {
               <ExternalLink className="h-4 w-4" />
             </a>
           </Button>
+          <DarkDocumentToggle />
           <CommentsToggle open={commentsOpen} onToggle={onToggleComments} />
         </DocBarFrame>
       )}

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, APIError, type DocumentKVEvent } from "@/api";
-import { useResolvedTheme } from "@/lib/theme";
+import { documentDarkStore, useResolvedTheme } from "@/lib/theme";
 import { errorMessage } from "@/lib/errors";
 
 // useBridgeHost is the app side of the render bridge that every embedded
@@ -20,11 +20,16 @@ export function useBridgeHost(
   const ready = !!renderURL && readyURL === renderURL;
   const renderURLRef = useRef(renderURL);
   renderURLRef.current = renderURL;
-  const theme = useResolvedTheme();
+  const dark = documentDarkStore.useStore();
+  const resolvedTheme = useResolvedTheme();
+  // A dark document is sent the dark theme whatever the app theme is.
+  const theme = dark ? "dark" : resolvedTheme;
   // Stable handlers read the latest theme and readiness from refs. Handlers
   // that re-register can miss a slashdocs:ready sent during the teardown.
   const themeRef = useRef(theme);
   themeRef.current = theme;
+  const darkRef = useRef(dark);
+  darkRef.current = dark;
   const readyRef = useRef(ready);
   readyRef.current = ready;
   // The newest KV revision the frame received, so no change goes twice.
@@ -46,7 +51,8 @@ export function useBridgeHost(
   const frameSrc = useMemo(() => {
     if (!renderURL) return undefined;
     const sep = renderURL.includes("?") ? "&" : "?";
-    return `${renderURL}${sep}slashdocs_theme=${themeRef.current}`;
+    const darkParam = darkRef.current ? "&slashdocs_dark=1" : "";
+    return `${renderURL}${sep}slashdocs_theme=${themeRef.current}${darkParam}`;
   }, [renderURL]);
 
   useEffect(() => {
@@ -64,6 +70,10 @@ export function useBridgeHost(
   useEffect(() => {
     if (ready) postToFrame({ type: "slashdocs:theme", theme });
   }, [theme, ready, postToFrame]);
+
+  useEffect(() => {
+    if (ready) postToFrame({ type: "slashdocs:dark", on: dark });
+  }, [dark, ready, postToFrame]);
 
   // A frame that is not ready yet reads the current KV state when it
   // hydrates, so it misses no change.
@@ -95,6 +105,7 @@ export function useBridgeHost(
       if (data?.type === "slashdocs:ready") {
         setReadyURL(renderURLRef.current);
         reply({ type: "slashdocs:theme", theme: themeRef.current });
+        reply({ type: "slashdocs:dark", on: darkRef.current });
       }
       if (data?.type === "slashdocs:kv-request") {
         void answerKV(docId, data, reply, kvRevision, signInRef.current);
