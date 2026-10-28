@@ -76,7 +76,8 @@ func (s *Slack) call(ctx context.Context, method string, payload any, result any
 	}
 	if !status.OK {
 		switch status.Error {
-		case "users_not_found", "user_not_found", "account_inactive", "cannot_dm_bot", "channel_not_found", "invalid_auth", "token_revoked", "missing_scope", "not_allowed_token_type":
+		case "users_not_found", "user_not_found", "account_inactive", "cannot_dm_bot", "channel_not_found", "invalid_auth", "token_revoked", "missing_scope", "not_allowed_token_type",
+			"cannot_unfurl_url", "cannot_find_message", "cannot_unfurl_message", "invalid_unfurls_format", "invalid_blocks":
 			return &DeliveryError{Code: status.Error, Permanent: true}
 		default:
 			// Avoid logging arbitrary provider response text.
@@ -113,6 +114,32 @@ func (s *Slack) Send(ctx context.Context, email string, message Message) error {
 	}
 	var response map[string]any
 	return s.call(ctx, "chat.postMessage", slackMessage(channel.Channel.ID, message), &response)
+}
+
+// Unfurl addresses posted messages by channel and ts, and composer previews by unfurl id.
+func (s *Slack) Unfurl(ctx context.Context, target UnfurlTarget, unfurls map[string]any) error {
+	payload := map[string]any{"unfurls": unfurls}
+	if target.IsComposer() {
+		payload["unfurl_id"], payload["source"] = target.UnfurlID, "composer"
+	} else {
+		payload["channel"], payload["ts"] = target.Channel, target.TS
+	}
+	var response map[string]any
+	return s.call(ctx, "chat.unfurl", payload, &response)
+}
+
+// IsExternalChannel reports Slack Connect conversations. On error it reports true.
+func (s *Slack) IsExternalChannel(ctx context.Context, channel string) (bool, error) {
+	var response struct {
+		Channel struct {
+			IsExtShared        bool `json:"is_ext_shared"`
+			IsPendingExtShared bool `json:"is_pending_ext_shared"`
+		} `json:"channel"`
+	}
+	if err := s.call(ctx, "conversations.info", url.Values{"channel": {channel}}, &response); err != nil {
+		return true, err
+	}
+	return response.Channel.IsExtShared || response.Channel.IsPendingExtShared, nil
 }
 
 func CommentURL(origin, documentID, commentID string) string {
