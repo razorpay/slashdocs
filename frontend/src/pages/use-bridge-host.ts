@@ -156,7 +156,9 @@ async function answerKV(
     }
     if (operation !== "patch") throw new Error("unknown KV operation");
     if (signIn) {
-      signIn();
+      // The bridge saves checkboxes quietly: ticking one is not a reason to
+      // leave the document.
+      if (data.quiet !== true) signIn();
       throw new Error("Sign in to edit this document.");
     }
     const set =

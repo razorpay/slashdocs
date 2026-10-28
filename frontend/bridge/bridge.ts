@@ -14,6 +14,7 @@ import {
   refreshSVGRects,
 } from "./highlight.ts";
 import { createCursorLayer, trackPointer } from "./cursors.ts";
+import { createCheckboxState } from "./checkbox-state.ts";
 import { CHORD_KEYS } from "../src/lib/esc-chord.ts";
 import {
   reduceVimScroll,
@@ -450,7 +451,27 @@ type Theme = "dark" | "light";
     parent.postMessage({ type: "slashdocs:github-connect" }, targetOrigin());
   }
 
+  // A checkbox keeps its state in the KV. A reader who cannot edit, or who
+  // is signed out, still ticks it for themselves: quiet asks the app not to
+  // send them to sign in.
+  const checkboxState = createCheckboxState(doc, (key, checked) => {
+    kvRequest("patch", {
+      set: { [key]: checked },
+      delete: [],
+      source: "local",
+      kvOperation: "checkbox",
+      quiet: true,
+    }).catch(() => {});
+  });
+  let checkboxTimer: ReturnType<typeof setTimeout> | undefined;
+  // Checkboxes a script renders later get their state too.
+  function scheduleCheckboxes(): void {
+    clearTimeout(checkboxTimer);
+    checkboxTimer = setTimeout(checkboxState.apply, 250);
+  }
+
   function emitKVChange(detail: unknown): void {
+    checkboxState.receive(detail);
     const w = innerWindow();
     if (!w) return;
     try {
@@ -995,6 +1016,7 @@ type Theme = "dark" | "light";
     if (mutationObserver) mutationObserver.disconnect();
     mutationObserver = new MutationObserver(() => {
       prepareHeadings(d);
+      scheduleCheckboxes();
       scheduleTextNavigation();
       scheduleMutationScan();
       scheduleCommentPositions();
@@ -1654,6 +1676,8 @@ type Theme = "dark" | "light";
     mutationRepaintDeadline = 0;
     observeMutations(d);
     resetKVHistory();
+    checkboxState.reset();
+    d.addEventListener("change", checkboxState.onChange, true);
     injectStyles();
     installSlashdocsAPI();
     dismissSelectionAction();
