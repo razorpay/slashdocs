@@ -555,6 +555,9 @@ func (s *Store) CreateVersion(ctx context.Context, documentID, baseVersionID, ch
 			return repo.Version{}, err
 		}
 	}
+	if err := recordVersionEvent(ctx, q, documentID); err != nil {
+		return repo.Version{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return repo.Version{}, err
 	}

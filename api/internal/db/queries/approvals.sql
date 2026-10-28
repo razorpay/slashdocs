@@ -122,3 +122,28 @@ LEFT JOIN approvals a
  AND a.approver_id = r.approver_id
 WHERE r.document_id = ANY(@document_ids::text[]) AND r.revoked_at IS NULL
 GROUP BY r.document_id;
+
+-- name: InsertApprovalEvent :exec
+INSERT INTO approval_events(document_id, event_type)
+VALUES(@document_id, @event_type);
+
+-- name: InsertApprovalEventIfApprovers :exec
+-- A new version only matters to a document that has approvers: without them it
+-- has no approval state to reset or carry.
+INSERT INTO approval_events(document_id, event_type)
+SELECT @document_id::text, @event_type::text
+WHERE EXISTS (
+  SELECT 1 FROM approval_requests
+  WHERE document_id = @document_id::text AND revoked_at IS NULL
+);
+
+-- name: PruneApprovalEvents :exec
+DELETE FROM approval_events WHERE created_at < now() - interval '90 days';
+
+-- name: ListApprovalEvents :many
+-- Events after a cursor, oldest first: the feed a reader pages through.
+SELECT id, document_id, event_type, created_at
+FROM approval_events
+WHERE id > @after_id
+ORDER BY id
+LIMIT @max_rows;

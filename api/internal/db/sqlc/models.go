@@ -21,6 +21,13 @@ type Approval struct {
 	Note                 string
 }
 
+type ApprovalEvent struct {
+	ID         int64
+	DocumentID string
+	EventType  string
+	CreatedAt  pgtype.Timestamptz
+}
+
 type ApprovalRequest struct {
 	ID              string
 	DocumentID      string
