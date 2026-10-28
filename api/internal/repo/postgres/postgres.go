@@ -360,6 +360,17 @@ func (s *Store) GetDocument(ctx context.Context, id string) (repo.Document, erro
 	return docFromGet(r), nil
 }
 
+func (s *Store) DocumentPreview(ctx context.Context, documentID string) (repo.DocumentPreview, error) {
+	r, err := s.q.GetDocumentPreview(ctx, documentID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return repo.DocumentPreview{}, repo.ErrNotFound
+	}
+	if err != nil {
+		return repo.DocumentPreview{}, err
+	}
+	return repo.DocumentPreview{Text: r.Text, UpdatedAt: r.CreatedAt.Time}, nil
+}
+
 func (s *Store) CreateServiceAccount(ctx context.Context, owner auth.Principal, name string) (repo.ServiceAccount, error) {
 	if owner.Type != auth.PrincipalUser {
 		return repo.ServiceAccount{}, errors.New("owner must be user")

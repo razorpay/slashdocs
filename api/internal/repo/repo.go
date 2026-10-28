@@ -94,6 +94,16 @@ type Document struct {
 	Snippet string `json:"snippet,omitempty"`
 }
 
+// DocumentPreview is what a link preview of a document shows besides its
+// title and owner.
+type DocumentPreview struct {
+	// Text is the start of what a reader sees in the current version. It is
+	// empty until the version is indexed.
+	Text string
+	// UpdatedAt is when the current version was created.
+	UpdatedAt time.Time
+}
+
 type FolderBreadcrumb struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
@@ -372,6 +382,9 @@ type Repository interface {
 	// first open. Idempotent.
 	RecordDocumentOpened(ctx context.Context, documentID string, principal auth.Principal) error
 	GetDocument(ctx context.Context, id string) (Document, error)
+	// DocumentPreview returns the start of a document's current text, for link
+	// previews. Returns ErrNotFound when the document is missing.
+	DocumentPreview(ctx context.Context, documentID string) (DocumentPreview, error)
 	UpdateDocument(ctx context.Context, id, title string) (Document, error)
 	DeleteDocument(ctx context.Context, id string) error
 	ListDocumentsByLabel(ctx context.Context, principal auth.Principal, label string) ([]Document, error)

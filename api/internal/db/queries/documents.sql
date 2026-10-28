@@ -213,3 +213,11 @@ LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account 
   -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
   ON d.owner_type='service_account' AND d.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE d.parent_folder_id= @folder_id::text;
+
+-- name: GetDocumentPreview :one
+-- The start of the current version's text and when that version was created,
+-- for link previews. The text is empty until the version is indexed.
+SELECT left(COALESCE(v.search_text, ''), 2000)::text AS text, v.created_at
+FROM documents d
+JOIN versions v ON v.id = d.current_version_id
+WHERE d.id = $1;
