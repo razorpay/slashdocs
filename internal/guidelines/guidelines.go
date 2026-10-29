@@ -495,6 +495,15 @@ Commands:
 
 The document response includes approval_status and approval_summary once
 approvers are assigned; use --json for machine-readable output.
+
+Over MCP, the owner's side is available (the rules above apply unchanged):
+  request_document_approval  ask a person or bot to approve (share first)
+  list_document_approvers    who was asked, with the approval-request IDs
+  list_document_approvals    what each decided on a version, and the status
+  remove_document_approver   take a request back
+  update_document            keep_approvals=true carries approvals forward
+Approving, rejecting and revoking are not available over MCP: an approval is the
+approver's own decision, made through the UI, the CLI or the API.
 `,
 	},
 }

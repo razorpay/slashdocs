@@ -253,6 +253,7 @@ func registerMCPVersionTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 		mcp.WithString("base_version_id", mcp.Required(), mcp.Description("Version on which these edits are based.")),
 		mcp.WithString("html", mcp.Required(), mcp.Description("Complete replacement HTML, up to 50 MiB.")),
 		mcp.WithString("change_summary", mcp.Description("Short summary of the changes, one change per line.")),
+		mcp.WithBoolean("keep_approvals", mcp.Description("Carry approved decisions forward to the new version. By default a change of content resets every approval; unchanged content always keeps them.")),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		doc, invalid := mcpRequired(request, "document_id")
 		if invalid != nil {
@@ -267,6 +268,9 @@ func registerMCPVersionTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 			return invalid, nil
 		}
 		fields := map[string]string{"base_version_id": base, "change_summary": request.GetString("change_summary", "")}
+		if request.GetBool("keep_approvals", false) {
+			fields["keep_approvals"] = "true"
+		}
 		return api.multipart(ctx, "/v1/documents/"+doc+"/versions", fields, html, mcpParams("id", doc), api.handlers.createVersion)
 	})
 }
