@@ -136,6 +136,13 @@ googleGroups:
   membershipTTL: 1m
   requestTimeout: 5s
 
+# Google Chat comment notifications (docs/comment-notifications.md): Secret
+# holding a space's incoming webhook URL. Do not also set
+# SLASHDOCS_SLACK_BOT_TOKEN via extraEnv.
+googleChat:
+  webhookSecret: ""
+  webhookKey: webhook-url
+
 # Generic OpenID Connect provider (Okta, Entra ID, Keycloak, Dex, ...).
 # Register the redirect URI with the provider as:
 #   https://slashdocs.example.com/v1/auth/oidc/callback
