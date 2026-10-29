@@ -36,6 +36,10 @@ hostnames match; local or throwaway setups can override this with
 `SLASHDOCS_ALLOW_UNSAFE_RENDER_ORIGIN=true`, accepting that uploaded documents
 can then script against the app origin.
 
+Direct visits to frontend pages on the render hostname redirect to the app
+hostname. Tokenized `/v/...` and `/print/...` document routes continue to run
+on the render hostname.
+
 ## Configure sign-in
 
 slashdocs authenticates humans through OpenID Connect. Pick one provider:
