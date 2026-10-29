@@ -39,8 +39,8 @@ func registerMCPDocumentTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 
 func registerMCPDocumentCRUDTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 	server.AddTool(mcp.NewTool("list_documents", readOnlyOptions(
-		mcp.WithDescription("List documents visible to the caller, optionally filtering by title."),
-		mcp.WithString("query", mcp.Description("Optional title search text.")),
+		mcp.WithDescription("List documents visible to the caller, or search their titles and text. Documents with the words in the title come first, then the latest."),
+		mcp.WithString("query", mcp.Description("Optional Slack-style search of titles and text: words, \"phrases\", -word, from:, in:, label:, before:, after:, on:, and during:.")),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		values := url.Values{}
 		if query := request.GetString("query", ""); query != "" {

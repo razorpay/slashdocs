@@ -67,9 +67,9 @@ slashdocs docs list 'incident from:alice@example.com label:api,review in:"Produc
 slashdocs docs list 'rollout -draft from:me after:last week' --json
 ```
 
-Every word must appear in the title or the text of the latest version, and
-the most relevant documents come first. A word also matches longer words that
-start with it. `"quoted text"` matches the words in order, and `-word`
+Every word must appear in the title or the text of the latest version.
+Documents with the words in the title come first, then the latest. A word
+also matches longer words that start with it. `"quoted text"` matches the words in order, and `-word`
 excludes documents that contain the word. `from:` (an email, the name
 before the @, or `me`), `in:` (a folder or any folder above the document),
 `label:`, `before:`, `after:`, `on:`, and `during:` narrow the results. Repeat
