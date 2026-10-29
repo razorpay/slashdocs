@@ -128,7 +128,7 @@ export function DocumentPage() {
   // or edit.
   const goToSignIn = useCallback(() => nav(signInPath), [nav, signInPath]);
   const signIn = me.unauth ? goToSignIn : undefined;
-  useTitle(doc.data ? docTitle(doc.data) : undefined);
+  useTitle(doc.data ? docTitle(doc.data) : undefined, { loading: doc.isPending });
 
   const versionItems = versions.data?.items || [];
   const latest =

@@ -3,14 +3,19 @@ import { useEffect } from "react";
 const BASE = "slashdocs";
 
 // Sets the browser tab title to "<title> · slashdocs" (or just "slashdocs" when no
-// page title is given), restoring the previous title on unmount so tabs stay
-// distinguishable as the user navigates.
-export function useTitle(title?: string) {
+// page title is given). While the page is loading, the tab keeps its title: the
+// server renders a document's title into its page before the app loads the
+// document. When the title changes or the page unmounts, the tab resets to
+// "slashdocs" rather than to the previous title, which can belong to a page the
+// reader has left.
+export function useTitle(title?: string, { loading = false } = {}) {
   useEffect(() => {
-    const prev = document.title;
+    if (loading) {
+      return;
+    }
     document.title = title ? `${title} · ${BASE}` : BASE;
     return () => {
-      document.title = prev;
+      document.title = BASE;
     };
-  }, [title]);
+  }, [title, loading]);
 }

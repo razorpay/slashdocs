@@ -80,6 +80,27 @@ func (q *Queries) GetDocumentOwner(ctx context.Context, id string) (GetDocumentO
 	return i, err
 }
 
+const getDocumentPreview = `-- name: GetDocumentPreview :one
+SELECT left(COALESCE(v.search_text, ''), 2000)::text AS text, v.created_at
+FROM documents d
+JOIN versions v ON v.id = d.current_version_id
+WHERE d.id = $1
+`
+
+type GetDocumentPreviewRow struct {
+	Text      string
+	CreatedAt pgtype.Timestamptz
+}
+
+// The start of the current version's text and when that version was created,
+// for link previews. The text is empty until the version is indexed.
+func (q *Queries) GetDocumentPreview(ctx context.Context, id string) (GetDocumentPreviewRow, error) {
+	row := q.db.QueryRow(ctx, getDocumentPreview, id)
+	var i GetDocumentPreviewRow
+	err := row.Scan(&i.Text, &i.CreatedAt)
+	return i, err
+}
+
 const getDocumentVersionForUpdate = `-- name: GetDocumentVersionForUpdate :one
 SELECT current_version_id, COALESCE((SELECT max(number)+1 FROM versions WHERE document_id=$1),1)::int AS next_number
 FROM documents WHERE id=$1 FOR UPDATE
