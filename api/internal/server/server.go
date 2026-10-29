@@ -311,6 +311,7 @@ func (s *Server) routes(deps dependencies) {
 	authed.PATCH("/documents/:id/grants/:grant_id", h.patchGrant)
 	authed.DELETE("/documents/:id/grants/:grant_id", h.deleteGrant)
 	authed.POST("/documents/:id/versions", h.createVersion)
+	authed.POST("/documents/:id/edits", h.editDocument)
 	authed.GET("/documents/:id/labels", h.listDocumentLabels)
 	authed.PUT("/documents/:id/labels", h.replaceDocumentLabels)
 	authed.POST("/documents/:id/github/raw", h.githubRawContent)

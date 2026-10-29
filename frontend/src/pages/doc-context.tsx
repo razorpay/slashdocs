@@ -2,6 +2,7 @@ import { createContext, useContext } from "react";
 import type { Anchor, Comment, CursorSpot, Principal } from "@/api";
 import type { CommentFilter } from "@/lib/constants";
 import type { CommentDraft } from "@/lib/comment-drafts";
+import type { TextChange } from "@/lib/text-edits";
 import type { CursorListener, DocumentKVListener } from "./use-document-stream";
 
 // A text selection captured from the render bridge that a new comment will
@@ -21,6 +22,9 @@ export type CommentViewport = {
   scrollTop: number;
   scrollHeight: number;
 };
+
+// What the rendered document reports when asked for its text edits.
+export type TextEditResult = { changes: TextChange[]; unsupported: boolean };
 
 export type DocContextValue = {
   docId: string;
@@ -64,6 +68,14 @@ export type DocContextValue = {
   // The cursor of the viewer the reader asked to go to. Each request is a new
   // object, so the same viewer can be followed again.
   followedCursor?: { session: string };
+  // Text editing makes the words of the rendered document editable.
+  textEditing: boolean;
+  setTextEditing: (on: boolean) => void;
+  // The number of changed passages, reported by the rendered document.
+  textEditCount: number;
+  setTextEditCount: (count: number) => void;
+  registerTextEditCollector: (collect: (() => Promise<TextEditResult>) | null) => void;
+  collectTextEdits: () => Promise<TextEditResult>;
 };
 
 const DocContext = createContext<DocContextValue | null>(null);

@@ -53,6 +53,7 @@ import { principalColor, samePrincipal } from "@/lib/principals";
 import { ShareSheet } from "./doc-share-sheet";
 import { useDoc } from "./doc-context";
 import { UploadVersionMenuItem, UploadVersionSheet } from "./doc-upload-version";
+import { TextEditControls } from "./doc-text-edit";
 import type { Viewer } from "./use-document-stream";
 
 const MAX_VIEWER_AVATARS = 4;
@@ -161,6 +162,9 @@ export function DocBar({
         >
           <ArrowUpToLine className="h-4 w-4" />
         </Button>
+      ) : null}
+      {canEdit && !isViewingOlder && current ? (
+        <TextEditControls docId={docId} version={current} onSaved={onSelectVersion} />
       ) : null}
       <VersionHistoryDialog
         current={current}

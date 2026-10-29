@@ -923,6 +923,64 @@
                 }
             }
         },
+        "/v1/documents/{id}/edits": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Applies exact find-and-replace edits to the document HTML on the server and saves the result as a new version. Each old_string must occur exactly once; edits apply in order and either all apply or none do. The HTML is never parsed, so everything else stays byte-for-byte the same.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "versions"
+                ],
+                "summary": "Edit document text",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Edits",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/server.editDocumentRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/server.editDocumentResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/documents/{id}/grants": {
             "post": {
                 "security": [
@@ -2540,6 +2598,48 @@
                 }
             }
         },
+        "server.editDocumentRequest": {
+            "type": "object",
+            "properties": {
+                "base_version_id": {
+                    "description": "BaseVersionID, when set, must be the current version. When it is\nempty the edits apply to whatever version is current, which is safe\nbecause each edit must still find its text there.",
+                    "type": "string"
+                },
+                "change_summary": {
+                    "type": "string"
+                },
+                "edits": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/textedit.Edit"
+                    }
+                }
+            }
+        },
+        "server.editDocumentResponse": {
+            "type": "object",
+            "properties": {
+                "base_version_id": {
+                    "description": "BaseVersionID is the version the edits were applied to.",
+                    "type": "string"
+                },
+                "change_summary": {
+                    "type": "string"
+                },
+                "edits_applied": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "number": {
+                    "type": "integer"
+                },
+                "sha256": {
+                    "type": "string"
+                }
+            }
+        },
         "server.errorBody": {
             "type": "object",
             "properties": {
@@ -2927,6 +3027,20 @@
                 },
                 "picture_url": {
                     "type": "string"
+                }
+            }
+        },
+        "textedit.Edit": {
+            "type": "object",
+            "properties": {
+                "new_string": {
+                    "type": "string"
+                },
+                "old_string": {
+                    "type": "string"
+                },
+                "replace_all": {
+                    "type": "boolean"
                 }
             }
         }

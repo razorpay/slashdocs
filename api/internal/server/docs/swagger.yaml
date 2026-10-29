@@ -424,6 +424,37 @@ definitions:
       url:
         type: string
     type: object
+  server.editDocumentRequest:
+    properties:
+      base_version_id:
+        description: |-
+          BaseVersionID, when set, must be the current version. When it is
+          empty the edits apply to whatever version is current, which is safe
+          because each edit must still find its text there.
+        type: string
+      change_summary:
+        type: string
+      edits:
+        items:
+          $ref: '#/definitions/textedit.Edit'
+        type: array
+    type: object
+  server.editDocumentResponse:
+    properties:
+      base_version_id:
+        description: BaseVersionID is the version the edits were applied to.
+        type: string
+      change_summary:
+        type: string
+      edits_applied:
+        type: integer
+      id:
+        type: string
+      number:
+        type: integer
+      sha256:
+        type: string
+    type: object
   server.errorBody:
     properties:
       code:
@@ -672,6 +703,15 @@ definitions:
         type: string
       picture_url:
         type: string
+    type: object
+  textedit.Edit:
+    properties:
+      new_string:
+        type: string
+      old_string:
+        type: string
+      replace_all:
+        type: boolean
     type: object
 info:
   contact: {}
@@ -1262,6 +1302,45 @@ paths:
       summary: Create comment reply
       tags:
       - comments
+  /v1/documents/{id}/edits:
+    post:
+      consumes:
+      - application/json
+      description: Applies exact find-and-replace edits to the document HTML on the
+        server and saves the result as a new version. Each old_string must occur exactly
+        once; edits apply in order and either all apply or none do. The HTML is never
+        parsed, so everything else stays byte-for-byte the same.
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Edits
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/server.editDocumentRequest'
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/server.editDocumentResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Edit document text
+      tags:
+      - versions
   /v1/documents/{id}/grants:
     post:
       parameters:

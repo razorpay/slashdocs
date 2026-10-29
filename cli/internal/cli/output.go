@@ -111,6 +111,12 @@ func action(g *globals, out io.Writer, fn func(*Client) ([]byte, error), msg fun
 }
 
 func printPushedVersion(out io.Writer, g *globals, docID, server string, b []byte) error {
+	return printSavedVersion(out, g, "Pushed version %s to %s.", docID, server, b)
+}
+
+// printSavedVersion reports a new version of a document. done formats the
+// version and the document ID into what was done.
+func printSavedVersion(out io.Writer, g *globals, done, docID, server string, b []byte) error {
 	if g.quiet {
 		return nil
 	}
@@ -136,7 +142,7 @@ func printPushedVersion(out io.Writer, g *globals, docID, server string, b []byt
 	if num := value(m, "number"); num != nil {
 		version = fmt.Sprint(num) + " (" + version + ")"
 	}
-	if err := confirm(out, g, fmt.Sprintf("Pushed version %s to %s. Review it at %s", version, docID, url)); err != nil {
+	if err := confirm(out, g, fmt.Sprintf(done+" Review it at %s", version, docID, url)); err != nil {
 		return err
 	}
 	return printOrgWideViewerNudge(out, g, docID)

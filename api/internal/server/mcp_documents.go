@@ -10,6 +10,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
+
+	"github.com/razorpay/slashdocs/internal/textedit"
 )
 
 func mcpDocumentID() mcp.ToolOption {
@@ -32,6 +34,7 @@ func registerMCPDocumentTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 	registerMCPDocumentCRUDTools(server, api)
 	registerMCPDocumentMoveTool(server, api)
 	registerMCPVersionTools(server, api)
+	registerMCPEditTool(server, api)
 	registerMCPCommentTools(server, api)
 	registerMCPCommentMutationTools(server, api)
 	registerMCPDocumentAccessTools(server, api)
@@ -248,7 +251,7 @@ func registerMCPVersionTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 	})
 
 	server.AddTool(mcp.NewTool("update_document", mutationOptions(false, false,
-		mcp.WithDescription("Publish complete HTML as a new document version using optimistic concurrency."),
+		mcp.WithDescription("Publish complete HTML as a new document version using optimistic concurrency. To change existing text, prefer edit_document: it sends only the changed strings."),
 		mcpDocumentID(),
 		mcp.WithString("base_version_id", mcp.Required(), mcp.Description("Version on which these edits are based.")),
 		mcp.WithString("html", mcp.Required(), mcp.Description("Complete replacement HTML, up to 50 MiB.")),
@@ -269,6 +272,63 @@ func registerMCPVersionTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 		fields := map[string]string{"base_version_id": base, "change_summary": request.GetString("change_summary", "")}
 		return api.multipart(ctx, "/v1/documents/"+doc+"/versions", fields, html, mcpParams("id", doc), api.handlers.createVersion)
 	})
+}
+
+func registerMCPEditTool(server *mcpserver.MCPServer, api mcpAPIAdapter) {
+	server.AddTool(mcp.NewTool("edit_document", mutationOptions(false, false,
+		mcp.WithDescription(fmt.Sprintf("Change a document by exact find-and-replace on its HTML and save the result as a new version, without resending the document. Each old_string must occur exactly once in the current HTML: copy it from get_document_html and include enough surrounding text to make it unique, or set replace_all to replace every occurrence. Edits apply in order, each to the result of the one before. If any edit does not match, nothing is saved and the error names that edit. Up to %d edits per call. Everything outside the replaced strings stays byte-for-byte the same, so comments elsewhere stay anchored.", textedit.MaxEdits)),
+		mcpDocumentID(),
+		mcp.WithArray("edits", mcp.Required(), mcp.Description("Replacements to make, in order."), mcp.Items(map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"old_string":  map[string]any{"type": "string", "description": "Exact HTML to replace. Must occur exactly once unless replace_all is set."},
+				"new_string":  map[string]any{"type": "string", "description": "HTML to put in its place."},
+				"replace_all": map[string]any{"type": "boolean", "description": "Replace every occurrence of old_string instead of requiring exactly one. Defaults to false."},
+			},
+			"required":             []string{"old_string", "new_string"},
+			"additionalProperties": false,
+		})),
+		mcp.WithString("base_version_id", mcp.Description("Optional. When set, the edit fails with version_conflict unless this is still the current version. When omitted, the edits apply to the current version.")),
+		mcp.WithString("change_summary", mcp.Description("Short summary of the changes, one change per line. Defaults to one line per edit.")),
+	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		doc, invalid := mcpRequired(request, "document_id")
+		if invalid != nil {
+			return invalid, nil
+		}
+		edits, invalid := mcpEdits(request)
+		if invalid != nil {
+			return invalid, nil
+		}
+		payload := map[string]any{"edits": edits}
+		if base := request.GetString("base_version_id", ""); base != "" {
+			payload["base_version_id"] = base
+		}
+		if summary := request.GetString("change_summary", ""); summary != "" {
+			payload["change_summary"] = summary
+		}
+		return api.json(ctx, http.MethodPost, "/v1/documents/"+doc+"/edits", payload, mcpParams("id", doc), api.handlers.editDocument)
+	})
+}
+
+// mcpEdits reads the edits argument as a list of replacements.
+func mcpEdits(request mcp.CallToolRequest) ([]textedit.Edit, *mcp.CallToolResult) {
+	const shape = "edits must be a list of {old_string, new_string, replace_all} objects"
+	raw, ok := request.GetArguments()["edits"]
+	if !ok {
+		return nil, mcp.NewToolResultError("edits is required")
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return nil, mcp.NewToolResultError(shape)
+	}
+	var edits []textedit.Edit
+	if err := json.Unmarshal(b, &edits); err != nil {
+		return nil, mcp.NewToolResultError(shape)
+	}
+	if len(edits) == 0 {
+		return nil, mcp.NewToolResultError("edits must contain at least one edit")
+	}
+	return edits, nil
 }
 
 func registerMCPCommentTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
