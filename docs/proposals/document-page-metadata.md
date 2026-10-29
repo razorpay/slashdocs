@@ -42,10 +42,10 @@ who may read the document, and a generated preview card image for it.
 | No session, document shared with anyone     | Generic shell    | Document head       |
 | No session, document not shared with anyone | Generic shell    | Generic shell       |
 
-A missing document, a lookup error, an invalid bearer token or unavailable
-Google Group membership all serve the generic shell. The shell never fails a
-page load and never redirects to sign-in; the React app keeps handling those
-cases as it does today.
+A missing document, a lookup error, an invalid bearer token, Google Group
+membership that is not cached, or lookups that take longer than one second all
+serve the generic shell. The shell never fails a page load and never redirects
+to sign-in; the React app keeps handling those cases as it does today.
 
 ## Approach
 
@@ -56,15 +56,19 @@ builder for a replacement `<head>` fragment. The builder:
 
 1. Authenticates the request with the same reader authenticator as
    `GET /v1/documents/:id` (anonymous on `public` deployments, required on
-   `org`), and resolves Google Group membership when that is enabled.
+   `org`). When Google Groups are enabled, it uses only cached memberships:
+   a directory call that the page gave up on would count as a failure and
+   start the retry cooldown, so the app's next requests would fail with
+   `group_membership_unavailable`.
 2. Checks `RoleForDocument` for at least the viewer role.
 3. Loads the document and a preview of its current version: the first 2,000
    characters of `versions.search_text` and the version's creation time.
 4. Renders the fragment with `html/template`, so the title and description are
    escaped for their text and attribute contexts.
 
-It has no side effects: it does not record a workspace entry as
-`GET /v1/documents/:id` does.
+It does not add the document to the reader's workspace as
+`GET /v1/documents/:id` does. Its lookups have a one-second budget, because the
+shell used to be static and must not wait on a slow database.
 
 The fragment replaces the `<title>slashdocs</title>` tag of the built
 `index.html`. Once both delivery steps below have landed, it reads:
@@ -89,7 +93,8 @@ The fragment replaces the `<title>slashdocs</title>` tag of the built
 `og:url` and `og:image` are omitted when no app origin is configured.
 
 A response that carries a document head is per caller, so every `/app/d/`
-shell is sent with `Cache-Control: no-store`.
+shell is sent with `Cache-Control: private, no-cache`: no shared cache keeps
+it, the browser revalidates it, and it can still use the back/forward cache.
 
 ### Description
 
@@ -121,10 +126,12 @@ The card draws no owner photo, so the server makes no outbound request.
 
 ### Tab title on navigation
 
-`useTitle` restores the previous title when a page unmounts. With a
-server-rendered document title, that previous title is the document's, and a
-page that sets no title of its own (such as Start) would keep it. `useTitle`
-will reset to `slashdocs` instead.
+The document page sets the tab title to `slashdocs` while it loads the
+document, which would replace the server-rendered title. `useTitle` gets a
+`loading` option that keeps the current title. It also resets to `slashdocs`,
+rather than restoring the previous title, when the title changes or the page
+unmounts: otherwise opening another document would show the previous
+document's title while it loads, or on its error page.
 
 ## Delivery
 

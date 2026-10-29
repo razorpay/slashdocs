@@ -2,6 +2,8 @@ package server
 
 import (
 	"bytes"
+	"errors"
+	"io/fs"
 	"os"
 	"strings"
 	"testing"
@@ -11,14 +13,28 @@ import (
 	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
+// The server serves the built page; the source page is checked too, because
+// the built page exists only after a frontend build.
 func TestShellTitleMatchesTheWebApp(t *testing.T) {
-	index, err := os.ReadFile("../../../frontend/index.html")
+	check := func(name string, index []byte) {
+		t.Helper()
+		if !bytes.Contains(index, []byte(shellTitle)) {
+			t.Errorf("%s lacks %s, which document pages replace", name, shellTitle)
+		}
+	}
+	source, err := os.ReadFile("../../../frontend/index.html")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(index, []byte(shellTitle)) {
-		t.Fatalf("frontend/index.html lacks %s, which document pages replace", shellTitle)
+	check("frontend/index.html", source)
+	built, err := os.ReadFile("frontend_dist/index.html")
+	if errors.Is(err, fs.ErrNotExist) {
+		return
 	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("the built index.html", built)
 }
 
 func TestDocumentExcerpt(t *testing.T) {
