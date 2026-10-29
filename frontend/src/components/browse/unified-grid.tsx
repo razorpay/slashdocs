@@ -41,6 +41,7 @@ export function UnifiedGrid({
           );
         }
         if (e.type === "document" && e.document) {
+          const inaccessible = e.document.caller_role === "";
           return (
             <DraggableEntryCard
               key={docID(e.document)}
@@ -51,6 +52,7 @@ export function UnifiedGrid({
               canDelete={samePrincipal(me.data?.principal, e.document.owner)}
               pinned={pinnedIds?.has(docID(e.document))}
               snippet={e.document.snippet}
+              inaccessible={inaccessible}
             />
           );
         }
@@ -68,6 +70,7 @@ function DraggableEntryCard({
   canDelete,
   pinned,
   snippet,
+  inaccessible,
 }: {
   type: ResourceType;
   id: string;
@@ -76,6 +79,7 @@ function DraggableEntryCard({
   canDelete: boolean;
   pinned?: boolean;
   snippet?: string;
+  inaccessible?: boolean;
 }) {
   const isFolder = type === "folder";
   const {
@@ -128,6 +132,11 @@ function DraggableEntryCard({
           <span className="mt-1 block truncate text-xs text-[var(--color-fg-muted)]">
             {principalLabel(owner)}
           </span>
+          {inaccessible ? (
+            <span className="mt-0.5 block truncate text-[11px] text-[var(--color-fg-muted)] opacity-75">
+              No access · folder owner can eject
+            </span>
+          ) : null}
         </span>
       </Link>
       <GridCardActions

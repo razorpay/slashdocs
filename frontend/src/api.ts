@@ -26,6 +26,10 @@ export type Document = {
   labels?: string[];
   // Search results only: the matching text. U+0002 and U+0003 surround each match.
   snippet?: string;
+  // Folder listings only: the caller's effective role on this document.
+  // Empty string means the caller owns the containing folder but has no direct
+  // document role — they can eject the document via DELETE /v1/folders/{id}/documents/{doc_id}.
+  caller_role?: string;
 };
 export type ServerConfig = {
   deployment: "public" | "org";

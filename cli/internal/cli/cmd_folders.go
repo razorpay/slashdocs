@@ -205,6 +205,15 @@ func renderFolderList(out io.Writer, b []byte) error {
 		_, e := out.Write(b)
 		return e
 	}
+	// Extract the current folder's ID so inaccessible-document hints can name it.
+	var currentFolderID string
+	if resp.Folder != nil {
+		var f struct {
+			ID string `json:"id"`
+		}
+		_ = json.Unmarshal(*resp.Folder, &f)
+		currentFolderID = f.ID
+	}
 	for _, item := range resp.Items {
 		var entry struct {
 			Type     string          `json:"type"`
@@ -225,6 +234,21 @@ func renderFolderList(out io.Writer, b []byte) error {
 			_ = json.Unmarshal(entry.Document, &row)
 			if row != nil {
 				row["type"] = "document"
+				// caller_role is present but empty when the folder owner has no
+				// direct role on the document. Surface this so the owner knows
+				// they can eject the document without opening it.
+				if cr, ok := row["caller_role"].(string); ok && cr == "" {
+					docIDVal, _ := row["id"].(string)
+					hint := " [no document access"
+					if currentFolderID != "" && docIDVal != "" {
+						hint += " — eject: slashdocs folders docs remove " + currentFolderID + " " + docIDVal
+					}
+					hint += "]"
+					if _, err := fmt.Fprintln(out, compactRow(row)+hint); err != nil {
+						return err
+					}
+					continue
+				}
 			}
 		}
 		if row != nil {

@@ -352,3 +352,38 @@ func createFolder(t *testing.T, e *testEnv, body, principal string) string {
 	assertStatus(t, rr, http.StatusCreated)
 	return jsonField(t, rr.Body.Bytes(), "id")
 }
+
+// TestFolderOwnerCanEjectForeignDocument verifies that a folder owner can
+// remove a document they have no role on (eject to root), and that a
+// non-folder-owner without a doc role cannot do the same.
+func TestFolderOwnerCanEjectForeignDocument(t *testing.T) {
+	e := newTestEnv(t)
+	docOwner := principalHeader(fixtureOwner)
+	folderOwner := principalHeader(fixtureStranger)
+	nonMember := principalHeader(fixtureAttacker)
+
+	// fixtureStranger owns a folder; fixtureOwner owns the document.
+	folderID := createFolder(t, e, `{"title":"Stranger folder"}`, folderOwner)
+	docID, _ := e.createDocument("Foreign", "<p>foreign</p>", fixtureOwner)
+
+	// Move the doc into fixtureStranger's folder (owner has editor on the doc).
+	rr := do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/documents",
+		`{"document_id":"`+docID+`"}`,
+		map[string]string{"X-Test-Principal": docOwner, "Content-Type": "application/json"})
+	assertStatus(t, rr, http.StatusOK)
+
+	// A non-member (no folder role, no doc role) must be rejected.
+	rr = do(t, e.h, http.MethodDelete, "/v1/folders/"+folderID+"/documents/"+docID,
+		"", map[string]string{"X-Test-Principal": nonMember})
+	assertStatus(t, rr, http.StatusForbidden)
+
+	// The folder owner (no doc role) can eject the foreign document to root.
+	rr = do(t, e.h, http.MethodDelete, "/v1/folders/"+folderID+"/documents/"+docID,
+		"", map[string]string{"X-Test-Principal": folderOwner})
+	assertStatus(t, rr, http.StatusNoContent)
+
+	// After ejection the document still exists (moved to root, not deleted).
+	rr = do(t, e.h, http.MethodGet, "/v1/documents/"+docID, "",
+		map[string]string{"X-Test-Principal": docOwner})
+	assertStatus(t, rr, http.StatusOK)
+}

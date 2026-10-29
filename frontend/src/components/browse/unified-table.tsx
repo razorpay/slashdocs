@@ -41,6 +41,7 @@ export function UnifiedTable({
           );
         }
         if (e.type === "document" && e.document) {
+          const inaccessible = e.document.caller_role === "";
           return (
             <DraggableEntryRow
               key={docID(e.document)}
@@ -51,6 +52,7 @@ export function UnifiedTable({
               canDelete={samePrincipal(principal, e.document.owner)}
               pinned={pinnedIds?.has(docID(e.document))}
               snippet={e.document.snippet}
+              inaccessible={inaccessible}
             />
           );
         }
@@ -68,6 +70,7 @@ function DraggableEntryRow({
   canDelete,
   pinned,
   snippet,
+  inaccessible,
 }: {
   type: ResourceType;
   id: string;
@@ -76,6 +79,7 @@ function DraggableEntryRow({
   canDelete: boolean;
   pinned?: boolean;
   snippet?: string;
+  inaccessible?: boolean;
 }) {
   const isFolder = type === "folder";
   const {
@@ -112,6 +116,11 @@ function DraggableEntryRow({
         >
           {pinned && <PinnedMark />}
         </EntryName>
+        {inaccessible ? (
+          <span className="mt-0.5 inline-block pl-6 text-[11px] text-[var(--color-fg-muted)]">
+            No access · folder owner can eject
+          </span>
+        ) : null}
         {snippet ? (
           <SearchSnippet text={snippet} className="mt-1 line-clamp-2 pl-6 text-xs" />
         ) : null}

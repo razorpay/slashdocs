@@ -314,6 +314,7 @@ func documentUpdateCmd(g *globals, out io.Writer) *cobra.Command {
 func documentMoveCmd(g *globals, out io.Writer) *cobra.Command {
 	var moveFolderID string
 	var moveRoot bool
+	var moveFromFolderID string
 	cmd := &cobra.Command{Use: "move <doc_id>", Short: "Move a document to a folder or back to root", Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if moveRoot && moveFolderID != "" {
 			return errors.New("--folder-id and --root are mutually exclusive")
@@ -321,22 +322,32 @@ func documentMoveCmd(g *globals, out io.Writer) *cobra.Command {
 		if !moveRoot && moveFolderID == "" {
 			return errors.New("pass --folder-id <fld_…> or --root")
 		}
+		if moveFromFolderID != "" && !moveRoot {
+			return errors.New("--from-folder-id requires --root")
+		}
 		if moveRoot {
 			cl, err := client(g)
 			if err != nil {
 				return err
 			}
-			b, err := cl.do("GET", apiPath("/v1/documents/%s", args[0]), nil, "")
-			if err != nil {
-				return err
+			fromFolderID := moveFromFolderID
+			if fromFolderID == "" {
+				// Discover the document's current folder. This GET requires at
+				// least viewer role on the document. Folder owners who have no
+				// document role can bypass it by passing --from-folder-id.
+				b, err := cl.do("GET", apiPath("/v1/documents/%s", args[0]), nil, "")
+				if err != nil {
+					return err
+				}
+				var doc struct {
+					ParentFolderID string `json:"parent_folder_id"`
+				}
+				if json.Unmarshal(b, &doc) != nil || doc.ParentFolderID == "" {
+					return errors.New("document is already at root")
+				}
+				fromFolderID = doc.ParentFolderID
 			}
-			var doc struct {
-				ParentFolderID string `json:"parent_folder_id"`
-			}
-			if json.Unmarshal(b, &doc) != nil || doc.ParentFolderID == "" {
-				return errors.New("document is already at root")
-			}
-			_, err = cl.do("DELETE", apiPath("/v1/folders/%s/documents/%s", doc.ParentFolderID, args[0]), nil, "")
+			_, err = cl.do("DELETE", apiPath("/v1/folders/%s/documents/%s", fromFolderID, args[0]), nil, "")
 			if err != nil {
 				return err
 			}
@@ -354,6 +365,7 @@ func documentMoveCmd(g *globals, out io.Writer) *cobra.Command {
 	}}
 	cmd.Flags().StringVar(&moveFolderID, "folder-id", "", "destination folder ID")
 	cmd.Flags().BoolVar(&moveRoot, "root", false, "move document to workspace root")
+	cmd.Flags().StringVar(&moveFromFolderID, "from-folder-id", "", "current folder ID (skips the GET pre-flight; required when the caller is a folder owner with no role on the document)")
 	return cmd
 }
 
