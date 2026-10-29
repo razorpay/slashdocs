@@ -43,7 +43,7 @@ func saRoot(g *globals, out io.Writer) *cobra.Command {
 			return c.doJSON("PATCH", apiPath("/v1/service-accounts/%s", args[0]), body)
 		}, func(map[string]any) string { return verb + " service account " + args[0] + "." })
 	}}
-	update.Flags().StringVar(&newName, "name", "", "new service account name")
+	update.Flags().StringVar(&newName, "name", "", "new label, or full address ending in .bot")
 	update.Flags().BoolVar(&enable, "enable", false, "enable (un-disable) the service account")
 	update.Flags().BoolVar(&disable, "disable", false, "disable the service account")
 	c.AddCommand(

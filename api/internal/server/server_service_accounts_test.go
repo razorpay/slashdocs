@@ -116,3 +116,119 @@ func TestAcceptDeclinedOwnershipTransferIsRejected(t *testing.T) {
 	  "error": { "code": "invalid_transfer_state", "message": "transfer is not pending" }
 	}`)
 }
+
+func TestPatchServiceAccountName_BareLabelKeepsDomain(t *testing.T) {
+	e := newTestEnv(t)
+	create := do(t, e.h, http.MethodPost, "/v1/service-accounts", `{"label":"my-bot","domain":"custom.test.bot"}`, map[string]string{
+		"Content-Type":     "application/json",
+		"X-Test-Principal": principalHeader(fixtureUser),
+	})
+	assertStatus(t, create, http.StatusCreated)
+	saID := jsonField(t, create.Body.Bytes(), "id")
+
+	rr := do(t, e.h, http.MethodPatch, "/v1/service-accounts/"+saID, `{"name":"renamed-bot"}`, map[string]string{
+		"Content-Type":     "application/json",
+		"X-Test-Principal": principalHeader(fixtureUser),
+	})
+	assertStatus(t, rr, http.StatusOK)
+	if got := jsonField(t, rr.Body.Bytes(), "name"); got != "renamed-bot@custom.test.bot" {
+		t.Fatalf("name = %q, want %q", got, "renamed-bot@custom.test.bot")
+	}
+}
+
+func TestPatchServiceAccountName_FullBotAddress(t *testing.T) {
+	e := newTestEnv(t)
+	create := do(t, e.h, http.MethodPost, "/v1/service-accounts", `{"label":"my-bot","domain":"custom.test.bot"}`, map[string]string{
+		"Content-Type":     "application/json",
+		"X-Test-Principal": principalHeader(fixtureUser),
+	})
+	assertStatus(t, create, http.StatusCreated)
+	saID := jsonField(t, create.Body.Bytes(), "id")
+
+	rr := do(t, e.h, http.MethodPatch, "/v1/service-accounts/"+saID, `{"name":"new-bot@other.domain.bot"}`, map[string]string{
+		"Content-Type":     "application/json",
+		"X-Test-Principal": principalHeader(fixtureUser),
+	})
+	assertStatus(t, rr, http.StatusOK)
+	if got := jsonField(t, rr.Body.Bytes(), "name"); got != "new-bot@other.domain.bot" {
+		t.Fatalf("name = %q, want %q", got, "new-bot@other.domain.bot")
+	}
+}
+
+func TestPatchServiceAccountName_RejectsInvalidLabel(t *testing.T) {
+	e := newTestEnv(t)
+	create := do(t, e.h, http.MethodPost, "/v1/service-accounts", `{"label":"my-bot","domain":"custom.test.bot"}`, map[string]string{
+		"Content-Type":     "application/json",
+		"X-Test-Principal": principalHeader(fixtureUser),
+	})
+	assertStatus(t, create, http.StatusCreated)
+	saID := jsonField(t, create.Body.Bytes(), "id")
+
+	for _, invalid := range []string{"Not A Valid Label", "-start-hyphen", "end-hyphen-", "has space", "has_underscore", ""} {
+		rr := do(t, e.h, http.MethodPatch, "/v1/service-accounts/"+saID, fmt.Sprintf(`{"name":%q}`, invalid), map[string]string{
+			"Content-Type":     "application/json",
+			"X-Test-Principal": principalHeader(fixtureUser),
+		})
+		assertStatus(t, rr, http.StatusBadRequest)
+		assertJSON(t, rr.Body.Bytes(), `{
+		  "error": { "code": "bad_request", "message": "Use letters, numbers, and hyphens for the bot's name." }
+		}`)
+	}
+}
+
+func TestPatchServiceAccountName_RejectsNonBotAddress(t *testing.T) {
+	e := newTestEnv(t)
+	create := do(t, e.h, http.MethodPost, "/v1/service-accounts", `{"label":"my-bot","domain":"custom.test.bot"}`, map[string]string{
+		"Content-Type":     "application/json",
+		"X-Test-Principal": principalHeader(fixtureUser),
+	})
+	assertStatus(t, create, http.StatusCreated)
+	saID := jsonField(t, create.Body.Bytes(), "id")
+
+	for _, invalid := range []string{"admin@example.com", "user@gmail.com", "bot@notbot", "bot@domain.com"} {
+		rr := do(t, e.h, http.MethodPatch, "/v1/service-accounts/"+saID, fmt.Sprintf(`{"name":%q}`, invalid), map[string]string{
+			"Content-Type":     "application/json",
+			"X-Test-Principal": principalHeader(fixtureUser),
+		})
+		assertStatus(t, rr, http.StatusBadRequest)
+		assertJSON(t, rr.Body.Bytes(), `{
+		  "error": { "code": "bad_request", "message": "Addresses must end in .bot." }
+		}`)
+	}
+}
+
+func TestPatchServiceAccountName_ConflictReturns409(t *testing.T) {
+	e := newTestEnv(t)
+	sa1 := do(t, e.h, http.MethodPost, "/v1/service-accounts", `{"label":"bot-one","domain":"shared.test.bot"}`, map[string]string{
+		"Content-Type":     "application/json",
+		"X-Test-Principal": principalHeader(fixtureUser),
+	})
+	assertStatus(t, sa1, http.StatusCreated)
+
+	sa2 := do(t, e.h, http.MethodPost, "/v1/service-accounts", `{"label":"bot-two","domain":"shared.test.bot"}`, map[string]string{
+		"Content-Type":     "application/json",
+		"X-Test-Principal": principalHeader(fixtureUser),
+	})
+	assertStatus(t, sa2, http.StatusCreated)
+	sa2ID := jsonField(t, sa2.Body.Bytes(), "id")
+
+	// Renaming sa2 to sa1's bare label (within same domain)
+	rr := do(t, e.h, http.MethodPatch, "/v1/service-accounts/"+sa2ID, `{"name":"bot-one"}`, map[string]string{
+		"Content-Type":     "application/json",
+		"X-Test-Principal": principalHeader(fixtureUser),
+	})
+	assertStatus(t, rr, http.StatusConflict)
+	assertJSON(t, rr.Body.Bytes(), `{
+	  "error": { "code": "address_taken", "message": "Someone already uses bot-one@shared.test.bot. Try a different address." }
+	}`)
+
+	// Renaming sa2 to sa1's full address
+	rr2 := do(t, e.h, http.MethodPatch, "/v1/service-accounts/"+sa2ID, `{"name":"bot-one@shared.test.bot"}`, map[string]string{
+		"Content-Type":     "application/json",
+		"X-Test-Principal": principalHeader(fixtureUser),
+	})
+	assertStatus(t, rr2, http.StatusConflict)
+	assertJSON(t, rr2.Body.Bytes(), `{
+	  "error": { "code": "address_taken", "message": "Someone already uses bot-one@shared.test.bot. Try a different address." }
+	}`)
+}
