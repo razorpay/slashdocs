@@ -2,10 +2,13 @@ package server_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
 func assertRFC3339Timestamp(t *testing.T, value string) {
@@ -237,4 +240,119 @@ func TestPatchCommentRejectsInvalidStatus(t *testing.T) {
 	})
 
 	assertStatus(t, rr, http.StatusBadRequest)
+}
+
+func TestCreateCommentAnchorValidation(t *testing.T) {
+	e := newTestEnv(t)
+	doc, ver, err := e.store.CreateDocument(context.Background(), fixtureOwner, "anchors_doc", []byte("<h1>Anchors</h1><p>Plan A: TBD</p><p>Plan B: TBD</p><p>Plan C: done</p>"))
+	if err != nil {
+		t.Fatalf("create document: %v", err)
+	}
+	if _, err := e.store.CreateGrant(context.Background(), "document", doc.ID, fixtureCommenter, repo.RoleCommenter, fixtureOwner); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+
+	t.Run("missing quote returns 400 anchor_not_found", func(t *testing.T) {
+		rr := do(t, e.h, http.MethodPost, "/v1/documents/"+doc.ID+"/comments", fmt.Sprintf(`{
+			"version_id": %q,
+			"body": "Comment on missing text",
+			"anchor": { "quote": "this text is not in the document" }
+		}`, ver.ID), map[string]string{
+			"Content-Type":     "application/json",
+			"X-Test-Principal": principalHeader(fixtureCommenter),
+		})
+		assertStatus(t, rr, http.StatusBadRequest)
+		var body struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil || body.Error.Code != "anchor_not_found" {
+			t.Fatalf("expected error.code anchor_not_found, got %s", rr.Body.String())
+		}
+	})
+
+	t.Run("repeated quote without disambiguation returns 400 anchor_ambiguous", func(t *testing.T) {
+		rr := do(t, e.h, http.MethodPost, "/v1/documents/"+doc.ID+"/comments", fmt.Sprintf(`{
+			"version_id": %q,
+			"body": "Comment on ambiguous TBD",
+			"anchor": { "quote": "TBD" }
+		}`, ver.ID), map[string]string{
+			"Content-Type":     "application/json",
+			"X-Test-Principal": principalHeader(fixtureCommenter),
+		})
+		assertStatus(t, rr, http.StatusBadRequest)
+		var body struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil || body.Error.Code != "anchor_ambiguous" {
+			t.Fatalf("expected error.code anchor_ambiguous, got %s", rr.Body.String())
+		}
+	})
+
+	t.Run("repeated quote with disambiguating prefix succeeds", func(t *testing.T) {
+		rr := do(t, e.h, http.MethodPost, "/v1/documents/"+doc.ID+"/comments", fmt.Sprintf(`{
+			"version_id": %q,
+			"body": "Comment on Plan B TBD",
+			"anchor": { "quote": "TBD", "prefix": "Plan B: " }
+		}`, ver.ID), map[string]string{
+			"Content-Type":     "application/json",
+			"X-Test-Principal": principalHeader(fixtureCommenter),
+		})
+		assertStatus(t, rr, http.StatusCreated)
+		var resp map[string]any
+		if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		placement, _ := resp["current_placement"].(map[string]any)
+		if placement == nil || placement["status"] != "attached" || placement["confidence"] != float64(1) {
+			t.Fatalf("expected attached with confidence 1, got %#v", placement)
+		}
+	})
+
+	t.Run("unique quote succeeds", func(t *testing.T) {
+		rr := do(t, e.h, http.MethodPost, "/v1/documents/"+doc.ID+"/comments", fmt.Sprintf(`{
+			"version_id": %q,
+			"body": "Plan C comment",
+			"anchor": { "quote": "Plan C: done" }
+		}`, ver.ID), map[string]string{
+			"Content-Type":     "application/json",
+			"X-Test-Principal": principalHeader(fixtureCommenter),
+		})
+		assertStatus(t, rr, http.StatusCreated)
+		var resp map[string]any
+		if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		placement, _ := resp["current_placement"].(map[string]any)
+		if placement == nil || placement["status"] != "attached" || placement["matched_text"] != "Plan C: done" {
+			t.Fatalf("expected attached with matched_text Plan C: done, got %#v", placement)
+		}
+	})
+
+	t.Run("unknown version returns 404", func(t *testing.T) {
+		rr := do(t, e.h, http.MethodPost, "/v1/documents/"+doc.ID+"/comments", `{
+			"version_id": "ver_nonexistent",
+			"body": "Comment",
+			"anchor": { "quote": "Plan C: done" }
+		}`, map[string]string{
+			"Content-Type":     "application/json",
+			"X-Test-Principal": principalHeader(fixtureCommenter),
+		})
+		assertStatus(t, rr, http.StatusNotFound)
+	})
+
+	t.Run("version belonging to another document returns 404", func(t *testing.T) {
+		rr := do(t, e.h, http.MethodPost, "/v1/documents/"+e.doc.ID+"/comments", fmt.Sprintf(`{
+			"version_id": %q,
+			"body": "Cross-doc comment",
+			"anchor": { "quote": "Plan C: done" }
+		}`, ver.ID), map[string]string{
+			"Content-Type":     "application/json",
+			"X-Test-Principal": principalHeader(fixtureCommenter),
+		})
+		assertStatus(t, rr, http.StatusNotFound)
+	})
 }

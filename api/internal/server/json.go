@@ -124,7 +124,7 @@ func commentPlacement(cm repo.Comment, placementVersionID, placementHTML string)
 	status = placementAttached
 	confidence = 1.0
 	matched = cm.SelectedText
-	if placementVersionID != cm.VersionID && len(placementHTML) > 0 && !strings.Contains(placementHTML, cm.SelectedText) {
+	if len(placementHTML) > 0 && !strings.Contains(placementHTML, cm.SelectedText) {
 		status = placementOrphaned
 		confidence = 0
 		matched = ""
