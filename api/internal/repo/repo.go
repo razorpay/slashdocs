@@ -89,6 +89,8 @@ type Document struct {
 	ParentFolder     *FolderBreadcrumb `json:"parent_folder,omitempty"`
 	UpdatedAt        string            `json:"updated_at,omitempty"`
 	Labels           []string          `json:"labels,omitempty"`
+	// FolderHasGrants is set only by CreateDocument when a folder was given.
+	FolderHasGrants bool `json:"-"`
 	// Snippet is set in search results when the text matches. U+0002 and
 	// U+0003 surround each match.
 	Snippet string `json:"snippet,omitempty"`
@@ -97,6 +99,11 @@ type Document struct {
 type FolderBreadcrumb struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
+}
+
+type CreateDocumentOptions struct {
+	FolderID string
+	Labels   []string
 }
 
 type Folder struct {
@@ -364,7 +371,7 @@ type Repository interface {
 	// folder itself last) with the principal's effective role at each level,
 	// resolved in one query. Returns ErrNotFound when the folder is missing.
 	FolderAccessChain(ctx context.Context, principal auth.Principal, folderID string) ([]FolderAccess, error)
-	CreateDocument(ctx context.Context, owner auth.Principal, title string, html []byte) (Document, Version, error)
+	CreateDocument(ctx context.Context, owner auth.Principal, title string, html []byte, opts ...CreateDocumentOptions) (Document, Version, error)
 	ListDocuments(ctx context.Context, principal auth.Principal) ([]Document, error)
 	SearchDocuments(ctx context.Context, principal auth.Principal, search DocumentSearch, includeOrgWide bool, limit int32) ([]Document, error)
 	// RecordDocumentOpened notes that a principal opened a document, so a

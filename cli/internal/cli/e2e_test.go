@@ -650,6 +650,52 @@ func TestSACommandsCanBeDisabled(t *testing.T) {
 	}
 }
 
+func TestCreateDocumentWithFolderAndLabels(t *testing.T) {
+	var gotFolder, gotLabels string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/documents":
+			requireMultipart(t, r)
+			gotFolder = r.FormValue("folder_id")
+			gotLabels = r.FormValue("labels")
+			writeTestJSON(t, w, map[string]any{
+				"id":                 "doc_new",
+				"current_version_id": "ver_new",
+				"folder_id":          gotFolder,
+				"labels":             []string{"api", "review-ready"},
+				"permission_warning": map[string]any{"kind": "may_broaden_access", "message": "This folder has active grants."},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/documents/doc_new/access":
+			writeTestJSON(t, w, map[string]any{"items": []any{}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/config":
+			writeTestJSON(t, w, map[string]any{"deployment": "org", "org_name": "Acme", "everyone_label": "Acme"})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("SLASHDOCS_TOKEN", "tok")
+	t.Setenv("SLASHDOCS_SERVER", srv.URL)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("SLASHDOCS_DISABLE_AUTO_UPDATE", "1")
+	html := filepath.Join(t.TempDir(), "x.html")
+	writeTestFile(t, html, []byte("<h1>x</h1>"))
+
+	got, err := Execute([]string{"docs", "create", html, "--folder-id", "fld_123", "--labels", "api,review-ready"})
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if gotFolder != "fld_123" {
+		t.Fatalf("expected folder_id fld_123, got %q", gotFolder)
+	}
+	if gotLabels != "api,review-ready" {
+		t.Fatalf("expected labels 'api,review-ready', got %q", gotLabels)
+	}
+	if !strings.Contains(got, "Warning: This folder has active grants.") {
+		t.Fatalf("expected permission warning in output, got %q", got)
+	}
+}
+
 func jsonH(t *testing.T, v any) http.HandlerFunc {
 	t.Helper()
 	return func(w http.ResponseWriter, r *http.Request) {
