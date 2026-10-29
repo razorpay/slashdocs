@@ -137,11 +137,18 @@ Theme: follow the reader's slashdocs theme.
 
   Notes:
   - "system" is resolved to a concrete light/dark before it reaches you.
+  - The attribute is set before your own scripts run, so read it at startup for
+    anything JS has to draw (charts, diagrams):
+      const theme = document.documentElement.getAttribute('data-slashdocs-theme');
   - The value updates live when the reader toggles; CSS reacts automatically.
-  - For JS, listen for the event on your own window:
+  - For JS, listen for the event on your own window. It fires only when the
+    theme actually changes, and never for the theme the page loaded with:
       window.addEventListener('slashdocs:theme', e => {
         // e.detail.theme is "light" or "dark"
       });
+  - Never call location.reload() on a theme change. Re-render the part that
+    depends on the theme instead; a reload fights the render bridge and can
+    leave the reader flickering.
   - Do NOT ship your own theme toggle. The slashdocs UI is the single control.
   - A document that never references data-slashdocs-theme keeps its hard-coded
     look, so theming is strictly opt-in.
