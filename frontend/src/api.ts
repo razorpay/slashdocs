@@ -219,6 +219,13 @@ export type EffectiveAccessItem = {
   effective_role: string;
   sources: AccessSource[];
 };
+export type AccessRequest = {
+  requester_type: string;
+  requester_id: string;
+  requester_name?: string;
+  requester_email?: string;
+  requested_at: string;
+};
 export type ServiceAccount = {
   id: string;
   name: string;
@@ -315,12 +322,16 @@ export const api = {
   },
   getDocument: (id: string) => request<Document>(`/v1/documents/${id}`),
   requestDocumentAccess: (id: string) =>
-    request<{ status: "sent" }>(
+    request<{ status: "recorded" | "notified" }>(
       `/v1/documents/${encodeURIComponent(id)}/access-requests`,
       {
         method: "POST",
         body: JSON.stringify({}),
       },
+    ),
+  listAccessRequests: (id: string) =>
+    request<{ items: AccessRequest[] }>(
+      `/v1/documents/${encodeURIComponent(id)}/access-requests`,
     ),
   getConfig: () => request<ServerConfig>("/v1/config"),
   searchUsers: (q: string) =>

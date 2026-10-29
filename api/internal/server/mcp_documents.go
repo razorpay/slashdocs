@@ -446,13 +446,23 @@ func mcpCommentArguments(request mcp.CallToolRequest, requireBody bool) (string,
 
 func registerMCPDocumentAccessTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 	server.AddTool(mcp.NewTool("request_document_access", mutationOptions(false, false,
-		mcp.WithDescription("Ask the current document owner to grant you access. Repeated requests are coalesced."), mcpDocumentID(),
+		mcp.WithDescription("Ask the current document owner to grant you access. Repeated requests are coalesced. The request is always recorded; the owner can list it via list_document_access_requests."), mcpDocumentID(),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		doc, invalid := mcpRequired(request, "document_id")
 		if invalid != nil {
 			return invalid, nil
 		}
 		return api.json(ctx, http.MethodPost, "/v1/documents/"+doc+"/access-requests", map[string]any{}, mcpParams("id", doc), api.handlers.requestDocumentAccess)
+	})
+
+	server.AddTool(mcp.NewTool("list_document_access_requests", readOnlyOptions(
+		mcp.WithDescription("List pending access requests for a document. Requires owner role. Returns requester details and timestamps."), mcpDocumentID(),
+	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		doc, invalid := mcpRequired(request, "document_id")
+		if invalid != nil {
+			return invalid, nil
+		}
+		return api.get(ctx, "/v1/documents/"+doc+"/access-requests", mcpParams("id", doc), api.handlers.listDocumentAccessRequests)
 	})
 
 	server.AddTool(mcp.NewTool("list_document_access", readOnlyOptions(

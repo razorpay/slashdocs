@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/razorpay/slashdocs/api/internal/auth"
 	"github.com/razorpay/slashdocs/api/internal/repo"
@@ -170,13 +171,18 @@ func (s *Store) enqueueDocumentAccessChanges(ctx context.Context, tx pgx.Tx, doc
 
 // RequestDocumentAccess deliberately returns no existence or owner detail. A
 // repeated request within 24 hours is accepted but does not notify again.
-func (s *Store) RequestDocumentAccess(ctx context.Context, requester auth.Principal, documentID string) error {
+// The access request row is always persisted so owners can see pending requests
+// even when no notification channel (Slack, etc.) is configured. The outbox
+// insert that triggers a Slack/email message is gated on notificationsEnabled.
+// The returned status distinguishes "recorded" (persisted only) from "notified"
+// (persisted and a Slack/email message was queued).
+func (s *Store) RequestDocumentAccess(ctx context.Context, requester auth.Principal, documentID string) (repo.AccessRequestResult, error) {
 	if requester.Type != auth.PrincipalUser && requester.Type != auth.PrincipalServiceAccount {
-		return nil
+		return repo.AccessRequestResult{Status: "recorded"}, nil
 	}
 	role, err := s.RoleForDocument(ctx, requester, documentID)
-	if err != nil || role != repo.RoleNone || !s.notificationsEnabled {
-		return err
+	if err != nil || role != repo.RoleNone {
+		return repo.AccessRequestResult{Status: "recorded"}, err
 	}
 	label := requester.Name
 	if requester.Email != "" {
@@ -189,41 +195,106 @@ func (s *Store) RequestDocumentAccess(ctx context.Context, requester auth.Princi
 		sa, lookupErr := s.GetServiceAccount(ctx, requester.ID)
 		if lookupErr != nil {
 			if errors.Is(lookupErr, repo.ErrNotFound) {
-				return nil
+				return repo.AccessRequestResult{Status: "recorded"}, nil
 			}
-			return lookupErr
+			return repo.AccessRequestResult{}, lookupErr
 		}
 		label = sa.Name
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		return err
+		return repo.AccessRequestResult{Status: "recorded"}, err
 	}
 	defer rollback(ctx, tx)
-	_, err = tx.Exec(ctx, `WITH requested AS (
-		INSERT INTO document_access_requests(document_id,requester_type,requester_id)
+	// Always persist the request so owners can discover it regardless of whether
+	// a notification channel is configured. RETURNING document_id tells us
+	// whether the row was actually written (new request or one older than 24 h).
+	// When the upsert is a no-op (within the 24-hour window) no row is returned
+	// and we must not fire a new notification.
+	var insertedDocID string
+	err = tx.QueryRow(ctx, `INSERT INTO document_access_requests(document_id,requester_type,requester_id)
 		SELECT d.id,$2,$3 FROM documents d WHERE d.id=$1
 		ON CONFLICT(document_id,requester_type,requester_id) DO UPDATE SET requested_at=now()
 		WHERE document_access_requests.requested_at <= now()-interval '24 hours'
-		RETURNING document_id
-	), recipient AS (
-		SELECT CASE WHEN d.owner_type='user' THEN d.owner_id ELSE sa.owner_user_id END AS user_id
-		FROM requested r JOIN documents d ON d.id=r.document_id
-		LEFT JOIN service_accounts sa ON d.owner_type='service_account' AND sa.id=d.owner_id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
-	)
-	INSERT INTO document_access_request_notification_outbox
-		(document_id,requester_type,requester_id,requester_label,recipient_id)
-	SELECT $1,$2,$3,$4,recipient.user_id FROM recipient
-	WHERE recipient.user_id IS NOT NULL AND NOT ($2='user' AND recipient.user_id=$3)
-	AND NOT EXISTS(SELECT 1 FROM notification_preferences p WHERE p.principal_type='user' AND p.principal_id=recipient.user_id AND NOT p.enabled)
-	AND NOT EXISTS(SELECT 1 FROM document_notification_mutes m WHERE m.principal_type='user' AND m.principal_id=recipient.user_id AND m.document_id=$1)
-	ON CONFLICT(document_id,requester_type,requester_id) DO UPDATE SET
-		requester_label=excluded.requester_label,recipient_id=excluded.recipient_id,
-		attempts=0,available_at=now(),created_at=now()`, documentID, requester.Type, requester.ID, label)
-	if err != nil {
-		return err
+		RETURNING document_id`,
+		documentID, requester.Type, requester.ID).Scan(&insertedDocID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return repo.AccessRequestResult{Status: "recorded"}, err
 	}
-	return tx.Commit(ctx)
+	// Only enqueue a notification when a delivery channel is available AND the
+	// row was actually written (new or refreshed after the 24-hour window).
+	if s.notificationsEnabled && insertedDocID != "" {
+		_, err = tx.Exec(ctx, `WITH recipient AS (
+			SELECT CASE WHEN d.owner_type='user' THEN d.owner_id ELSE sa.owner_user_id END AS user_id
+			FROM document_access_requests r JOIN documents d ON d.id=r.document_id
+			LEFT JOIN service_accounts sa ON d.owner_type='service_account' AND sa.id=d.owner_id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+			WHERE r.document_id=$1 AND r.requester_type=$2 AND r.requester_id=$3
+		)
+		INSERT INTO document_access_request_notification_outbox
+			(document_id,requester_type,requester_id,requester_label,recipient_id)
+		SELECT $1,$2,$3,$4,recipient.user_id FROM recipient
+		WHERE recipient.user_id IS NOT NULL AND NOT ($2='user' AND recipient.user_id=$3)
+		AND NOT EXISTS(SELECT 1 FROM notification_preferences p WHERE p.principal_type='user' AND p.principal_id=recipient.user_id AND NOT p.enabled)
+		AND NOT EXISTS(SELECT 1 FROM document_notification_mutes m WHERE m.principal_type='user' AND m.principal_id=recipient.user_id AND m.document_id=$1)
+		ON CONFLICT(document_id,requester_type,requester_id) DO UPDATE SET
+			requester_label=excluded.requester_label,recipient_id=excluded.recipient_id,
+			attempts=0,available_at=now(),created_at=now()`,
+			documentID, requester.Type, requester.ID, label)
+		if err != nil {
+			return repo.AccessRequestResult{Status: "recorded"}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return repo.AccessRequestResult{Status: "recorded"}, err
+		}
+		return repo.AccessRequestResult{Status: "notified"}, nil
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return repo.AccessRequestResult{Status: "recorded"}, err
+	}
+	return repo.AccessRequestResult{Status: "recorded"}, nil
+}
+
+func (s *Store) ListAccessRequests(ctx context.Context, documentID, afterRequestedAt string) ([]repo.AccessRequest, error) {
+	var rows pgx.Rows
+	var err error
+	if afterRequestedAt != "" {
+		rows, err = s.db.Query(ctx, `
+			SELECT r.requester_type, r.requester_id, r.requested_at,
+			       COALESCE(u.name, sa.name, '') AS requester_name,
+			       COALESCE(u.email, '') AS requester_email
+			FROM document_access_requests r
+			LEFT JOIN users u ON r.requester_type='user' AND u.id=r.requester_id
+			LEFT JOIN service_accounts sa ON r.requester_type='service_account' AND sa.id=r.requester_id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+			WHERE r.document_id=$1 AND r.requested_at < $2::timestamptz
+			ORDER BY r.requested_at DESC
+			LIMIT 100`, documentID, afterRequestedAt)
+	} else {
+		rows, err = s.db.Query(ctx, `
+			SELECT r.requester_type, r.requester_id, r.requested_at,
+			       COALESCE(u.name, sa.name, '') AS requester_name,
+			       COALESCE(u.email, '') AS requester_email
+			FROM document_access_requests r
+			LEFT JOIN users u ON r.requester_type='user' AND u.id=r.requester_id
+			LEFT JOIN service_accounts sa ON r.requester_type='service_account' AND sa.id=r.requester_id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+			WHERE r.document_id=$1
+			ORDER BY r.requested_at DESC
+			LIMIT 100`, documentID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []repo.AccessRequest
+	for rows.Next() {
+		var a repo.AccessRequest
+		var requestedAt pgtype.Timestamptz
+		if err := rows.Scan(&a.RequesterType, &a.RequesterID, &requestedAt, &a.RequesterName, &a.RequesterEmail); err != nil {
+			return nil, err
+		}
+		a.RequestedAt = requestedAt.Time.UTC().Format("2006-01-02T15:04:05Z")
+		out = append(out, a)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) NotificationPreferences(ctx context.Context, p auth.Principal, documentID string) (repo.NotificationPreferences, error) {

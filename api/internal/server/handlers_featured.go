@@ -137,7 +137,7 @@ func (h handlers) featuredEntry(ctx context.Context, p auth.Principal, id string
 	} else {
 		var document repo.Document
 		document, err = r.GetDocument(ctx, id)
-		entry.Document = &document
+		entry.Document = repo.DocumentAsFolderEntry(document)
 	}
 	if errors.Is(err, repo.ErrNotFound) {
 		return nil, nil

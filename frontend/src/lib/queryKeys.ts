@@ -19,6 +19,7 @@ export const queryKeys = {
   folderAccessAll: () => ["folder-access"] as const,
   folderAccess: (id: string) => ["folder-access", id] as const,
   documentAccess: (id: string) => ["document-access", id] as const,
+  accessRequests: (id: string) => ["access-requests", id] as const,
   pins: () => ["pins"] as const,
   featured: () => ["featured"] as const,
   // Prefix key matching every people search. Grants change who is a contact.

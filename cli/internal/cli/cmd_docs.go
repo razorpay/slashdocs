@@ -23,6 +23,7 @@ func docsCmd(g *globals, out io.Writer) *cobra.Command {
 	c.AddCommand(
 		documentListCmd(g, out),
 		documentRequestAccessCmd(g, out),
+		documentListAccessRequestsCmd(g, out),
 		notificationsCmd(g, out, true),
 		documentHeadingsCmd(g, out),
 		documentLinkCmd(g, out),
@@ -49,7 +50,31 @@ func documentRequestAccessCmd(g *globals, out io.Writer) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return action(g, out, func(c *Client) ([]byte, error) {
 				return c.doJSON("POST", apiPath("/v1/documents/%s/access-requests", args[0]), map[string]any{})
-			}, func(map[string]any) string { return "Access request sent for " + args[0] + "." })
+			}, func(res map[string]any) string {
+				if res["status"] == "notified" {
+					return "Access request sent for " + args[0] + ". The owner has been notified."
+				}
+				return "Access request recorded for " + args[0] + ". The owner can see it in the sharing panel."
+			})
+		},
+	}
+}
+
+func documentListAccessRequestsCmd(g *globals, out io.Writer) *cobra.Command {
+	return &cobra.Command{
+		Use:   "access-requests <doc_id>",
+		Short: "List pending access requests for a document (owner only)",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return action(g, out, func(c *Client) ([]byte, error) {
+				return c.do("GET", apiPath("/v1/documents/%s/access-requests", args[0]), nil, "")
+			}, func(m map[string]any) string {
+				items, _ := m["items"].([]any)
+				if len(items) == 0 {
+					return "No pending access requests for " + args[0] + "."
+				}
+				return fmt.Sprintf("%d pending access request(s) for %s. Use --json to see details.", len(items), args[0])
+			})
 		},
 	}
 }

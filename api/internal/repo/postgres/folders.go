@@ -341,7 +341,7 @@ func (s *Store) ListFolder(ctx context.Context, p auth.Principal, folderID, path
 			return nil, false, nil, err
 		}
 		for _, r := range docs {
-			d := docFromFolderListing(r)
+			d := folderDocEntryFromRow(r)
 			out = append(out, repo.FolderEntry{Type: "document", Document: &d})
 		}
 		f, err := s.GetFolder(ctx, parent)
@@ -453,24 +453,115 @@ func (s *Store) MoveDocumentToRoot(ctx context.Context, folderID, docID string) 
 	return s.q.MoveDocumentToRoot(ctx, dbsqlc.MoveDocumentToRootParams{DocumentID: docID, FolderID: folderID})
 }
 
-func (s *Store) ListFolderDocuments(ctx context.Context, _ auth.Principal, folderID string) ([]repo.Document, error) {
+func (s *Store) ListFolderDocuments(ctx context.Context, p auth.Principal, folderID string) ([]repo.FolderDocumentEntry, error) {
 	rows, err := s.q.ListFolderDocuments(ctx, folderID)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]repo.Document, 0, len(rows))
+	if len(rows) == 0 {
+		return []repo.FolderDocumentEntry{}, nil
+	}
+
+	// Bulk-resolve the caller's effective role for every document in one pass.
+	docIDs := make([]string, len(rows))
+	ownerByDoc := make(map[string]struct{ ownerType, ownerID string }, len(rows))
+	for i, r := range rows {
+		docIDs[i] = r.ID
+		ownerByDoc[r.ID] = struct{ ownerType, ownerID string }{r.OwnerType, r.OwnerID}
+	}
+
+	grantRows, err := s.listGrantsForDocuments(ctx, docIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	roleByDoc := make(map[string]repo.Role, len(rows))
+	for _, docID := range docIDs {
+		own := ownerByDoc[docID]
+		if string(p.Type) == own.ownerType && p.ID == own.ownerID {
+			roleByDoc[docID] = repo.RoleOwner
+		}
+	}
+	for _, g := range grantRows {
+		if principalHasGrant(p, g.PrincipalType, g.PrincipalID) {
+			roleByDoc[g.DocumentID] = repo.MaxRole(roleByDoc[g.DocumentID], repo.Role(g.Role))
+		}
+	}
+
+	out := make([]repo.FolderDocumentEntry, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, docFromFolderListing(r))
+		d := folderDocEntryFromRow(r)
+		d.CallerRole = roleByDoc[r.ID]
+		out = append(out, d)
 	}
 	return out, nil
 }
 
-func docFromFolderListing(r dbsqlc.ListFolderDocumentsRow) repo.Document {
-	return repo.Document{
+func folderDocEntryFromRow(r dbsqlc.ListFolderDocumentsRow) repo.FolderDocumentEntry {
+	return repo.FolderDocumentEntry{
 		ID:               r.ID,
 		Title:            r.Title,
 		CurrentVersionID: r.CurrentVersionID,
 		ParentFolderID:   r.ParentFolderID,
 		Owner:            auth.Principal{Type: auth.PrincipalType(r.OwnerType), ID: r.OwnerID, Name: r.OwnerName, Email: r.OwnerEmail},
 	}
+}
+
+// folderDocGrantRow is one row from the bulk grant lookup for a set of
+// folder-document IDs.
+type folderDocGrantRow struct {
+	DocumentID    string
+	PrincipalType string
+	PrincipalID   string
+	Role          string
+}
+
+// listGrantsForDocuments returns all active grants on the given documents
+// (and on their parent folders) in one query, so the caller can compute the
+// effective role for a principal without issuing one query per document.
+func (s *Store) listGrantsForDocuments(ctx context.Context, docIDs []string) ([]folderDocGrantRow, error) {
+	if len(docIDs) == 0 {
+		return nil, nil
+	}
+	// Build $1,$2,... placeholders for the IN clause.
+	args := make([]any, len(docIDs))
+	placeholders := make([]string, len(docIDs))
+	for i, id := range docIDs {
+		args[i] = id
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+	}
+	query := `
+WITH RECURSIVE ancestors(doc_id, rid, rtype, depth) AS (
+  SELECT d.id, d.id, 'document'::text, 0
+  FROM documents d
+  WHERE d.id = ANY(ARRAY[` + strings.Join(placeholders, ",") + `]::text[])
+  UNION ALL
+  SELECT a.doc_id,
+         CASE WHEN a.rtype='document' THEN (SELECT parent_folder_id FROM documents WHERE id=a.rid)
+              ELSE (SELECT parent_folder_id FROM folders WHERE id=a.rid) END,
+         'folder'::text,
+         a.depth+1
+  FROM ancestors a
+  WHERE a.depth < 64
+    AND (CASE WHEN a.rtype='document' THEN (SELECT parent_folder_id FROM documents WHERE id=a.rid)
+              ELSE (SELECT parent_folder_id FROM folders WHERE id=a.rid) END) IS NOT NULL
+)
+SELECT a.doc_id, g.principal_type, g.principal_id, g.role
+FROM ancestors a
+JOIN resource_grants g ON g.resource_type=a.rtype AND g.resource_id=a.rid AND g.revoked_at IS NULL`
+
+	rows, err := s.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []folderDocGrantRow
+	for rows.Next() {
+		var r folderDocGrantRow
+		if err := rows.Scan(&r.DocumentID, &r.PrincipalType, &r.PrincipalID, &r.Role); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }

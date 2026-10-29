@@ -3,6 +3,7 @@ package server_test
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -351,4 +352,112 @@ func createFolder(t *testing.T, e *testEnv, body, principal string) string {
 	rr := do(t, e.h, http.MethodPost, "/v1/folders", body, map[string]string{"X-Test-Principal": principal, "Content-Type": "application/json"})
 	assertStatus(t, rr, http.StatusCreated)
 	return jsonField(t, rr.Body.Bytes(), "id")
+}
+
+// TestFolderDocumentCallerRole verifies that GET /v1/folders/{id}/documents
+// always includes a "caller_role" field on every document entry, even when the
+// caller has no direct grant (RoleNone = ""). The field must not be omitted.
+func TestFolderDocumentCallerRole(t *testing.T) {
+	e := newTestEnv(t)
+	folderOwner := principalHeader(fixtureOwner)
+	docOwner := principalHeader(fixtureStranger)
+
+	// folderOwner creates folder, docOwner files their own document into it.
+	folderID := createFolder(t, e, `{"title":"MyFolder"}`, folderOwner)
+	rr := do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/grants",
+		`{"address":"`+fixtureStranger.Email+`","role":"editor"}`,
+		map[string]string{"X-Test-Principal": folderOwner, "Content-Type": "application/json"})
+	assertStatus(t, rr, http.StatusCreated)
+
+	docID, _ := e.createDocument("InFolder", "<p>x</p>", fixtureStranger)
+	rr = do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/documents",
+		`{"document_id":"`+docID+`"}`,
+		map[string]string{"X-Test-Principal": docOwner, "Content-Type": "application/json"})
+	assertStatus(t, rr, http.StatusOK)
+
+	// folderOwner lists the folder — they have no direct grant on docOwner's
+	// document, so caller_role must be "" (not omitted).
+	rr = do(t, e.h, http.MethodGet, "/v1/folders/"+folderID+"/documents", "", map[string]string{"X-Test-Principal": folderOwner})
+	assertStatus(t, rr, http.StatusOK)
+
+	// Use raw map to distinguish absent key from present empty string.
+	var raw struct {
+		Items []map[string]json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode raw: %v", err)
+	}
+	if len(raw.Items) == 0 {
+		t.Fatalf("expected at least one document in listing, got 0; body=%s", rr.Body.String())
+	}
+	for i, item := range raw.Items {
+		if _, present := item["caller_role"]; !present {
+			t.Errorf("items[%d]: caller_role key absent (omitempty bug)", i)
+		}
+	}
+}
+
+// TestGetDocumentActionable403ForFolderOwner verifies that a folder owner who
+// has no role on a document in their folder receives a 403 with an actionable
+// message pointing to the DELETE /v1/folders/{fld}/documents/{doc} endpoint.
+func TestGetDocumentActionable403ForFolderOwner(t *testing.T) {
+	e := newTestEnv(t)
+	folderOwner := principalHeader(fixtureStranger) // will own the folder
+	docOwner := principalHeader(fixtureOwner)        // owns the doc, not the folder
+
+	// folderOwner creates a folder; docOwner puts their document in it.
+	folderID := createFolder(t, e, `{"title":"TrapFolder"}`, folderOwner)
+	docID, _ := e.createDocument("TrapDoc", "<p>x</p>", fixtureOwner)
+
+	// docOwner needs editor on the folder to move the doc in.
+	rr := do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/grants",
+		`{"address":"`+fixtureOwner.Email+`","role":"editor"}`,
+		map[string]string{"X-Test-Principal": folderOwner, "Content-Type": "application/json"})
+	assertStatus(t, rr, http.StatusCreated)
+
+	rr = do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/documents",
+		`{"document_id":"`+docID+`"}`,
+		map[string]string{"X-Test-Principal": docOwner, "Content-Type": "application/json"})
+	assertStatus(t, rr, http.StatusOK)
+
+	// folderOwner fetches the document they have no role on — expect 403 with
+	// the actionable message embedding the folder and document IDs.
+	rr = do(t, e.h, http.MethodGet, "/v1/documents/"+docID, "", map[string]string{"X-Test-Principal": folderOwner})
+	assertStatus(t, rr, http.StatusForbidden)
+
+	body := rr.Body.String()
+	if !strings.Contains(body, folderID) {
+		t.Errorf("expected 403 message to contain folder ID %q; got: %s", folderID, body)
+	}
+	if !strings.Contains(body, docID) {
+		t.Errorf("expected 403 message to contain doc ID %q; got: %s", docID, body)
+	}
+	if !strings.Contains(body, "DELETE") {
+		t.Errorf("expected 403 message to mention DELETE endpoint; got: %s", body)
+	}
+}
+
+// TestGetDocumentGeneric403ForNonFolderOwner verifies that a caller who has
+// no role on the document AND no owner role on its parent folder receives the
+// generic 403 — the folder ID must not appear in the response body.
+func TestGetDocumentGeneric403ForNonFolderOwner(t *testing.T) {
+	e := newTestEnv(t)
+	owner := principalHeader(fixtureOwner)
+	attacker := principalHeader(fixtureAttacker)
+
+	folderID := createFolder(t, e, `{"title":"Private"}`, owner)
+	docID, _ := e.createDocument("Secret", "<p>x</p>", fixtureOwner)
+	rr := do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/documents",
+		`{"document_id":"`+docID+`"}`,
+		map[string]string{"X-Test-Principal": owner, "Content-Type": "application/json"})
+	assertStatus(t, rr, http.StatusOK)
+
+	// Attacker knows the doc ID but has no access to the folder.
+	rr = do(t, e.h, http.MethodGet, "/v1/documents/"+docID, "", map[string]string{"X-Test-Principal": attacker})
+	assertStatus(t, rr, http.StatusForbidden)
+
+	body := rr.Body.String()
+	if strings.Contains(body, folderID) {
+		t.Errorf("folder ID %q must not appear in 403 body for non-folder-owner; got: %s", folderID, body)
+	}
 }

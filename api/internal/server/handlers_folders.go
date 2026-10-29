@@ -34,14 +34,17 @@ func (h handlers) needFolderRole(c *gin.Context, id string, need repo.Role) bool
 // canRemoveChildren, the caller also needs editor on the folder that the
 // document leaves, because the move removes the access that folder gives.
 // The owner skips that check, so no one can trap a document away from them.
+//
+// Special case: when the destination is root (to == "") and the caller owns
+// the containing folder but holds no role on the document itself, the move is
+// still allowed. Moving to root only removes the access the folder was
+// granting; it cannot broaden the document's visibility or alter its content.
+// This prevents a foreign document from being permanently trapped in a folder
+// whose owner has no way to remove it.
 func (h handlers) needDocMove(c *gin.Context, docID, to string) bool {
 	role, err := h.deps.repository.RoleForDocument(c.Request.Context(), *current(c), docID)
 	if err != nil {
 		internalErr(c, err)
-		return false
-	}
-	if !atLeast(role, repo.RoleEditor) {
-		forbidden(c, "editor role on the document is required")
 		return false
 	}
 	if role == repo.RoleOwner {
@@ -49,10 +52,31 @@ func (h handlers) needDocMove(c *gin.Context, docID, to string) bool {
 	}
 	doc, err := h.deps.repository.GetDocument(c.Request.Context(), docID)
 	if err != nil {
+		if errors.Is(err, repo.ErrNotFound) {
+			notFound(c)
+			return false
+		}
 		internalErr(c, err)
 		return false
 	}
 	from := doc.ParentFolderID
+	// A folder owner may always eject a document to root, even without a role
+	// on the document. The SQL for moveDocToRoot scopes the UPDATE to the
+	// given folder, so this cannot pull documents out of other folders.
+	if to == "" && from != "" {
+		folderRole, err := h.deps.repository.RoleForFolder(c.Request.Context(), *current(c), from)
+		if err != nil {
+			internalErr(c, err)
+			return false
+		}
+		if folderRole == repo.RoleOwner {
+			return true
+		}
+	}
+	if !atLeast(role, repo.RoleEditor) {
+		forbidden(c, "editor role on the document is required")
+		return false
+	}
 	return from == "" || from == to || h.needFolderRole(c, from, repo.RoleEditor)
 }
 
@@ -356,7 +380,7 @@ func (h handlers) listFolderDocs(c *gin.Context) {
 		internalErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, listResponse[repo.Document]{Items: docs})
+	c.JSON(http.StatusOK, listResponse[repo.FolderDocumentEntry]{Items: docs})
 }
 func (h handlers) moveDocToFolder(c *gin.Context) {
 	folderID := c.Param("id")

@@ -188,6 +188,17 @@ func (h handlers) getDocument(c *gin.Context) {
 		return
 	}
 	if !atLeast(role, repo.RoleViewer) {
+		// When the caller owns the containing folder but has no role on the
+		// document itself, give a more actionable error. They can eject the
+		// document via DELETE /v1/folders/{folder_id}/documents/{doc_id}.
+		// We confirm folder ownership before emitting anything, so the
+		// folder ID in the message is never new information to the caller.
+		if d.ParentFolderID != "" {
+			if fr, err := h.deps.repository.RoleForFolder(c.Request.Context(), *current(c), d.ParentFolderID); err == nil && fr == repo.RoleOwner {
+				forbidden(c, "viewer role required on the document; as the folder owner you can remove it from your folder using DELETE /v1/folders/"+d.ParentFolderID+"/documents/"+d.ID)
+				return
+			}
+		}
 		denyDocRole(c, repo.RoleViewer)
 		return
 	}

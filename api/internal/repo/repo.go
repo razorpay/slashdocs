@@ -116,11 +116,45 @@ type FolderAccess struct {
 	Role  Role   `json:"role"`
 }
 
+// FolderDocumentEntry is a document row in a folder listing. It is a flat
+// struct rather than an embedded *Document so it can carry CallerRole without
+// affecting the generic Document type used elsewhere.
+type FolderDocumentEntry struct {
+	ID               string            `json:"id"`
+	Title            string            `json:"title"`
+	Owner            auth.Principal    `json:"owner"`
+	CurrentVersionID string            `json:"current_version_id"`
+	ParentFolderID   string            `json:"parent_folder_id,omitempty"`
+	ParentFolder     *FolderBreadcrumb `json:"parent_folder,omitempty"`
+	UpdatedAt        string            `json:"updated_at,omitempty"`
+	Labels           []string          `json:"labels,omitempty"`
+	// CallerRole is always present in folder listings, including as "" (RoleNone).
+	// Empty string means the caller has no direct grant — they see the entry only
+	// as folder owner and can eject it but cannot open it.
+	CallerRole Role `json:"caller_role"`
+}
+
+// DocumentAsFolderEntry converts a Document to a FolderDocumentEntry with no CallerRole.
+// Use this when a document is shown in a FolderEntry context outside of folder listings
+// (e.g. featured items), where CallerRole is not known.
+func DocumentAsFolderEntry(d Document) *FolderDocumentEntry {
+	return &FolderDocumentEntry{
+		ID:               d.ID,
+		Title:            d.Title,
+		Owner:            d.Owner,
+		CurrentVersionID: d.CurrentVersionID,
+		ParentFolderID:   d.ParentFolderID,
+		ParentFolder:     d.ParentFolder,
+		UpdatedAt:        d.UpdatedAt,
+		Labels:           d.Labels,
+	}
+}
+
 type FolderEntry struct {
-	Type       string    `json:"type"`
-	Folder     *Folder   `json:"folder,omitempty"`
-	Document   *Document `json:"document,omitempty"`
-	LastActive string    `json:"last_active,omitempty"`
+	Type       string               `json:"type"`
+	Folder     *Folder              `json:"folder,omitempty"`
+	Document   *FolderDocumentEntry `json:"document,omitempty"`
+	LastActive string               `json:"last_active,omitempty"`
 }
 
 // DocumentSearch filters documents. All values are lowercase, and empty
@@ -343,11 +377,31 @@ type DocumentKVEvent struct {
 // Repository is the application persistence boundary, implemented by the
 // PostgreSQL store in repo/postgres. Tests exercise that same implementation
 // against a disposable database (see api/internal/testdb) rather than an
+// AccessRequest is a pending request from a principal to the document owner.
+type AccessRequest struct {
+	RequesterType  string `json:"requester_type"`
+	RequesterID    string `json:"requester_id"`
+	RequesterName  string `json:"requester_name,omitempty"`
+	RequesterEmail string `json:"requester_email,omitempty"`
+	RequestedAt    string `json:"requested_at"`
+}
+
+// AccessRequestResult is returned by RequestDocumentAccess. Status is
+// "recorded" when the row was persisted but no notification channel is
+// configured, and "notified" when a Slack/email message was also queued.
+type AccessRequestResult struct {
+	Status string `json:"status"` // "recorded" | "notified"
+}
+
 // in-memory fake, so test behaviour cannot drift from production.
 type Repository interface {
 	NotificationPreferences(ctx context.Context, principal auth.Principal, documentID string) (NotificationPreferences, error)
 	SetNotificationPreferences(ctx context.Context, principal auth.Principal, documentID string, enabled bool) (NotificationPreferences, error)
-	RequestDocumentAccess(ctx context.Context, principal auth.Principal, documentID string) error
+	RequestDocumentAccess(ctx context.Context, principal auth.Principal, documentID string) (AccessRequestResult, error)
+	// ListAccessRequests returns up to 100 access requests ordered by
+	// requested_at DESC. afterRequestedAt is an optional RFC3339 cursor; when
+	// non-empty only rows with requested_at < afterRequestedAt are returned.
+	ListAccessRequests(ctx context.Context, documentID, afterRequestedAt string) ([]AccessRequest, error)
 	ResolveBearerToken(ctx context.Context, tokenHash string) (auth.Principal, error)
 	ResolveUser(ctx context.Context, id string) (auth.Principal, error)
 	UpsertGoogleUser(ctx context.Context, id, email, name, googleSub, pictureURL string) (auth.Principal, error)
@@ -442,7 +496,10 @@ type Repository interface {
 	FolderHasGrants(ctx context.Context, folderID string) (bool, error)
 	MoveDocumentToFolder(ctx context.Context, principal auth.Principal, folderID, documentID string) (bool, error)
 	MoveDocumentToRoot(ctx context.Context, folderID, documentID string) error
-	ListFolderDocuments(ctx context.Context, principal auth.Principal, folderID string) ([]Document, error)
+	// ListFolderDocuments returns documents in folderID with CallerRole
+	// pre-populated for principal. It issues at most two queries (one for
+	// documents, one bulk grant lookup), never one per document.
+	ListFolderDocuments(ctx context.Context, principal auth.Principal, folderID string) ([]FolderDocumentEntry, error)
 	ListEffectiveAccess(ctx context.Context, resourceType, resourceID string) ([]EffectiveAccessItem, error)
 	ListPins(ctx context.Context, principal auth.Principal) ([]Pin, error)
 	PutPin(ctx context.Context, principal auth.Principal, resourceType, resourceID string) error

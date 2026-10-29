@@ -86,7 +86,7 @@ func (h handlers) setDocumentNotificationPreferences(c *gin.Context) { h.setNoti
 
 // requestDocumentAccess godoc
 // @Summary Request access to a document
-// @Description Notifies the current owner without revealing whether the document or owner exists. Repeated requests are coalesced.
+// @Description Persists a request to the owner. Repeated requests are coalesced. Enumeration-safe: returns the same body for missing, already-accessible, or recently-requested documents.
 // @Tags documents
 // @Security bearerAuth
 // @Security cookieAuth
@@ -94,11 +94,40 @@ func (h handlers) setDocumentNotificationPreferences(c *gin.Context) { h.setNoti
 // @Success 202 {object} map[string]string
 // @Router /v1/documents/{id}/access-requests [post]
 func (h handlers) requestDocumentAccess(c *gin.Context) {
-	if err := h.deps.repository.RequestDocumentAccess(c.Request.Context(), *current(c), c.Param("id")); err != nil {
+	result, err := h.deps.repository.RequestDocumentAccess(c.Request.Context(), *current(c), c.Param("id"))
+	if err != nil {
 		internalErr(c, err)
 		return
 	}
-	// Keep the same response for missing, already-accessible, and recently
+	// Keep the same response shape for missing, already-accessible, and recently
 	// requested documents so this endpoint cannot be used for enumeration.
-	c.JSON(http.StatusAccepted, gin.H{"status": "sent"})
+	// Status is "notified" when a Slack/email was queued, "recorded" otherwise.
+	c.JSON(http.StatusAccepted, gin.H{"status": result.Status})
+}
+
+// listDocumentAccessRequests godoc
+// @Summary List pending access requests for a document
+// @Description Returns up to 100 requests ordered by requested_at descending. Pass next_page_token as the "after" query parameter to retrieve the next page.
+// @Tags documents
+// @Security bearerAuth
+// @Security cookieAuth
+// @Param id path string true "Document ID"
+// @Param after query string false "RFC3339 cursor — last requested_at from the previous page"
+// @Success 200 {object} map[string]any
+// @Router /v1/documents/{id}/access-requests [get]
+func (h handlers) listDocumentAccessRequests(c *gin.Context) {
+	if !h.needDocRole(c, c.Param("id"), repo.RoleOwner) {
+		return
+	}
+	after := c.Query("after")
+	requests, err := h.deps.repository.ListAccessRequests(c.Request.Context(), c.Param("id"), after)
+	if err != nil {
+		internalErr(c, err)
+		return
+	}
+	var nextPageToken string
+	if len(requests) == 100 {
+		nextPageToken = requests[len(requests)-1].RequestedAt
+	}
+	c.JSON(http.StatusOK, gin.H{"items": requests, "next_page_token": nextPageToken})
 }
