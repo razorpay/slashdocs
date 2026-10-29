@@ -356,6 +356,7 @@ func mutationOptions(destructive, idempotent bool, options ...mcp.ToolOption) []
 func registerMCPTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 	registerMCPGeneralTools(server, api)
 	registerMCPDocumentTools(server, api)
+	registerMCPApprovalTools(server, api)
 	registerMCPFolderTools(server, api)
 	registerMCPServiceAccountTools(server, api)
 }
