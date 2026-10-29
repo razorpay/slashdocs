@@ -414,8 +414,8 @@ export function Comments({ mobile = false }: { mobile?: boolean }) {
     drafts,
     commentFilter: filter,
     setCommentFilter: setFilter,
+    activeComment,
     setActiveComment,
-    scrollDocumentTo,
   } = useDoc();
   const headerRef = useRef<HTMLDivElement>(null);
   const [headerHeight, setHeaderHeight] = useState(0);
@@ -438,11 +438,20 @@ export function Comments({ mobile = false }: { mobile?: boolean }) {
   const chooseFilter = (next: CommentFilter) => {
     if (next === filter) return;
     setFilter(next);
-    // Let the bridge reveal the first matching highlight after repainting.
-    // Sending a scroll-to-top here would interrupt that reveal.
-    const first = comments.find((c) => matchesCommentFilter(c.status, next));
-    if (!first) scrollDocumentTo(0);
-    setActiveComment(first?.id);
+    // Switching filters only changes which threads are listed; it must not
+    // move the reader. Activating the first thread of the new filter dragged
+    // the document to the top of the rail whenever that thread had no known
+    // position yet (every resolved thread, because the default Open filter
+    // does not paint their highlights). Keep the active thread only while the
+    // new filter still lists it.
+    if (
+      activeComment &&
+      !comments.some(
+        (c) => c.id === activeComment && matchesCommentFilter(c.status, next),
+      )
+    ) {
+      setActiveComment(undefined);
+    }
   };
 
   return (
