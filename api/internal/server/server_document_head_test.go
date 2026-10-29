@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -54,10 +55,12 @@ func assertGenericShell(t *testing.T, rr *httptest.ResponseRecorder) {
 	}
 }
 
-func assertNoStore(t *testing.T, rr *httptest.ResponseRecorder) {
+// A document page depends on who asks, so shared caches must not keep it and
+// the browser must revalidate it, but it may stay in the back/forward cache.
+func assertPrivateNoCache(t *testing.T, rr *httptest.ResponseRecorder) {
 	t.Helper()
-	if got := rr.Header().Get("Cache-Control"); got != "no-store" {
-		t.Errorf("Cache-Control = %q, want no-store", got)
+	if got := rr.Header().Get("Cache-Control"); got != "private, no-cache" {
+		t.Errorf("Cache-Control = %q, want private, no-cache", got)
 	}
 }
 
@@ -71,7 +74,7 @@ func TestDocumentPageHeadForReader(t *testing.T) {
 		`<meta property="og:url" content="https://docs.example/app/d/`+e.doc.ID+`" />`,
 		`<meta name="twitter:card" content="summary" />`,
 	)
-	assertNoStore(t, rr)
+	assertPrivateNoCache(t, rr)
 }
 
 func TestDocumentPageHeadUsesAnExcerpt(t *testing.T) {
@@ -94,12 +97,37 @@ func TestDocumentPageHeadForAnonymousReaderOfDocumentSharedWithAnyone(t *testing
 	assertContains(t, getPage(t, e.h, "/app/d/"+e.doc.ID, nil).Body.String(), "<title>fixture · slashdocs</title>")
 }
 
-func TestDocumentPageHeadForGoogleGroupMember(t *testing.T) {
+func TestDocumentPageHeadForReaderOnAnOrgDeployment(t *testing.T) {
+	e := newShellTestEnv(t, server.Config{Environment: "test", Deployment: server.DeploymentOrg, OrgName: "Acme"})
+	e.shareWithAnyone("viewer")
+	assertContains(t, getPage(t, e.h, "/app/d/"+e.doc.ID, &fixtureStranger).Body.String(), "<title>fixture · slashdocs</title>")
+}
+
+// blockingGroupDirectory answers like postgresGroupDirectory, except that
+// while it is blocked it waits until the caller gives up.
+type blockingGroupDirectory struct {
+	*postgresGroupDirectory
+	blocked atomic.Bool
+}
+
+func (d *blockingGroupDirectory) TransitiveGroupsForMember(ctx context.Context, email string) ([]googlegroups.GoogleGroup, error) {
+	if d.blocked.Load() {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return d.postgresGroupDirectory.TransitiveGroupsForMember(ctx, email)
+}
+
+// The head uses Google Group memberships that are already cached and never
+// asks the directory. A directory call that the page gave up on would count
+// as a failure and make the app's next requests fail during the retry
+// cooldown.
+func TestDocumentPageHeadUsesCachedGroupMemberships(t *testing.T) {
 	group := googlegroups.GoogleGroup{ID: "groups/platform", CustomerID: "C123", Email: "platform@example.com", Name: "Platform"}
-	directory := &postgresGroupDirectory{
+	directory := &blockingGroupDirectory{postgresGroupDirectory: &postgresGroupDirectory{
 		group:       group,
 		memberships: map[string][]googlegroups.GoogleGroup{fixtureStranger.Email: {group}},
-	}
+	}}
 	e := newShellTestEnv(t, server.Config{
 		Environment:         server.EnvProduction,
 		Deployment:          server.DeploymentOrg,
@@ -110,7 +138,22 @@ func TestDocumentPageHeadForGoogleGroupMember(t *testing.T) {
 		map[string]string{"Content-Type": "application/json", "X-Test-Principal": principalHeader(fixtureOwner)})
 	assertStatus(t, rr, http.StatusCreated)
 
+	directory.blocked.Store(true)
+	assertGenericShell(t, getPage(t, e.h, "/app/d/"+e.doc.ID, &fixtureStranger))
+	directory.blocked.Store(false)
+	rr = do(t, e.h, http.MethodGet, "/v1/documents/"+e.doc.ID, "", map[string]string{"X-Test-Principal": principalHeader(fixtureStranger)})
+	assertStatus(t, rr, http.StatusOK)
 	assertContains(t, getPage(t, e.h, "/app/d/"+e.doc.ID, &fixtureStranger).Body.String(), "<title>fixture · slashdocs</title>")
+}
+
+// A CLI or an agent with an expired token must not read a document as
+// anonymous; the page stays generic for it, as the API refuses it.
+func TestDocumentPageKeepsTheGenericShellForAnInvalidBearerToken(t *testing.T) {
+	e := newShellTestEnv(t, server.Config{Environment: "test"})
+	e.shareWithAnyone("viewer")
+	rr := do(t, e.h, http.MethodGet, "/app/d/"+e.doc.ID, "", map[string]string{"Authorization": "Bearer expired"})
+	assertStatus(t, rr, http.StatusOK)
+	assertGenericShell(t, rr)
 }
 
 func TestDocumentPageHeadEscapesTheTitle(t *testing.T) {
@@ -173,7 +216,7 @@ func TestDocumentPageKeepsTheGenericShell(t *testing.T) {
 			}
 			rr := getPage(t, e.h, "/app/d/"+cmp.Or(tc.doc, e.doc.ID), tc.caller)
 			assertGenericShell(t, rr)
-			assertNoStore(t, rr)
+			assertPrivateNoCache(t, rr)
 		})
 	}
 }

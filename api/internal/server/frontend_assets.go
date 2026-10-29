@@ -60,8 +60,9 @@ func registerFrontendRoutes(r *gin.Engine, dist fs.FS, publicURL string, documen
 		}
 		index = bytes.ReplaceAll(index, []byte("__SLASHDOCS_PUBLIC_URL_VALUE__"), []byte(publicURL))
 		if id, ok := documentPageID(urlPath); ok {
-			// The head depends on who asks, so no cache may keep the page.
-			c.Header("Cache-Control", "no-store")
+			// The head depends on who asks: no shared cache may keep the page, and
+			// the browser must ask again before it reuses it.
+			c.Header("Cache-Control", "private, no-cache")
 			if head := documentHead(c.Request, id); head != nil {
 				index = bytes.Replace(index, []byte(shellTitle), head, 1)
 			}

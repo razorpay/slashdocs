@@ -631,9 +631,11 @@ chat app that fetches the link to preview it, gets the generic page. On a
 chat app; on an `org` deployment, link previews stay generic, because the app
 that fetches the link is not signed in. `og:url` needs `SLASHDOCS_APP_ORIGIN`.
 
-Document pages are sent with `Cache-Control: no-store`, because their content
-depends on who asks. If a lookup takes longer than a second, the server sends
-the generic page.
+Document pages are sent with `Cache-Control: private, no-cache`, because their
+content depends on who asks. If the lookups take longer than a second, the
+server sends the generic page. With Google Groups enabled, a reader whose access
+comes from a group gets the document's head only while their memberships are
+cached; the page never asks the directory.
 
 ## Storage notes
 

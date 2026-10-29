@@ -39,7 +39,8 @@ const documentHeadTimeout = time.Second
 
 // documentHead returns the <head> fragment of a document page, or nil to keep
 // the generic shell when the caller may not read the document or a lookup
-// fails. Unlike GET /v1/documents/:id, it records nothing.
+// fails. Unlike GET /v1/documents/:id, it adds nothing to the reader's
+// workspace and refreshes no group memberships.
 func (h handlers) documentHead(r *http.Request, documentID string) []byte {
 	ctx, cancel := context.WithTimeout(r.Context(), documentHeadTimeout)
 	defer cancel()
@@ -59,9 +60,10 @@ func (h handlers) documentHead(r *http.Request, documentID string) []byte {
 	return b.Bytes()
 }
 
-// documentHeadData authorizes the caller as GET /v1/documents/:id does and
-// returns what the head shows. It returns nil data and no error when the
-// caller may not read the document.
+// documentHeadData authorizes the caller as GET /v1/documents/:id does, except
+// that Google Group memberships come only from the cache, and returns what the
+// head shows. It returns nil data and no error when the caller may not read
+// the document.
 func (h handlers) documentHeadData(r *http.Request, documentID string) (*documentHeadData, error) {
 	ctx := r.Context()
 	p, err := h.deps.readerAuthenticator().Authenticate(r)
@@ -72,7 +74,7 @@ func (h handlers) documentHeadData(r *http.Request, documentID string) (*documen
 		return nil, err
 	}
 	if h.deps.googleGroupResolver != nil {
-		p = h.deps.googleGroupResolver.Resolve(ctx, p)
+		p = h.deps.googleGroupResolver.ResolveCached(ctx, p)
 	}
 	if groupMembershipUnavailable(p) {
 		return nil, nil
@@ -104,9 +106,9 @@ const maxDescriptionRunes = 200
 
 // documentExcerpt returns the start of a document's text for a link preview:
 // whitespace collapsed, leading copies of the title removed (documents often
-// repeat it in <title> and <h1>), and cut at a word boundary to at most max
+// repeat it in <title> and <h1>), and cut at a word boundary to at most limit
 // characters, ellipsis included.
-func documentExcerpt(title, text string, max int) string {
+func documentExcerpt(title, text string, limit int) string {
 	r := []rune(strings.Join(strings.Fields(text), " "))
 	if t := []rune(strings.Join(strings.Fields(title), " ")); len(t) > 0 {
 		for len(r) >= len(t) && strings.EqualFold(string(r[:len(t)]), string(t)) &&
@@ -114,11 +116,11 @@ func documentExcerpt(title, text string, max int) string {
 			r = []rune(strings.TrimLeft(string(r[len(t):]), " -–—|:·"))
 		}
 	}
-	if len(r) <= max {
+	if len(r) <= limit {
 		return string(r)
 	}
-	cut := r[:max-1]
-	if r[max-1] != ' ' {
+	cut := r[:limit-1]
+	if r[limit-1] != ' ' {
 		if i := lastSpace(cut); i > 0 {
 			cut = cut[:i]
 		}
