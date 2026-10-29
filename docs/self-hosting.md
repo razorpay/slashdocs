@@ -139,6 +139,25 @@ server-side URL. Discovery, token exchange, and JWKS fetches then use the
 internal URL while ID tokens are still validated against the public
 `SLASHDOCS_OIDC_ISSUER_URL`.
 
+For providers other than Google, slashdocs derives each user's id and the
+identity key stored in `users.google_sub` from the exact issuer and the token
+subject. Keep `SLASHDOCS_OIDC_ISSUER_URL` byte-identical (scheme, host, port,
+path, and any trailing slash) for the life of the database, including after
+restoring a backup or moving the database to another deployment. If the issuer
+changes, an existing user's next sign-in builds a new identity key that no
+longer matches their stored row while the verified email still collides with
+it; the sign-in is refused with `409 conflict` and the server log names the
+old and new identity keys. To relink accounts after an intentional issuer
+change, clear the stored identity keys and let each user's next sign-in adopt
+the existing row by verified email:
+
+```sql
+UPDATE users SET google_sub = NULL WHERE google_sub LIKE 'oidc_sha256_%';
+```
+
+Adoption links purely by email, so it relies on the ID token's
+`email_verified` claim staying true.
+
 Example: a minimal [Dex](https://dexidp.io/) setup for local testing —
 
 ```yaml
@@ -650,6 +669,8 @@ down-migration manually if needed; the binary does not auto-rollback.
 - [ ] `SESSION_SECRET` rotated to a fresh 32+ byte value, stored in a
       secret manager.
 - [ ] OAuth/OIDC redirect URIs registered at the IdP match `SLASHDOCS_APP_ORIGIN`.
+- [ ] `SLASHDOCS_OIDC_ISSUER_URL`, when set, never changes for the lifetime of
+      the database; see [Generic OIDC providers](#generic-oidc-providers).
 - [ ] `ALLOWED_OAUTH_DOMAINS` set if you don't want public sign-ups.
 - [ ] Postgres backups configured.
 - [ ] Blob storage versioning / lifecycle rules configured.

@@ -140,6 +140,8 @@ googleGroups:
 # Register the redirect URI with the provider as:
 #   https://slashdocs.example.com/v1/auth/oidc/callback
 oidc:
+  # Issuer URL of the generic OIDC provider. Must stay byte-identical for the
+  # life of the database: user identities are derived from it.
   issuerURL: ""
   # Display label for the login button ("Continue with <name>"); the server
   # defaults it to "SSO".

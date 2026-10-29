@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -208,6 +209,18 @@ func (h handlers) oauthCallback(c *gin.Context) {
 	uid, externalSubject := oidcIdentityKeys(h.deps.oidc.Issuer, u.Sub)
 	p, err := h.deps.repository.UpsertGoogleUser(c.Request.Context(), uid, u.Email, u.Name, externalSubject, u.PictureURL)
 	if err != nil {
+		var identityConflict *repo.EmailIdentityConflictError
+		if errors.As(err, &identityConflict) {
+			slog.WarnContext(c.Request.Context(), "sign-in email is linked to another identity",
+				slog.String("issuer", h.deps.oidc.Issuer),
+				slog.String("email", identityConflict.Email),
+				slog.String("existing_identity", identityConflict.ExistingExternalSubject),
+				slog.String("incoming_identity", identityConflict.IncomingExternalSubject))
+			incAuth(metricKind, "failure")
+			c.JSON(http.StatusConflict, errorResponse("conflict",
+				"this email is already linked to another sign-in identity; keep the OIDC issuer unchanged for the life of the database (see docs/self-hosting.md#generic-oidc-providers)", nil))
+			return
+		}
 		internalErr(c, err)
 		return
 	}

@@ -99,6 +99,10 @@ func (s *Store) ResolveUser(ctx context.Context, id string) (auth.Principal, err
 func (s *Store) UpsertGoogleUser(ctx context.Context, id, email, name, googleSub, pictureURL string) (auth.Principal, error) {
 	err := s.q.UpsertGoogleUser(ctx, dbsqlc.UpsertGoogleUserParams{ID: id, Email: email, Name: name, GoogleSub: pgtype.Text{String: googleSub, Valid: true}, PictureUrl: pictureURL})
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "users_email_key" {
+			return auth.Principal{}, s.emailIdentityConflict(ctx, email, googleSub)
+		}
 		return auth.Principal{}, err
 	}
 	u, err := s.q.GetUserByGoogleSub(ctx, pgtype.Text{String: googleSub, Valid: true})
@@ -106,6 +110,19 @@ func (s *Store) UpsertGoogleUser(ctx context.Context, id, email, name, googleSub
 		return auth.Principal{}, err
 	}
 	return auth.Principal{Type: auth.PrincipalUser, ID: u.ID, Email: u.Email, Name: u.Name, PictureURL: u.PictureUrl}, nil
+}
+
+// emailIdentityConflict turns the users_email_key unique violation into an
+// ErrEmailIdentityConflict and enriches it with the identity key already
+// stored for the email, so a log line can name both keys. Reading the existing
+// key is best-effort: an unreadable row does not change the outcome.
+func (s *Store) emailIdentityConflict(ctx context.Context, email, googleSub string) error {
+	conflict := &repo.EmailIdentityConflictError{Email: email, IncomingExternalSubject: googleSub}
+	var existing pgtype.Text
+	if err := s.db.QueryRow(ctx, `SELECT google_sub FROM users WHERE email=$1`, email).Scan(&existing); err == nil {
+		conflict.ExistingExternalSubject = existing.String
+	}
+	return conflict
 }
 func (s *Store) UserByEmail(ctx context.Context, email string) (auth.Principal, error) {
 	u, err := s.q.GetSignedInUserByEmail(ctx, email)
