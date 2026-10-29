@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { layoutCommentRail } from "./comment-rail";
+import { commentTicks, layoutCommentRail } from "./comment-rail";
 
 describe("layoutCommentRail", () => {
   it("places unanchored cards at the start before anchored cards", () => {
@@ -91,5 +91,63 @@ describe("layoutCommentRail", () => {
     expect(scrolledAway.y).toBe(850);
     const [released] = layoutCommentRail(items, 2000);
     expect(released.y).toBe(850);
+  });
+});
+
+describe("commentTicks", () => {
+  const base = { scrollHeight: 1100, viewportHeight: 500, topInset: 100 };
+  const positions = new Map([
+    ["late", { top: 1100, bottom: 1120 }],
+    ["early", { top: 300, bottom: 320 }],
+  ]);
+
+  it("places ticks in the rail's coordinates, in document order", () => {
+    const ticks = commentTicks({ ...base, ids: ["late", "early"], positions });
+
+    expect(ticks).toEqual([
+      { id: "early", y: 0.2 },
+      { id: "late", y: 1 },
+    ]);
+  });
+
+  it("keeps ticks inside the strip and breaks ties by id, like the rail", () => {
+    const ticks = commentTicks({
+      ...base,
+      ids: ["b", "a", "above", "below"],
+      positions: new Map([
+        ["b", { top: 300, bottom: 320 }],
+        ["a", { top: 300, bottom: 320 }],
+        ["above", { top: 20, bottom: 40 }],
+        ["below", { top: 5000, bottom: 5020 }],
+      ]),
+    });
+
+    expect(ticks).toEqual([
+      { id: "above", y: 0 },
+      { id: "a", y: 0.2 },
+      { id: "b", y: 0.2 },
+      { id: "below", y: 1 },
+    ]);
+  });
+
+  it("skips threads without a position, such as unanchored ones", () => {
+    const ticks = commentTicks({ ...base, ids: ["early", "lost"], positions });
+
+    expect(ticks?.map((tick) => tick.id)).toEqual(["early"]);
+  });
+
+  it("shows nothing when no thread has a position", () => {
+    expect(commentTicks({ ...base, ids: ["lost"], positions })).toBeNull();
+  });
+
+  it("shows nothing when the whole document is already on screen", () => {
+    const ticks = commentTicks({
+      ...base,
+      scrollHeight: 550,
+      ids: ["early"],
+      positions,
+    });
+
+    expect(ticks).toBeNull();
   });
 });

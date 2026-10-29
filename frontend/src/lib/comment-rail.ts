@@ -70,3 +70,37 @@ export function layoutCommentRail(
 
   return placements;
 }
+
+export type CommentTicksInput = {
+  ids: string[];
+  positions: ReadonlyMap<string, { top: number }>;
+  scrollHeight: number;
+  viewportHeight: number;
+  topInset: number;
+};
+
+// Where each thread sits in the document, as a fraction (0-1) of the rail
+// timeline, in document order. Uses the same coordinates as layoutCommentRail.
+// Returns null when there is nothing worth marking: no positioned thread, or a
+// document that already fits on screen.
+export function commentTicks({
+  ids,
+  positions,
+  scrollHeight,
+  viewportHeight,
+  topInset,
+}: CommentTicksInput): { id: string; y: number }[] | null {
+  const timeline = scrollHeight - topInset;
+  if (timeline <= viewportHeight) return null;
+  const ticks = ids
+    .flatMap((id) => {
+      const position = positions.get(id);
+      return position ? [{ id, top: position.top }] : [];
+    })
+    .sort((a, b) => a.top - b.top || a.id.localeCompare(b.id))
+    .map(({ id, top }) => ({
+      id,
+      y: Math.min(1, Math.max(0, (top - topInset) / timeline)),
+    }));
+  return ticks.length > 0 ? ticks : null;
+}
