@@ -1,9 +1,9 @@
 package cli
 
 import (
+	"bufio"
 	"context"
-	// Enable the go:embed directive for the login page below.
-	_ "embed"
+	_ "embed" // Enable go:embed for the login page below.
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -78,8 +79,87 @@ func startLoginCallbackServer(ln net.Listener, state string, resultCh chan<- cal
 	return srv, serveErrCh
 }
 
+// parsePastedLoginCallback accepts only the redirect issued for this login.
+// Never include the input in errors: it contains a short-lived credential.
+func parsePastedLoginCallback(input, redirect, state string) callbackResult {
+	u, err := url.Parse(strings.TrimSpace(input))
+	expected, _ := url.Parse(redirect)
+	if err != nil || u.Scheme != expected.Scheme || u.Host != expected.Host || u.Path != expected.Path || u.User != nil || u.Fragment != "" || u.Opaque != "" {
+		return callbackResult{err: errors.New("paste the full callback URL for this login")}
+	}
+	q, err := url.ParseQuery(u.RawQuery)
+	if err != nil || len(q["state"]) != 1 || q.Get("state") != state {
+		return callbackResult{err: errors.New("login callback returned an unexpected state value")}
+	}
+	if len(q["error"]) > 0 {
+		return callbackResult{err: errors.New("login failed: the identity provider returned an error; run slashdocs auth login again")}
+	}
+	if len(q["code"]) != 1 || q.Get("code") == "" {
+		return callbackResult{err: errors.New("login callback did not include a single authorization code")}
+	}
+	return callbackResult{code: q.Get("code")}
+}
+
+func loginInputLines(ctx context.Context, in io.Reader) <-chan string {
+	// Reading stdin must not hold up a browser callback or cancellation. A
+	// terminal read may remain blocked until the CLI process exits; do not close
+	// the caller's stdin. The context stops further reads and channel sends.
+	lines := make(chan string)
+	go func() {
+		defer close(lines)
+		scanner := bufio.NewScanner(in)
+		for scanner.Scan() {
+			select {
+			case lines <- scanner.Text():
+			case <-ctx.Done():
+				return
+			}
+			if ctx.Err() != nil {
+				return
+			}
+		}
+	}()
+	return lines
+}
+
+func waitForLoginCallback(ctx context.Context, in io.Reader, errOut io.Writer, redirect, state string, resultCh <-chan callbackResult, serveErrCh <-chan error) (string, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	lines := loginInputLines(ctx, in)
+	for {
+		select {
+		case res := <-resultCh:
+			return res.code, res.err
+		case err := <-serveErrCh:
+			return "", fmt.Errorf("serve login callback: %w", err)
+		case line, ok := <-lines:
+			if !ok {
+				// EOF (including redirected /dev/null) leaves browser login usable.
+				lines = nil
+				continue
+			}
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			res := parsePastedLoginCallback(line, redirect, state)
+			if res.err == nil {
+				return res.code, nil
+			}
+			if _, err := fmt.Fprintln(errOut, res.err.Error()+". Paste the callback URL again, or finish signing in through the browser."); err != nil {
+				return "", err
+			}
+		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return "", fmt.Errorf("timed out waiting for login callback after %s; run slashdocs auth login again", loginTimeout)
+			}
+			return "", ctx.Err()
+		}
+	}
+}
+
 func loginCmd(g *globals, out io.Writer) *cobra.Command {
 	var name string
+	var noBrowser bool
 	cmd := &cobra.Command{Use: "login [server]", Short: "Log in through a slashdocs server", Example: "  slashdocs auth login slashdocs.example.com\n  slashdocs auth login   # reuses the active context's server", RunE: func(cmd *cobra.Command, args []string) error {
 		srv := first(g.server, env("SLASHDOCS_SERVER"))
 		if len(args) > 0 {
@@ -113,24 +193,21 @@ func loginCmd(g *globals, out io.Writer) *cobra.Command {
 			_ = srvHTTP.Shutdown(sdCtx)
 		}()
 		loginURL := srv + "/v1/auth/google/start?mode=cli&state=" + url.QueryEscape(state) + "&cli_redirect=" + url.QueryEscape(redirect) + "&code_challenge=" + url.QueryEscape(challenge)
-		if err := message(out, g, "Opening "+loginURL); err != nil {
+		if err := message(out, g, "Open this URL to log in: "+loginURL); err != nil {
 			return err
 		}
-		openBrowser(loginURL)
+		if !noBrowser {
+			openBrowser(loginURL)
+		}
+		if err := message(out, g, "If the browser is on another computer (for example, over SSH), open the URL above there. After signing in, paste the full http://127.0.0.1:.../callback URL from its address bar here and press Enter, even if the page failed to load."); err != nil {
+			return err
+		}
 
 		ctx, cancel := context.WithTimeout(cmd.Context(), loginTimeout)
 		defer cancel()
-		var code string
-		select {
-		case res := <-resultCh:
-			if res.err != nil {
-				return res.err
-			}
-			code = res.code
-		case err := <-serveErrCh:
-			return fmt.Errorf("serve login callback: %w", err)
-		case <-ctx.Done():
-			return fmt.Errorf("timed out waiting for login callback after %s; run slashdocs auth login again", loginTimeout)
+		code, err := waitForLoginCallback(ctx, cmd.InOrStdin(), cmd.ErrOrStderr(), redirect, state, resultCh, serveErrCh)
+		if err != nil {
+			return err
 		}
 
 		cl := &Client{Base: srv, HTTP: apiHTTPClient}
@@ -158,6 +235,7 @@ func loginCmd(g *globals, out io.Writer) *cobra.Command {
 		return confirm(out, g, "Logged in to "+srv+".")
 	}}
 	cmd.Flags().StringVar(&name, "name", "", "credential name")
+	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "print the login URL without opening a browser")
 	return cmd
 }
 
