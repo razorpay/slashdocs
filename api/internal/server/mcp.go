@@ -12,7 +12,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"strings"
 	"time"
 
@@ -87,6 +86,8 @@ func newMCPHTTPHandler(deps dependencies) http.Handler {
 		protocol,
 		mcpserver.WithStateLess(true),
 		mcpserver.WithDisableStreaming(true),
+		// mcp-go caps bodies at 4 MiB by default; documents may be up to the HTML limit.
+		mcpserver.WithMaxRequestBodyBytes(maxMCPRequestBytes),
 	)
 	authenticator := auth.MCPAuthenticator{
 		Users:         deps.repository,
@@ -142,7 +143,10 @@ func newMCPHTTPHandler(deps dependencies) http.Handler {
 			return
 		}
 		if !observation.hasObservedRequest() {
-			method, outcome := mcpFallbackRequestLabels(r.Method, requestBody, response.Status())
+			// From 2026-07-28, mcp-go returns JSON-RPC errors with 4xx statuses.
+			jsonRPCError := mcp.IsModernProtocol(r.Header.Get("Mcp-Protocol-Version")) &&
+				strings.HasPrefix(response.Header().Get("Content-Type"), "application/json")
+			method, outcome := mcpFallbackRequestLabels(r.Method, requestBody, response.Status(), jsonRPCError)
 			observation.observeRequest(method, outcome)
 		}
 	})
@@ -161,9 +165,8 @@ func mcpTransportHeaderError(r *http.Request) string {
 	if !acceptsJSON || !acceptsEvents {
 		return "Accept must include application/json and text/event-stream"
 	}
-	if version := r.Header.Get("Mcp-Protocol-Version"); version != "" && !slices.Contains(mcp.ValidProtocolVersions, version) {
-		return "unsupported MCP protocol version"
-	}
+	// mcp-go checks Mcp-Protocol-Version and answers an unknown version with
+	// the supported ones (-32022), so a client can retry with one of them.
 	return ""
 }
 

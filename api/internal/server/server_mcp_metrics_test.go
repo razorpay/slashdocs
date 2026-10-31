@@ -17,6 +17,27 @@ import (
 	"github.com/razorpay/slashdocs/api/internal/server"
 )
 
+func TestMCPMetricsLabelStatelessRequests(t *testing.T) {
+	e := newMCPOAuthTestEnv(t)
+	token := auth.NewMCPAccessToken(fixtureUser.ID, e.resource, oauthTestSigningMaterial, time.Minute)
+
+	assertMetricDelta(t,
+		"slashdocs_mcp_requests_total", map[string]string{"method": "server_discover", "outcome": "success"},
+		"slashdocs_mcp_request_duration_seconds_count", map[string]string{"method": "server_discover", "outcome": "success"},
+		func() {
+			assertStatus(t, statelessMCPRequest(t, e, token, "server/discover", mcp.ProtocolVersion20260728), http.StatusOK)
+		},
+	)
+	// A JSON-RPC error with a 4xx status is a protocol error, not a transport error.
+	assertMetricDelta(t,
+		"slashdocs_mcp_requests_total", map[string]string{"method": "unknown", "outcome": "protocol_error"},
+		"slashdocs_mcp_request_duration_seconds_count", map[string]string{"method": "unknown", "outcome": "protocol_error"},
+		func() {
+			assertStatus(t, statelessMCPRequest(t, e, token, "unknown/method", mcp.ProtocolVersion20260728), http.StatusNotFound)
+		},
+	)
+}
+
 func TestMCPMetricsClassifyProtocolTransportAndToolOutcomes(t *testing.T) {
 	e := newMCPOAuthTestEnv(t)
 	token := auth.NewMCPAccessToken(fixtureUser.ID, e.resource, oauthTestSigningMaterial, time.Minute)
@@ -28,7 +49,7 @@ func TestMCPMetricsClassifyProtocolTransportAndToolOutcomes(t *testing.T) {
 			rr := mcpPost(t, e, token, "", map[string]any{
 				"jsonrpc": "2.0", "id": 1, "method": "initialize",
 				"params": map[string]any{
-					"protocolVersion": mcp.LATEST_PROTOCOL_VERSION,
+					"protocolVersion": mcp.LATEST_LEGACY_PROTOCOL_VERSION,
 					"capabilities":    map[string]any{},
 					"clientInfo":      map[string]any{"name": "metrics-test", "version": "1"},
 				},
@@ -76,7 +97,7 @@ func TestMCPMetricsClassifyProtocolTransportAndToolOutcomes(t *testing.T) {
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Accept", "application/json, text/event-stream")
-		req.Header.Set("Mcp-Protocol-Version", mcp.LATEST_PROTOCOL_VERSION)
+		req.Header.Set("Mcp-Protocol-Version", mcp.LATEST_LEGACY_PROTOCOL_VERSION)
 		rr := httptest.NewRecorder()
 		e.h.ServeHTTP(rr, req)
 		return rr
