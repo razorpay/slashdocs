@@ -83,6 +83,7 @@ export function DocBar({
   onShowShortcuts,
   approvalStatus,
   approvalSummary,
+  approvalsOpen,
   shareOpen,
   onShareOpenChange,
 }: {
@@ -104,6 +105,8 @@ export function DocBar({
   onShowShortcuts: () => void;
   approvalStatus?: ApprovalStatus;
   approvalSummary?: ApprovalSummary;
+  // Opens the approvals dialog on load, for links from notifications.
+  approvalsOpen?: boolean;
   shareOpen: boolean;
   onShareOpenChange: (open: boolean) => void;
 }) {
@@ -164,6 +167,7 @@ export function DocBar({
         approved={approvalSummary?.approved}
         total={approvalSummary?.total}
         isOwner={canManage}
+        defaultOpen={approvalsOpen}
       />
       <Viewers viewers={viewers} versions={versions} onFollow={onFollowViewer} />
       {viewers.length ? <CursorsToggle /> : null}

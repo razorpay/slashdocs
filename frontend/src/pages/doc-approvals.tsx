@@ -86,14 +86,16 @@ export function ApprovalsDialog({
   approved,
   total,
   isOwner,
+  defaultOpen = false,
 }: {
   status?: ApprovalStatus;
   approved?: number;
   total?: number;
   isOwner: boolean;
+  defaultOpen?: boolean;
 }) {
   const { docId, version } = useDoc();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const doc = useQuery({
     queryKey: queryKeys.document(docId),
     queryFn: () => api.getDocument(docId),

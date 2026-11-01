@@ -249,6 +249,7 @@ export function DocumentPage() {
           onShareOpenChange={setShareOpen}
           approvalStatus={doc.data.approval_status}
           approvalSummary={doc.data.approval_summary}
+          approvalsOpen={searchParams.get("approvals") === "1"}
         />
       )}
     />

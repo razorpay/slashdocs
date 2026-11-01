@@ -477,6 +477,8 @@ Model:
     review it again. A version with the same content as an approved one, such
     as a revert, shows that approval ("approved on vN").
   - Approvers can revoke their decision at any time.
+  - With Slack notifications on, an approver hears when they are asked, and the
+    owner hears each approval or rejection.
   - A rejection needs either open comments of yours on the document (they say
     what to change) or a reason; a note is optional when approving. Approving
     with open comments in the UI asks you to confirm.

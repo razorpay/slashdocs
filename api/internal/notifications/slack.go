@@ -119,6 +119,11 @@ func CommentURL(origin, documentID, commentID string) string {
 	return strings.TrimRight(origin, "/") + "/app/d/" + url.PathEscape(documentID) + "?" + url.Values{"comment": {commentID}}.Encode()
 }
 
+// ApprovalsURL opens the document with its approvals dialog.
+func ApprovalsURL(origin, documentID string) string {
+	return DocumentURL(origin, documentID) + "?approvals=1"
+}
+
 func DocumentURL(origin, documentID string) string {
 	return strings.TrimRight(origin, "/") + "/app/d/" + url.PathEscape(documentID)
 }

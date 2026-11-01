@@ -32,3 +32,19 @@ type DocumentAccessRequestNotification struct {
 	RecipientID    string
 	Attempts       int
 }
+
+// Approval notification reasons. A request goes to the approver; a decision
+// goes to the document owner.
+const (
+	ApprovalNotificationRequested = "approval_requested"
+	ApprovalNotificationDecided   = "approval_decided"
+)
+
+type ApprovalNotification struct {
+	DocumentID   string
+	ApproverType string
+	ApproverID   string
+	Reason       string
+	RecipientID  string
+	Attempts     int
+}

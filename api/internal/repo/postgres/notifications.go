@@ -271,6 +271,10 @@ func (s *Store) SetNotificationPreferences(ctx context.Context, p auth.Principal
 		if err != nil {
 			return repo.NotificationPreferences{}, err
 		}
+		_, err = tx.Exec(ctx, `DELETE FROM approval_notification_outbox WHERE recipient_id=$1 AND ($2='' OR document_id=$2)`, p.ID, documentID)
+		if err != nil {
+			return repo.NotificationPreferences{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return repo.NotificationPreferences{}, err
@@ -330,6 +334,35 @@ func (s *Store) enqueueNewCommentMentionNotifications(ctx context.Context, tx pg
 		AND NOT EXISTS(SELECT 1 FROM notification_preferences p WHERE p.principal_type='user' AND p.principal_id=recipient.id AND NOT p.enabled)
 		AND NOT EXISTS(SELECT 1 FROM document_notification_mutes m WHERE m.principal_type='user' AND m.principal_id=recipient.id AND m.document_id=d.id)
 		ON CONFLICT(comment_id,recipient_id) DO UPDATE SET reason='mention', available_at=LEAST(queued.available_at, now())`, commentID, recipientIDs)
+	return err
+}
+
+// The approval change and its message commit together. A request notifies the
+// approver, when they are a user; a decision notifies the document's human
+// owner. Nobody hears about their own action, and the usual preference and
+// mute policy applies.
+func (s *Store) enqueueApprovalNotification(ctx context.Context, tx pgx.Tx, documentID string, approver, actor auth.Principal, reason string) error {
+	if !s.notificationsEnabled {
+		return nil
+	}
+	_, err := tx.Exec(ctx, `WITH recipient AS (
+		SELECT CASE
+			WHEN $4='approval_requested' THEN CASE WHEN $2='user' THEN $3 END
+			WHEN d.owner_type='user' THEN d.owner_id
+			ELSE sa.owner_user_id END AS user_id
+		FROM documents d
+		LEFT JOIN service_accounts sa ON d.owner_type='service_account' AND sa.id=d.owner_id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+		WHERE d.id=$1
+	)
+	INSERT INTO approval_notification_outbox(document_id,approver_type,approver_id,reason,recipient_id)
+	SELECT $1,$2,$3,$4,recipient.user_id FROM recipient
+	WHERE recipient.user_id IS NOT NULL AND NOT ($5='user' AND recipient.user_id=$6)
+	AND EXISTS(SELECT 1 FROM users WHERE id=recipient.user_id)
+	AND NOT EXISTS(SELECT 1 FROM notification_preferences p WHERE p.principal_type='user' AND p.principal_id=recipient.user_id AND NOT p.enabled)
+	AND NOT EXISTS(SELECT 1 FROM document_notification_mutes m WHERE m.principal_type='user' AND m.principal_id=recipient.user_id AND m.document_id=$1)
+	ON CONFLICT(document_id,approver_type,approver_id,reason) DO UPDATE SET
+		recipient_id=excluded.recipient_id,attempts=0,available_at=now(),created_at=now()`,
+		documentID, approver.Type, approver.ID, reason, actor.Type, actor.ID)
 	return err
 }
 
@@ -419,6 +452,34 @@ func (s *Store) FinishDocumentAccessRequestNotification(ctx context.Context, n r
 	}
 	_, err := s.db.Exec(ctx, `UPDATE document_access_request_notification_outbox SET available_at=now()+$5*interval '1 second'
 		WHERE document_id=$1 AND requester_type=$2 AND requester_id=$3 AND attempts=$4`, n.DocumentID, n.RequesterType, n.RequesterID, n.Attempts, retryAfter.Seconds())
+	return err
+}
+
+func (s *Store) ClaimApprovalNotification(ctx context.Context) (*repo.ApprovalNotification, error) {
+	if _, err := s.db.Exec(ctx, `DELETE FROM approval_notification_outbox WHERE created_at < now()-interval '24 hours'`); err != nil {
+		return nil, err
+	}
+	var n repo.ApprovalNotification
+	err := s.db.QueryRow(ctx, `UPDATE approval_notification_outbox o SET available_at=now()+interval '1 minute',attempts=o.attempts+1
+		FROM (SELECT document_id,approver_type,approver_id,reason FROM approval_notification_outbox
+			WHERE available_at<=now() ORDER BY available_at FOR UPDATE SKIP LOCKED LIMIT 1) pending
+		WHERE o.document_id=pending.document_id AND o.approver_type=pending.approver_type AND o.approver_id=pending.approver_id AND o.reason=pending.reason
+		RETURNING o.document_id,o.approver_type,o.approver_id,o.reason,o.recipient_id,o.attempts`).Scan(
+		&n.DocumentID, &n.ApproverType, &n.ApproverID, &n.Reason, &n.RecipientID, &n.Attempts)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return &n, err
+}
+
+func (s *Store) FinishApprovalNotification(ctx context.Context, n repo.ApprovalNotification, retryAfter time.Duration) error {
+	if retryAfter <= 0 {
+		_, err := s.db.Exec(ctx, `DELETE FROM approval_notification_outbox
+			WHERE document_id=$1 AND approver_type=$2 AND approver_id=$3 AND reason=$4 AND attempts=$5`, n.DocumentID, n.ApproverType, n.ApproverID, n.Reason, n.Attempts)
+		return err
+	}
+	_, err := s.db.Exec(ctx, `UPDATE approval_notification_outbox SET available_at=now()+$6*interval '1 second'
+		WHERE document_id=$1 AND approver_type=$2 AND approver_id=$3 AND reason=$4 AND attempts=$5`, n.DocumentID, n.ApproverType, n.ApproverID, n.Reason, n.Attempts, retryAfter.Seconds())
 	return err
 }
 

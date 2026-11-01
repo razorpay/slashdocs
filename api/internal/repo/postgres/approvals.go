@@ -64,6 +64,9 @@ func (s *Store) CreateApprovalRequest(ctx context.Context, documentID string, ap
 		}
 		return repo.ApprovalRequest{}, err
 	}
+	if err := s.enqueueApprovalNotification(ctx, tx, documentID, approver, requestedBy, repo.ApprovalNotificationRequested); err != nil {
+		return repo.ApprovalRequest{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return repo.ApprovalRequest{}, err
 	}
@@ -168,6 +171,9 @@ func (s *Store) CreateOrUpdateApproval(ctx context.Context, documentID, versionI
 		Note:         note,
 	})
 	if err != nil {
+		return repo.Approval{}, false, err
+	}
+	if err := s.enqueueApprovalNotification(ctx, tx, documentID, approver, approver, repo.ApprovalNotificationDecided); err != nil {
 		return repo.Approval{}, false, err
 	}
 	if err := tx.Commit(ctx); err != nil {

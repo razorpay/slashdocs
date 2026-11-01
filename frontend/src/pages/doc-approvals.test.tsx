@@ -95,6 +95,7 @@ function renderDialog(
     approved?: number;
     total?: number;
     isOwner?: boolean;
+    defaultOpen?: boolean;
   },
   viewedVersion = "ver_2",
   comments: unknown[] = [],
@@ -119,6 +120,7 @@ function renderDialog(
           approved={props.approved}
           total={props.total}
           isOwner={props.isOwner ?? false}
+          defaultOpen={props.defaultOpen}
         />
       </DocProvider>
     </QueryClientProvider>,
@@ -147,6 +149,16 @@ describe("ApprovalsDialog", () => {
     installFetch();
     renderDialog({ status: "rejected", approved: 1, total: 3 });
     expect(await screen.findByText("Rejected · 1 of 3 approved")).toBeTruthy();
+  });
+
+  it("opens on load for a link from a notification", async () => {
+    installFetch({
+      approvalsByVersion: {
+        ver_2: { status: "pending", approved: 0, total: 1 },
+      },
+    });
+    renderDialog({ status: "pending", approved: 0, total: 1, defaultOpen: true });
+    expect(await screen.findByRole("dialog", { name: "Approvals" })).toBeTruthy();
   });
 
   it("shows the version the status is for in the dialog", async () => {

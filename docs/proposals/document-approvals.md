@@ -10,7 +10,7 @@
 | ---------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 2026-07-13 | Dedicated tables over KV or grants (Approach A)                       | Brainstorm: approvals are a distinct domain concept                                                                                                                                                        |
 | 2026-07-16 | Confirmed: first-class flow, not a KV convention                      | Maintainer review (Slack): KV satisfies ~60% of requirements; per-action authorization, version-scoping, server-derived status, and atomic cleanup all need server enforcement. See "Why not KV" appendix. |
-| 2026-07-16 | Notifications fully out of scope                                      | Maintainer: notifications will start with comment mentions only                                                                                                                                            |
+| 2026-07-16 | Notifications fully out of scope                                      | **Superseded 2026-11-01.** Maintainer: notifications will start with comment mentions only                                                                                                                 |
 | 2026-07-16 | Approved decisions carry forward across versions (replaces reset-all) | **Superseded 2026-10-26.** Concern as noted by the author from a Slack discussion: every small edit is a new version, and resetting all approvals on each push means people won't chase re-approvals       |
 | 2026-10-26 | A change of content resets every approval; keeping them is opt-in     | **Superseded 2026-11-01** (the opt-in `keep_approvals` is removed; see below)                                                                                                                              |
 | 2026-10-26 | Anyone who created a version of the document cannot approve it        | As an author cannot approve their own pull request; here it covers every contributor, not only the last. Enforced when assigning and when deciding                                                         |
@@ -19,6 +19,7 @@
 | 2026-11-01 | `keep_approvals` is removed                                           | It let a publisher keep approvals over content the approvers did not see, which breaks the tie between an approval and its content                                                                         |
 | 2026-11-01 | An approver who pushes a version stops being an approver              | The push removes them and their decisions in its transaction, so the "creators cannot approve" rule always holds. Before, they stayed assigned but could never decide, so the document waited forever      |
 | 2026-11-01 | One name: reject                                                      | The decision value, the CLI verb (`docs reject`), the UI and the events all say "rejected". The value was `changes_requested` while the UI said Reject                                                     |
+| 2026-11-01 | Approvers and owners get Slack notifications                          | An approver hears when they are asked. The owner hears each approval or rejection. Revoking does not notify                                                                                                |
 
 ## Summary
 
@@ -146,6 +147,14 @@ slashdocs docs revoke-approval <doc_id> [--version <version_id>]
 1. **Status chip in the document bar**: "2 of 2 approved", "1 of 3 approved", "Rejected · 1 of 3 approved". With no approvers, the owner sees a **Request approval** button.
 2. **Approvals dialog**: per-approver status, "N open of M comments", and "on vN" when a decision was made on an earlier version with the same content. Decision controls sit beside the approver's own row; owner controls add and remove approvers.
 3. **Reject** opens a dialog with the reviewer's open comments and an optional reason. With no open comments, the reason is required. Approving with open comments asks to confirm.
+
+## Notifications
+
+With Slack configured, approvals use the same outbox as comment and access notifications (`approval_notification_outbox`):
+
+- Assigning a human approver queues a message to them: "Owner asked you to approve a document", with a **Review document** button that opens the approvals dialog (`?approvals=1`).
+- An approval or a rejection queues a message to the document's human owner (for a bot-owned document, the bot's owner), with the reason when there is one.
+- One row per approver and reason: a newer decision replaces a queued one. The worker reads the current state before it sends, so a revoked decision or a removed approver sends nothing. Nobody hears about their own action, and the usual preferences and mutes apply.
 
 ## Edge Cases
 
