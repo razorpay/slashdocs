@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -97,17 +98,12 @@ func (h handlers) createVersion(c *gin.Context) {
 	}
 	observeHTML("version_create", len(html))
 	v, err := h.deps.repository.CreateVersion(c.Request.Context(), c.Param("id"), c.PostForm("base_version_id"), c.PostForm("change_summary"), html, *p)
+	// A conflict means the base version was stale; report the current one.
+	if errors.Is(err, repo.ErrVersionConflict) {
+		versionConflict(c, err, "base_version_id is stale")
+		return
+	}
 	if err != nil {
-		// A conflict means the base version was stale; report the current one.
-		if errors.Is(err, repo.ErrVersionConflict) {
-			var latestID string
-			var vce *repo.VersionConflictError
-			if errors.As(err, &vce) {
-				latestID = vce.LatestVersionID
-			}
-			c.JSON(http.StatusConflict, errorResponse("version_conflict", "base_version_id is stale", versionConflictDetails{CurrentVersionID: latestID}))
-			return
-		}
 		internalErr(c, err)
 		return
 	}
@@ -218,9 +214,9 @@ func (h handlers) editFailed(c *gin.Context, err error, hadBase bool) {
 		incVersion("edit_failed", actorType(c))
 		c.JSON(http.StatusUnprocessableEntity, errorResponse("edit_failed", mismatch.Error(), editFailedDetails{Error: *mismatch.edit, CurrentVersionID: mismatch.versionID}))
 	case errors.As(err, &conflict) && hadBase:
-		c.JSON(http.StatusConflict, errorResponse("version_conflict", "base_version_id is stale", versionConflictDetails{CurrentVersionID: conflict.LatestVersionID}))
+		versionConflict(c, err, "base_version_id is stale")
 	case errors.As(err, &conflict):
-		c.JSON(http.StatusConflict, errorResponse("version_conflict", "the document changed while the edits were saved; try again", versionConflictDetails{CurrentVersionID: conflict.LatestVersionID}))
+		versionConflict(c, err, "the document changed while the edits were saved; try again")
 	case errors.Is(err, repo.ErrNotFound):
 		notFound(c)
 	case errors.Is(err, errEditedTooLarge):
@@ -228,6 +224,78 @@ func (h handlers) editFailed(c *gin.Context, err error, hadBase bool) {
 	default:
 		internalErr(c, err)
 	}
+}
+
+// restoreVersionRequest is the optional body of POST
+// /v1/documents/{id}/versions/{version_id}/restore.
+type restoreVersionRequest struct {
+	ChangeSummary string `json:"change_summary,omitempty"`
+}
+
+// RestoreVersion godoc
+// @Summary Restore version
+// @Description Saves the content of an earlier version as the newest version, as an edit by the caller. History keeps every version, so a restore can itself be undone by restoring again.
+// @Tags versions
+// @Security bearerAuth
+// @Security cookieAuth
+// @Accept json
+// @Param id path string true "Document ID"
+// @Param version_id path string true "Version ID to restore"
+// @Param body body restoreVersionRequest false "Change summary"
+// @Success 201 {object} createVersionResponse
+// @Failure 409 {object} errorEnvelope
+// @Router /v1/documents/{id}/versions/{version_id}/restore [post]
+func (h handlers) restoreVersion(c *gin.Context) {
+	old, ok := h.loadVersion(c, repo.RoleEditor)
+	if !ok {
+		return
+	}
+	var in restoreVersionRequest
+	if err := c.ShouldBindJSON(&in); err != nil && !errors.Is(err, io.EOF) {
+		badRequest(c, "invalid restore request")
+		return
+	}
+	ctx := c.Request.Context()
+	d, err := h.deps.repository.GetDocument(ctx, old.DocumentID)
+	if err != nil {
+		internalErr(c, err)
+		return
+	}
+	if d.CurrentVersionID == old.ID {
+		badRequest(c, "that version is already the current version")
+		return
+	}
+	html, err := h.deps.repository.GetVersionHTML(ctx, old.ID)
+	if err != nil {
+		internalErr(c, err)
+		return
+	}
+	summary := strings.TrimSpace(in.ChangeSummary)
+	if summary == "" {
+		summary = fmt.Sprintf("Restored version %d", old.Number)
+	}
+	v, err := h.deps.repository.CreateVersion(ctx, old.DocumentID, d.CurrentVersionID, summary, html, *current(c))
+	if errors.Is(err, repo.ErrVersionConflict) {
+		versionConflict(c, err, "the document changed while it was restored; try again")
+		return
+	}
+	if err != nil {
+		internalErr(c, err)
+		return
+	}
+	incVersion("restored", actorType(c))
+	h.announce(c, repo.DocumentEventDocument)
+	c.JSON(http.StatusCreated, createVersionResponse{ID: v.ID, Number: v.Number, SHA256: v.SHA256, ChangeSummary: v.ChangeSummary})
+}
+
+// versionConflict writes the 409 for a stale base, naming the current version.
+func versionConflict(c *gin.Context, err error, message string) {
+	var details versionConflictDetails
+	var conflict *repo.VersionConflictError
+	if errors.As(err, &conflict) {
+		details.CurrentVersionID = conflict.LatestVersionID
+	}
+	c.JSON(http.StatusConflict, errorResponse("version_conflict", message, details))
 }
 
 // CreateRenderToken godoc
@@ -410,8 +478,13 @@ func (h handlers) getVersion(c *gin.Context) {
 // viewer access to that document. It writes the appropriate error response
 // and returns ok=false when any check fails.
 func (h handlers) loadVersionForViewer(c *gin.Context) (repo.Version, bool) {
+	return h.loadVersion(c, repo.RoleViewer)
+}
+
+// loadVersion is loadVersionForViewer for callers that need the given role.
+func (h handlers) loadVersion(c *gin.Context, role repo.Role) (repo.Version, bool) {
 	docID := c.Param("id")
-	if !h.needDocRole(c, docID, repo.RoleViewer) {
+	if !h.needDocRole(c, docID, role) {
 		return repo.Version{}, false
 	}
 	v, err := h.deps.repository.GetVersion(c.Request.Context(), c.Param("version_id"))

@@ -229,3 +229,63 @@ func TestEditDocumentNeedsEditorRole(t *testing.T) {
 		t.Fatalf("stranger status = %d", status)
 	}
 }
+
+func postRestore(t *testing.T, e *testEnv, docID, versionID string, p auth.Principal, body string) (int, []byte) {
+	t.Helper()
+	rr := do(t, e.h, http.MethodPost, "/v1/documents/"+docID+"/versions/"+versionID+"/restore", body, map[string]string{
+		"Content-Type":     "application/json",
+		"X-Test-Principal": principalHeader(p),
+	})
+	return rr.Code, rr.Body.Bytes()
+}
+
+func TestRestoreVersionSavesItsContentAsTheNewest(t *testing.T) {
+	e := newTestEnv(t)
+	docID, firstID := createEditableDocument(t, e)
+	status, body := postEdits(t, e, docID, fixtureEditor, map[string]any{
+		"edits": []map[string]string{{"old_string": "10 minutes", "new_string": "5 minutes"}},
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("edit status = %d; body=%s", status, body)
+	}
+
+	status, body = postRestore(t, e, docID, firstID, fixtureEditor, "")
+	if status != http.StatusCreated {
+		t.Fatalf("restore status = %d; body=%s", status, body)
+	}
+	restored := jsonField(t, body, "id")
+	if got := jsonField(t, body, "change_summary"); got != "Restored version 1" {
+		t.Fatalf("change_summary = %q", got)
+	}
+	if got := versionHTML(t, e, docID, restored); got != editFixtureHTML {
+		t.Fatalf("html = %q, want the first version", got)
+	}
+	d, err := e.store.GetDocument(context.Background(), docID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.CurrentVersionID != restored {
+		t.Fatalf("current version = %s, want %s", d.CurrentVersionID, restored)
+	}
+
+	// A caller can name the restore, and restoring the current version is refused.
+	status, body = postRestore(t, e, docID, firstID, fixtureOwner, `{"change_summary":"Back to the draft"}`)
+	if status != http.StatusCreated || jsonField(t, body, "change_summary") != "Back to the draft" {
+		t.Fatalf("named restore = %d; body=%s", status, body)
+	}
+	if status, body = postRestore(t, e, docID, jsonField(t, body, "id"), fixtureOwner, ""); status != http.StatusBadRequest {
+		t.Fatalf("restore of the current version = %d; body=%s", status, body)
+	}
+}
+
+func TestRestoreVersionNeedsEditor(t *testing.T) {
+	e := newTestEnv(t)
+	for _, p := range []auth.Principal{fixtureViewer, fixtureCommenter} {
+		if status, body := postRestore(t, e, e.doc.ID, e.ver.ID, p, ""); status != http.StatusForbidden {
+			t.Fatalf("%s: status = %d; body=%s", p.ID, status, body)
+		}
+	}
+	if status, _ := postRestore(t, e, e.doc.ID, "ver_missing", fixtureOwner, ""); status != http.StatusNotFound {
+		t.Fatalf("missing version: status = %d", status)
+	}
+}
