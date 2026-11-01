@@ -109,6 +109,12 @@ func localCmd(g *globals, out io.Writer) *cobra.Command {
 	o := &localOptions{}
 	c := &cobra.Command{Use: "local", Short: "Serve a folder of HTML documents on this machine", Long: "Serve a folder of HTML documents on this machine with the slashdocs viewer and comments.\n\nPut .html files (and folders of them) in the documents folder, then open the local URL. The server listens on this machine only. `start` runs it now and when you log in (macOS) or when the computer starts (Linux, with sudo)."}
 	c.PersistentFlags().IntVar(&o.port, "port", 0, "local port (default 80, or 7070 if 80 is not available)")
+	c.PersistentPreRunE = func(*cobra.Command, []string) error {
+		if o.port < 0 || o.port > 65535 {
+			return usageError{fmt.Errorf("invalid --port %d: use a port from 1 to 65535", o.port)}
+		}
+		return nil
+	}
 	c.AddCommand(o.startCmd(g, out), o.stopCmd(g, out), o.statusCmd(g, out), o.serveCmd())
 	return c
 }
@@ -140,7 +146,7 @@ func (o *localOptions) serveArgs(cmd *cobra.Command) ([]string, error) {
 }
 
 func (o *localOptions) serveCmd() *cobra.Command {
-	return o.dirFlag(&cobra.Command{Use: "serve", Short: "Run the local server in the foreground", Args: exactArgs(0), RunE: func(cmd *cobra.Command, _ []string) error {
+	return o.dirFlag(&cobra.Command{Use: "serve", Short: "Run the local server in the foreground", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		return serveLocal(ctx, o.dir, o.port)
@@ -148,7 +154,7 @@ func (o *localOptions) serveCmd() *cobra.Command {
 }
 
 func (o *localOptions) startCmd(g *globals, out io.Writer) *cobra.Command {
-	return o.dirFlag(&cobra.Command{Use: "start", Short: "Start the local server now and by itself later", Args: exactArgs(0), RunE: func(cmd *cobra.Command, _ []string) error {
+	return o.dirFlag(&cobra.Command{Use: "start", Short: "Start the local server now and by itself later", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		return o.start(cmd, g, out)
 	}})
 }
@@ -188,7 +194,7 @@ func (o *localOptions) start(cmd *cobra.Command, g *globals, out io.Writer) erro
 }
 
 func (o *localOptions) statusCmd(g *globals, out io.Writer) *cobra.Command {
-	return &cobra.Command{Use: "status", Short: "Show the local server status", Args: exactArgs(0), RunE: func(*cobra.Command, []string) error {
+	return &cobra.Command{Use: "status", Short: "Show the local server status", Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error {
 		info, err := findLocal(o.port)
 		if err != nil {
 			return errors.New("slashdocs local is not running")
@@ -213,7 +219,7 @@ func (o *localOptions) statusCmd(g *globals, out io.Writer) *cobra.Command {
 }
 
 func (o *localOptions) stopCmd(g *globals, out io.Writer) *cobra.Command {
-	return &cobra.Command{Use: "stop", Short: "Stop the local server, also later", Args: exactArgs(0), RunE: func(cmd *cobra.Command, _ []string) error {
+	return &cobra.Command{Use: "stop", Short: "Stop the local server, also later", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		if svc := serviceFor(o.port); svc != nil && svc.installed() {
 			if svc.root && os.Geteuid() != 0 {
 				return asRoot(cmd, out)
@@ -278,9 +284,7 @@ func autoStartLocal() (localInfo, error) {
 	case svc != nil && svc.root && os.Geteuid() != 0 && !term.IsTerminal(int(os.Stdin.Fd())):
 		return localInfo{}, errors.New("slashdocs local is not running: to start it, run `slashdocs local start` in a terminal")
 	}
-	start := NewRoot(os.Stderr)
-	start.SetArgs([]string{"local", "start"})
-	if err := start.Execute(); err != nil {
+	if err := Run(os.Stderr, []string{"local", "start"}); err != nil {
 		return localInfo{}, err
 	}
 	return findLocal(0)
