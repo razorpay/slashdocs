@@ -6,16 +6,50 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/razorpay/slashdocs/api/internal/auth"
 	dbsqlc "github.com/razorpay/slashdocs/api/internal/db/sqlc"
 	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
+// lockForApproval locks the document against a concurrent version push and
+// returns its current version. It refuses principals who created a version:
+// they wrote what is under review. Approval writes call it first in their
+// transaction, so neither check can go stale before the write commits.
+func lockForApproval(ctx context.Context, q *dbsqlc.Queries, documentID string, approver auth.Principal) (dbsqlc.GetVersionRow, error) {
+	currentID, err := q.LockDocumentForShare(ctx, documentID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return dbsqlc.GetVersionRow{}, repo.ErrNotFound
+	}
+	if err != nil {
+		return dbsqlc.GetVersionRow{}, err
+	}
+	current, err := q.GetVersion(ctx, currentID.String)
+	if err != nil {
+		return current, err
+	}
+	author, err := q.CreatedVersionOf(ctx, dbsqlc.CreatedVersionOfParams{DocumentID: documentID, PrincipalType: string(approver.Type), PrincipalID: approver.ID})
+	if err != nil {
+		return current, err
+	}
+	if author {
+		return current, repo.ErrApproverIsAuthor
+	}
+	return current, nil
+}
+
 func (s *Store) CreateApprovalRequest(ctx context.Context, documentID string, approver, requestedBy auth.Principal) (repo.ApprovalRequest, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return repo.ApprovalRequest{}, err
+	}
+	defer rollback(ctx, tx)
+	q := s.q.WithTx(tx)
+	if _, err := lockForApproval(ctx, q, documentID, approver); err != nil {
+		return repo.ApprovalRequest{}, err
+	}
 	id := newID("apr")
-	err := s.q.InsertApprovalRequest(ctx, dbsqlc.InsertApprovalRequestParams{
+	err = q.InsertApprovalRequest(ctx, dbsqlc.InsertApprovalRequestParams{
 		ID:              id,
 		DocumentID:      documentID,
 		ApproverType:    string(approver.Type),
@@ -28,6 +62,9 @@ func (s *Store) CreateApprovalRequest(ctx context.Context, documentID string, ap
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return repo.ApprovalRequest{}, repo.ErrConflict
 		}
+		return repo.ApprovalRequest{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return repo.ApprovalRequest{}, err
 	}
 	return repo.ApprovalRequest{ID: id, DocumentID: documentID, Approver: approver, RequestedBy: requestedBy}, nil
@@ -64,7 +101,7 @@ func (s *Store) DeleteApprovalRequest(ctx context.Context, documentID, requestID
 	if err != nil {
 		return err
 	}
-	// A removed approver's decisions no longer count toward any version.
+	// A removed approver's decisions no longer count toward any content.
 	if err := q.RevokeApprovalsForApprover(ctx, dbsqlc.RevokeApprovalsForApproverParams{
 		DocumentID:   documentID,
 		ApproverType: approver.ApproverType,
@@ -75,15 +112,41 @@ func (s *Store) DeleteApprovalRequest(ctx context.Context, documentID, requestID
 	return tx.Commit(ctx)
 }
 
+// removeAuthorApprover removes the creator of a new version as an approver of
+// the document, with their decisions: they now wrote part of what is under
+// review. Runs inside the CreateVersion transaction.
+func removeAuthorApprover(ctx context.Context, q *dbsqlc.Queries, documentID string, author auth.Principal) error {
+	removed, err := q.RevokeApproverRequest(ctx, dbsqlc.RevokeApproverRequestParams{DocumentID: documentID, ApproverType: string(author.Type), ApproverID: author.ID})
+	if err != nil || removed == 0 {
+		return err
+	}
+	return q.RevokeApprovalsForApprover(ctx, dbsqlc.RevokeApprovalsForApproverParams{DocumentID: documentID, ApproverType: string(author.Type), ApproverID: author.ID})
+}
+
 func (s *Store) CreateOrUpdateApproval(ctx context.Context, documentID, versionID, decision, note string, approver auth.Principal) (repo.Approval, bool, error) {
-	v, err := s.q.GetVersion(ctx, versionID)
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return repo.Approval{}, false, err
+	}
+	defer rollback(ctx, tx)
+	q := s.q.WithTx(tx)
+	v, err := q.GetVersion(ctx, versionID)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && v.DocumentID != documentID) {
 		return repo.Approval{}, false, repo.ErrNotFound
 	}
 	if err != nil {
 		return repo.Approval{}, false, err
 	}
-	assigned, err := s.q.HasActiveApprovalRequest(ctx, dbsqlc.HasActiveApprovalRequestParams{
+	current, err := lockForApproval(ctx, q, documentID, approver)
+	if err != nil {
+		return repo.Approval{}, false, err
+	}
+	// A decision is about the content the approver read. When the document has
+	// other content now, the decision would vouch for replaced text.
+	if v.Sha256 != current.Sha256 {
+		return repo.Approval{}, false, &repo.VersionConflictError{LatestVersionID: current.ID}
+	}
+	assigned, err := q.HasActiveApprovalRequest(ctx, dbsqlc.HasActiveApprovalRequestParams{
 		DocumentID:   documentID,
 		ApproverType: string(approver.Type),
 		ApproverID:   approver.ID,
@@ -94,10 +157,11 @@ func (s *Store) CreateOrUpdateApproval(ctx context.Context, documentID, versionI
 	if !assigned {
 		return repo.Approval{}, false, repo.ErrForbidden
 	}
-	row, err := s.q.UpsertApproval(ctx, dbsqlc.UpsertApprovalParams{
+	row, err := q.UpsertApproval(ctx, dbsqlc.UpsertApprovalParams{
 		ID:           newID("apv"),
 		DocumentID:   documentID,
 		VersionID:    versionID,
+		Sha256:       v.Sha256,
 		ApproverType: string(approver.Type),
 		ApproverID:   approver.ID,
 		Decision:     decision,
@@ -106,14 +170,19 @@ func (s *Store) CreateOrUpdateApproval(ctx context.Context, documentID, versionI
 	if err != nil {
 		return repo.Approval{}, false, err
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return repo.Approval{}, false, err
+	}
 	return repo.Approval{
-		ID:         row.ID,
-		DocumentID: documentID,
-		VersionID:  versionID,
-		Approver:   approver,
-		Decision:   decision,
-		Note:       note,
-		DecidedAt:  pgTimeRFC3339(row.DecidedAt),
+		ID:            row.ID,
+		DocumentID:    documentID,
+		VersionID:     versionID,
+		VersionNumber: int(v.Number),
+		SHA256:        v.Sha256,
+		Approver:      approver,
+		Decision:      decision,
+		Note:          note,
+		DecidedAt:     pgTimeRFC3339(row.DecidedAt),
 	}, row.Inserted, nil
 }
 
@@ -138,22 +207,23 @@ func (s *Store) DeleteApproval(ctx context.Context, documentID, approvalID strin
 	return nil
 }
 
-func (s *Store) ListApprovals(ctx context.Context, documentID, versionID string) ([]repo.Approval, error) {
-	rows, err := s.q.ListVersionApprovals(ctx, dbsqlc.ListVersionApprovalsParams{DocumentID: documentID, VersionID: versionID})
+func (s *Store) ListApprovals(ctx context.Context, documentID, sha256 string) ([]repo.Approval, error) {
+	rows, err := s.q.ListContentApprovals(ctx, dbsqlc.ListContentApprovalsParams{DocumentID: documentID, Sha256: sha256})
 	if err != nil {
 		return nil, err
 	}
 	out := make([]repo.Approval, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, repo.Approval{
-			ID:                   r.ID,
-			DocumentID:           documentID,
-			VersionID:            r.VersionID,
-			Approver:             auth.Principal{Type: auth.PrincipalType(r.ApproverType), ID: r.ApproverID, Email: r.ApproverEmail, Name: r.ApproverName, PictureURL: r.ApproverPictureUrl},
-			Decision:             r.Decision,
-			Note:                 r.Note,
-			DecidedAt:            pgTimeRFC3339(r.DecidedAt),
-			CarriedFromVersionID: r.CarriedFromVersionID,
+			ID:            r.ID,
+			DocumentID:    documentID,
+			VersionID:     r.VersionID,
+			VersionNumber: int(r.VersionNumber),
+			SHA256:        r.Sha256,
+			Approver:      auth.Principal{Type: auth.PrincipalType(r.ApproverType), ID: r.ApproverID, Email: r.ApproverEmail, Name: r.ApproverName, PictureURL: r.ApproverPictureUrl},
+			Decision:      r.Decision,
+			Note:          r.Note,
+			DecidedAt:     pgTimeRFC3339(r.DecidedAt),
 		})
 	}
 	return out, nil
@@ -169,47 +239,14 @@ func (s *Store) DocumentApprovalSummaries(ctx context.Context, documentIDs []str
 	}
 	out := make(map[string]repo.ApprovalSummary, len(rows))
 	for _, r := range rows {
-		total, approved, changes := int(r.Total), int(r.Approved), int(r.ChangesRequested)
+		total, approved, rejected := int(r.Total), int(r.Approved), int(r.Rejected)
 		out[r.DocumentID] = repo.ApprovalSummary{
-			Total:            total,
-			Approved:         approved,
-			ChangesRequested: changes,
-			Pending:          total - approved - changes,
-			Status:           repo.DeriveApprovalStatus(total, approved, changes),
+			Total:    total,
+			Approved: approved,
+			Rejected: rejected,
+			Pending:  total - approved - rejected,
+			Status:   repo.DeriveApprovalStatus(total, approved, rejected),
 		}
 	}
 	return out, nil
-}
-
-// carryForwardApprovals copies active approved decisions from the base
-// version onto a freshly inserted version, preserving the original decision
-// time and the version that received the explicit decision. Runs inside the
-// CreateVersion transaction. A decision is not copied onto a version its own
-// approver created: nobody approves their own work. Returns the number of
-// copied rows.
-func carryForwardApprovals(ctx context.Context, q *dbsqlc.Queries, documentID, baseVersionID, newVersionID string, createdBy auth.Principal) (int, error) {
-	rows, err := q.ListCarryForwardApprovals(ctx, dbsqlc.ListCarryForwardApprovalsParams{DocumentID: documentID, VersionID: baseVersionID})
-	if err != nil {
-		return 0, err
-	}
-	carried := 0
-	for _, r := range rows {
-		if r.ApproverType == string(createdBy.Type) && r.ApproverID == createdBy.ID {
-			continue
-		}
-		carried++
-		if err := q.InsertCarriedApproval(ctx, dbsqlc.InsertCarriedApprovalParams{
-			ID:                   newID("apv"),
-			DocumentID:           documentID,
-			VersionID:            newVersionID,
-			ApproverType:         r.ApproverType,
-			ApproverID:           r.ApproverID,
-			Note:                 r.Note,
-			DecidedAt:            r.DecidedAt,
-			CarriedFromVersionID: pgtype.Text{String: r.OriginVersionID, Valid: r.OriginVersionID != ""},
-		}); err != nil {
-			return 0, err
-		}
-	}
-	return carried, nil
 }

@@ -597,7 +597,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "Per-approver decisions for a version (current version by default), merged with pending approvers, plus the derived aggregate status.",
+                "description": "Per-approver decisions on the content of a version (current version by default), merged with pending approvers, plus the derived aggregate status. A decision made on an earlier version with the same content counts, and names that version.",
                 "tags": [
                     "approvals"
                 ],
@@ -635,7 +635,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "Records the caller's decision on the latest version. Submitting again replaces the previous decision for that version. A request for changes needs a note unless the caller has open comment threads on the document (the comments say what to change). Returns 403 when the caller created a version of the document (nobody approves their own work) and 409 when a newer version exists.",
+                "description": "Records the caller's decision on the content of a version. The decision vouches for that content, so every version with the same content shows it. Submitting again replaces the previous decision on that content. A rejection needs a note unless the caller has open comment threads on the document (the comments say what to change). Returns 403 when the caller created a version of the document (nobody approves their own work) and 409 when the document's content changed since that version.",
                 "tags": [
                     "approvals"
                 ],
@@ -675,7 +675,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "Removes the caller's decision on a version, returning them to pending. Assignment is unaffected.",
+                "description": "Removes the caller's decision, returning them to pending. Assignment is unaffected.",
                 "tags": [
                     "approvals"
                 ],
@@ -1495,12 +1495,6 @@ const docTemplate = `{
                         "in": "formData"
                     },
                     {
-                        "type": "string",
-                        "description": "Set to true to carry approved decisions forward to the new version. By default a change of content resets every approval; re-uploading identical content always keeps them.",
-                        "name": "keep_approvals",
-                        "in": "formData"
-                    },
-                    {
                         "type": "file",
                         "description": "HTML file",
                         "name": "file",
@@ -2201,10 +2195,10 @@ const docTemplate = `{
                 "approved": {
                     "type": "integer"
                 },
-                "changes_requested": {
+                "pending": {
                     "type": "integer"
                 },
-                "pending": {
+                "rejected": {
                     "type": "integer"
                 },
                 "total": {
@@ -2411,23 +2405,12 @@ const docTemplate = `{
                 "approver": {
                     "$ref": "#/definitions/server.principalResponse"
                 },
-                "carried_from_version_id": {
-                    "type": "string"
-                },
-                "carried_from_version_number": {
-                    "description": "CarriedFromVersionNumber is the display number of the version that\nreceived the explicit decision, so the UI can say \"Approved on v3\"\ninstead of an opaque ID. Zero when the decision is not carried.",
-                    "type": "integer"
-                },
                 "comments_open": {
-                    "description": "CommentsOpen and CommentsTotal count the comment threads this approver\nstarted on the document, so a request for changes can say \"2 open of 3\".",
+                    "description": "CommentsOpen and CommentsTotal count the comment threads this approver\nstarted on the document, so a rejection can say \"2 open of 3\".",
                     "type": "integer"
                 },
                 "comments_total": {
                     "type": "integer"
-                },
-                "created_version": {
-                    "description": "CreatedVersion is true when the approver created a version of this\ndocument. They cannot decide on it, so the document waits for the owner\nto replace them.",
-                    "type": "boolean"
                 },
                 "decided_at": {
                     "type": "string"
@@ -2440,6 +2423,13 @@ const docTemplate = `{
                 },
                 "note": {
                     "type": "string"
+                },
+                "version_id": {
+                    "description": "VersionID and VersionNumber name the version the approver decided on.\nIt can be older than the listed version when the content is the same,\nso the UI can say \"Approved on v3\".",
+                    "type": "string"
+                },
+                "version_number": {
+                    "type": "integer"
                 }
             }
         },
@@ -2466,9 +2456,6 @@ const docTemplate = `{
                 "approver": {
                     "$ref": "#/definitions/server.principalResponse"
                 },
-                "carried_from_version_id": {
-                    "type": "string"
-                },
                 "decided_at": {
                     "type": "string"
                 },
@@ -2488,7 +2475,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "version_number": {
-                    "description": "VersionNumber and VersionSHA256 name the exact content the decision was\nmade on.",
                     "type": "integer"
                 },
                 "version_sha256": {
@@ -2684,6 +2670,9 @@ const docTemplate = `{
                 },
                 "current_placement": {
                     "$ref": "#/definitions/server.commentPlacementResponse"
+                },
+                "edited": {
+                    "type": "boolean"
                 },
                 "id": {
                     "type": "string"

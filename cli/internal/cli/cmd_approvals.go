@@ -103,7 +103,7 @@ func resolveApprovalVersion(g *globals, cl *Client, docID, explicit string) (str
 	return v, nil
 }
 
-// decisionCmd builds the approve / request-changes verbs, which submit a
+// decisionCmd builds the approve / reject verbs, which submit a
 // decision on the current (or given) version.
 func decisionCmd(g *globals, out io.Writer, use, short, decision, did string) *cobra.Command {
 	var ver string
@@ -113,7 +113,7 @@ func decisionCmd(g *globals, out io.Writer, use, short, decision, did string) *c
 		Short: short,
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// The server decides whether the request says enough: a note, or
+			// The server decides whether a rejection says enough: a note, or
 			// open comments of yours on the document.
 			cl, err := client(g)
 			if err != nil {
@@ -139,8 +139,8 @@ func decisionCmd(g *globals, out io.Writer, use, short, decision, did string) *c
 	}
 	cmd.Flags().StringVar(&ver, "version", "", "version ID (defaults to the current version)")
 	noteHelp := "note explaining the decision"
-	if decision == "changes_requested" {
-		noteHelp = "note explaining what needs to change (required unless you have open comments on the document)"
+	if decision == "rejected" {
+		noteHelp = "reason saying what needs to change (required unless you have open comments on the document)"
 	}
 	cmd.Flags().StringVar(&note, "note", "", noteHelp)
 	return cmd

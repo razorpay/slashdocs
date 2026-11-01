@@ -126,12 +126,12 @@ export type Grant = {
   principal?: Principal;
   role: string;
 };
-export type ApprovalStatus = "approved" | "changes_requested" | "pending";
-export type ApprovalDecision = "approved" | "changes_requested";
+export type ApprovalStatus = "approved" | "rejected" | "pending";
+export type ApprovalDecision = "approved" | "rejected";
 export type ApprovalSummary = {
   total: number;
   approved: number;
-  changes_requested: number;
+  rejected: number;
   pending: number;
 };
 export type ApprovalRequest = {
@@ -144,13 +144,12 @@ export type Approval = {
   id: string;
   document_id: string;
   version_id: string;
-  version_number?: number;
-  version_sha256?: string;
+  version_number: number;
+  version_sha256: string;
   approver: Principal;
   decision: ApprovalDecision;
   note?: string;
   decided_at?: string;
-  carried_from_version_id?: string;
 };
 export type ApprovalListItem = {
   id?: string;
@@ -158,10 +157,10 @@ export type ApprovalListItem = {
   decision: ApprovalDecision | null;
   note?: string;
   decided_at?: string;
-  carried_from_version_id?: string;
-  carried_from_version_number?: number;
-  // The approver created a version of the document, so they cannot decide.
-  created_version?: boolean;
+  // The version the approver decided on: older than the listed version when
+  // both have the same content.
+  version_id?: string;
+  version_number?: number;
   // Comment threads this approver started on the document.
   comments_open?: number;
   comments_total?: number;

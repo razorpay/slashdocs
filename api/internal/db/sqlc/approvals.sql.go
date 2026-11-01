@@ -11,16 +11,41 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createdVersionOf = `-- name: CreatedVersionOf :one
+SELECT EXISTS(
+  SELECT 1 FROM versions
+  WHERE document_id = $1
+    AND created_by_type = $2
+    AND created_by_id = $3
+)
+`
+
+type CreatedVersionOfParams struct {
+	DocumentID    string
+	PrincipalType string
+	PrincipalID   string
+}
+
+// Anyone who created a version of a document wrote what is under review.
+func (q *Queries) CreatedVersionOf(ctx context.Context, arg CreatedVersionOfParams) (bool, error) {
+	row := q.db.QueryRow(ctx, createdVersionOf, arg.DocumentID, arg.PrincipalType, arg.PrincipalID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const documentApprovalSummaries = `-- name: DocumentApprovalSummaries :many
 SELECT
   r.document_id,
   count(*) AS total,
   count(a.id) FILTER (WHERE a.decision = 'approved') AS approved,
-  count(a.id) FILTER (WHERE a.decision = 'changes_requested') AS changes_requested
+  count(a.id) FILTER (WHERE a.decision = 'rejected') AS rejected
 FROM approval_requests r
 JOIN documents d ON d.id = r.document_id
+JOIN versions cv ON cv.id = d.current_version_id
 LEFT JOIN approvals a
-  ON a.version_id = d.current_version_id
+  ON a.document_id = r.document_id
+ AND a.sha256 = cv.sha256
  AND a.revoked_at IS NULL
  AND a.approver_type = r.approver_type
  AND a.approver_id = r.approver_id
@@ -29,14 +54,14 @@ GROUP BY r.document_id
 `
 
 type DocumentApprovalSummariesRow struct {
-	DocumentID       string
-	Total            int64
-	Approved         int64
-	ChangesRequested int64
+	DocumentID string
+	Total      int64
+	Approved   int64
+	Rejected   int64
 }
 
-// Per-document decision counts for the document's current version, counting
-// only decisions from currently assigned approvers.
+// Per-document decision counts on the content of the document's current
+// version, counting only decisions from currently assigned approvers.
 func (q *Queries) DocumentApprovalSummaries(ctx context.Context, documentIds []string) ([]DocumentApprovalSummariesRow, error) {
 	rows, err := q.db.Query(ctx, documentApprovalSummaries, documentIds)
 	if err != nil {
@@ -50,7 +75,7 @@ func (q *Queries) DocumentApprovalSummaries(ctx context.Context, documentIds []s
 			&i.DocumentID,
 			&i.Total,
 			&i.Approved,
-			&i.ChangesRequested,
+			&i.Rejected,
 		); err != nil {
 			return nil, err
 		}
@@ -145,36 +170,6 @@ func (q *Queries) InsertApprovalRequest(ctx context.Context, arg InsertApprovalR
 	return err
 }
 
-const insertCarriedApproval = `-- name: InsertCarriedApproval :exec
-INSERT INTO approvals(id, document_id, version_id, approver_type, approver_id, decision, note, decided_at, carried_from_version_id)
-VALUES($1, $2, $3, $4, $5, 'approved', $6, $7, $8)
-`
-
-type InsertCarriedApprovalParams struct {
-	ID                   string
-	DocumentID           string
-	VersionID            string
-	ApproverType         string
-	ApproverID           string
-	Note                 string
-	DecidedAt            pgtype.Timestamptz
-	CarriedFromVersionID pgtype.Text
-}
-
-func (q *Queries) InsertCarriedApproval(ctx context.Context, arg InsertCarriedApprovalParams) error {
-	_, err := q.db.Exec(ctx, insertCarriedApproval,
-		arg.ID,
-		arg.DocumentID,
-		arg.VersionID,
-		arg.ApproverType,
-		arg.ApproverID,
-		arg.Note,
-		arg.DecidedAt,
-		arg.CarriedFromVersionID,
-	)
-	return err
-}
-
 const listApprovalRequests = `-- name: ListApprovalRequests :many
 SELECT
   r.id,
@@ -191,14 +186,14 @@ SELECT
 FROM approval_requests r
 LEFT JOIN users u
   ON r.approver_type = 'user' AND r.approver_id = u.id
-LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-  -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
-  ON r.approver_type = 'service_account' AND r.approver_id = sa.id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON r.approver_type = 'service_account' AND r.approver_id = sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 LEFT JOIN users au
   ON r.requested_by_type = 'user' AND r.requested_by_id = au.id
-LEFT JOIN service_accounts asa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-  -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
-  ON r.requested_by_type = 'service_account' AND r.requested_by_id = asa.id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts asa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON r.requested_by_type = 'service_account' AND r.requested_by_id = asa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE r.document_id = $1 AND r.revoked_at IS NULL
 ORDER BY r.created_at, r.id
 `
@@ -217,8 +212,8 @@ type ListApprovalRequestsRow struct {
 	RequestedByName    string
 }
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) ListApprovalRequests(ctx context.Context, documentID string) ([]ListApprovalRequestsRow, error) {
 	rows, err := q.db.Query(ctx, listApprovalRequests, documentID)
 	if err != nil {
@@ -251,61 +246,12 @@ func (q *Queries) ListApprovalRequests(ctx context.Context, documentID string) (
 	return items, nil
 }
 
-const listCarryForwardApprovals = `-- name: ListCarryForwardApprovals :many
-SELECT approver_type, approver_id, decided_at, note,
-       COALESCE(carried_from_version_id, version_id) AS origin_version_id
-FROM approvals
-WHERE document_id = $1
-  AND version_id = $2
-  AND decision = 'approved'
-  AND revoked_at IS NULL
-`
-
-type ListCarryForwardApprovalsParams struct {
-	DocumentID string
-	VersionID  string
-}
-
-type ListCarryForwardApprovalsRow struct {
-	ApproverType    string
-	ApproverID      string
-	DecidedAt       pgtype.Timestamptz
-	Note            string
-	OriginVersionID string
-}
-
-// Active approved decisions on a version, with the origin version that
-// received the explicit decision (so provenance survives chained pushes).
-func (q *Queries) ListCarryForwardApprovals(ctx context.Context, arg ListCarryForwardApprovalsParams) ([]ListCarryForwardApprovalsRow, error) {
-	rows, err := q.db.Query(ctx, listCarryForwardApprovals, arg.DocumentID, arg.VersionID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListCarryForwardApprovalsRow
-	for rows.Next() {
-		var i ListCarryForwardApprovalsRow
-		if err := rows.Scan(
-			&i.ApproverType,
-			&i.ApproverID,
-			&i.DecidedAt,
-			&i.Note,
-			&i.OriginVersionID,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listVersionApprovals = `-- name: ListVersionApprovals :many
+const listContentApprovals = `-- name: ListContentApprovals :many
 SELECT
   a.id,
   a.version_id,
+  v.number AS version_number,
+  a.sha256,
   a.approver_type,
   a.approver_id,
   COALESCE(u.email, '') AS approver_email,
@@ -313,50 +259,54 @@ SELECT
   COALESCE(u.picture_url, '') AS approver_picture_url,
   a.decision,
   a.note,
-  a.decided_at,
-  COALESCE(a.carried_from_version_id, '') AS carried_from_version_id
+  a.decided_at
 FROM approvals a
+JOIN versions v ON v.id = a.version_id
 LEFT JOIN users u
   ON a.approver_type = 'user' AND a.approver_id = u.id
-LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-  -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
-  ON a.approver_type = 'service_account' AND a.approver_id = sa.id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-WHERE a.document_id = $1 AND a.version_id = $2 AND a.revoked_at IS NULL
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON a.approver_type = 'service_account' AND a.approver_id = sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+WHERE a.document_id = $1 AND a.sha256 = $2 AND a.revoked_at IS NULL
 ORDER BY a.decided_at, a.id
 `
 
-type ListVersionApprovalsParams struct {
+type ListContentApprovalsParams struct {
 	DocumentID string
-	VersionID  string
+	Sha256     string
 }
 
-type ListVersionApprovalsRow struct {
-	ID                   string
-	VersionID            string
-	ApproverType         string
-	ApproverID           string
-	ApproverEmail        string
-	ApproverName         string
-	ApproverPictureUrl   string
-	Decision             string
-	Note                 string
-	DecidedAt            pgtype.Timestamptz
-	CarriedFromVersionID string
+type ListContentApprovalsRow struct {
+	ID                 string
+	VersionID          string
+	VersionNumber      int32
+	Sha256             string
+	ApproverType       string
+	ApproverID         string
+	ApproverEmail      string
+	ApproverName       string
+	ApproverPictureUrl string
+	Decision           string
+	Note               string
+	DecidedAt          pgtype.Timestamptz
 }
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-func (q *Queries) ListVersionApprovals(ctx context.Context, arg ListVersionApprovalsParams) ([]ListVersionApprovalsRow, error) {
-	rows, err := q.db.Query(ctx, listVersionApprovals, arg.DocumentID, arg.VersionID)
+// Active decisions on the given content, each with the version it was made on.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+func (q *Queries) ListContentApprovals(ctx context.Context, arg ListContentApprovalsParams) ([]ListContentApprovalsRow, error) {
+	rows, err := q.db.Query(ctx, listContentApprovals, arg.DocumentID, arg.Sha256)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListVersionApprovalsRow
+	var items []ListContentApprovalsRow
 	for rows.Next() {
-		var i ListVersionApprovalsRow
+		var i ListContentApprovalsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.VersionID,
+			&i.VersionNumber,
+			&i.Sha256,
 			&i.ApproverType,
 			&i.ApproverID,
 			&i.ApproverEmail,
@@ -365,7 +315,6 @@ func (q *Queries) ListVersionApprovals(ctx context.Context, arg ListVersionAppro
 			&i.Decision,
 			&i.Note,
 			&i.DecidedAt,
-			&i.CarriedFromVersionID,
 		); err != nil {
 			return nil, err
 		}
@@ -375,6 +324,21 @@ func (q *Queries) ListVersionApprovals(ctx context.Context, arg ListVersionAppro
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockDocumentForShare = `-- name: LockDocumentForShare :one
+SELECT current_version_id FROM documents WHERE id = $1 FOR SHARE
+`
+
+// The share lock makes an approval change wait for a version push in progress
+// (which holds the row for update), so a decision or an assignment never races
+// a new version. Read the version in a later statement: this statement's
+// snapshot cannot see a version that a push committed while it waited.
+func (q *Queries) LockDocumentForShare(ctx context.Context, documentID string) (pgtype.Text, error) {
+	row := q.db.QueryRow(ctx, lockDocumentForShare, documentID)
+	var current_version_id pgtype.Text
+	err := row.Scan(&current_version_id)
+	return current_version_id, err
 }
 
 const revokeApproval = `-- name: RevokeApproval :execrows
@@ -431,11 +395,33 @@ func (q *Queries) RevokeApprovalsForApprover(ctx context.Context, arg RevokeAppr
 	return err
 }
 
+const revokeApproverRequest = `-- name: RevokeApproverRequest :execrows
+UPDATE approval_requests SET revoked_at = now()
+WHERE document_id = $1
+  AND approver_type = $2
+  AND approver_id = $3
+  AND revoked_at IS NULL
+`
+
+type RevokeApproverRequestParams struct {
+	DocumentID   string
+	ApproverType string
+	ApproverID   string
+}
+
+func (q *Queries) RevokeApproverRequest(ctx context.Context, arg RevokeApproverRequestParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeApproverRequest, arg.DocumentID, arg.ApproverType, arg.ApproverID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const upsertApproval = `-- name: UpsertApproval :one
-INSERT INTO approvals(id, document_id, version_id, approver_type, approver_id, decision, note)
-VALUES($1, $2, $3, $4, $5, $6, $7)
-ON CONFLICT (version_id, approver_type, approver_id) WHERE revoked_at IS NULL
-DO UPDATE SET decision = EXCLUDED.decision, note = EXCLUDED.note, decided_at = now(), carried_from_version_id = NULL
+INSERT INTO approvals(id, document_id, version_id, sha256, approver_type, approver_id, decision, note)
+VALUES($1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT (document_id, sha256, approver_type, approver_id) WHERE revoked_at IS NULL
+DO UPDATE SET version_id = EXCLUDED.version_id, decision = EXCLUDED.decision, note = EXCLUDED.note, decided_at = now()
 RETURNING id, decided_at, (xmax = 0)::bool AS inserted
 `
 
@@ -443,6 +429,7 @@ type UpsertApprovalParams struct {
 	ID           string
 	DocumentID   string
 	VersionID    string
+	Sha256       string
 	ApproverType string
 	ApproverID   string
 	Decision     string
@@ -460,6 +447,7 @@ func (q *Queries) UpsertApproval(ctx context.Context, arg UpsertApprovalParams) 
 		arg.ID,
 		arg.DocumentID,
 		arg.VersionID,
+		arg.Sha256,
 		arg.ApproverType,
 		arg.ApproverID,
 		arg.Decision,

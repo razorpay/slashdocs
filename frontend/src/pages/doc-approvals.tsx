@@ -33,7 +33,7 @@ const STATUS_BADGE: Record<
 > = {
   approved: { label: "Approved", variant: "success", Icon: Check },
   pending: { label: "Pending", variant: "warning", Icon: CircleDashed },
-  changes_requested: { label: "Rejected", variant: "danger", Icon: X },
+  rejected: { label: "Rejected", variant: "danger", Icon: X },
 };
 
 // badgeText leads with how many approvers have approved ("2 of 3 approved"):
@@ -41,7 +41,7 @@ const STATUS_BADGE: Record<
 // someone rejected it, that comes first, because it blocks the rest.
 function badgeText(status: ApprovalStatus, approved?: number, total?: number) {
   const counts = total ? `${approved ?? 0} of ${total} approved` : "";
-  if (status === "changes_requested") {
+  if (status === "rejected") {
     return counts ? `Rejected · ${counts}` : "Rejected";
   }
   return counts || STATUS_BADGE[status].label;
@@ -174,33 +174,32 @@ function ApprovalsDialogBody({ onClose }: { onClose: () => void }) {
   );
 }
 
-// carriedSuffix names the version that received the explicit decision, so a
-// carried approval reads "Approved on v3" rather than an opaque note that
-// something was carried forward from somewhere.
-function carriedSuffix(item: ApprovalListItem) {
-  if (!item.carried_from_version_id) return null;
+// versionSuffix names the version a decision was made on when it is not the
+// listed one (an earlier version with the same content), so it reads
+// "Approved on v3".
+function versionSuffix(item: ApprovalListItem, listed?: number) {
+  if (!item.version_number || item.version_number === listed) return null;
   return (
     <span className="font-normal text-[var(--color-fg-muted)]">
-      {item.carried_from_version_number
-        ? ` on v${item.carried_from_version_number}`
-        : " (carried forward)"}
+      {` on v${item.version_number}`}
     </span>
   );
 }
 
-function decisionLabel(item: ApprovalListItem) {
+function decisionLabel(item: ApprovalListItem, listed?: number) {
   if (item.decision === "approved") {
     return (
       <span className="flex items-center gap-1 text-xs font-medium text-green-700 dark:text-green-300">
         <Check className="h-3.5 w-3.5" /> Approved
-        {carriedSuffix(item)}
+        {versionSuffix(item, listed)}
       </span>
     );
   }
-  if (item.decision === "changes_requested") {
+  if (item.decision === "rejected") {
     return (
       <span className="flex items-center gap-1 text-xs font-medium text-red-700 dark:text-red-300">
         <X className="h-3.5 w-3.5" /> Rejected
+        {versionSuffix(item, listed)}
       </span>
     );
   }
@@ -222,8 +221,8 @@ function useInvalidateApprovals(docId: string) {
 }
 
 // ReviewActions is the signed-in approver's own controls: Approve, Reject and
-// Revoke. It renders nothing for anyone else, for an approver who created a
-// version (they cannot decide), or while an older version is on screen. It lives
+// Revoke. It renders nothing for anyone else, or while an older version is on
+// screen. It lives
 // only in the approvals dialog, beside the approver's own row, so the decision
 // and what it currently says are read together.
 export function ReviewActions({
@@ -290,10 +289,10 @@ export function ReviewActions({
   );
   const latest = doc.data?.current_version_id;
   const isCurrentVersion = !version || !latest || version === latest;
-  if (!own || own.created_version || !isCurrentVersion) return null;
+  if (!own || !isCurrentVersion) return null;
 
   const allResolved =
-    own.decision === "changes_requested" &&
+    own.decision === "rejected" &&
     (own.comments_total ?? 0) > 0 &&
     (own.comments_open ?? 0) === 0;
   const plural = mine.length === 1 ? "comment" : "comments";
@@ -343,7 +342,7 @@ export function ReviewActions({
               <Check className="h-3.5 w-3.5" /> Approve
             </Button>
           ) : null}
-          {own.decision !== "changes_requested" ? (
+          {own.decision !== "rejected" ? (
             <Button
               size="sm"
               variant="danger"
@@ -371,7 +370,7 @@ export function ReviewActions({
         comments={mine}
         pending={decide.isPending}
         onSubmit={(note) =>
-          decide.mutate({ decision: "changes_requested", note: note || undefined })
+          decide.mutate({ decision: "rejected", note: note || undefined })
         }
         onJump={(id) => {
           setRequestOpen(false);
@@ -500,7 +499,6 @@ export function Approvals({ onClose }: { onClose?: () => void }) {
 
   const items = approvals.data?.items || [];
   const summary = approvals.data?.summary;
-  const own = items.find((item) => samePrincipal(item.approver, principal));
 
   return (
     <div className="flex max-h-[70vh] flex-col">
@@ -542,17 +540,12 @@ export function Approvals({ onClose }: { onClose?: () => void }) {
               item={item}
               docId={docId}
               isOwner={isOwner}
+              listedVersion={approvals.data?.version_number}
               onChanged={invalidate}
             />
           ))
         )}
       </div>
-      {own?.created_version ? (
-        <p className="border-t border-[var(--color-border)] p-3 text-xs text-[var(--color-fg-muted)]">
-          You created a version of this document, so you can&apos;t approve it. Ask the
-          owner to assign someone else.
-        </p>
-      ) : null}
       <ReviewActions
         className="border-t border-[var(--color-border)] p-3"
         onNavigate={onClose}
@@ -566,11 +559,13 @@ function ApproverRow({
   item,
   docId,
   isOwner,
+  listedVersion,
   onChanged,
 }: {
   item: ApprovalListItem;
   docId: string;
   isOwner: boolean;
+  listedVersion?: number;
   onChanged: () => void;
 }) {
   const approvers = useQuery({
@@ -596,14 +591,7 @@ function ApproverRow({
       <Avatar name={label} src={item.approver.picture_url} size={24} />
       <div className="min-w-0 flex-1">
         <div className="truncate text-xs font-medium">{label}</div>
-        {item.created_version ? (
-          <span className="text-xs text-[var(--color-fg-muted)]">
-            Created a version, can&apos;t approve
-            {isOwner ? ". Remove them and ask someone else." : ""}
-          </span>
-        ) : (
-          decisionLabel(item)
-        )}
+        {decisionLabel(item, listedVersion)}
         {item.comments_total ? (
           <span className="block text-[11px] text-[var(--color-fg-muted)]">
             {item.comments_open ?? 0} open of {item.comments_total}{" "}

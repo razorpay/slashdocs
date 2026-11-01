@@ -469,19 +469,17 @@ Model:
   - The document owner assigns approvers. Approvers need viewer access first.
   - Anyone who created a version of the document (including the owner who
     published it) cannot be an approver or decide: they wrote what is reviewed.
-  - Approvers approve or request changes on a specific version, and only on
-    the latest one; a decision on an older version is refused.
+    An approver who pushes a version stops being an approver.
+  - Approvers approve or reject what the document says now. A decision vouches
+    for the content (its sha256), not for a version number.
   - The document is "approved" only when every assigned approver approved.
-  - A new version with changed content resets every approval: the approvers
-    review it again. Pushing identical content keeps them.
-  - Push with --keep-approvals to carry approved decisions onto a changed
-    version (they show "approved on vN"); use it only for changes the approvers
-    do not need to see again.
+  - A new version with changed content resets every decision: the approvers
+    review it again. A version with the same content as an approved one, such
+    as a revert, shows that approval ("approved on vN").
   - Approvers can revoke their decision at any time.
-  - Requesting changes needs either open comments of yours on the document (they
-    say what to change) or a note; a note is optional when approving. In the UI
-    this is the Reject button: it lists your open comments, and approving with
-    open comments asks you to confirm.
+  - A rejection needs either open comments of yours on the document (they say
+    what to change) or a reason; a note is optional when approving. Approving
+    with open comments in the UI asks you to confirm.
 
 Commands:
   slashdocs docs approvers add <doc_id> --to reviewer@org.example
@@ -489,9 +487,8 @@ Commands:
   slashdocs docs approvers remove <doc_id> <approver_id>
   slashdocs docs approvals list <doc_id> [--version <version_id>]
   slashdocs docs approve <doc_id> [--version <version_id>] [--note "..."]
-  slashdocs docs request-changes <doc_id> [--note "what needs to change"]
+  slashdocs docs reject <doc_id> [--note "what needs to change"]
   slashdocs docs revoke-approval <doc_id> [--version <version_id>]
-  slashdocs docs push <doc_id> <file> --keep-approvals
 
 The document response includes approval_status and approval_summary once
 approvers are assigned; use --json for machine-readable output.
@@ -501,7 +498,6 @@ Over MCP, the owner's side is available (the rules above apply unchanged):
   list_document_approvers    who was asked, with the approval-request IDs
   list_document_approvals    what each decided on a version, and the status
   remove_document_approver   take a request back
-  update_document            keep_approvals=true carries approvals forward
 Approving, rejecting and revoking are not available over MCP: an approval is the
 approver's own decision, made through the UI, the CLI or the API.
 `,
