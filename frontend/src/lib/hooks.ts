@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { api, APIError } from "@/api";
+import { api, APIError, type Principal } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
 
 // A signed-out reader stays signed out until sign-in reloads the page, so a
@@ -13,4 +13,17 @@ export function useMe() {
   });
   const unauth = q.error instanceof APIError && q.error.status === 401;
   return { ...q, unauth };
+}
+
+// useSelf is the reader as a principal with their name: the session's
+// principal may carry only an id, and the profile has the name.
+export function useSelf(principal?: Principal): Principal | undefined {
+  const me = useMe();
+  return (
+    principal && {
+      ...me.data?.user,
+      ...principal,
+      name: principal.name || me.data?.user?.name,
+    }
+  );
 }

@@ -43,19 +43,18 @@ import {
   AlertDialogFooter,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { useMe } from "@/lib/hooks";
+import { useSelf } from "@/lib/hooks";
 import { useDoc } from "./doc-context";
-import { CommentBody, MentionTextarea } from "./doc-comments";
+import { CommentBody, MentionTextarea } from "./doc-comment-text";
 import { ReactionBar } from "./doc-comment-reactions";
 
-// The parts of a comment thread, shared by the comments panel and the thread
-// beside a canvas pin. The structure follows Figma (each message as avatar,
-// name and time on one line with its text beneath; replies split by hairlines;
-// a reply field that is always there), in slashdocs' own look.
+// The parts of a comment thread, which the comments panel uses. The structure
+// follows Figma (each message as avatar, name and time on one line with its
+// text beneath; replies split by hairlines; a reply field that is always
+// there), in slashdocs' own look.
 
-// PersonAvatar is a person's photo, or their initials on their own color: the
-// color of their pins and their live cursor, so one person reads as one
-// color everywhere on the canvas.
+// PersonAvatar is a person's photo, or their initials on their principalColor,
+// the same color as their live cursor.
 export function PersonAvatar({ who, size = 20 }: { who: Principal; size?: number }) {
   const name = principalLabel(who);
   if (who.picture_url) return <Avatar size={size} name={name} src={who.picture_url} />;
@@ -394,8 +393,8 @@ export function ReplyRow({
   autoFocus?: boolean;
 }) {
   const q = useQueryClient();
-  const { signIn } = useDoc();
-  const self = useSelf();
+  const { principal, signIn } = useDoc();
+  const self = useSelf(principal);
   const [draft, setDraft] = useState<MentionDraft>(emptyMentionDraft);
   const sent = useRef<MentionDraft | null>(null);
   const reply = useMutation({
@@ -503,19 +502,5 @@ export function Replies({ c, docId }: { c: Comment; docId: string }) {
         </div>
       ))}
     </div>
-  );
-}
-
-// useSelf is the reader as a principal with their name: the session's
-// principal may carry only an id, and the profile has the name.
-export function useSelf(): Principal | undefined {
-  const { principal } = useDoc();
-  const me = useMe();
-  return (
-    principal && {
-      ...me.data?.user,
-      ...principal,
-      name: principal.name || me.data?.user?.name,
-    }
   );
 }
