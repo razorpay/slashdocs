@@ -48,6 +48,11 @@ slashdocs authenticates humans through OpenID Connect. Pick one provider:
 
 Set exactly one of the two; the server refuses to start with both.
 
+slashdocs does not connect to LDAP directly. To sign in with an LDAP or Active
+Directory account, use an OIDC provider with an LDAP connector, such as Dex
+([LDAP connector](https://dexidp.io/docs/connectors/ldap/)) or Keycloak (user
+federation), and configure it as a generic OIDC provider.
+
 ### Google, step by step (Google Cloud Console)
 
 1. **Pick or create a project.** Go to
@@ -280,6 +285,37 @@ and fixed secrets. Production deployments configure a real identity provider
 stack and runs a non-interactive end-to-end test: OIDC login, service
 accounts, CLI push/pull, comments, sharing, folders, sandboxed rendering, and
 the KV events stream. `scripts/e2e.sh down` removes the stack and its volumes.
+
+### Use your own Postgres and object storage
+
+The Helm chart bundles no database or object storage: set `database.*` and
+`blob.*` in your values (see [Kubernetes with Helm](#kubernetes-with-helm)).
+For S3-compatible storage other than AWS, also set `blob.endpoint` and
+`blob.forcePathStyle: true`.
+
+To point the compose stack at external services, put a
+`docker-compose.override.yml` next to `docker-compose.yml`. Compose merges it
+automatically:
+
+```yaml
+services:
+  slashdocs:
+    environment:
+      DATABASE_URL: postgres://slashdocs:...@db.example.com:5432/slashdocs?sslmode=require
+      BLOB_BUCKET: slashdocs-documents
+      BLOB_REGION: us-east-1
+      BLOB_ENDPOINT: "" # empty for AWS S3, else the MinIO or R2 URL
+      BLOB_FORCE_PATH_STYLE: "false" # "true" for most non-AWS storage
+      BLOB_ACCESS_KEY_ID: ...
+      BLOB_SECRET_ACCESS_KEY: ...
+    depends_on: !override # Compose 2.24.4 or later
+      dex:
+        condition: service_healthy
+```
+
+Then run `docker compose up slashdocs`. Compose starts only slashdocs and Dex,
+not the bundled Postgres and versitygw. For production, also replace Dex and
+the dev secrets, or use [Docker](#docker) or [Helm](#kubernetes-with-helm).
 
 ## Docker
 
@@ -554,7 +590,7 @@ both. The redirect URI to register is
 | `ALLOWED_OAUTH_DOMAINS`                     | unset       | Comma-separated email-domain allowlist for OAuth logins (public deployments).                                                                                                                                                                                                                       |
 | `SLASHDOCS_DEPLOYMENT`                      | `public`    | `public` or `org`. An org deployment gates login to `SLASHDOCS_ORG_DOMAINS`.                                                                                                                                                                                                                        |
 | `SLASHDOCS_ORG_DOMAINS`                     | unset       | Comma-separated org domains. Required when `SLASHDOCS_DEPLOYMENT=org`; also the login gate.                                                                                                                                                                                                         |
-| `SLASHDOCS_ORG_NAME`                        | unset       | Org display name used in share UI copy (e.g. "Anyone in Razorpay").                                                                                                                                                                                                                                     |
+| `SLASHDOCS_ORG_NAME`                        | unset       | Org display name used in share UI copy (e.g. "Anyone in Razorpay").                                                                                                                                                                                                                                 |
 | `BLOB_REGION`                               | `us-east-1` | AWS region for the S3 client.                                                                                                                                                                                                                                                                       |
 | `BLOB_ENDPOINT`                             | unset       | Custom S3 endpoint (MinIO, R2, etc.).                                                                                                                                                                                                                                                               |
 | `BLOB_ACCESS_KEY_ID`                        | unset       | Override AWS-SDK default credential chain.                                                                                                                                                                                                                                                          |
