@@ -89,7 +89,10 @@ version for the active context, so --base-version is optional.
 Publishing model:
   - Creating a document stores the uploaded HTML as version 1.
   - Pushing HTML, or editing its text, creates a new immutable version.
-  - The slashdocs UI is for review; agents and CLI/API publishers create versions.
+  - People with the editor role change the text in the slashdocs UI. Their
+    edits save as they pause, through the same edits as docs edit, so each
+    pause is a new version. The UI shows versions as the document's history,
+    where people preview and restore them.
   - Runtime KV changes from uploaded HTML do not create versions; see:
       slashdocs guidelines interactivity kv
 
@@ -486,7 +489,9 @@ Model:
   - The document is "approved" only when every assigned approver approved.
   - A new version with changed content resets every decision: the approvers
     review it again. A version with the same content as an approved one, such
-    as a revert, shows that approval ("approved on vN").
+    as a restore, shows that approval.
+  - An assigned approver cannot type in the document in the UI: that would
+    make them an author.
   - Approvers can revoke their decision at any time.
   - With Slack notifications on, an approver hears when they are asked, and the
     owner hears each approval or rejection.

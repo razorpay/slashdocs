@@ -610,7 +610,7 @@ the webhook answers with a 2xx status.
 | `approval.approved`        | An approver approves                                                                                         |
 | `approval.rejected`        | An approver rejects                                                                                          |
 | `approval.revoked`         | An approver revokes their decision                                                                           |
-| `approval.version_created` | A new version of a document that has approvers                                                               |
+| `approval.version_created` | A new version of a document that has approvers, including each save of browser edits and each restore        |
 
 ```json
 {
@@ -694,7 +694,9 @@ configured for the server.
 
 `slashdocs` stores uploaded HTML versions in blob storage and metadata,
 comments, grants, sessions, and OAuth state in Postgres. Documents are
-versioned immutably; each push creates a new version.
+versioned immutably; each push, edit or restore creates a new version. Edits
+in the browser save as the editor pauses, so a session of typing makes several
+versions. The UI shows them as the document's history.
 
 For search, Postgres also keeps the visible text of each new version. After an
 upgrade from a release without content search, every server reads the older
