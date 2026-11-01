@@ -393,17 +393,10 @@ export const api = {
   },
   listVersions: (doc: string) =>
     request<{ items: Version[] }>(`/v1/documents/${doc}/versions`),
-  createVersion: (
-    doc: string,
-    base: string,
-    summary: string,
-    file: File,
-    keepApprovals = false,
-  ) => {
+  createVersion: (doc: string, base: string, summary: string, file: File) => {
     const fd = new FormData();
     fd.set("base_version_id", base);
     fd.set("change_summary", summary);
-    if (keepApprovals) fd.set("keep_approvals", "true");
     fd.set("file", file);
     return request<Version>(`/v1/documents/${doc}/versions`, {
       method: "POST",

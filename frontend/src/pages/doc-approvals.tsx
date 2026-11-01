@@ -237,7 +237,7 @@ export function ReviewActions({
 }) {
   const { docId, version, principal, comments, setActiveComment } = useDoc();
   const invalidate = useInvalidateApprovals(docId);
-  const [requestOpen, setRequestOpen] = useState(false);
+  const [rejectOpen, setRejectOpen] = useState(false);
   const [confirmApprove, setConfirmApprove] = useState(false);
   const doc = useQuery({
     queryKey: queryKeys.document(docId),
@@ -253,7 +253,7 @@ export function ReviewActions({
       api.createApproval(docId, version, input.decision, input.note),
     onSuccess: (a) => {
       toast.success(a.decision === "approved" ? "Approved." : "Rejected.");
-      setRequestOpen(false);
+      setRejectOpen(false);
       setConfirmApprove(false);
       invalidate();
     },
@@ -349,7 +349,7 @@ export function ReviewActions({
               size="sm"
               variant="danger"
               disabled={decide.isPending}
-              onClick={() => setRequestOpen(true)}
+              onClick={() => setRejectOpen(true)}
             >
               Reject
             </Button>
@@ -367,15 +367,15 @@ export function ReviewActions({
         </div>
       )}
       <RejectDialog
-        open={requestOpen}
-        onOpenChange={setRequestOpen}
+        open={rejectOpen}
+        onOpenChange={setRejectOpen}
         comments={mine}
         pending={decide.isPending}
         onSubmit={(note) =>
           decide.mutate({ decision: "rejected", note: note || undefined })
         }
         onJump={(id) => {
-          setRequestOpen(false);
+          setRejectOpen(false);
           onNavigate?.();
           setActiveComment(id);
         }}
