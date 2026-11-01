@@ -12,6 +12,8 @@ type CommentNotification struct {
 	RecipientID string
 	Reason      string
 	Attempts    int
+	// FinishedProviders names the providers that need no further attempt.
+	FinishedProviders []string
 }
 
 type DocumentAccessNotification struct {
@@ -22,6 +24,8 @@ type DocumentAccessNotification struct {
 	PreviousRole Role
 	Role         Role
 	Attempts     int
+	// FinishedProviders names the providers that need no further attempt.
+	FinishedProviders []string
 }
 
 type DocumentAccessRequestNotification struct {
@@ -31,4 +35,6 @@ type DocumentAccessRequestNotification struct {
 	RequesterLabel string
 	RecipientID    string
 	Attempts       int
+	// FinishedProviders names the providers that need no further attempt.
+	FinishedProviders []string
 }

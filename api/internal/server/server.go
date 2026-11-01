@@ -65,30 +65,30 @@ type readinessCheck struct {
 }
 
 type dependencies struct {
-	commentNotificationSender notifications.Sender
-	authenticator             auth.Authenticator
-	repository                repo.Repository
-	stateStore                auth.LoginStateStore
-	oidc                      auth.OIDC
-	oidcProviderName          string
-	sessionSecret             string
-	appOrigin                 string
-	renderOrigin              string
-	allowedOAuthDomains       []string
-	deployment                string
-	orgName                   string
-	defaultDocPermission      repo.Role
-	featured                  []FeaturedSection
-	readinessChecks           []readinessCheck
-	documentKVEvents          kvevents.Subscriber
-	githubOAuth               *oauth2.Config
-	githubHTTPClient          *http.Client
-	githubAccessChecks        *singleflight.Group
-	googleGroupsEnabled       bool
-	googleGroupDirectory      googlegroups.GoogleGroupDirectory
-	googleGroupResolver       *googlegroups.Resolver
-	labelsEnabled             bool
-	frontend                  fs.FS
+	notificationSenders  map[string]notifications.Sender
+	authenticator        auth.Authenticator
+	repository           repo.Repository
+	stateStore           auth.LoginStateStore
+	oidc                 auth.OIDC
+	oidcProviderName     string
+	sessionSecret        string
+	appOrigin            string
+	renderOrigin         string
+	allowedOAuthDomains  []string
+	deployment           string
+	orgName              string
+	defaultDocPermission repo.Role
+	featured             []FeaturedSection
+	readinessChecks      []readinessCheck
+	documentKVEvents     kvevents.Subscriber
+	githubOAuth          *oauth2.Config
+	githubHTTPClient     *http.Client
+	githubAccessChecks   *singleflight.Group
+	googleGroupsEnabled  bool
+	googleGroupDirectory googlegroups.GoogleGroupDirectory
+	googleGroupResolver  *googlegroups.Resolver
+	labelsEnabled        bool
+	frontend             fs.FS
 }
 
 // Option configures the Server.
@@ -98,8 +98,10 @@ func WithAuthenticator(a auth.Authenticator) Option {
 	return func(d *dependencies) { d.authenticator = a }
 }
 
-func WithCommentNotificationSender(sender notifications.Sender) Option {
-	return func(d *dependencies) { d.commentNotificationSender = sender }
+// WithNotificationSenders starts the notification worker when at least one
+// provider is configured. The map key names the provider.
+func WithNotificationSenders(senders map[string]notifications.Sender) Option {
+	return func(d *dependencies) { d.notificationSenders = senders }
 }
 
 func (s *Server) RunCommentNotifications(ctx context.Context) {
@@ -205,12 +207,12 @@ func New(cfg Config, opts ...Option) *Server {
 		r.Use(movedOriginMiddleware(cfg.AppOrigin, cfg.PreviousOrigins))
 	}
 	s := &Server{engine: r}
-	if deps.commentNotificationSender != nil {
+	if len(deps.notificationSenders) > 0 {
 		store, ok := deps.repository.(notifications.Store)
 		if !ok {
 			panic("notification sender requires an outbox store")
 		}
-		s.notificationWorker = &notifications.Worker{Store: store, Sender: deps.commentNotificationSender, AppOrigin: deps.appOrigin}
+		s.notificationWorker = &notifications.Worker{Store: store, Senders: deps.notificationSenders, AppOrigin: deps.appOrigin}
 		if deps.googleGroupResolver != nil {
 			s.notificationWorker.ResolvePrincipal = deps.googleGroupResolver.Resolve
 		}
