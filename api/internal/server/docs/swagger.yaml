@@ -27,6 +27,13 @@ definitions:
     - PrincipalGoogleGroup
     - PrincipalAnyone
     - PrincipalAnonymous
+  repo.AccessRequest:
+    properties:
+      requested_at:
+        type: string
+      requester:
+        $ref: '#/definitions/auth.Principal'
+    type: object
   repo.Anchor:
     properties:
       dom_path:
@@ -276,6 +283,8 @@ definitions:
         type: string
       current_placement:
         $ref: '#/definitions/server.commentPlacementResponse'
+      edited:
+        type: boolean
       id:
         type: string
       mentions:
@@ -519,6 +528,13 @@ definitions:
         type: string
       url:
         type: string
+    type: object
+  server.listResponse-repo_AccessRequest:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/repo.AccessRequest'
+        type: array
     type: object
   server.listResponse-repo_CLICredential:
     properties:
@@ -1014,9 +1030,30 @@ paths:
       tags:
       - documents
   /v1/documents/{id}/access-requests:
+    get:
+      description: The newest first. A grant on the document to the requester removes
+        the request.
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/server.listResponse-repo_AccessRequest'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: List requests for access to a document
+      tags:
+      - documents
     post:
-      description: Notifies the current owner without revealing whether the document
-        or owner exists. Repeated requests are coalesced.
+      description: Records the request for the people who manage access, and notifies
+        the current owner when notifications are enabled. The response does not reveal
+        whether the document or owner exists. Repeated requests are coalesced.
       parameters:
       - description: Document ID
         in: path

@@ -551,6 +551,38 @@ const docTemplate = `{
             }
         },
         "/v1/documents/{id}/access-requests": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "The newest first. A grant on the document to the requester removes the request.",
+                "tags": [
+                    "documents"
+                ],
+                "summary": "List requests for access to a document",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server.listResponse-repo_AccessRequest"
+                        }
+                    }
+                }
+            },
             "post": {
                 "security": [
                     {
@@ -560,7 +592,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "Notifies the current owner without revealing whether the document or owner exists. Repeated requests are coalesced.",
+                "description": "Records the request for the people who manage access, and notifies the current owner when notifications are enabled. The response does not reveal whether the document or owner exists. Repeated requests are coalesced.",
                 "tags": [
                     "documents"
                 ],
@@ -1947,6 +1979,17 @@ const docTemplate = `{
                 "PrincipalAnonymous"
             ]
         },
+        "repo.AccessRequest": {
+            "type": "object",
+            "properties": {
+                "requested_at": {
+                    "type": "string"
+                },
+                "requester": {
+                    "$ref": "#/definitions/auth.Principal"
+                }
+            }
+        },
         "repo.Anchor": {
             "type": "object",
             "properties": {
@@ -2318,6 +2361,9 @@ const docTemplate = `{
                 },
                 "current_placement": {
                     "$ref": "#/definitions/server.commentPlacementResponse"
+                },
+                "edited": {
+                    "type": "boolean"
                 },
                 "id": {
                     "type": "string"
@@ -2695,6 +2741,17 @@ const docTemplate = `{
                 },
                 "url": {
                     "type": "string"
+                }
+            }
+        },
+        "server.listResponse-repo_AccessRequest": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/repo.AccessRequest"
+                    }
                 }
             }
         },

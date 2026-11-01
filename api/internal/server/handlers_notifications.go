@@ -86,7 +86,7 @@ func (h handlers) setDocumentNotificationPreferences(c *gin.Context) { h.setNoti
 
 // requestDocumentAccess godoc
 // @Summary Request access to a document
-// @Description Notifies the current owner without revealing whether the document or owner exists. Repeated requests are coalesced.
+// @Description Records the request for the people who manage access, and notifies the current owner when notifications are enabled. The response does not reveal whether the document or owner exists. Repeated requests are coalesced.
 // @Tags documents
 // @Security bearerAuth
 // @Security cookieAuth
@@ -101,4 +101,25 @@ func (h handlers) requestDocumentAccess(c *gin.Context) {
 	// Keep the same response for missing, already-accessible, and recently
 	// requested documents so this endpoint cannot be used for enumeration.
 	c.JSON(http.StatusAccepted, gin.H{"status": "sent"})
+}
+
+// listDocumentAccessRequests godoc
+// @Summary List requests for access to a document
+// @Description The newest first. A grant on the document to the requester removes the request.
+// @Tags documents
+// @Security bearerAuth
+// @Security cookieAuth
+// @Param id path string true "Document ID"
+// @Success 200 {object} listResponse[repo.AccessRequest]
+// @Router /v1/documents/{id}/access-requests [get]
+func (h handlers) listDocumentAccessRequests(c *gin.Context) {
+	if !h.needDocRole(c, c.Param("id"), repo.RoleEditor) {
+		return
+	}
+	items, err := h.deps.repository.ListAccessRequests(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		internalErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, listResponse[repo.AccessRequest]{Items: items})
 }

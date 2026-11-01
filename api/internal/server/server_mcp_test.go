@@ -36,6 +36,7 @@ var expectedMCPTools = []string{
 	"get_server_config",
 	"list_comments",
 	"list_document_access",
+	"list_document_access_requests",
 	"list_document_versions",
 	"list_documents",
 	"list_folder_access",
