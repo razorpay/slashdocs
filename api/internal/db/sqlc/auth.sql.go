@@ -11,6 +11,17 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const getGoogleSubByEmail = `-- name: GetGoogleSubByEmail :one
+SELECT google_sub FROM users WHERE email=$1
+`
+
+func (q *Queries) GetGoogleSubByEmail(ctx context.Context, email string) (pgtype.Text, error) {
+	row := q.db.QueryRow(ctx, getGoogleSubByEmail, email)
+	var google_sub pgtype.Text
+	err := row.Scan(&google_sub)
+	return google_sub, err
+}
+
 const getSignedInUserByEmail = `-- name: GetSignedInUserByEmail :one
 SELECT id,email,name,picture_url FROM users WHERE email=$1 AND google_sub IS NOT NULL
 `
@@ -126,6 +137,24 @@ type InsertPlaceholderUserParams struct {
 func (q *Queries) InsertPlaceholderUser(ctx context.Context, arg InsertPlaceholderUserParams) error {
 	_, err := q.db.Exec(ctx, insertPlaceholderUser, arg.ID, arg.Email)
 	return err
+}
+
+const relinkUserIdentity = `-- name: RelinkUserIdentity :execrows
+UPDATE users SET google_sub = $1
+WHERE users.google_sub = $2 AND NOT EXISTS (SELECT 1 FROM users taken WHERE taken.google_sub = $1)
+`
+
+type RelinkUserIdentityParams struct {
+	ToSub   pgtype.Text
+	FromSub pgtype.Text
+}
+
+func (q *Queries) RelinkUserIdentity(ctx context.Context, arg RelinkUserIdentityParams) (int64, error) {
+	result, err := q.db.Exec(ctx, relinkUserIdentity, arg.ToSub, arg.FromSub)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const resolveCLIToken = `-- name: ResolveCLIToken :one

@@ -98,6 +98,14 @@ func (s *Store) ResolveUser(ctx context.Context, id string) (auth.Principal, err
 }
 func (s *Store) UpsertGoogleUser(ctx context.Context, id, email, name, googleSub, pictureURL string) (auth.Principal, error) {
 	err := s.q.UpsertGoogleUser(ctx, dbsqlc.UpsertGoogleUserParams{ID: id, Email: email, Name: name, GoogleSub: pgtype.Text{String: googleSub, Valid: true}, PictureUrl: pictureURL})
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "users_email_key" {
+		existing, err := s.q.GetGoogleSubByEmail(ctx, email)
+		if err != nil {
+			return auth.Principal{}, err
+		}
+		return auth.Principal{}, &repo.EmailIdentityConflictError{Email: email, ExistingIdentity: existing.String, IncomingIdentity: googleSub}
+	}
 	if err != nil {
 		return auth.Principal{}, err
 	}
@@ -106,6 +114,16 @@ func (s *Store) UpsertGoogleUser(ctx context.Context, id, email, name, googleSub
 		return auth.Principal{}, err
 	}
 	return auth.Principal{Type: auth.PrincipalUser, ID: u.ID, Email: u.Email, Name: u.Name, PictureURL: u.PictureUrl}, nil
+}
+func (s *Store) RelinkUserIdentity(ctx context.Context, from, to string) error {
+	n, err := s.q.RelinkUserIdentity(ctx, dbsqlc.RelinkUserIdentityParams{FromSub: pgtype.Text{String: from, Valid: true}, ToSub: pgtype.Text{String: to, Valid: true}})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return repo.ErrNotFound
+	}
+	return nil
 }
 func (s *Store) UserByEmail(ctx context.Context, email string) (auth.Principal, error) {
 	u, err := s.q.GetSignedInUserByEmail(ctx, email)

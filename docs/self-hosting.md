@@ -144,6 +144,21 @@ server-side URL. Discovery, token exchange, and JWKS fetches then use the
 internal URL while ID tokens are still validated against the public
 `SLASHDOCS_OIDC_ISSUER_URL`.
 
+Each user's identity key in `users.google_sub` comes from the exact issuer
+URL and the token `sub`. If you change `SLASHDOCS_OIDC_ISSUER_URL` (a new
+host, port, scheme, or trailing slash, or a backup restored into another
+deployment), the next sign-in of each user moves their existing account to the
+new key, matched by verified email. The server logs
+`relinked user to a new oidc identity` with the old and new keys. slashdocs
+does not relink an account between Google and a generic OIDC provider. That
+sign-in fails with `409 conflict` and the log names both keys. To move such
+an account on purpose, clear its key. The next sign-in with the same verified
+email then adopts the account:
+
+```sql
+UPDATE users SET google_sub = NULL WHERE email = 'person@example.com';
+```
+
 Example: a minimal [Dex](https://dexidp.io/) setup for local testing —
 
 ```yaml
