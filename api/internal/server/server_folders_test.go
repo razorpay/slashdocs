@@ -353,39 +353,40 @@ func createFolder(t *testing.T, e *testEnv, body, principal string) string {
 	return jsonField(t, rr.Body.Bytes(), "id")
 }
 
-// TestMoveDeletedDocumentNo500 is a regression guard: moving a deleted document
-// must never return 500. It does not cover the ErrNotFound branch in needDocMove
-// (lines 50-55 of handlers_folders.go) — that branch requires the caller to hold
-// RoleOwner at RoleForDocument time but the document be absent by GetDocument,
-// which is a TOCTOU race that the Postgres repo cannot reproduce without injection.
-// In practice the Postgres RoleForDocument returns RoleNone for deleted documents
-// even for the original owner (GetDocumentOwner returns no rows), so the caller
-// is stopped by the "editor role required" gate (403) before reaching GetDocument.
-func TestMoveDeletedDocumentNo500(t *testing.T) {
+// A document or folder that does not exist is a 404 for every request, as
+// GET /v1/documents/{id} always was. One that exists but is not shared with
+// the caller stays a 403.
+func TestMissingResourcesAreNotFound(t *testing.T) {
 	e := newTestEnv(t)
 	owner := principalHeader(fixtureOwner)
-	editor := principalHeader(fixtureEditor)
-
-	destID := createFolder(t, e, `{"title":"Dest"}`, owner)
-
-	// Owner creates a doc and grants fixtureEditor editor access.
-	docID, _ := e.createDocument("ToDelete", "<p>x</p>", fixtureOwner)
-	rr := do(t, e.h, http.MethodPost, "/v1/documents/"+docID+"/grants",
-		`{"address":"`+fixtureEditor.Email+`","role":"editor"}`,
-		map[string]string{"X-Test-Principal": owner, "Content-Type": "application/json"})
-	assertStatus(t, rr, http.StatusCreated)
-
-	// Delete the document so it is gone when the editor tries to move it.
-	rr = do(t, e.h, http.MethodDelete, "/v1/documents/"+docID, "", map[string]string{"X-Test-Principal": owner})
+	folderID := createFolder(t, e, `{"title":"Shelf"}`, owner)
+	docID, _ := e.createDocument("Gone", "<p>x</p>", fixtureOwner)
+	rr := do(t, e.h, http.MethodDelete, "/v1/documents/"+docID, "", map[string]string{"X-Test-Principal": owner})
 	assertStatus(t, rr, http.StatusNoContent)
 
-	// Editor attempts to move the now-deleted doc. RoleForDocument returns RoleNone
-	// (grant rows gone, document row gone), so the request is rejected with 403 at
-	// the "editor role required" gate. The key invariant: it must not 500.
-	rr = do(t, e.h, http.MethodPost, "/v1/folders/"+destID+"/documents",
-		`{"document_id":"`+docID+`"}`,
-		map[string]string{"X-Test-Principal": editor, "Content-Type": "application/json"})
-	if rr.Code == http.StatusInternalServerError {
-		t.Fatalf("move on deleted document must not 500; got %d: %s", rr.Code, rr.Body.String())
+	requests := []struct{ method, path, body string }{
+		{http.MethodGet, "/v1/documents/" + docID, ""},
+		{http.MethodPatch, "/v1/documents/" + docID, `{"title":"x"}`},
+		{http.MethodDelete, "/v1/documents/" + docID, ""},
+		{http.MethodPost, "/v1/documents/" + docID + "/grants", `{"address":"` + fixtureViewer.Email + `","role":"viewer"}`},
+		{http.MethodPost, "/v1/folders/" + folderID + "/documents", `{"document_id":"` + docID + `"}`},
+		{http.MethodPut, "/v1/pins/document/" + docID, ""},
+		{http.MethodGet, "/v1/folders/fld_missing", ""},
+		{http.MethodPatch, "/v1/folders/fld_missing", `{"title":"x"}`},
+		{http.MethodDelete, "/v1/folders/fld_missing", ""},
+		{http.MethodPost, "/v1/folders/fld_missing/grants", `{"address":"` + fixtureViewer.Email + `","role":"viewer"}`},
+		{http.MethodPut, "/v1/pins/folder/fld_missing", ""},
+	}
+	for _, r := range requests {
+		rr := do(t, e.h, r.method, r.path, r.body, map[string]string{"X-Test-Principal": owner, "Content-Type": "application/json"})
+		if rr.Code != http.StatusNotFound {
+			t.Errorf("%s %s: status = %d, want 404; body=%s", r.method, r.path, rr.Code, rr.Body.String())
+		}
+	}
+
+	stranger := map[string]string{"X-Test-Principal": principalHeader(fixtureStranger), "Content-Type": "application/json"}
+	for _, path := range []string{"/v1/folders/" + folderID, "/v1/documents/" + e.doc.ID} {
+		rr := do(t, e.h, http.MethodDelete, path, "", stranger)
+		assertStatus(t, rr, http.StatusForbidden)
 	}
 }
