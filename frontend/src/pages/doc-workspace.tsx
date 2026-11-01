@@ -85,8 +85,8 @@ export type DocBarControls = {
 
 // DocWorkspace is a rendered document with its comments: the comment rail,
 // drafts, shortcuts, and full screen. The page around it supplies the
-// document bar and the parts that only the server has, such as versions and
-// sharing.
+// document bar, an optional banner, and the parts that only the server has,
+// such as versions and sharing.
 export function DocWorkspace({
   docId,
   version,
@@ -98,6 +98,7 @@ export function DocWorkspace({
   followedCursor,
   onDocumentClick,
   bar,
+  banner,
 }: {
   docId: string;
   version: string;
@@ -115,6 +116,8 @@ export function DocWorkspace({
   followedCursor?: DocContextValue["followedCursor"];
   onDocumentClick?: () => void;
   bar: (controls: DocBarControls) => ReactNode;
+  // Shown under the bar, or floating over the document in full screen.
+  banner?: (floating: boolean) => ReactNode;
 }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const fullscreen = searchParams.get("fullscreen") === "1";
@@ -543,6 +546,7 @@ export function DocWorkspace({
             </div>
           ) : null}
           {frame}
+          {banner?.(true)}
         </div>
       ) : (
         <motion.div
@@ -557,6 +561,7 @@ export function DocWorkspace({
               onToggleComments: toggleComments,
               onShowShortcuts: () => setShortcutsOpen(true),
             })}
+            {banner?.(false)}
           </motion.div>
           <motion.div variants={contentFade} className="flex flex-1 overflow-hidden">
             <section className="relative min-w-0 flex-1 bg-[var(--color-surface-muted)]">
