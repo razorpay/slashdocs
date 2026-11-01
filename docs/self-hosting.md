@@ -629,13 +629,17 @@ For a document page (`/app/d/:id`), the server also puts the document's title,
 a short description and Open Graph tags into `index.html`, so that browser
 tabs, bookmarks and link previews show the document before the app loads. The
 description is the start of the document's text, or the owner and the date of
-the last version when the text is not indexed yet.
+the last version when the text is not indexed yet. Sensitive values such as
+one-time codes are redacted from the description.
 
 Only a caller who may read the document gets them. Everyone else, including a
 chat app that fetches the link to preview it, gets the generic page. On a
 `public` deployment, a document shared with everyone therefore previews in any
 chat app; on an `org` deployment, link previews stay generic, because the app
-that fetches the link is not signed in. `og:url` needs `SLASHDOCS_APP_ORIGIN`.
+that fetches the link is not signed in. There, the Slack app can still preview
+documents that everyone in the organization can open (see [Slack link
+previews](comment-notifications.md#slack-link-previews)). `og:url` needs
+`SLASHDOCS_APP_ORIGIN`.
 
 Document pages are sent with `Cache-Control: private, no-cache`, because their
 content depends on who asks. If the lookups take longer than a second, the

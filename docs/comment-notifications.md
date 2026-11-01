@@ -128,7 +128,8 @@ Slack token, and delete the Secret key.
 
 The same Slack app can preview pasted document links with
 [`chat.unfurl`](https://docs.slack.dev/messaging/unfurling-links-in-messages/).
-A link gets a card with the title, a summary, `vN · N open threads · owner` and
+A link gets a card with the title, a summary (the same one as the
+[document page description](self-hosting.md#document-titles-and-link-previews)), `vN · N open threads · owner` and
 an **Open doc** button only when:
 
 1. `SLASHDOCS_DEPLOYMENT=org`;

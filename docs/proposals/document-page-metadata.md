@@ -28,8 +28,9 @@ who may read the document, and a generated preview card image for it.
 - Rich Slack previews on `org` deployments. Slack's unfurler has no session,
   so it is not a reader of any document there and receives the generic shell.
   That needs a Slack app that unfurls on behalf of the person who shared the
-  link (`link_shared` → access check → `chat.unfurl`), which is a separate
-  proposal. It can reuse the preview card from this one.
+  link (`link_shared` → access check → `chat.unfurl`). [Slack link
+  previews](../comment-notifications.md#slack-link-previews) do that, with the
+  same description as the document head.
 - A per-document favicon.
 - Author-declared descriptions read from the uploaded HTML.
 
@@ -99,8 +100,9 @@ it, the browser revalidates it, and it can still use the back/forward cache.
 ### Description
 
 The description is an excerpt of what a reader sees: the current version's
-indexed text with a leading copy of the title removed, cut at a word boundary to at most 200
-characters with an ellipsis. When the version has no indexed text yet, the
+indexed text with leading copies of the title removed, sensitive values such as
+one-time codes redacted, and cut at a word boundary to at most 200 characters
+with an ellipsis. Slack link previews use the same summary. When the version has no indexed text yet, the
 description is a byline: `By {owner name} · Updated {2 Jan 2006}`.
 
 The excerpt can start with navigation or table-of-contents text. That is
