@@ -538,10 +538,10 @@ both. The redirect URI to register is
 `<SLASHDOCS_APP_ORIGIN>/v1/auth/google/callback` for Google and
 `<SLASHDOCS_APP_ORIGIN>/v1/auth/oidc/callback` for everything else.
 
-### Notifications (at most one provider)
+### Notifications
 
-Comment and access notifications are off unless one of these is set; the server
-refuses to start with both. See
+Comment and access notifications are off unless one of these is set. When both
+are set, each provider delivers every notification. See
 [Comment notifications](comment-notifications.md) for provider setup.
 
 | Variable                            | Purpose                                                                                                                     |
@@ -668,8 +668,8 @@ down-migration manually if needed; the binary does not auto-rollback.
 - [ ] OAuth/OIDC redirect URIs registered at the IdP match `SLASHDOCS_APP_ORIGIN`.
 - [ ] `ALLOWED_OAUTH_DOMAINS` set if you don't want public sign-ups.
 - [ ] Postgres backups configured.
-- [ ] If notifications are on: exactly one provider configured, its secret in a
-      secret manager, and outbound HTTPS to the provider allowed.
+- [ ] If notifications are on: each provider's secret in a secret manager, and
+      outbound HTTPS to each configured provider allowed.
 - [ ] Blob storage versioning / lifecycle rules configured.
 - [ ] `SLASHDOCS_COMMIT_SHA` baked into your image so `/commit.txt`
       reports the running build.

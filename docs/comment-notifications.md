@@ -87,10 +87,11 @@ rewritten by these viewer conveniences.
 
 ## Google Chat setup
 
-Configure at most one provider: `SLASHDOCS_SLACK_BOT_TOKEN` or
-`SLASHDOCS_GOOGLE_CHAT_WEBHOOK_URL`. The server refuses to start with both.
-Recipients, mutes, retries, and content redaction are the same for every
-provider.
+Configure `SLASHDOCS_SLACK_BOT_TOKEN`, `SLASHDOCS_GOOGLE_CHAT_WEBHOOK_URL`, or
+both. Each configured provider delivers every notification. A retry only
+repeats the providers that failed temporarily, so one provider's outage does
+not post duplicates through the other. Recipients, mutes, retries, and content
+redaction are the same for every provider.
 
 Google Chat notifications go to one space through an incoming webhook, as a
 card that names its recipient ("For: alice@example.com"). The space sees all

@@ -137,7 +137,7 @@ googleGroups:
   requestTimeout: 5s
 
 # Google Chat comment notifications (docs/comment-notifications.md): Secret
-# holding a space's incoming webhook URL. Do not also set
+# holding a space's incoming webhook URL. It can be used together with
 # SLASHDOCS_SLACK_BOT_TOKEN via extraEnv.
 googleChat:
   webhookSecret: ""

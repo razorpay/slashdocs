@@ -296,13 +296,13 @@ func newApplicationServer(ctx context.Context, store *pgrepo.Store, blobs blob.S
 	if err != nil {
 		return nil, err
 	}
-	sender, err := loadNotificationSender(os.Getenv)
+	senders, err := loadNotificationSenders(os.Getenv)
 	if err != nil {
 		return nil, err
 	}
-	store.SetNotificationsEnabled(sender != nil)
+	store.SetNotificationsEnabled(len(senders) > 0)
 	options := []server.Option{
-		server.WithCommentNotificationSender(sender),
+		server.WithNotificationSenders(senders),
 		server.WithRepository(store),
 		server.WithDocumentKVEvents(kvEvents),
 		server.WithAuthenticator(auth.DBAuthenticator{Resolver: store, SessionSecret: origins.sessionSecret}),
