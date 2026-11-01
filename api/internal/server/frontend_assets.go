@@ -41,7 +41,7 @@ func registerFrontendRoutes(r *gin.Engine, h handlers) {
 		return
 	}
 	fileServer := http.FileServer(http.FS(dist))
-	appOrigin, renderOrigin := strings.TrimRight(h.deps.appOrigin, "/"), h.deps.renderOrigin
+	appOrigin := strings.TrimRight(h.deps.appOrigin, "/")
 
 	r.GET("/assets/*filepath", gin.WrapH(http.StripPrefix("/assets/", http.FileServer(http.FS(subOrEmpty(dist, "assets"))))))
 	r.NoRoute(func(c *gin.Context) {
@@ -49,7 +49,9 @@ func registerFrontendRoutes(r *gin.Engine, h handlers) {
 			c.Status(http.StatusNotFound)
 			return
 		}
-		if appOrigin != "" && renderOrigin != "" && hostMatchesOrigin(c.Request.Host, renderOrigin) && !hostMatchesOrigin(c.Request.Host, appOrigin) {
+		// The render hostname serves only tokenized renders. Its other pages go to
+		// the app origin, where sign-in works and document pages get their head.
+		if h.deps.isRenderHost(c.Request.Host) {
 			if strings.HasPrefix(c.Request.URL.Path, "/v/") || strings.HasPrefix(c.Request.URL.Path, "/print/") {
 				c.Status(http.StatusNotFound)
 				return
@@ -78,6 +80,12 @@ func registerFrontendRoutes(r *gin.Engine, h handlers) {
 		}
 		c.Data(http.StatusOK, "text/html; charset=utf-8", index)
 	})
+}
+
+// isRenderHost reports whether host is the render hostname and not also the app
+// hostname.
+func (d dependencies) isRenderHost(host string) bool {
+	return d.appOrigin != "" && d.renderOrigin != "" && hostMatchesOrigin(host, d.renderOrigin) && !hostMatchesOrigin(host, d.appOrigin)
 }
 
 // documentPageID returns the document ID of a cleaned "app/d/{id}" path.

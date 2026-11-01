@@ -25,6 +25,7 @@ func TestFrontendRoutesRedirectRenderHost(t *testing.T) {
 	}{
 		{http.MethodGet, "https://render.example/", "https://app.example/", http.StatusTemporaryRedirect},
 		{http.MethodHead, "https://render.example/login", "https://app.example/login", http.StatusTemporaryRedirect},
+		{http.MethodGet, "https://render.example/app/d/doc_1", "https://app.example/app/d/doc_1", http.StatusTemporaryRedirect},
 		{http.MethodGet, "https://RENDER.EXAMPLE.:443/app/documents?sort=updated", "https://app.example/app/documents?sort=updated", http.StatusTemporaryRedirect},
 		{http.MethodPost, "https://render.example/login", "", http.StatusNotFound},
 		{http.MethodGet, "https://render.example/v/doc_1/ver_1", "", http.StatusOK},
