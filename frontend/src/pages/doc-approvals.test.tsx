@@ -161,19 +161,26 @@ describe("ApprovalsDialog", () => {
     expect(await screen.findByRole("dialog", { name: "Approvals" })).toBeTruthy();
   });
 
-  it("shows the version the status is for in the dialog", async () => {
-    installFetch({
-      approvalsByVersion: {
-        ver_2: { status: "approved", approved: 1, total: 1 },
-      },
-    });
-    renderDialog({ status: "approved", approved: 1, total: 1 });
-    await userEvent.click(
-      await screen.findByRole("button", { name: /Open approvals/ }),
-    );
-    // The chip already carries the count, so the header says which version.
-    expect(await screen.findByText("On version 2")).toBeTruthy();
-  });
+  it.each([
+    ["ver_2", "On the current document"],
+    ["ver_1", "On an earlier version"],
+  ])(
+    "says whether the status of %s is for the current document",
+    async (viewed, label) => {
+      installFetch({
+        approvalsByVersion: {
+          [viewed]: { status: "approved", approved: 1, total: 1 },
+        },
+      });
+      renderDialog({ status: "approved", approved: 1, total: 1 }, viewed);
+      await userEvent.click(
+        await screen.findByRole("button", { name: /Open approvals/ }),
+      );
+      // The chip already carries the count, so the header says which content,
+      // without version numbers.
+      expect(await screen.findByText(label)).toBeTruthy();
+    },
+  );
 
   it("gives the owner a way in when no approvers are assigned yet", async () => {
     installFetch();

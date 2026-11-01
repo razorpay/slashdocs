@@ -499,11 +499,11 @@ export function Approvals({ onClose }: { onClose?: () => void }) {
       <div className="border-b border-[var(--color-border)] px-5 py-3">
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs text-[var(--color-fg-muted)]">
-            {summary?.total
-              ? approvals.data?.version_number
-                ? `On version ${approvals.data.version_number}`
-                : "On this version"
-              : "No approvers assigned"}
+            {!summary?.total
+              ? "No approvers assigned"
+              : isCurrentVersion
+                ? "On the current document"
+                : "On an earlier version"}
           </p>
           <ApprovalStatusBadge
             status={approvals.data?.status}
@@ -511,11 +511,6 @@ export function Approvals({ onClose }: { onClose?: () => void }) {
             total={summary?.total}
           />
         </div>
-        {!isCurrentVersion ? (
-          <p className="mt-1 text-[11px] text-[var(--color-fg-muted)]">
-            Viewing decisions on an older version.
-          </p>
-        ) : null}
       </div>
       <div className="flex-1 space-y-1 overflow-y-auto p-3">
         {approvals.isLoading ? (
