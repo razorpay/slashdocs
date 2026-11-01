@@ -352,6 +352,9 @@ func TestMCPDocumentAndFolderToolParity(t *testing.T) {
 	assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "list_comments", map[string]any{
 		"document_id": docID, "status": "open", "version_id": versionID,
 	}), commentID)
+	assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "list_comments", map[string]any{
+		"document_id": docID, "status": "all",
+	}), commentID)
 	assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "reply_comment", map[string]any{
 		"document_id": docID, "comment_id": commentID, "body": "Reply through MCP",
 	}), "Reply through MCP")
