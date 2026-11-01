@@ -13,10 +13,12 @@ import (
 
 const createdVersionOf = `-- name: CreatedVersionOf :one
 SELECT EXISTS(
-  SELECT 1 FROM versions
-  WHERE document_id = $1
-    AND created_by_type = $2
-    AND created_by_id = $3
+  SELECT 1 FROM versions v
+  WHERE v.document_id = $1
+    AND CASE v.created_by_type WHEN 'user' THEN v.created_by_id
+          ELSE (SELECT owner_user_id FROM service_accounts WHERE id = v.created_by_id) END -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+      = CASE $2::text WHEN 'user' THEN $3::text
+          ELSE (SELECT owner_user_id FROM service_accounts WHERE id = $3::text) END -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 )
 `
 
@@ -26,7 +28,9 @@ type CreatedVersionOfParams struct {
 	PrincipalID   string
 }
 
-// Anyone who created a version of a document wrote what is under review.
+// Anyone who created a version of a document wrote what is under review. A
+// service account works for its owner, so a bot and its owner are one author,
+// as in the GitHub author mapping.
 func (q *Queries) CreatedVersionOf(ctx context.Context, arg CreatedVersionOfParams) (bool, error) {
 	row := q.db.QueryRow(ctx, createdVersionOf, arg.DocumentID, arg.PrincipalType, arg.PrincipalID)
 	var exists bool
@@ -149,6 +153,7 @@ INSERT INTO approval_event_outbox(id, payload)
 SELECT $1::text, jsonb_strip_nulls(jsonb_build_object(
   'id', $1::text,
   'type', $2::text,
+  'sequence', nextval('approval_event_sequence'),
   'created_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
   'document', jsonb_build_object('id', d.id, 'title', d.title, 'url', $3::text),
   'version', jsonb_build_object('id', v.id, 'number', v.number, 'sha256', v.sha256),
@@ -191,7 +196,9 @@ type InsertApprovalEventParams struct {
 
 // A webhook event about a change to a document's approvals, written in the
 // transaction of the change. It names who and what at the time of the change,
-// so a receiver can act on it without reading the API.
+// so a receiver can act on it without reading the API. The sequence orders
+// the events of one document: changes to a document take turns (see
+// LockDocumentForApproval), so each takes its number in commit order.
 // nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 // nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) InsertApprovalEvent(ctx context.Context, arg InsertApprovalEventParams) error {
@@ -393,31 +400,103 @@ func (q *Queries) ListContentApprovals(ctx context.Context, arg ListContentAppro
 	return items, nil
 }
 
-const lockDocumentForShare = `-- name: LockDocumentForShare :one
-SELECT current_version_id FROM documents WHERE id = $1 FOR SHARE
+const lockApproversWithoutAccess = `-- name: LockApproversWithoutAccess :many
+WITH RECURSIVE subtree(id) AS (
+  SELECT $1::text
+  UNION ALL
+  SELECT f.id FROM folders f JOIN subtree s ON f.parent_folder_id = s.id
+),
+ancestors(document_id, rid, rtype, depth) AS (
+  SELECT d.id, d.id, 'document'::text, 0
+  FROM documents d
+  WHERE (d.id = $1::text OR d.parent_folder_id IN (SELECT id FROM subtree))
+    AND EXISTS (SELECT 1 FROM approval_requests ar WHERE ar.document_id = d.id AND ar.revoked_at IS NULL)
+  UNION ALL
+  SELECT a.document_id, f.id, 'folder'::text, a.depth + 1
+  FROM ancestors a
+  JOIN LATERAL (
+    SELECT CASE WHEN a.rtype = 'document' THEN (SELECT parent_folder_id FROM documents WHERE id = a.rid)
+                ELSE (SELECT parent_folder_id FROM folders WHERE id = a.rid) END AS pid
+  ) sub ON true
+  JOIN folders f ON f.id = sub.pid
+  WHERE a.depth < 64
+)
+SELECT r.document_id, r.approver_type, r.approver_id
+FROM approval_requests r
+JOIN documents d ON d.id = r.document_id
+WHERE r.revoked_at IS NULL
+  AND r.document_id IN (SELECT document_id FROM ancestors)
+  AND NOT (d.owner_type = r.approver_type AND d.owner_id = r.approver_id)
+  AND NOT EXISTS (
+    SELECT 1 FROM resource_grants g
+    JOIN ancestors a ON a.document_id = r.document_id AND a.rid = g.resource_id
+    WHERE g.revoked_at IS NULL
+      AND (g.principal_type = 'anyone'
+        OR (g.principal_type = r.approver_type AND g.principal_id = r.approver_id)
+        OR (r.approver_type = 'user' AND g.principal_type = 'google_group' AND EXISTS (
+          SELECT 1 FROM google_group_memberships gm
+          WHERE gm.user_id = r.approver_id AND gm.group_id = g.principal_id)))
+  )
+ORDER BY r.document_id
+FOR NO KEY UPDATE OF d
 `
 
-// The share lock makes an approval change wait for a version push in progress
-// (which holds the row for update), so a decision or an assignment never races
-// a new version. Read the version in a later statement: this statement's
-// snapshot cannot see a version that a push committed while it waited.
-func (q *Queries) LockDocumentForShare(ctx context.Context, documentID string) (pgtype.Text, error) {
-	row := q.db.QueryRow(ctx, lockDocumentForShare, documentID)
+type LockApproversWithoutAccessRow struct {
+	DocumentID   string
+	ApproverType string
+	ApproverID   string
+}
+
+// The approvers of the documents at or under a resource who can no longer
+// read their document, after a grant on that resource was revoked. Access is
+// ownership or a grant on the document or a folder above it, as in
+// RoleForDocument. It locks each document as LockDocumentForApproval does, in
+// id order, before the caller removes the approvers.
+func (q *Queries) LockApproversWithoutAccess(ctx context.Context, resourceID string) ([]LockApproversWithoutAccessRow, error) {
+	rows, err := q.db.Query(ctx, lockApproversWithoutAccess, resourceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LockApproversWithoutAccessRow
+	for rows.Next() {
+		var i LockApproversWithoutAccessRow
+		if err := rows.Scan(&i.DocumentID, &i.ApproverType, &i.ApproverID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockDocumentForApproval = `-- name: LockDocumentForApproval :one
+SELECT current_version_id FROM documents WHERE id = $1 FOR NO KEY UPDATE
+`
+
+// Approval writes on one document take turns, and wait for a version push in
+// progress (which holds the row for update). So a decision or an assignment
+// never races a new version, and the status each change records counts every
+// change before it. NO KEY UPDATE does not wait on foreign-key checks from
+// concurrent comment writes. Read the version in a later statement: this
+// statement's snapshot cannot see a version that a push committed while it
+// waited.
+func (q *Queries) LockDocumentForApproval(ctx context.Context, documentID string) (pgtype.Text, error) {
+	row := q.db.QueryRow(ctx, lockDocumentForApproval, documentID)
 	var current_version_id pgtype.Text
 	err := row.Scan(&current_version_id)
 	return current_version_id, err
 }
 
-const revokeApproval = `-- name: RevokeApproval :execrows
+const revokeApproval = `-- name: RevokeApproval :exec
 UPDATE approvals SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL
 `
 
-func (q *Queries) RevokeApproval(ctx context.Context, id string) (int64, error) {
-	result, err := q.db.Exec(ctx, revokeApproval, id)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+func (q *Queries) RevokeApproval(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, revokeApproval, id)
+	return err
 }
 
 const revokeApprovalRequest = `-- name: RevokeApprovalRequest :one
@@ -462,7 +541,7 @@ func (q *Queries) RevokeApprovalsForApprover(ctx context.Context, arg RevokeAppr
 	return err
 }
 
-const revokeApproverRequest = `-- name: RevokeApproverRequest :execrows
+const revokeApproverRequest = `-- name: RevokeApproverRequest :exec
 UPDATE approval_requests SET revoked_at = now()
 WHERE document_id = $1
   AND approver_type = $2
@@ -476,20 +555,68 @@ type RevokeApproverRequestParams struct {
 	ApproverID   string
 }
 
-func (q *Queries) RevokeApproverRequest(ctx context.Context, arg RevokeApproverRequestParams) (int64, error) {
-	result, err := q.db.Exec(ctx, revokeApproverRequest, arg.DocumentID, arg.ApproverType, arg.ApproverID)
+func (q *Queries) RevokeApproverRequest(ctx context.Context, arg RevokeApproverRequestParams) error {
+	_, err := q.db.Exec(ctx, revokeApproverRequest, arg.DocumentID, arg.ApproverType, arg.ApproverID)
+	return err
+}
+
+const revokeAuthorApprovers = `-- name: RevokeAuthorApprovers :many
+UPDATE approval_requests r SET revoked_at = now()
+WHERE r.document_id = $1
+  AND r.revoked_at IS NULL
+  AND CASE r.approver_type WHEN 'user' THEN r.approver_id
+        ELSE (SELECT owner_user_id FROM service_accounts WHERE id = r.approver_id) END -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+    = CASE $2::text WHEN 'user' THEN $3::text
+        ELSE (SELECT owner_user_id FROM service_accounts WHERE id = $3::text) END -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+RETURNING r.approver_type, r.approver_id
+`
+
+type RevokeAuthorApproversParams struct {
+	DocumentID string
+	AuthorType string
+	AuthorID   string
+}
+
+type RevokeAuthorApproversRow struct {
+	ApproverType string
+	ApproverID   string
+}
+
+// Removes the approvers who are the same author as the creator of a new
+// version, by the rule of CreatedVersionOf.
+func (q *Queries) RevokeAuthorApprovers(ctx context.Context, arg RevokeAuthorApproversParams) ([]RevokeAuthorApproversRow, error) {
+	rows, err := q.db.Query(ctx, revokeAuthorApprovers, arg.DocumentID, arg.AuthorType, arg.AuthorID)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return result.RowsAffected(), nil
+	defer rows.Close()
+	var items []RevokeAuthorApproversRow
+	for rows.Next() {
+		var i RevokeAuthorApproversRow
+		if err := rows.Scan(&i.ApproverType, &i.ApproverID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const upsertApproval = `-- name: UpsertApproval :one
+WITH previous AS (
+  SELECT decision, note FROM approvals
+  WHERE document_id = $2 AND sha256 = $4
+    AND approver_type = $5 AND approver_id = $6
+    AND revoked_at IS NULL
+)
 INSERT INTO approvals(id, document_id, version_id, sha256, approver_type, approver_id, decision, note)
 VALUES($1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT (document_id, sha256, approver_type, approver_id) WHERE revoked_at IS NULL
 DO UPDATE SET version_id = EXCLUDED.version_id, decision = EXCLUDED.decision, note = EXCLUDED.note, decided_at = now()
-RETURNING id, decided_at, (xmax = 0)::bool AS inserted
+RETURNING id, decided_at, (xmax = 0)::bool AS inserted,
+  NOT EXISTS(SELECT 1 FROM previous WHERE decision = $7 AND note = $8) AS changed
 `
 
 type UpsertApprovalParams struct {
@@ -507,8 +634,11 @@ type UpsertApprovalRow struct {
 	ID        string
 	DecidedAt pgtype.Timestamptz
 	Inserted  bool
+	Changed   bool
 }
 
+// Changed is false when the approver repeats their decision and note on the
+// same content, which then tells nobody again.
 func (q *Queries) UpsertApproval(ctx context.Context, arg UpsertApprovalParams) (UpsertApprovalRow, error) {
 	row := q.db.QueryRow(ctx, upsertApproval,
 		arg.ID,
@@ -521,6 +651,11 @@ func (q *Queries) UpsertApproval(ctx context.Context, arg UpsertApprovalParams) 
 		arg.Note,
 	)
 	var i UpsertApprovalRow
-	err := row.Scan(&i.ID, &i.DecidedAt, &i.Inserted)
+	err := row.Scan(
+		&i.ID,
+		&i.DecidedAt,
+		&i.Inserted,
+		&i.Changed,
+	)
 	return i, err
 }

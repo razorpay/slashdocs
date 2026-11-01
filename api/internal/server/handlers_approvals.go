@@ -217,7 +217,7 @@ func (h handlers) approverHasAccess(c *gin.Context, approver auth.Principal) boo
 
 // CreateApprover godoc
 // @Summary Assign an approver
-// @Description Assigns a user or service account as an approver. The approver must already have at least viewer access on the document, and must not have created a version of it.
+// @Description Assigns a user or service account as an approver. The approver must already have at least viewer access on the document, and must not have created a version of it. A service account counts as its owner. An approver who loses viewer access when a grant is revoked stops being an approver.
 // @Tags approvals
 // @Security bearerAuth
 // @Security cookieAuth

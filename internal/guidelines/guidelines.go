@@ -469,7 +469,9 @@ Model:
   - The document owner assigns approvers. Approvers need viewer access first.
   - Anyone who created a version of the document (including the owner who
     published it) cannot be an approver or decide: they wrote what is reviewed.
-    An approver who pushes a version stops being an approver.
+    A service account counts as its owner. An approver who pushes a version,
+    or whose bot does, stops being an approver. So does an approver who loses
+    read access.
   - Approvers approve or reject what the document says now. A decision vouches
     for the content (its sha256), not for a version number.
   - The document is "approved" only when every assigned approver approved.

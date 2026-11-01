@@ -12,19 +12,28 @@ import (
 	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
+// lockDocument makes the approval writes on a document take turns, and returns
+// its current version ID. Every approval write calls it first in its
+// transaction, so the status that each change records counts all changes
+// before it.
+func lockDocument(ctx context.Context, q *dbsqlc.Queries, documentID string) (string, error) {
+	currentID, err := q.LockDocumentForApproval(ctx, documentID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", repo.ErrNotFound
+	}
+	return currentID.String, err
+}
+
 // lockForApproval locks the document against a concurrent version push and
 // returns its current version. It refuses principals who created a version:
-// they wrote what is under review. Approval writes call it first in their
-// transaction, so neither check can go stale before the write commits.
+// they wrote what is under review. Neither check can go stale before the
+// write commits.
 func lockForApproval(ctx context.Context, q *dbsqlc.Queries, documentID string, approver auth.Principal) (dbsqlc.GetVersionRow, error) {
-	currentID, err := q.LockDocumentForShare(ctx, documentID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return dbsqlc.GetVersionRow{}, repo.ErrNotFound
-	}
+	currentID, err := lockDocument(ctx, q, documentID)
 	if err != nil {
 		return dbsqlc.GetVersionRow{}, err
 	}
-	current, err := q.GetVersion(ctx, currentID.String)
+	current, err := q.GetVersion(ctx, currentID)
 	if err != nil {
 		return current, err
 	}
@@ -100,6 +109,9 @@ func (s *Store) DeleteApprovalRequest(ctx context.Context, documentID, requestID
 	}
 	defer rollback(ctx, tx)
 	q := s.q.WithTx(tx)
+	if _, err := lockDocument(ctx, q, documentID); err != nil {
+		return err
+	}
 	approver, err := q.RevokeApprovalRequest(ctx, dbsqlc.RevokeApprovalRequestParams{RequestID: requestID, DocumentID: documentID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return repo.ErrNotFound
@@ -127,15 +139,43 @@ func (s *Store) dropApproverDecisions(ctx context.Context, q *dbsqlc.Queries, do
 	return s.recordApprovalEvent(ctx, q, approvalEvent{documentID: documentID, kind: repo.ApprovalEventRemoved, approver: approver, actor: removedBy})
 }
 
-// removeAuthorApprover removes the creator of a new version as an approver of
-// the document, with their decisions: they now wrote part of what is under
-// review. Runs inside the CreateVersion transaction.
-func (s *Store) removeAuthorApprover(ctx context.Context, q *dbsqlc.Queries, documentID string, author auth.Principal) error {
-	removed, err := q.RevokeApproverRequest(ctx, dbsqlc.RevokeApproverRequestParams{DocumentID: documentID, ApproverType: string(author.Type), ApproverID: author.ID})
-	if err != nil || removed == 0 {
+// removeAuthorApprovers removes the approvers who are the same author as the
+// creator of a new version (the creator, or the owner of the creator's bot),
+// with their decisions: they now wrote part of what is under review. Runs
+// inside the CreateVersion transaction.
+func (s *Store) removeAuthorApprovers(ctx context.Context, q *dbsqlc.Queries, documentID string, author auth.Principal) error {
+	removed, err := q.RevokeAuthorApprovers(ctx, dbsqlc.RevokeAuthorApproversParams{DocumentID: documentID, AuthorType: string(author.Type), AuthorID: author.ID})
+	if err != nil {
 		return err
 	}
-	return s.dropApproverDecisions(ctx, q, documentID, author, author)
+	for _, r := range removed {
+		approver := auth.Principal{Type: auth.PrincipalType(r.ApproverType), ID: r.ApproverID}
+		if err := s.dropApproverDecisions(ctx, q, documentID, approver, author); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// removeApproversWithoutAccess removes, with their decisions, the approvers of
+// the documents at or under a resource who can no longer read their document.
+// They could not decide, so the document would wait for them forever. Runs
+// inside the transaction that revokes a grant on the resource.
+func (s *Store) removeApproversWithoutAccess(ctx context.Context, q *dbsqlc.Queries, resourceID string, revokedBy auth.Principal) error {
+	removed, err := q.LockApproversWithoutAccess(ctx, resourceID)
+	if err != nil {
+		return err
+	}
+	for _, r := range removed {
+		approver := auth.Principal{Type: auth.PrincipalType(r.ApproverType), ID: r.ApproverID}
+		if err := q.RevokeApproverRequest(ctx, dbsqlc.RevokeApproverRequestParams(r)); err != nil {
+			return err
+		}
+		if err := s.dropApproverDecisions(ctx, q, r.DocumentID, approver, revokedBy); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 var approvalDecisionEvent = map[string]string{
@@ -190,11 +230,13 @@ func (s *Store) CreateOrUpdateApproval(ctx context.Context, documentID, versionI
 	if err != nil {
 		return repo.Approval{}, false, err
 	}
-	if err := s.enqueueApprovalNotification(ctx, tx, documentID, approver, approver, repo.ApprovalNotificationDecided); err != nil {
-		return repo.Approval{}, false, err
-	}
-	if err := s.recordApprovalEvent(ctx, q, approvalEvent{documentID: documentID, kind: approvalDecisionEvent[decision], approver: approver, actor: approver, note: note}); err != nil {
-		return repo.Approval{}, false, err
+	if row.Changed {
+		if err := s.enqueueApprovalNotification(ctx, tx, documentID, approver, approver, repo.ApprovalNotificationDecided); err != nil {
+			return repo.Approval{}, false, err
+		}
+		if err := s.recordApprovalEvent(ctx, q, approvalEvent{documentID: documentID, kind: approvalDecisionEvent[decision], approver: approver, actor: approver, note: note}); err != nil {
+			return repo.Approval{}, false, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return repo.Approval{}, false, err
@@ -213,7 +255,16 @@ func (s *Store) CreateOrUpdateApproval(ctx context.Context, documentID, versionI
 }
 
 func (s *Store) DeleteApproval(ctx context.Context, documentID, approvalID string, approver auth.Principal) error {
-	row, err := s.q.GetApproval(ctx, dbsqlc.GetApprovalParams{ID: approvalID, DocumentID: documentID})
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer rollback(ctx, tx)
+	q := s.q.WithTx(tx)
+	if _, err := lockDocument(ctx, q, documentID); err != nil {
+		return err
+	}
+	row, err := q.GetApproval(ctx, dbsqlc.GetApprovalParams{ID: approvalID, DocumentID: documentID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return repo.ErrNotFound
 	}
@@ -223,18 +274,8 @@ func (s *Store) DeleteApproval(ctx context.Context, documentID, approvalID strin
 	if row.ApproverType != string(approver.Type) || row.ApproverID != approver.ID {
 		return repo.ErrForbidden
 	}
-	tx, err := s.db.Begin(ctx)
-	if err != nil {
+	if err := q.RevokeApproval(ctx, approvalID); err != nil {
 		return err
-	}
-	defer rollback(ctx, tx)
-	q := s.q.WithTx(tx)
-	revoked, err := q.RevokeApproval(ctx, approvalID)
-	if err != nil {
-		return err
-	}
-	if revoked == 0 {
-		return repo.ErrNotFound
 	}
 	if err := s.recordApprovalEvent(ctx, q, approvalEvent{documentID: documentID, kind: repo.ApprovalEventRevoked, approver: approver, actor: approver}); err != nil {
 		return err

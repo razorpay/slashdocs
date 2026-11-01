@@ -46,6 +46,7 @@ func (e *endpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 type event struct {
 	ID       string `json:"id"`
 	Type     string `json:"type"`
+	Sequence int64  `json:"sequence"`
 	Document struct {
 		ID, Title, URL string
 	} `json:"document"`
@@ -106,8 +107,14 @@ func TestApprovalEventsReachTheWebhook(t *testing.T) {
 	if _, err := store.CreateApprovalRequest(ctx, doc.ID, reviewer, owner); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.CreateOrUpdateApproval(ctx, doc.ID, v1.ID, repo.DecisionRejected, "needs a rollback plan", reviewer); err != nil {
-		t.Fatal(err)
+	// Repeating the same decision changes nothing, so it sends no event.
+	for range 2 {
+		if _, _, err := store.CreateOrUpdateApproval(ctx, doc.ID, v1.ID, repo.DecisionRejected, "needs a rollback plan", reviewer); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if queued() != 2 {
+		t.Fatalf("queued = %d, want one event for the request and one for the decision", queued())
 	}
 	if _, err := store.CreateVersion(ctx, doc.ID, v1.ID, "", []byte("<p>two</p>"), owner); err != nil {
 		t.Fatal(err)
@@ -173,5 +180,8 @@ func TestApprovalEventsReachTheWebhook(t *testing.T) {
 	}
 	if created.Approver != nil || created.Version.Number != 2 || created.Status != repo.StatusPending || created.Summary.Pending != 1 {
 		t.Fatalf("version_created event = %+v", created)
+	}
+	if requested.Sequence >= rejected.Sequence || rejected.Sequence >= created.Sequence {
+		t.Fatalf("sequences = %d, %d, %d; want them in the order of the changes", requested.Sequence, rejected.Sequence, created.Sequence)
 	}
 }

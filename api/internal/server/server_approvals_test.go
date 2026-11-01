@@ -314,20 +314,18 @@ func TestApproveAsAssignedApprover(t *testing.T) {
 
 func TestServiceAccountApprover(t *testing.T) {
 	e := newTestEnv(t)
-	// Give the fixture service account access, then assign it as an approver.
-	rr := do(t, e.h, http.MethodPost, "/v1/documents/"+e.doc.ID+"/grants", fmt.Sprintf(`{
-	  "principal": { "type": "service_account", "id": %q },
-	  "role": "viewer"
-	}`, e.sa.ID), map[string]string{
-		"Content-Type":     "application/json",
-		"X-Test-Principal": principalHeader(fixtureOwner),
-	})
+	// The fixture service account belongs to the owner, who wrote version 1, so
+	// the approver is a bot of someone else.
+	sa, err := e.store.CreateServiceAccount(context.Background(), fixtureStranger, "reviewer-bot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	grantServiceAccountViewer(t, e, sa.ID)
+
+	rr := assignApprover(t, e, e.doc.ID, fmt.Sprintf(`{"principal": {"type": "service_account", "id": %q}}`, sa.ID), fixtureOwner)
 	assertStatus(t, rr, http.StatusCreated)
 
-	rr = assignApprover(t, e, e.doc.ID, fmt.Sprintf(`{"principal": {"type": "service_account", "id": %q}}`, e.sa.ID), fixtureOwner)
-	assertStatus(t, rr, http.StatusCreated)
-
-	saPrincipal := auth.Principal{Type: auth.PrincipalServiceAccount, ID: e.sa.ID}
+	saPrincipal := auth.Principal{Type: auth.PrincipalServiceAccount, ID: sa.ID}
 	rr = submitApproval(t, e, e.doc.ID, e.ver.ID, "approved", saPrincipal)
 	assertStatus(t, rr, http.StatusCreated)
 
@@ -335,6 +333,18 @@ func TestServiceAccountApprover(t *testing.T) {
 	if doc.ApprovalStatus != "approved" {
 		t.Fatalf("approval_status = %q, want approved", doc.ApprovalStatus)
 	}
+}
+
+func grantServiceAccountViewer(t *testing.T, e *testEnv, saID string) {
+	t.Helper()
+	rr := do(t, e.h, http.MethodPost, "/v1/documents/"+e.doc.ID+"/grants", fmt.Sprintf(`{
+	  "principal": { "type": "service_account", "id": %q },
+	  "role": "viewer"
+	}`, saID), map[string]string{
+		"Content-Type":     "application/json",
+		"X-Test-Principal": principalHeader(fixtureOwner),
+	})
+	assertStatus(t, rr, http.StatusCreated)
 }
 
 func TestReject(t *testing.T) {
@@ -850,6 +860,82 @@ func TestApproverWhoCreatesAVersionIsRemoved(t *testing.T) {
 		if !strings.Contains(rr.Body.String(), "You created a version") {
 			t.Fatalf("body = %s, want the created-a-version message", rr.Body.String())
 		}
+	}
+}
+
+// A service account works for its owner, so a version that a person's bot
+// pushes is that person's work too.
+func TestApproverWhoseBotCreatesAVersionIsRemoved(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	sa, err := e.store.CreateServiceAccount(ctx, fixtureEditor, "editor-bot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bot := auth.Principal{Type: auth.PrincipalServiceAccount, ID: sa.ID}
+	if _, err := e.store.CreateGrant(ctx, "document", e.doc.ID, bot, "editor", fixtureOwner); err != nil {
+		t.Fatal(err)
+	}
+	mustAssignApprover(t, e, e.doc.ID, "editor@example.com", fixtureOwner)
+
+	second := pushApprovalTestVersion(t, e, e.doc.ID, e.ver.ID, bot)
+
+	if list := listApprovals(t, e, e.doc.ID, "", fixtureOwner); len(list.Items) != 0 {
+		t.Fatalf("items = %+v, want the bot's owner removed", list.Items)
+	}
+	assertStatus(t, submitApproval(t, e, e.doc.ID, second, "approved", fixtureEditor), http.StatusForbidden)
+	rr := assignApprover(t, e, e.doc.ID, `{"principal": {"type": "user", "email": "editor@example.com"}}`, fixtureOwner)
+	assertStatus(t, rr, http.StatusBadRequest)
+}
+
+func TestBotOfTheCreatorCannotBeAssignedAsApprover(t *testing.T) {
+	e := newTestEnv(t)
+	// The fixture service account belongs to the owner, who uploaded version 1.
+	grantServiceAccountViewer(t, e, e.sa.ID)
+	rr := assignApprover(t, e, e.doc.ID, fmt.Sprintf(`{"principal": {"type": "service_account", "id": %q}}`, e.sa.ID), fixtureOwner)
+	assertStatus(t, rr, http.StatusBadRequest)
+	if !strings.Contains(rr.Body.String(), "created a version of this document") {
+		t.Fatalf("body = %s, want the created-a-version message", rr.Body.String())
+	}
+}
+
+// An approver who cannot read the document cannot decide, so revoking the
+// grant they read it through removes them, with their decisions. An approver
+// who still has access through another grant stays.
+func TestApproverWhoLosesAccessIsRemoved(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	owner := principalHeader(fixtureOwner)
+	folderID := createFolder(t, e, `{"title":"Reviews"}`, owner)
+	if _, err := e.store.MoveDocumentToFolder(ctx, fixtureOwner, folderID, e.doc.ID); err != nil {
+		t.Fatal(err)
+	}
+	rr := do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/grants",
+		`{"address":"`+fixtureStranger.Email+`","role":"viewer"}`,
+		map[string]string{"X-Test-Principal": owner, "Content-Type": "application/json"})
+	assertStatus(t, rr, http.StatusCreated)
+	folderGrantID := jsonField(t, rr.Body.Bytes(), "id")
+	for _, email := range []string{"viewer@example.com", "commenter@example.com", "stranger@example.com"} {
+		mustAssignApprover(t, e, e.doc.ID, email, fixtureOwner)
+	}
+	assertStatus(t, submitApproval(t, e, e.doc.ID, e.ver.ID, "approved", fixtureViewer), http.StatusCreated)
+
+	grants, err := e.store.ListGrants(ctx, e.doc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, grant := range grants {
+		if grant.Principal.ID == fixtureViewer.ID {
+			rr := do(t, e.h, http.MethodDelete, "/v1/documents/"+e.doc.ID+"/grants/"+grant.ID, "", map[string]string{"X-Test-Principal": owner})
+			assertStatus(t, rr, http.StatusNoContent)
+		}
+	}
+	rr = do(t, e.h, http.MethodDelete, "/v1/folders/"+folderID+"/grants/"+folderGrantID, "", map[string]string{"X-Test-Principal": owner})
+	assertStatus(t, rr, http.StatusNoContent)
+
+	list := listApprovals(t, e, e.doc.ID, "", fixtureOwner)
+	if len(list.Items) != 1 || list.Items[0].Approver.Email != "commenter@example.com" || list.Summary.Approved != 0 {
+		t.Fatalf("list = %+v, want only the commenter, pending", list)
 	}
 }
 

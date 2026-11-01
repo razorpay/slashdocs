@@ -603,19 +603,20 @@ a review task for each approver. Each change writes one event in the database
 transaction of the change. A worker posts the event as JSON and deletes it when
 the webhook answers with a 2xx status.
 
-| `type`                     | When                                                           |
-| -------------------------- | -------------------------------------------------------------- |
-| `approval.requested`       | The owner asks someone to approve                              |
-| `approval.removed`         | The owner removes an approver, or an approver pushes a version |
-| `approval.approved`        | An approver approves                                           |
-| `approval.rejected`        | An approver rejects                                            |
-| `approval.revoked`         | An approver revokes their decision                             |
-| `approval.version_created` | A new version of a document that has approvers                 |
+| `type`                     | When                                                                                                         |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `approval.requested`       | The owner asks someone to approve                                                                            |
+| `approval.removed`         | The owner removes an approver, an approver (or their bot) pushes a version, or an approver loses read access |
+| `approval.approved`        | An approver approves                                                                                         |
+| `approval.rejected`        | An approver rejects                                                                                          |
+| `approval.revoked`         | An approver revokes their decision                                                                           |
+| `approval.version_created` | A new version of a document that has approvers                                                               |
 
 ```json
 {
   "id": "evt_…",
   "type": "approval.rejected",
+  "sequence": 42,
   "created_at": "2026-11-01T12:00:00.000000Z",
   "document": {
     "id": "doc_…",
@@ -660,7 +661,9 @@ Each request has three headers, in the
 A failed request (an error, a timeout after 10 seconds, or a non-2xx status)
 is tried again after 2 seconds, then after double the delay, up to one hour.
 Events still undelivered after seven days are dropped with an error log.
-Events can arrive out of order after a retry: order them by `created_at`.
+Events can arrive out of order after a retry. Order the events of one document
+by `sequence`: the changes to a document take turns, so a higher number is a
+later change. A repeated decision with the same note sends no event.
 
 ## Health and metadata endpoints
 

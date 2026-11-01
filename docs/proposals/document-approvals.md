@@ -18,6 +18,9 @@
 | 2026-11-01 | A decision vouches for content (sha256), not for a version row        | Versions become an automatic edit history, so they are frequent. A version with the same content shows the decision; other content does not. A revert restores approvals. No rows are copied               |
 | 2026-11-01 | `keep_approvals` is removed                                           | It let a publisher keep approvals over content the approvers did not see, which breaks the tie between an approval and its content                                                                         |
 | 2026-11-01 | An approver who pushes a version stops being an approver              | The push removes them and their decisions in its transaction, so the "creators cannot approve" rule always holds. Before, they stayed assigned but could never decide, so the document waited forever      |
+| 2026-11-01 | A bot and its owner are one author                                    | The creator rule compares the human behind each principal (a service account's owner), as the GitHub author mapping does. Otherwise a user pushes through their bot and approves the result                |
+| 2026-11-01 | An approver who loses read access stops being an approver             | Revoking the grant removes them and their decisions in its transaction. They could not open or decide, so the document waited forever                                                                      |
+| 2026-11-01 | A repeated decision tells nobody                                      | The same decision and note on the same content sends no notification and no event                                                                                                                          |
 | 2026-11-01 | One name: reject                                                      | The decision value, the CLI verb (`docs reject`), the UI and the events all say "rejected". The value was `changes_requested` while the UI said Reject                                                     |
 | 2026-11-01 | Approvers and owners get Slack notifications                          | An approver hears when they are asked. The owner hears each approval or rejection. Revoking does not notify                                                                                                |
 | 2026-11-01 | Approval events go to a webhook through an outbox                     | Replaces the insert-only event log proposal (#245). Off by default. See "Events"                                                                                                                           |
@@ -30,7 +33,8 @@ Document owners assign approvers. Approvers approve or reject the content of the
 
 - Only the document owner can assign or remove approvers.
 - Approvers must already have viewer+ access on the document.
-- Anyone who created a version of the document cannot be assigned as an approver or decide. An approver who pushes a version stops being an approver.
+- Anyone who created a version of the document cannot be assigned as an approver or decide. A service account and its owner are one author. An approver who pushes a version (or whose bot pushes one) stops being an approver.
+- An approver who loses read access when a grant is revoked stops being an approver.
 - Approvers approve or reject what the document says now. A decision names the version it was made on and vouches for that version's content (`sha256`).
 - All assigned approvers must approve for the document status to be "approved."
 - An approver can change their decision (upsert) or **revoke** it (back to pending).
@@ -169,20 +173,22 @@ The earlier proposal (#245) wrote a retained, insert-only log of bare signals wi
 
 ## Edge Cases
 
-| Scenario                                | Behavior                                                   | HTTP |
-| --------------------------------------- | ---------------------------------------------------------- | ---- |
-| Assign user without doc access          | Refused                                                    | 400  |
-| Assign same user twice                  | Refused                                                    | 409  |
-| Assign someone who created a version    | Refused, including the owner who published it              | 400  |
-| Approver pushes a version               | Push succeeds; approver and their decisions removed        | —    |
-| Approver loses access                   | Request stays; counts as pending; owner should remove them | —    |
-| Decision on replaced content            | Refused; nothing recorded                                  | 409  |
-| Decision on older version, same content | Recorded on that content                                   | 201  |
-| Decision races a push                   | Waits for the push; then refused if content changed        | 409  |
-| Non-approver submits decision           | Forbidden                                                  | 403  |
-| Revoke someone else's decision          | Forbidden                                                  | 403  |
-| Remove approver who already decided     | Request and all their decisions revoked                    | 204  |
-| Document deleted                        | CASCADE                                                    | —    |
+| Scenario                                | Behavior                                            | HTTP |
+| --------------------------------------- | --------------------------------------------------- | ---- |
+| Assign user without doc access          | Refused                                             | 400  |
+| Assign same user twice                  | Refused                                             | 409  |
+| Assign someone who created a version    | Refused, including the owner who published it       | 400  |
+| Approver pushes a version               | Push succeeds; approver and their decisions removed | —    |
+| Approver's bot pushes a version         | Same as the approver pushing                        | —    |
+| Grant revoked, approver loses access    | Approver and their decisions removed                | 204  |
+| Approver repeats the same decision      | Kept; no notification and no event                  | 200  |
+| Decision on replaced content            | Refused; nothing recorded                           | 409  |
+| Decision on older version, same content | Recorded on that content                            | 201  |
+| Decision races a push                   | Waits for the push; then refused if content changed | 409  |
+| Non-approver submits decision           | Forbidden                                           | 403  |
+| Revoke someone else's decision          | Forbidden                                           | 403  |
+| Remove approver who already decided     | Request and all their decisions revoked             | 204  |
+| Document deleted                        | CASCADE                                             | —    |
 
 ## Appendix: Why Not KV?
 

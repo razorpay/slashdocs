@@ -73,6 +73,14 @@ func TestApprovalNotifications(t *testing.T) {
 		t.Fatalf("decision notification: emails=%v messages=%+v", sender.emails, sender.messages)
 	}
 
+	// The same decision again tells the owner nothing new.
+	if _, _, err := store.CreateOrUpdateApproval(ctx, doc.ID, v.ID, repo.DecisionRejected, "needs a rollback plan", approver); err != nil {
+		t.Fatal(err)
+	}
+	if queued() != 0 {
+		t.Fatalf("a repeated decision queued %d notifications", queued())
+	}
+
 	// A decision revoked before delivery, or an approver removed before their
 	// request is delivered, sends nothing.
 	approval, _, err := store.CreateOrUpdateApproval(ctx, doc.ID, v.ID, repo.DecisionApproved, "", approver)

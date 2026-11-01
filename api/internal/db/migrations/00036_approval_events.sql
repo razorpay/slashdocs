@@ -14,5 +14,9 @@ CREATE TABLE approval_event_outbox (
 
 CREATE INDEX approval_event_pending ON approval_event_outbox(available_at);
 
+-- Numbers the events in each payload, so a receiver can order them.
+CREATE SEQUENCE approval_event_sequence;
+
 -- +goose Down
+DROP SEQUENCE approval_event_sequence;
 DROP TABLE approval_event_outbox;
