@@ -305,6 +305,24 @@ func (s *Store) ListApprovals(ctx context.Context, documentID, sha256 string) ([
 	return out, nil
 }
 
+func (s *Store) ListLatestApprovals(ctx context.Context, documentID string) ([]repo.Approval, error) {
+	rows, err := s.q.ListLatestApprovals(ctx, documentID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]repo.Approval, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, repo.Approval{
+			DocumentID: documentID,
+			SHA256:     r.Sha256,
+			Approver:   auth.Principal{Type: auth.PrincipalType(r.ApproverType), ID: r.ApproverID},
+			Decision:   r.Decision,
+			DecidedAt:  pgTimeRFC3339(r.DecidedAt),
+		})
+	}
+	return out, nil
+}
+
 func (s *Store) DocumentApprovalSummaries(ctx context.Context, documentIDs []string) (map[string]repo.ApprovalSummary, error) {
 	if len(documentIDs) == 0 {
 		return map[string]repo.ApprovalSummary{}, nil

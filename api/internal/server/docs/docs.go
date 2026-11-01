@@ -1693,6 +1693,64 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/documents/{id}/versions/{version_id}/restore": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Saves the content of an earlier version as the newest version, as an edit by the caller. History keeps every version, so a restore can itself be undone by restoring again.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "versions"
+                ],
+                "summary": "Restore version",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Version ID to restore",
+                        "name": "version_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Change summary",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/server.restoreVersionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/server.createVersionResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/folders/{id}/grants": {
             "post": {
                 "security": [
@@ -2476,6 +2534,14 @@ const docTemplate = `{
                 "decision": {
                     "type": "string"
                 },
+                "earlier": {
+                    "description": "Earlier is set while the approver is pending on this content: their most\nrecent decision, made on other content of the document. On the current\nversion it lets the UI say \"Approved before the latest edits\".",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/server.earlierDecision"
+                        }
+                    ]
+                },
                 "id": {
                     "type": "string"
                 },
@@ -2960,6 +3026,17 @@ const docTemplate = `{
                 }
             }
         },
+        "server.earlierDecision": {
+            "type": "object",
+            "properties": {
+                "decided_at": {
+                    "type": "string"
+                },
+                "decision": {
+                    "type": "string"
+                }
+            }
+        },
         "server.editDocumentRequest": {
             "type": "object",
             "properties": {
@@ -3371,6 +3448,14 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "id": {
+                    "type": "string"
+                }
+            }
+        },
+        "server.restoreVersionRequest": {
+            "type": "object",
+            "properties": {
+                "change_summary": {
                     "type": "string"
                 }
             }

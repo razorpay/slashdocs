@@ -558,6 +558,10 @@ type Repository interface {
 	DeleteApproval(ctx context.Context, documentID, approvalID string, approver auth.Principal) error
 	// ListApprovals returns the active decisions on the given content.
 	ListApprovals(ctx context.Context, documentID, sha256 string) ([]Approval, error)
+	// ListLatestApprovals returns each approver's most recent active decision
+	// on any content of the document. Only Approver, SHA256, Decision and
+	// DecidedAt are set.
+	ListLatestApprovals(ctx context.Context, documentID string) ([]Approval, error)
 	// DocumentApprovalSummaries batch-computes each document's approval summary
 	// for its current content. Documents without assigned approvers are absent
 	// from the result map.

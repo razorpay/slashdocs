@@ -85,6 +85,16 @@ type approvalListItem struct {
 	// started on the document, so a rejection can say "2 open of 3".
 	CommentsOpen  int `json:"comments_open,omitempty"`
 	CommentsTotal int `json:"comments_total,omitempty"`
+	// Earlier is set while the approver is pending on this content: their most
+	// recent decision, made on other content of the document. On the current
+	// version it lets the UI say "Approved before the latest edits".
+	Earlier *earlierDecision `json:"earlier,omitempty"`
+}
+
+// earlierDecision is an approver's decision on other content.
+type earlierDecision struct {
+	Decision  string `json:"decision"`
+	DecidedAt string `json:"decided_at"`
 }
 
 // approvalsListResponse is the payload of GET /v1/documents/{id}/approvals.
@@ -434,10 +444,14 @@ func (h handlers) approvalsVersion(c *gin.Context) (repo.Version, bool) {
 // buildApprovalItems merges each assigned approver with their decision on the
 // content, and adds up the decisions into the summary. counts may be nil: it
 // only decorates the items.
-func buildApprovalItems(requests []repo.ApprovalRequest, decisions []repo.Approval, counts map[string]commentCounts) ([]approvalListItem, repo.ApprovalSummary) {
+func buildApprovalItems(requests []repo.ApprovalRequest, decisions, latest []repo.Approval, counts map[string]commentCounts) ([]approvalListItem, repo.ApprovalSummary) {
 	decisionByApprover := make(map[string]repo.Approval, len(decisions))
 	for _, a := range decisions {
 		decisionByApprover[principalKey(a.Approver)] = a
+	}
+	latestByApprover := make(map[string]repo.Approval, len(latest))
+	for _, a := range latest {
+		latestByApprover[principalKey(a.Approver)] = a
 	}
 	summary := repo.ApprovalSummary{Total: len(requests)}
 	items := make([]approvalListItem, 0, len(requests))
@@ -462,6 +476,8 @@ func buildApprovalItems(requests []repo.ApprovalRequest, decisions []repo.Approv
 			case repo.DecisionRejected:
 				summary.Rejected++
 			}
+		} else if a, ok := latestByApprover[principalKey(r.Approver)]; ok {
+			item.Earlier = &earlierDecision{Decision: a.Decision, DecidedAt: a.DecidedAt}
 		}
 		items = append(items, item)
 	}
@@ -499,12 +515,17 @@ func (h handlers) listApprovals(c *gin.Context) {
 		internalErr(c, err)
 		return
 	}
+	latest, err := h.deps.repository.ListLatestApprovals(ctx, docID)
+	if err != nil {
+		internalErr(c, err)
+		return
+	}
 	// Best-effort: without these the list just does not count comments.
 	counts, err := h.reviewerCommentCounts(ctx, docID)
 	if err != nil {
 		requestLogger(c).Warn("approval comment counts", "error", err)
 	}
-	items, summary := buildApprovalItems(requests, decisions, counts)
+	items, summary := buildApprovalItems(requests, decisions, latest, counts)
 	c.JSON(http.StatusOK, approvalsListResponse{
 		VersionID:     version.ID,
 		VersionNumber: version.Number,

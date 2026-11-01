@@ -201,6 +201,13 @@ definitions:
         type: string
       decision:
         type: string
+      earlier:
+        allOf:
+        - $ref: '#/definitions/server.earlierDecision'
+        description: |-
+          Earlier is set while the approver is pending on this content: their most
+          recent decision, made on other content of the document. On the current
+          version it lets the UI say "Approved before the latest edits".
       id:
         type: string
       note:
@@ -521,6 +528,13 @@ definitions:
       url:
         type: string
     type: object
+  server.earlierDecision:
+    properties:
+      decided_at:
+        type: string
+      decision:
+        type: string
+    type: object
   server.editDocumentRequest:
     properties:
       base_version_id:
@@ -788,6 +802,11 @@ definitions:
       email:
         type: string
       id:
+        type: string
+    type: object
+  server.restoreVersionRequest:
+    properties:
+      change_summary:
         type: string
     type: object
   server.serviceAccountKey:
@@ -1888,6 +1907,44 @@ paths:
       - bearerAuth: []
       - cookieAuth: []
       summary: Create render token
+      tags:
+      - versions
+  /v1/documents/{id}/versions/{version_id}/restore:
+    post:
+      consumes:
+      - application/json
+      description: Saves the content of an earlier version as the newest version,
+        as an edit by the caller. History keeps every version, so a restore can itself
+        be undone by restoring again.
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Version ID to restore
+        in: path
+        name: version_id
+        required: true
+        type: string
+      - description: Change summary
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/server.restoreVersionRequest'
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/server.createVersionResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Restore version
       tags:
       - versions
   /v1/folders/{id}/grants:

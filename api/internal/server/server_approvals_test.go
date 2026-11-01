@@ -88,6 +88,10 @@ type approvalItem struct {
 	VersionNumber int     `json:"version_number"`
 	CommentsOpen  int     `json:"comments_open"`
 	CommentsTotal int     `json:"comments_total"`
+	Earlier       *struct {
+		Decision  string `json:"decision"`
+		DecidedAt string `json:"decided_at"`
+	} `json:"earlier"`
 }
 
 type approvalsListResponse struct {
@@ -466,6 +470,13 @@ func TestListApprovalsHistoricalVersion(t *testing.T) {
 	current := listApprovals(t, e, e.doc.ID, "", fixtureViewer)
 	if current.Status != "pending" {
 		t.Fatalf("current status = %q, want pending", current.Status)
+	}
+	// The pending approver still shows what they decided before the change.
+	if got := current.Items[0]; got.Decision != nil || got.Earlier == nil || got.Earlier.Decision != "rejected" || got.Earlier.DecidedAt == "" {
+		t.Fatalf("current item = %+v, want pending with an earlier rejection", got)
+	}
+	if historical.Items[0].Earlier != nil {
+		t.Fatalf("historical item = %+v, want no earlier decision beside the decision", historical.Items[0])
 	}
 }
 

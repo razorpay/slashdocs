@@ -181,6 +181,16 @@ LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account 
 WHERE a.document_id = @document_id AND a.sha256 = @sha256 AND a.revoked_at IS NULL
 ORDER BY a.decided_at, a.id;
 
+-- name: ListLatestApprovals :many
+-- Each approver's most recent active decision on any content of the
+-- document, so a pending approver can be shown what they decided before the
+-- content changed.
+SELECT DISTINCT ON (approver_type, approver_id)
+  approver_type, approver_id, sha256, decision, decided_at
+FROM approvals
+WHERE document_id = @document_id AND revoked_at IS NULL
+ORDER BY approver_type, approver_id, decided_at DESC, id DESC;
+
 -- name: GetApproval :one
 SELECT id, document_id, version_id, approver_type, approver_id, decision
 FROM approvals

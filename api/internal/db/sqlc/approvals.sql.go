@@ -400,6 +400,51 @@ func (q *Queries) ListContentApprovals(ctx context.Context, arg ListContentAppro
 	return items, nil
 }
 
+const listLatestApprovals = `-- name: ListLatestApprovals :many
+SELECT DISTINCT ON (approver_type, approver_id)
+  approver_type, approver_id, sha256, decision, decided_at
+FROM approvals
+WHERE document_id = $1 AND revoked_at IS NULL
+ORDER BY approver_type, approver_id, decided_at DESC, id DESC
+`
+
+type ListLatestApprovalsRow struct {
+	ApproverType string
+	ApproverID   string
+	Sha256       string
+	Decision     string
+	DecidedAt    pgtype.Timestamptz
+}
+
+// Each approver's most recent active decision on any content of the
+// document, so a pending approver can be shown what they decided before the
+// content changed.
+func (q *Queries) ListLatestApprovals(ctx context.Context, documentID string) ([]ListLatestApprovalsRow, error) {
+	rows, err := q.db.Query(ctx, listLatestApprovals, documentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLatestApprovalsRow
+	for rows.Next() {
+		var i ListLatestApprovalsRow
+		if err := rows.Scan(
+			&i.ApproverType,
+			&i.ApproverID,
+			&i.Sha256,
+			&i.Decision,
+			&i.DecidedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockApproversWithoutAccess = `-- name: LockApproversWithoutAccess :many
 WITH RECURSIVE subtree(id) AS (
   SELECT $1::text
