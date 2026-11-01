@@ -395,7 +395,6 @@ export function Comments({ mobile = false }: { mobile?: boolean }) {
     commentFilter: filter,
     setCommentFilter: setFilter,
     setActiveComment,
-    scrollDocumentTo,
   } = useDoc();
   const headerRef = useRef<HTMLDivElement>(null);
   const [headerHeight, setHeaderHeight] = useState(0);
@@ -419,10 +418,8 @@ export function Comments({ mobile = false }: { mobile?: boolean }) {
     if (next === filter) return;
     setFilter(next);
     // Let the bridge reveal the first matching highlight after repainting.
-    // Sending a scroll-to-top here would interrupt that reveal.
-    const first = comments.find((c) => matchesCommentFilter(c.status, next));
-    if (!first) scrollDocumentTo(0);
-    setActiveComment(first?.id);
+    // With no match there is nothing to reveal, so the reader stays in place.
+    setActiveComment(comments.find((c) => matchesCommentFilter(c.status, next))?.id);
   };
 
   return (
@@ -679,6 +676,7 @@ function CommentRail({
     drafts,
     activeComment,
     commentPositions,
+    unanchoredComments,
     commentViewport,
     scrollDocumentTo,
     registerCommentRailSync,
@@ -792,6 +790,9 @@ function CommentRail({
     const rail = railRef.current;
     const placement = placements.find((item) => item.id === activeComment);
     if (!rail || !placement || !heights.has(activeComment)) return;
+    // A thread has no position until the bridge paints it, as after a filter
+    // switch. Wait for the paint: only an unanchored thread stays at the start.
+    if (placement.atStart && !unanchoredComments.has(activeComment)) return;
     revealedComment.current = activeComment;
     if (!placement.atStart) return;
     // Reveal unanchored threads where they already are. Clicking a visible
@@ -824,6 +825,7 @@ function CommentRail({
     activeComment,
     placements,
     heights,
+    unanchoredComments,
     linkedComment,
     applyDocumentScroll,
     scrollDocumentTo,
