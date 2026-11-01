@@ -329,7 +329,7 @@ func (s *Store) enqueueNewCommentMentionNotifications(ctx context.Context, tx pg
 		WHERE c.id=$1 AND NOT (c.author_type='user' AND c.author_id=recipient.id)
 		AND NOT EXISTS(SELECT 1 FROM notification_preferences p WHERE p.principal_type='user' AND p.principal_id=recipient.id AND NOT p.enabled)
 		AND NOT EXISTS(SELECT 1 FROM document_notification_mutes m WHERE m.principal_type='user' AND m.principal_id=recipient.id AND m.document_id=d.id)
-		ON CONFLICT(comment_id,recipient_id) DO UPDATE SET reason='mention', available_at=LEAST(queued.available_at, now()), finished_providers='{}'`, commentID, recipientIDs)
+		ON CONFLICT(comment_id,recipient_id) DO UPDATE SET reason='mention', attempts=0, available_at=LEAST(queued.available_at, now()), finished_providers='{}'`, commentID, recipientIDs)
 	return err
 }
 

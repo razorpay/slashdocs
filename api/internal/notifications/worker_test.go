@@ -342,6 +342,32 @@ func TestEachProviderDeliversOnce(t *testing.T) {
 	if queued() || len(slack.emails) != 3 || len(chat.emails) != 3 {
 		t.Fatal("a retry must skip a provider that failed permanently")
 	}
+
+	// A re-enqueue sends the new content to every provider, and an
+	// acknowledgement from an earlier claim cannot discard it.
+	c, err := store.CreateComment(ctx, doc.ID, v.ID, "@Owner", repo.Anchor{Quote: "Review"}, author, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deliver(&DeliveryError{Code: "rate_limited"}, nil)
+	if _, err := store.Pool().Exec(ctx, "UPDATE comment_notification_outbox SET available_at=now()"); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := store.ClaimCommentNotification(ctx)
+	if err != nil || stale == nil {
+		t.Fatalf("claim=%v err=%v", stale, err)
+	}
+	mentions := []repo.CommentMention{{Principal: owner, OffsetUTF16: 0, LengthUTF16: int64(len("@Owner"))}}
+	if _, err := store.UpdateComment(ctx, c.ID, repo.CommentUpdate{Mentions: &mentions}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FinishCommentNotification(ctx, *stale, 0); err != nil {
+		t.Fatal(err)
+	}
+	deliver(nil, nil)
+	if queued() || slack.reasons[len(slack.reasons)-1] != "mention" || chat.reasons[len(chat.reasons)-1] != "mention" {
+		t.Fatalf("a mention upgrade must reach every provider: slack=%v chat=%v", slack.reasons, chat.reasons)
+	}
 }
 
 func TestCommentActorFallbacks(t *testing.T) {
