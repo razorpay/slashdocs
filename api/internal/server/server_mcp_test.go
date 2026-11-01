@@ -329,6 +329,18 @@ func TestMCPDocumentAndFolderToolParity(t *testing.T) {
 	versionID := requiredMCPString(t, created, "current_version_id")
 
 	assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "get_document", map[string]any{"document_id": docID}), docID)
+	// The only match is on the first page, and the second page is empty.
+	second := assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "list_documents", map[string]any{
+		"query": "parity", "limit": 1, "offset": 1,
+	}), "items")
+	var page struct {
+		Items   []any `json:"items"`
+		HasMore bool  `json:"has_more"`
+	}
+	if err := json.Unmarshal([]byte(second.Text), &page); err != nil || len(page.Items) != 0 || page.HasMore {
+		t.Fatalf("second page = %s, %v, want no documents", second.Text, err)
+	}
+	assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "list_documents", map[string]any{"query": "parity", "limit": 1}), docID)
 	assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "rename_document", map[string]any{
 		"document_id": docID, "title": "Renamed through MCP",
 	}), "Renamed through MCP")

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -56,6 +57,7 @@ func documentRequestAccessCmd(g *globals, out io.Writer) *cobra.Command {
 
 func documentListCmd(g *globals, out io.Writer) *cobra.Command {
 	var query string
+	var limit, offset int
 	cmd := &cobra.Command{
 		Use:   "list [query]",
 		Short: "List or search documents",
@@ -74,6 +76,7 @@ func documentListCmd(g *globals, out io.Writer) *cobra.Command {
 			"a month, or a year (last week, september, this year, 2026), or last 7 days.\n" +
 			"Dates use UTC. Repeat from: or in: to match any value.\n" +
 			"Quote the whole query when it contains spaces.\n\n" +
+			"A list shows 25 documents. Use --limit for up to 100, and --offset to see the next documents.\n\n" +
 			"With --local, the query finds each word in the title or the path of a document, and modifiers are not available.",
 		Example: "  slashdocs docs list 'incident from:alice@example.com label:api,review in:\"Product Specs\"'\n" +
 			"  slashdocs docs list --query 'rollout -draft from:me after:last week'",
@@ -85,18 +88,51 @@ func documentListCmd(g *globals, out io.Writer) *cobra.Command {
 			if len(args) == 1 {
 				query = args[0]
 			}
-			path := "/v1/documents"
+			params := url.Values{}
 			if strings.TrimSpace(query) != "" {
-				params := url.Values{"q": []string{query}}
+				params.Set("q", query)
+			}
+			if limit > 0 {
+				params.Set("limit", strconv.Itoa(limit))
+			}
+			if offset > 0 {
+				params.Set("offset", strconv.Itoa(offset))
+			}
+			path := "/v1/documents"
+			if len(params) > 0 {
 				path += "?" + params.Encode()
 			}
-			return run(g, out, func(c *Client) ([]byte, error) {
-				return c.do("GET", path, nil, "")
-			})
+			c, err := client(g)
+			if err != nil {
+				return err
+			}
+			b, err := c.do("GET", path, nil, "")
+			if err != nil {
+				return err
+			}
+			if err := render(out, g, b); err != nil {
+				return err
+			}
+			return renderMoreDocuments(out, g, b, offset)
 		},
 	}
 	cmd.Flags().StringVar(&query, "query", "", "search query")
+	cmd.Flags().IntVar(&limit, "limit", 0, "the number of documents to show, up to 100 (default 25)")
+	cmd.Flags().IntVar(&offset, "offset", 0, "the number of documents to skip")
 	return cmd
+}
+
+// renderMoreDocuments tells a person how to see the next page of a list. JSON
+// output has has_more instead.
+func renderMoreDocuments(out io.Writer, g *globals, b []byte, offset int) error {
+	var page struct {
+		Items   []json.RawMessage `json:"items"`
+		HasMore bool              `json:"has_more"`
+	}
+	if g.json || json.Unmarshal(b, &page) != nil || !page.HasMore {
+		return nil
+	}
+	return message(out, g, fmt.Sprintf("More documents follow. Use --offset %d to see them.", offset+len(page.Items)))
 }
 
 func documentLabelsCmd(g *globals, out io.Writer) *cobra.Command {

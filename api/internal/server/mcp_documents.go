@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -39,12 +40,19 @@ func registerMCPDocumentTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 
 func registerMCPDocumentCRUDTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 	server.AddTool(mcp.NewTool("list_documents", readOnlyOptions(
-		mcp.WithDescription("List documents visible to the caller, or search their titles and text. Documents with the words in the title come first, then the latest."),
+		mcp.WithDescription("List documents visible to the caller, or search their titles and text. Documents with the words in the title come first, then the latest. The result is one page: has_more is true when more documents follow, and offset gets the next page."),
 		mcp.WithString("query", mcp.Description("Optional Slack-style search of titles and text: words, \"phrases\", -word, from:, in:, label:, before:, after:, on:, and during:.")),
+		mcp.WithNumber("limit", mcp.Description("Optional page size: 25 by default, 100 at most.")),
+		mcp.WithNumber("offset", mcp.Description("Optional number of documents to skip.")),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		values := url.Values{}
 		if query := request.GetString("query", ""); query != "" {
 			values.Set("q", query)
+		}
+		for _, key := range []string{"limit", "offset"} {
+			if n := request.GetInt(key, 0); n > 0 {
+				values.Set(key, strconv.Itoa(n))
+			}
 		}
 		target := "/v1/documents"
 		if len(values) > 0 {

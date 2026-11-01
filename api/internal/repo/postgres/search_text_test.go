@@ -33,7 +33,7 @@ func TestPostgresSearchDocumentText(t *testing.T) {
 	budget := create("Budget plan", "<p>Planning notes.</p>")
 	search := func(terms, excluded []string) []repo.Document {
 		t.Helper()
-		results, err := store.SearchDocuments(ctx, owner, repo.DocumentSearch{Terms: terms, ExcludedTerms: excluded}, false, 25)
+		results, _, err := store.SearchDocuments(ctx, owner, repo.DocumentSearch{Terms: terms, ExcludedTerms: excluded}, false, repo.Page{Limit: 25})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -153,7 +153,7 @@ func TestPostgresSearchRanksTitlesThenLatest(t *testing.T) {
 	latest := create("Status", "<p>One rollout.</p>")
 	partialTitle := create("Rollout checklist", "<p>Steps.</p>")
 
-	results, err := store.SearchDocuments(ctx, owner, repo.DocumentSearch{Terms: []string{"rollout"}}, false, 25)
+	results, _, err := store.SearchDocuments(ctx, owner, repo.DocumentSearch{Terms: []string{"rollout"}}, false, repo.Page{Limit: 25})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestPostgresSearchRanksTitlesThenLatest(t *testing.T) {
 
 	// With several words, a title that has more of them ranks higher than a
 	// title that has one, and both rank above text-only matches.
-	results, err = store.SearchDocuments(ctx, owner, repo.DocumentSearch{Terms: []string{"rollout", "plan"}}, false, 25)
+	results, _, err = store.SearchDocuments(ctx, owner, repo.DocumentSearch{Terms: []string{"rollout", "plan"}}, false, repo.Page{Limit: 25})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,5 +178,51 @@ func TestPostgresSearchRanksTitlesThenLatest(t *testing.T) {
 	}
 	if want := []string{inTitle.ID}; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("results = %v, want %v", got, want)
+	}
+}
+
+func TestPostgresSearchPages(t *testing.T) {
+	ctx := context.Background()
+	store, err := pgrepo.ConnectWithBlob(ctx, testdb.New(t), blob.NewMemory())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store.Close)
+	owner := auth.Principal{Type: auth.PrincipalUser, ID: "usr_page_owner", Email: "page-owner@test.com"}
+	// The same title gives the documents the same rank.
+	for _, text := range []string{"error budget", "budget error", "error budget", "the error budget"} {
+		if _, _, err := store.CreateDocument(ctx, owner, "Same title", []byte("<p>"+text+"</p>")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	search := func(terms []string, page repo.Page) ([]string, bool) {
+		t.Helper()
+		results, more, err := store.SearchDocuments(ctx, owner, repo.DocumentSearch{Terms: terms}, false, page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ids []string
+		for _, r := range results {
+			ids = append(ids, r.ID)
+		}
+		return ids, more
+	}
+	// Pages of one document, read until has_more is false, give the documents
+	// of one large page in the same order. A phrase is examined after the
+	// sort, and a stop word takes the query arm without words.
+	for _, terms := range [][]string{{"error budget"}, {"the"}} {
+		all, more := search(terms, repo.Page{Limit: 25})
+		if more || len(all) < 3 {
+			t.Fatalf("%q: %v, has_more %v, want at least 3 documents on one page", terms, all, more)
+		}
+		var paged []string
+		for offset, more := int32(0), true; more && int(offset) <= len(all); offset++ {
+			var ids []string
+			ids, more = search(terms, repo.Page{Limit: 1, Offset: offset})
+			paged = append(paged, ids...)
+		}
+		if strings.Join(paged, ",") != strings.Join(all, ",") {
+			t.Errorf("%q: pages = %v, want %v", terms, paged, all)
+		}
 	}
 }

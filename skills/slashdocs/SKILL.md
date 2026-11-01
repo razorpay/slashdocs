@@ -77,6 +77,10 @@ before the @, or `me`), `in:` (a folder or any folder above the document),
 `5 september`, `monday`, `today`, `3 days ago`), a week, a month, or a year
 (`last week`, `september`, `this year`, `2026`), or `last 7 days`, in UTC.
 
+A list shows 25 documents, and `--limit` shows up to 100. When the JSON has
+`"has_more": true`, more documents follow: `--offset` skips the documents that
+you have, for example `--offset 25` for the second page of 25.
+
 Manage labels directly from the CLI:
 
 ```bash
