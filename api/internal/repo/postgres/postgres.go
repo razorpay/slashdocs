@@ -991,6 +991,10 @@ func (s *Store) ListServiceAccounts(ctx context.Context, owner auth.Principal) (
 func (s *Store) UpdateServiceAccount(ctx context.Context, id, name string, disabled *bool) (repo.ServiceAccount, error) {
 	if name != "" {
 		if err := s.q.UpdateServiceAccountName(ctx, dbsqlc.UpdateServiceAccountNameParams{Name: name, ID: id}); err != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+				return repo.ServiceAccount{}, repo.ErrConflict
+			}
 			return repo.ServiceAccount{}, err
 		}
 	}
