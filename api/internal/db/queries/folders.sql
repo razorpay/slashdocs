@@ -274,19 +274,24 @@ WHERE f.title ILIKE '%' || @query::text || '%'
 ORDER BY f.title
 LIMIT @row_limit;
 
--- name: FolderOrAncestorsHaveGrants :one
--- Whether the folder or any of its ancestors carries an active grant, i.e.
--- placing content inside it may broaden who can see that content.
+-- name: FolderMayBroadenAccess :one
+-- Whether placing content of the given owner inside the folder may broaden
+-- who can see that content: the folder or one of its ancestors carries an
+-- active grant or has another owner, whose ownership cascades as editor.
 WITH RECURSIVE anc(fid, depth) AS (
   SELECT @folder_id::text, 1
   UNION ALL
   SELECT f.parent_folder_id, a.depth+1 FROM folders f JOIN anc a ON f.id=a.fid WHERE f.parent_folder_id IS NOT NULL AND a.depth < 20
 )
-SELECT EXISTS(
+SELECT (EXISTS(
   SELECT 1 FROM resource_grants g
   JOIN anc ON g.resource_id=anc.fid
   WHERE g.resource_type='folder' AND g.revoked_at IS NULL
-)::bool AS has_grants;
+) OR EXISTS(
+  SELECT 1 FROM folders f
+  JOIN anc ON f.id=anc.fid
+  WHERE (f.owner_type, f.owner_id) <> (@owner_type::text, @owner_id::text)
+))::bool AS may_broaden;
 
 -- name: RecordFolderWorkspaceEntry :exec
 INSERT INTO folder_workspace_entries(folder_id,principal_type,principal_id,last_opened_at)

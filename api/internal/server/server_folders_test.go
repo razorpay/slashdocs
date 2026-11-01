@@ -395,6 +395,18 @@ func TestFolderOwnerIsEditorOfContentsOthersOwn(t *testing.T) {
 		t.Fatalf("search does not find the document in the owner's folder: %s", rr.Body.String())
 	}
 
+	// A move warns when an owner of a folder above the destination gains
+	// access, also when no grant is left.
+	privateID, _ := e.createDocument("Private", "<p>private</p>", fixtureStranger)
+	mineID := createFolder(t, e, `{"title":"Mine"}`, other["X-Test-Principal"])
+	for dest, warns := range map[string]bool{subID: true, mineID: false} {
+		rr = do(t, e.h, http.MethodPost, "/v1/folders/"+dest+"/documents", `{"document_id":"`+privateID+`"}`, other)
+		assertStatus(t, rr, http.StatusOK)
+		if got := strings.Contains(rr.Body.String(), `"permission_warning"`); got != warns {
+			t.Fatalf("move into %s: permission_warning = %v, want %v: %s", dest, got, warns, rr.Body.String())
+		}
+	}
+
 	// The folder owner can move the document out, and then has no role on it.
 	rr = do(t, e.h, http.MethodDelete, "/v1/folders/"+folderID+"/documents/"+docID, "", owner)
 	assertStatus(t, rr, http.StatusNoContent)

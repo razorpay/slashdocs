@@ -199,8 +199,9 @@ WHERE id IN (
 -- name: DeleteDocument :execrows
 DELETE FROM documents WHERE id=$1;
 
--- name: MoveDocumentToFolder :execrows
-UPDATE documents SET parent_folder_id= @folder_id::text, updated_at=now() WHERE id= @document_id;
+-- name: MoveDocumentToFolder :one
+UPDATE documents SET parent_folder_id= @folder_id::text, updated_at=now() WHERE id= @document_id
+RETURNING owner_type, owner_id;
 
 -- name: MoveDocumentToRoot :exec
 UPDATE documents SET parent_folder_id=NULL, updated_at=now() WHERE id= @document_id AND parent_folder_id= @folder_id::text;
