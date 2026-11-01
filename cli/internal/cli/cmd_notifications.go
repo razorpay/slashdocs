@@ -9,7 +9,7 @@ import (
 // The same verbs work globally and for one document. These are always the
 // authenticated principal's preferences, including when called by an agent.
 func notificationsCmd(g *globals, out io.Writer, document bool) *cobra.Command {
-	root := &cobra.Command{Use: "notifications", Short: "Control your Slack notifications"}
+	root := &cobra.Command{Use: "notifications", Short: "Control your chat notifications (Slack or Google Chat)"}
 	suffix := ""
 	count := 0
 	if document {

@@ -8,16 +8,16 @@ is resolved. Each comment and reply has a **Copy comment link** action.
 ## Personal notification controls
 
 Use the bell beside the comment count to mute or enable notifications from that
-document. In **Profile → Slack notifications**, switch notifications off globally.
+document. In **Profile → Chat notifications**, switch notifications off globally.
 The global switch overrides document settings. Muting affects only your account;
 it does not change document access or anyone else's preferences. Re-enabling
 starts with future activity, without replaying the muted backlog.
 
-With Slack configured, each new comment or reply notifies the document's human
+With Slack or Google Chat configured, each new comment or reply notifies the document's human
 owner and explicitly mentioned human users. The author is excluded and recipients
 are deduplicated; an owner who is also mentioned receives one mention notification.
 Edits, reactions, resolving, and reopening do not notify. Service accounts can
-write comments and receive structured mentions, but have no Slack inbox.
+write comments and receive structured mentions, but have no chat inbox.
 
 Choose a person from the `@` suggestions to create a mention. The composer shows
 accepted mentions below the text field. Pasting or typing around a tag preserves
@@ -85,6 +85,35 @@ in the viewer when created. Agents can link to a known runtime ID with
 other custom interactions remain controlled by the document. Source HTML is not
 rewritten by these viewer conveniences.
 
+## Google Chat setup
+
+Configure at most one provider: `SLASHDOCS_SLACK_BOT_TOKEN` or
+`SLASHDOCS_GOOGLE_CHAT_WEBHOOK_URL`. The server refuses to start with both.
+Recipients, mutes, retries, and content redaction are the same for every
+provider.
+
+Google Chat notifications go to one space through an incoming webhook, as a
+card that names its recipient ("For: alice@example.com"). The space sees all
+notifications, and a comment with several recipients posts once per recipient.
+
+1. In Google Chat, open the space, then **Apps & integrations → Webhooks →
+   Add webhook**, and copy the URL.
+2. Set it as a secret; the URL itself grants posting rights:
+
+   ```bash
+   SLASHDOCS_GOOGLE_CHAT_WEBHOOK_URL='https://chat.googleapis.com/v1/spaces/…/messages?key=…&token=…'
+   ```
+
+Only `https://chat.googleapis.com/v1/spaces/…/messages` URLs are accepted.
+
+### Content
+
+Messages are cards: the activity (naming the comment's author, as in Slack) as
+the header, the document title as the
+subtitle, the highlighted text and comment as HTML-escaped paragraphs, and a
+button to the comment. User content never appears in the message's top-level
+text, where Google Chat would turn `<users/all>` into a real mention.
+
 ## Slack setup
 
 Each deployment uses one Slack app. Platform and Slack email addresses must
@@ -129,7 +158,8 @@ The comment and outbox recipients are saved in one database transaction. A worke
 rechecks the recipient's current document access and notification settings before
 sending a DM. Slack receives the document title, highlighted text, comment or
 reply content, and a button linking to that exact comment. Replies include the
-root thread's highlight. The activity leads the message, followed by
+root thread's highlight. The activity leads the message and names the comment's
+author by name (or email when no name is known), followed by
 `Document: <title>` as a link, an italic Slack
 blockquote, the comment, and a prominent **View comment** button. Regular Block
 Kit blocks avoid the extra attribution footer Slack adds to attachments.
