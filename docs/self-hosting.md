@@ -294,8 +294,8 @@ For S3-compatible storage other than AWS, also set `blob.endpoint` and
 `blob.forcePathStyle: true`.
 
 To point the compose stack at external services, put a
-`docker-compose.override.yml` next to `docker-compose.yml`. Compose merges it
-automatically:
+`docker-compose.external.yml` next to `docker-compose.yml`. Git ignores this
+file, so its credentials stay out of commits:
 
 ```yaml
 services:
@@ -313,9 +313,11 @@ services:
         condition: service_healthy
 ```
 
-Then run `docker compose up slashdocs`. Compose starts only slashdocs and Dex,
-not the bundled Postgres and versitygw. For production, also replace Dex and
-the dev secrets, or use [Docker](#docker) or [Helm](#kubernetes-with-helm).
+Then run
+`docker compose -f docker-compose.yml -f docker-compose.external.yml up slashdocs`.
+Compose starts only slashdocs and Dex, not the bundled Postgres and versitygw.
+Other `docker compose` commands, such as `make e2e`, do not read this file.
+For production, also replace Dex and the dev secrets, or use [Docker](#docker) or [Helm](#kubernetes-with-helm).
 
 ## Docker
 
