@@ -379,16 +379,23 @@ WITH RECURSIVE chain(id, title, parent_folder_id, owner_type, owner_id, depth) A
 )
 SELECT c.id, c.title,
        (c.owner_type= $1::text AND c.owner_id= $2::text)::bool AS is_owner,
-       COALESCE((
-         SELECT max(CASE g.role WHEN 'owner' THEN 4 WHEN 'editor' THEN 3 WHEN 'commenter' THEN 2 WHEN 'viewer' THEN 1 ELSE 0 END)
-         FROM resource_grants g
-         JOIN chain gc ON g.resource_id=gc.id
-         WHERE gc.depth >= c.depth
-           AND g.resource_type='folder' AND g.revoked_at IS NULL
-           AND ((g.principal_type= $1::text AND g.principal_id= $2::text)
-             OR (g.principal_type='google_group' AND g.principal_id=ANY($3::text[]))
-             OR g.principal_type='anyone')
-       ), 0)::int AS grant_rank
+       GREATEST(
+         COALESCE((
+           SELECT max(CASE g.role WHEN 'owner' THEN 4 WHEN 'editor' THEN 3 WHEN 'commenter' THEN 2 WHEN 'viewer' THEN 1 ELSE 0 END)
+           FROM resource_grants g
+           JOIN chain gc ON g.resource_id=gc.id
+           WHERE gc.depth >= c.depth
+             AND g.resource_type='folder' AND g.revoked_at IS NULL
+             AND ((g.principal_type= $1::text AND g.principal_id= $2::text)
+               OR (g.principal_type='google_group' AND g.principal_id=ANY($3::text[]))
+               OR g.principal_type='anyone')
+         ), 0),
+         CASE WHEN EXISTS (
+           SELECT 1 FROM chain oc
+           WHERE oc.depth > c.depth
+             AND oc.owner_type= $1::text AND oc.owner_id= $2::text
+         ) THEN 3 ELSE 0 END
+       )::int AS grant_rank
 FROM chain c
 ORDER BY c.depth DESC
 `
@@ -411,8 +418,10 @@ type ListFolderAccessChainRow struct {
 // with the principal's access at each level, resolved in one round trip. A
 // grant on a folder applies to it and everything below it, so the strongest
 // grant for chain element X is taken over X and all of X's ancestors
-// (chain elements with depth >= X's). Rank order mirrors repo.MaxRole:
-// owner=4, editor=3, commenter=2, viewer=1.
+// (chain elements with depth >= X's). The owner of a folder above X counts as
+// an editor grant: a resource has one owner, and editor is the most that a
+// grant can give. Rank order mirrors repo.MaxRole: owner=4, editor=3,
+// commenter=2, viewer=1.
 func (q *Queries) ListFolderAccessChain(ctx context.Context, arg ListFolderAccessChainParams) ([]ListFolderAccessChainRow, error) {
 	rows, err := q.db.Query(ctx, listFolderAccessChain,
 		arg.PrincipalType,

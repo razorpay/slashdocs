@@ -9,7 +9,7 @@ import (
 	"context"
 )
 
-const listDocumentInheritedGrants = `-- name: ListDocumentInheritedGrants :many
+const listDocumentInheritedRoles = `-- name: ListDocumentInheritedRoles :many
 WITH RECURSIVE ancestors(rid, rtype, depth) AS (
   SELECT $1::text, 'document'::text, 0
   UNION ALL
@@ -26,26 +26,32 @@ SELECT g.resource_id, g.principal_type, g.principal_id, g.role
 FROM resource_grants g
 WHERE g.revoked_at IS NULL
   AND g.resource_id IN (SELECT rid FROM ancestors)
+UNION ALL
+SELECT f.id, f.owner_type, f.owner_id, 'editor'
+FROM folders f
+WHERE f.id IN (SELECT rid FROM ancestors WHERE rtype='folder')
 `
 
-type ListDocumentInheritedGrantsRow struct {
+type ListDocumentInheritedRolesRow struct {
 	ResourceID    string
 	PrincipalType string
 	PrincipalID   string
 	Role          string
 }
 
-// All active grants on a document and on every folder above it. The caller
-// folds these (plus ownership) into the principal's effective role.
-func (q *Queries) ListDocumentInheritedGrants(ctx context.Context, documentID string) ([]ListDocumentInheritedGrantsRow, error) {
-	rows, err := q.db.Query(ctx, listDocumentInheritedGrants, documentID)
+// All active grants on a document and on every folder above it, and the owner
+// of every folder above it. The caller folds these (plus ownership) into the
+// principal's effective role. A resource has one owner, so the owner of a
+// folder gets editor on what is inside it, the most that a grant can give.
+func (q *Queries) ListDocumentInheritedRoles(ctx context.Context, documentID string) ([]ListDocumentInheritedRolesRow, error) {
+	rows, err := q.db.Query(ctx, listDocumentInheritedRoles, documentID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListDocumentInheritedGrantsRow
+	var items []ListDocumentInheritedRolesRow
 	for rows.Next() {
-		var i ListDocumentInheritedGrantsRow
+		var i ListDocumentInheritedRolesRow
 		if err := rows.Scan(
 			&i.ResourceID,
 			&i.PrincipalType,

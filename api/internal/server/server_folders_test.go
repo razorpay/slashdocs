@@ -3,6 +3,7 @@ package server_test
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -351,6 +352,54 @@ func createFolder(t *testing.T, e *testEnv, body, principal string) string {
 	rr := do(t, e.h, http.MethodPost, "/v1/folders", body, map[string]string{"X-Test-Principal": principal, "Content-Type": "application/json"})
 	assertStatus(t, rr, http.StatusCreated)
 	return jsonField(t, rr.Body.Bytes(), "id")
+}
+
+// A role on a folder cascades to what is inside it, and so does ownership of
+// the folder. A resource has one owner, so the folder owner gets editor on
+// the documents and subfolders that someone else put in the folder (#199).
+func TestFolderOwnerIsEditorOfContentsOthersOwn(t *testing.T) {
+	e := newTestEnv(t)
+	owner := map[string]string{"X-Test-Principal": principalHeader(fixtureOwner), "Content-Type": "application/json"}
+	other := map[string]string{"X-Test-Principal": principalHeader(fixtureStranger), "Content-Type": "application/json"}
+	folderID := createFolder(t, e, `{"title":"Team"}`, owner["X-Test-Principal"])
+	rr := do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/grants", `{"address":"`+fixtureStranger.Email+`","role":"editor"}`, owner)
+	assertStatus(t, rr, http.StatusCreated)
+	grantID := jsonField(t, rr.Body.Bytes(), "id")
+
+	docID, _ := e.createDocument("Note", "<p>note</p>", fixtureStranger)
+	rr = do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/documents", `{"document_id":"`+docID+`"}`, other)
+	assertStatus(t, rr, http.StatusOK)
+	subID := createFolder(t, e, `{"title":"Sub","parent_folder_id":"`+folderID+`"}`, other["X-Test-Principal"])
+
+	// Revoking the grant does not take away what the folder owner has.
+	rr = do(t, e.h, http.MethodDelete, "/v1/folders/"+folderID+"/grants/"+grantID, "", owner)
+	assertStatus(t, rr, http.StatusNoContent)
+
+	for _, path := range []string{"/v1/documents/" + docID + "/access", "/v1/folders/" + subID + "/access"} {
+		rr = do(t, e.h, http.MethodGet, path, "", owner)
+		assertStatus(t, rr, http.StatusOK)
+		if got := jsonField(t, rr.Body.Bytes(), "current_role"); got != "editor" {
+			t.Fatalf("GET %s: current_role = %q, want editor", path, got)
+		}
+		if !strings.Contains(rr.Body.String(), `"principal":{"type":"user","id":"`+fixtureOwner.ID+`"`) {
+			t.Fatalf("GET %s: access report does not list the folder owner: %s", path, rr.Body.String())
+		}
+	}
+	rr = do(t, e.h, http.MethodPatch, "/v1/documents/"+docID, `{"title":"Edited"}`, owner)
+	assertStatus(t, rr, http.StatusForbidden)
+	rr = do(t, e.h, http.MethodDelete, "/v1/folders/"+subID, "", owner)
+	assertStatus(t, rr, http.StatusForbidden)
+	rr = do(t, e.h, http.MethodGet, "/v1/documents?q=note", "", owner)
+	assertStatus(t, rr, http.StatusOK)
+	if !strings.Contains(rr.Body.String(), docID) {
+		t.Fatalf("search does not find the document in the owner's folder: %s", rr.Body.String())
+	}
+
+	// The folder owner can move the document out, and then has no role on it.
+	rr = do(t, e.h, http.MethodDelete, "/v1/folders/"+folderID+"/documents/"+docID, "", owner)
+	assertStatus(t, rr, http.StatusNoContent)
+	rr = do(t, e.h, http.MethodGet, "/v1/documents/"+docID, "", owner)
+	assertStatus(t, rr, http.StatusForbidden)
 }
 
 // A document or folder that does not exist is a 404 for every request, as

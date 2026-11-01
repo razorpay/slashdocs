@@ -355,6 +355,11 @@ docs_via_folder AS (
   WHERE (g.principal_type= $1 AND g.principal_id= $2)
      OR (g.principal_type='google_group' AND g.principal_id=ANY($3::text[]))
      OR ($4::boolean AND g.principal_type='anyone')
+  UNION
+  SELECT fa.doc_id
+  FROM folder_ancestors fa
+  JOIN folders f ON f.id=fa.fid
+  WHERE f.owner_type= $1 AND f.owner_id= $2
 ),
 search AS NOT MATERIALIZED (
   SELECT to_tsquery('english', $5::text) AS match,
