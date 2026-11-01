@@ -47,9 +47,11 @@ RETURNING id, resource_type, resource_id, principal_type, principal_id, role, gr
 -- name: RevokeResourceGrant :execrows
 UPDATE resource_grants SET revoked_at=now() WHERE id= @grant_id AND resource_id= @resource_id AND revoked_at IS NULL;
 
--- name: ListDocumentInheritedGrants :many
--- All active grants on a document and on every folder above it. The caller
--- folds these (plus ownership) into the principal's effective role.
+-- name: ListDocumentInheritedRoles :many
+-- All active grants on a document and on every folder above it, and the owner
+-- of every folder above it. The caller folds these (plus ownership) into the
+-- principal's effective role. A resource has one owner, so the owner of a
+-- folder gets editor on what is inside it, the most that a grant can give.
 WITH RECURSIVE ancestors(rid, rtype, depth) AS (
   SELECT @document_id::text, 'document'::text, 0
   UNION ALL
@@ -65,7 +67,11 @@ WITH RECURSIVE ancestors(rid, rtype, depth) AS (
 SELECT g.resource_id, g.principal_type, g.principal_id, g.role
 FROM resource_grants g
 WHERE g.revoked_at IS NULL
-  AND g.resource_id IN (SELECT rid FROM ancestors);
+  AND g.resource_id IN (SELECT rid FROM ancestors)
+UNION ALL
+SELECT f.id, f.owner_type, f.owner_id, 'editor'
+FROM folders f
+WHERE f.id IN (SELECT rid FROM ancestors WHERE rtype='folder');
 
 -- name: ListResourceAncestors :many
 -- The resource itself plus every folder above it, with titles and owners, for

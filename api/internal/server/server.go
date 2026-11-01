@@ -307,6 +307,7 @@ func (s *Server) routes(deps dependencies) {
 	authed.POST("/documents", h.createDocument)
 	authed.GET("/documents", h.listDocuments)
 	authed.POST("/documents/:id/access-requests", activityLimit, h.requestDocumentAccess)
+	authed.GET("/documents/:id/access-requests", h.listDocumentAccessRequests)
 	authed.GET("/documents/:id/access", h.documentAccess)
 	authed.PATCH("/documents/:id", h.patchDocument)
 	authed.DELETE("/documents/:id", h.deleteDocument)
@@ -366,11 +367,20 @@ func (h handlers) needDocRole(c *gin.Context, docID string, need repo.Role) bool
 		internalErr(c, err)
 		return false
 	}
-	if !atLeast(role, need) {
-		denyDocRole(c, need)
-		return false
+	if atLeast(role, need) {
+		return true
 	}
-	return true
+	// RoleNone also means that the document does not exist. Then the answer
+	// is 404, which GET /v1/documents/{id} already gives to every caller.
+	switch _, err := h.deps.repository.GetDocument(c.Request.Context(), docID); {
+	case errors.Is(err, repo.ErrNotFound):
+		notFound(c)
+	case err != nil:
+		internalErr(c, err)
+	default:
+		denyDocRole(c, need)
+	}
+	return false
 }
 
 // denyDocRole answers a caller whose role on a document is less than need.

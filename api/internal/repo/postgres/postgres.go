@@ -300,11 +300,11 @@ func (s *Store) RoleForDocument(ctx context.Context, p auth.Principal, documentI
 	if string(p.Type) == owner.OwnerType && p.ID == owner.OwnerID {
 		best = repo.RoleOwner
 	}
-	grants, err := s.q.ListDocumentInheritedGrants(ctx, documentID)
+	inherited, err := s.q.ListDocumentInheritedRoles(ctx, documentID)
 	if err != nil {
 		return "", err
 	}
-	for _, g := range grants {
+	for _, g := range inherited {
 		if principalHasGrant(p, g.PrincipalType, g.PrincipalID) {
 			best = repo.MaxRole(best, repo.Role(g.Role))
 		}
@@ -1009,6 +1009,10 @@ func (s *Store) ListServiceAccounts(ctx context.Context, owner auth.Principal) (
 func (s *Store) UpdateServiceAccount(ctx context.Context, id, name string, disabled *bool) (repo.ServiceAccount, error) {
 	if name != "" {
 		if err := s.q.UpdateServiceAccountName(ctx, dbsqlc.UpdateServiceAccountNameParams{Name: name, ID: id}); err != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+				return repo.ServiceAccount{}, repo.ErrConflict
+			}
 			return repo.ServiceAccount{}, err
 		}
 	}
@@ -1736,23 +1740,26 @@ func (s *Store) ListEffectiveAccess(ctx context.Context, rt, rid string) ([]repo
 		by[k].Sources = append(by[k].Sources, src)
 	}
 
-	root := chain[0]
-	ownerP := auth.Principal{
-		Type:       auth.PrincipalType(root.OwnerType),
-		ID:         root.OwnerID,
-		Email:      root.OwnerEmail,
-		Name:       root.OwnerName,
-		PictureURL: root.OwnerPictureUrl,
-	}
-	add(ownerP, repo.AccessSource{ResourceType: root.AncestorType, ResourceID: root.AncestorID, ResourceTitle: root.Title, Role: repo.RoleOwner})
-
 	ids := make([]string, 0, len(chain))
 	titles := map[string]string{}
 	rtypes := map[string]string{}
-	for _, a := range chain {
+	for i, a := range chain {
 		ids = append(ids, a.AncestorID)
 		titles[a.AncestorID] = a.Title
 		rtypes[a.AncestorID] = a.AncestorType
+		// The owner of a folder above gets editor, as in RoleForDocument.
+		role := repo.RoleEditor
+		if i == 0 {
+			role = repo.RoleOwner
+		}
+		owner := auth.Principal{
+			Type:       auth.PrincipalType(a.OwnerType),
+			ID:         a.OwnerID,
+			Email:      a.OwnerEmail,
+			Name:       a.OwnerName,
+			PictureURL: a.OwnerPictureUrl,
+		}
+		add(owner, repo.AccessSource{ResourceType: a.AncestorType, ResourceID: a.AncestorID, ResourceTitle: a.Title, Role: role})
 	}
 
 	grants, err := s.q.ListGrantsForResources(ctx, ids)

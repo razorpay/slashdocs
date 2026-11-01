@@ -167,6 +167,13 @@ type EffectiveAccessItem struct {
 	Sources       []AccessSource `json:"sources"`
 }
 
+// AccessRequest is a request for access to a document. A grant on the
+// document to the requester removes it.
+type AccessRequest struct {
+	Requester   auth.Principal `json:"requester"`
+	RequestedAt string         `json:"requested_at"`
+}
+
 type ServiceAccount struct {
 	ID       string         `json:"id"`
 	Name     string         `json:"name"`
@@ -359,6 +366,7 @@ type Repository interface {
 	NotificationPreferences(ctx context.Context, principal auth.Principal, documentID string) (NotificationPreferences, error)
 	SetNotificationPreferences(ctx context.Context, principal auth.Principal, documentID string, enabled bool) (NotificationPreferences, error)
 	RequestDocumentAccess(ctx context.Context, principal auth.Principal, documentID string) error
+	ListAccessRequests(ctx context.Context, documentID string) ([]AccessRequest, error)
 	ResolveBearerToken(ctx context.Context, tokenHash string) (auth.Principal, error)
 	ResolveUser(ctx context.Context, id string) (auth.Principal, error)
 	// UpsertGoogleUser returns *EmailIdentityConflictError when the email
@@ -455,7 +463,10 @@ type Repository interface {
 	GetFolder(ctx context.Context, id string) (Folder, error)
 	UpdateFolder(ctx context.Context, id, title string, parentFolderID *string) (Folder, error)
 	DeleteFolder(ctx context.Context, id string, principal auth.Principal) error
-	FolderHasGrants(ctx context.Context, folderID string) (bool, error)
+	// FolderMayBroadenAccess reports whether content of owner placed in the
+	// folder may become visible to others.
+	FolderMayBroadenAccess(ctx context.Context, folderID string, owner auth.Principal) (bool, error)
+	// MoveDocumentToFolder reports whether the move may broaden access.
 	MoveDocumentToFolder(ctx context.Context, principal auth.Principal, folderID, documentID string) (bool, error)
 	MoveDocumentToRoot(ctx context.Context, folderID, documentID string) error
 	ListFolderDocuments(ctx context.Context, principal auth.Principal, folderID string) ([]Document, error)

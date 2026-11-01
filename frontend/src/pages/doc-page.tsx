@@ -61,7 +61,7 @@ function AccessDeniedState({ documentID }: { documentID: string }) {
       title="You don't have access to this document"
       description={
         sent
-          ? "The owner has been notified."
+          ? "People who can share this document will see your request."
           : "Send the owner a request to grant you access."
       }
     >

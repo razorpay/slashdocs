@@ -101,6 +101,11 @@ docs_via_folder AS (
   WHERE (g.principal_type= @owner_type AND g.principal_id= @owner_id)
      OR (g.principal_type='google_group' AND g.principal_id=ANY(@google_group_ids::text[]))
      OR (@include_org_wide::boolean AND g.principal_type='anyone')
+  UNION
+  SELECT fa.doc_id
+  FROM folder_ancestors fa
+  JOIN folders f ON f.id=fa.fid
+  WHERE f.owner_type= @owner_type AND f.owner_id= @owner_id
 ),
 -- The planner puts the query values into the conditions below, so that the
 -- search_vector index can find the matches, and an empty query reads no
@@ -194,8 +199,9 @@ WHERE id IN (
 -- name: DeleteDocument :execrows
 DELETE FROM documents WHERE id=$1;
 
--- name: MoveDocumentToFolder :execrows
-UPDATE documents SET parent_folder_id= @folder_id::text, updated_at=now() WHERE id= @document_id;
+-- name: MoveDocumentToFolder :one
+UPDATE documents SET parent_folder_id= @folder_id::text, updated_at=now() WHERE id= @document_id
+RETURNING owner_type, owner_id;
 
 -- name: MoveDocumentToRoot :exec
 UPDATE documents SET parent_folder_id=NULL, updated_at=now() WHERE id= @document_id AND parent_folder_id= @folder_id::text;

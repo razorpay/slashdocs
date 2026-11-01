@@ -98,7 +98,9 @@ func foldersCmd(g *globals, out io.Writer) *cobra.Command {
 	move.MarkFlagsOneRequired("parent", "root")
 	move.MarkFlagsMutuallyExclusive("parent", "root")
 
-	del := mutate(g, out, "delete <folder_id>", "Delete a folder and its subfolders", "DELETE", "/v1/folders/%s", 1, func(a []string) string { return "Deleted folder " + a[0] + "." })
+	del := mutate(g, out, "delete <folder_id>", "Delete a folder and its subfolders (documents inside move to root)", "DELETE", "/v1/folders/%s", 1, func(a []string) string {
+		return "Deleted folder " + a[0] + ". Documents inside it moved to root."
+	})
 
 	access := simplePath(g, out, "access <folder_id>", "GET", "/v1/folders/%s/access")
 	access.Short = "Show effective access for a folder"
