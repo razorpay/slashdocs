@@ -396,13 +396,25 @@ const docTemplate = `{
                         "description": "Deprecated exact label filter; use q=label:\u003clabel\u003e",
                         "name": "label",
                         "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size: 25 by default, 100 at most",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "The number of documents to skip",
+                        "name": "offset",
+                        "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/server.listResponse-repo_Document"
+                            "$ref": "#/definitions/server.documentListResponse"
                         }
                     }
                 }
@@ -440,6 +452,12 @@ const docTemplate = `{
                         "name": "file",
                         "in": "formData",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "The folder for the document. The caller needs editor on it. The default is the root.",
+                        "name": "folder_id",
+                        "in": "formData"
                     },
                     {
                         "type": "string",
@@ -2469,8 +2487,14 @@ const docTemplate = `{
                 "default_grant": {
                     "$ref": "#/definitions/server.defaultGrant"
                 },
+                "folder_id": {
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
+                },
+                "permission_warning": {
+                    "$ref": "#/definitions/server.permissionWarning"
                 }
             }
         },
@@ -2590,6 +2614,21 @@ const docTemplate = `{
             "properties": {
                 "url": {
                     "type": "string"
+                }
+            }
+        },
+        "server.documentListResponse": {
+            "type": "object",
+            "properties": {
+                "has_more": {
+                    "description": "HasMore reports that more documents follow this page.",
+                    "type": "boolean"
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/repo.Document"
+                    }
                 }
             }
         },
@@ -2766,17 +2805,6 @@ const docTemplate = `{
                 }
             }
         },
-        "server.listResponse-repo_Document": {
-            "type": "object",
-            "properties": {
-                "items": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/repo.Document"
-                    }
-                }
-            }
-        },
         "server.listResponse-repo_OwnershipTransfer": {
             "type": "object",
             "properties": {
@@ -2909,6 +2937,17 @@ const docTemplate = `{
                     }
                 },
                 "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "server.permissionWarning": {
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string"
+                },
+                "message": {
                     "type": "string"
                 }
             }

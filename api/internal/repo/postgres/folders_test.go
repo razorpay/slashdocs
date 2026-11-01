@@ -35,7 +35,7 @@ func TestPostgresFolderInvariants(t *testing.T) {
 	t.Run("additive inheritance", func(t *testing.T) {
 		r := newFolderStore(t)
 		root, _ := r.CreateFolder(ctx, owner, "Root", "")
-		doc, _, _ := r.CreateDocument(ctx, owner, "Doc", []byte("x"))
+		doc, _, _ := r.CreateDocument(ctx, owner, "Doc", "", []byte("x"))
 		if _, err := r.CreateGrant(ctx, "folder", root.ID, other, repo.RoleViewer, owner); err != nil {
 			t.Fatal(err)
 		}
@@ -47,11 +47,28 @@ func TestPostgresFolderInvariants(t *testing.T) {
 			t.Fatalf("role=%q err=%v", role, err)
 		}
 	})
+	t.Run("create in a folder", func(t *testing.T) {
+		r := newFolderStore(t)
+		root, _ := r.CreateFolder(ctx, owner, "Root", "")
+		if _, err := r.CreateGrant(ctx, "folder", root.ID, other, repo.RoleViewer, owner); err != nil {
+			t.Fatal(err)
+		}
+		doc, _, err := r.CreateDocument(ctx, owner, "Doc", root.ID, []byte("x"))
+		if err != nil || doc.ParentFolderID != root.ID {
+			t.Fatalf("doc=%+v err=%v", doc, err)
+		}
+		if role, err := r.RoleForDocument(ctx, other, doc.ID); err != nil || role != repo.RoleViewer {
+			t.Fatalf("role=%q err=%v", role, err)
+		}
+		if _, _, err := r.CreateDocument(ctx, owner, "Doc", "fld_missing", []byte("x")); !errors.Is(err, repo.ErrNotFound) {
+			t.Fatalf("create in a missing folder: err=%v, want ErrNotFound", err)
+		}
+	})
 	t.Run("nested inheritance", func(t *testing.T) {
 		r := newFolderStore(t)
 		root, _ := r.CreateFolder(ctx, owner, "Root", "")
 		child, _ := r.CreateFolder(ctx, owner, "Child", root.ID)
-		doc, _, _ := r.CreateDocument(ctx, owner, "Doc", []byte("x"))
+		doc, _, _ := r.CreateDocument(ctx, owner, "Doc", "", []byte("x"))
 		if _, err := r.CreateGrant(ctx, "folder", root.ID, other, repo.RoleCommenter, owner); err != nil {
 			t.Fatal(err)
 		}
@@ -67,7 +84,7 @@ func TestPostgresFolderInvariants(t *testing.T) {
 		r := newFolderStore(t)
 		root, _ := r.CreateFolder(ctx, owner, "Root", "")
 		child, _ := r.CreateFolder(ctx, owner, "Child", root.ID)
-		doc, _, _ := r.CreateDocument(ctx, owner, "Doc", []byte("x"))
+		doc, _, _ := r.CreateDocument(ctx, owner, "Doc", "", []byte("x"))
 		if _, err := r.CreateGrant(ctx, "folder", root.ID, other, repo.RoleEditor, owner); err != nil {
 			t.Fatal(err)
 		}
@@ -85,7 +102,7 @@ func TestPostgresFolderInvariants(t *testing.T) {
 	t.Run("reduce via ancestor provenance sources", func(t *testing.T) {
 		r := newFolderStore(t)
 		root, _ := r.CreateFolder(ctx, owner, "Root", "")
-		doc, _, _ := r.CreateDocument(ctx, owner, "Doc", []byte("x"))
+		doc, _, _ := r.CreateDocument(ctx, owner, "Doc", "", []byte("x"))
 		if _, err := r.CreateGrant(ctx, "folder", root.ID, other, repo.RoleViewer, owner); err != nil {
 			t.Fatal(err)
 		}
@@ -109,7 +126,7 @@ func TestPostgresFolderInvariants(t *testing.T) {
 	})
 	t.Run("effective access hydrates canonical owner", func(t *testing.T) {
 		r := newFolderStore(t)
-		doc, _, err := r.CreateDocument(ctx, owner, "Owned doc", []byte("x"))
+		doc, _, err := r.CreateDocument(ctx, owner, "Owned doc", "", []byte("x"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -171,7 +188,7 @@ func TestPostgresFolderInvariants(t *testing.T) {
 	t.Run("pin access validation", func(t *testing.T) {
 		r := newFolderStore(t)
 		root, _ := r.CreateFolder(ctx, owner, "Root", "")
-		doc, _, _ := r.CreateDocument(ctx, owner, "Doc", []byte("x"))
+		doc, _, _ := r.CreateDocument(ctx, owner, "Doc", "", []byte("x"))
 		if _, err := r.MoveDocumentToFolder(ctx, owner, root.ID, doc.ID); err != nil {
 			t.Fatal(err)
 		}

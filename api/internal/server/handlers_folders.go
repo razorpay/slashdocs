@@ -87,6 +87,21 @@ func mayBroadenAccessWarning(message string) *permissionWarning {
 	return &permissionWarning{Kind: "may_broaden_access", Message: message}
 }
 
+const folderDocumentWarningMessage = "Others have access to this folder — everyone with access may see this document."
+
+// folderDocumentWarning warns that the people who can see the folder can see
+// a document of owner that was put in it. The warning is not essential, so a
+// failed lookup gives no warning.
+func (h handlers) folderDocumentWarning(c *gin.Context, folderID string, owner auth.Principal) *permissionWarning {
+	if folderID == "" {
+		return nil
+	}
+	if mayBroaden, err := h.deps.repository.FolderMayBroadenAccess(c.Request.Context(), folderID, owner); err != nil || !mayBroaden {
+		return nil
+	}
+	return mayBroadenAccessWarning(folderDocumentWarningMessage)
+}
+
 // updateFolderResponse is the payload of PATCH /v1/folders/{id}.
 type updateFolderResponse struct {
 	ID                string             `json:"id"`
@@ -391,7 +406,7 @@ func (h handlers) moveDocToFolder(c *gin.Context) {
 	}
 	out := moveDocResponse{DocumentID: in.DocumentID, FolderID: folderID, Moved: true}
 	if mayBroaden {
-		out.PermissionWarning = mayBroadenAccessWarning("Others have access to this folder — everyone with access may see this document.")
+		out.PermissionWarning = mayBroadenAccessWarning(folderDocumentWarningMessage)
 	}
 	c.JSON(http.StatusOK, out)
 }

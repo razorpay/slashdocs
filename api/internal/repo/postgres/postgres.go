@@ -327,7 +327,7 @@ func principalHasGrant(p auth.Principal, principalType, principalID string) bool
 	return false
 }
 
-func (s *Store) CreateDocument(ctx context.Context, owner auth.Principal, title string, html []byte) (repo.Document, repo.Version, error) {
+func (s *Store) CreateDocument(ctx context.Context, owner auth.Principal, title, folderID string, html []byte) (repo.Document, repo.Version, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return repo.Document{}, repo.Version{}, err
@@ -351,7 +351,11 @@ func (s *Store) CreateDocument(ctx context.Context, owner auth.Principal, title 
 			_ = s.blobs.Delete(context.WithoutCancel(ctx), blobKey)
 		}
 	}()
-	if err := q.InsertDocument(ctx, dbsqlc.InsertDocumentParams{ID: docID, Title: title, OwnerType: string(owner.Type), OwnerID: owner.ID}); err != nil {
+	if err := q.InsertDocument(ctx, dbsqlc.InsertDocumentParams{ID: docID, Title: title, OwnerType: string(owner.Type), OwnerID: owner.ID, ParentFolderID: folderID}); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" { // the folder does not exist
+			return repo.Document{}, repo.Version{}, repo.ErrNotFound
+		}
 		return repo.Document{}, repo.Version{}, err
 	}
 	createdAt, err := q.InsertInitialVersion(ctx, dbsqlc.InsertInitialVersionParams{ID: verID, DocumentID: docID, HtmlBlobKey: blobKey, Sha256: sum, CreatedByType: string(owner.Type), CreatedByID: owner.ID, SearchText: searchText(html)})
@@ -365,7 +369,7 @@ func (s *Store) CreateDocument(ctx context.Context, owner auth.Principal, title 
 		return repo.Document{}, repo.Version{}, err
 	}
 	committed = true
-	return repo.Document{ID: docID, Title: title, Owner: owner, CurrentVersionID: verID}, repo.Version{ID: verID, Number: 1, DocumentID: docID, CreatedBy: owner, SHA256: sum, CreatedAt: pgTimeRFC3339(createdAt)}, nil
+	return repo.Document{ID: docID, Title: title, Owner: owner, CurrentVersionID: verID, ParentFolderID: folderID}, repo.Version{ID: verID, Number: 1, DocumentID: docID, CreatedBy: owner, SHA256: sum, CreatedAt: pgTimeRFC3339(createdAt)}, nil
 }
 func (s *Store) GetDocument(ctx context.Context, id string) (repo.Document, error) {
 	r, err := s.q.GetDocument(ctx, id)
@@ -826,21 +830,36 @@ func pgTimeRFC3339(ts pgtype.Timestamptz) string {
 	return ts.Time.UTC().Format(time.RFC3339Nano)
 }
 
-func (s *Store) ListDocuments(ctx context.Context, p auth.Principal) ([]repo.Document, error) {
-	rows, err := s.q.ListDocuments(ctx, dbsqlc.ListDocumentsParams{OwnerID: p.ID, OwnerType: string(p.Type), Column3: p.GoogleGroupIDs})
-	if err != nil {
-		return nil, err
+// pageOf trims rows to the page. The query asks for one row more than the
+// page, so that the row tells whether more rows follow.
+func pageOf[T any](rows []T, page repo.Page) ([]T, bool) {
+	if len(rows) > int(page.Limit) {
+		return rows[:page.Limit], true
 	}
+	return rows, false
+}
+
+func (s *Store) ListDocuments(ctx context.Context, p auth.Principal, page repo.Page, includeLabels bool) ([]repo.Document, bool, error) {
+	rows, err := s.q.ListDocuments(ctx, dbsqlc.ListDocumentsParams{OwnerID: p.ID, OwnerType: string(p.Type), Column3: p.GoogleGroupIDs, Limit: page.Limit + 1, Offset: page.Offset})
+	if err != nil {
+		return nil, false, err
+	}
+	rows, more := pageOf(rows, page)
 	out := make([]repo.Document, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, docFromList(r))
 	}
-	return out, nil
+	if includeLabels {
+		err = s.addLabels(ctx, out)
+	}
+	return out, more, err
 }
-func (s *Store) SearchDocuments(ctx context.Context, p auth.Principal, search repo.DocumentSearch, includeOrgWide bool, limit int32) ([]repo.Document, error) {
+func (s *Store) SearchDocuments(ctx context.Context, p auth.Principal, search repo.DocumentSearch, includeOrgWide bool, page repo.Page) ([]repo.Document, bool, error) {
 	rows, err := s.q.SearchDocuments(ctx, dbsqlc.SearchDocumentsParams{
 		MatchQuery:     tsquery(search.Terms, " & "),
+		WordsQuery:     tsqueryWords(search.Terms),
 		ExcludeQuery:   tsquery(search.ExcludedTerms, " | "),
+		RankQuery:      tsquery(search.Terms, " | "),
 		Owners:         search.Owners,
 		Folders:        search.Folders,
 		Labels:         search.Labels,
@@ -850,23 +869,21 @@ func (s *Store) SearchDocuments(ctx context.Context, p auth.Principal, search re
 		OwnerType:      string(p.Type),
 		GoogleGroupIds: p.GoogleGroupIDs,
 		IncludeOrgWide: includeOrgWide,
-		RowLimit:       limit,
+		RowLimit:       page.Limit + 1,
+		RowOffset:      page.Offset,
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
+	rows, more := pageOf(rows, page)
 	out := make([]repo.Document, 0, len(rows))
 	for _, r := range rows {
-		d := docFromSearch(r)
-		if search.IncludeLabels {
-			d.Labels, err = s.q.ListDocumentLabels(ctx, r.ID)
-			if err != nil {
-				return nil, err
-			}
-		}
-		out = append(out, d)
+		out = append(out, docFromSearch(r))
 	}
-	return out, nil
+	if search.IncludeLabels {
+		err = s.addLabels(ctx, out)
+	}
+	return out, more, err
 }
 func (s *Store) RecordDocumentOpened(ctx context.Context, documentID string, p auth.Principal) error {
 	return s.q.RecordWorkspaceEntry(ctx, dbsqlc.RecordWorkspaceEntryParams{
@@ -917,13 +934,32 @@ func (s *Store) ListDocumentsByLabel(ctx context.Context, p auth.Principal, labe
 		if r.UpdatedAt.Valid {
 			d.UpdatedAt = r.UpdatedAt.Time.UTC().Format(time.RFC3339Nano)
 		}
-		d.Labels, err = s.q.ListDocumentLabels(ctx, r.ID)
-		if err != nil {
-			return nil, err
-		}
 		out = append(out, d)
 	}
-	return out, nil
+	return out, s.addLabels(ctx, out)
+}
+
+// addLabels sets the labels of the documents with one query.
+func (s *Store) addLabels(ctx context.Context, docs []repo.Document) error {
+	if len(docs) == 0 {
+		return nil
+	}
+	ids := make([]string, len(docs))
+	for i, d := range docs {
+		ids[i] = d.ID
+	}
+	rows, err := s.q.ListLabelsForDocuments(ctx, ids)
+	if err != nil {
+		return err
+	}
+	labels := make(map[string][]string, len(docs))
+	for _, r := range rows {
+		labels[r.DocumentID] = append(labels[r.DocumentID], r.Label)
+	}
+	for i := range docs {
+		docs[i].Labels = labels[docs[i].ID]
+	}
+	return nil
 }
 
 func (s *Store) ListDocumentLabels(ctx context.Context, documentID string) ([]string, error) {
