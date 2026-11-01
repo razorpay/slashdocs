@@ -80,7 +80,7 @@ func startLoginCallbackServer(ln net.Listener, state string, resultCh chan<- cal
 
 func loginCmd(g *globals, out io.Writer) *cobra.Command {
 	var name string
-	cmd := &cobra.Command{Use: "login [server]", Short: "Log in through a slashdocs server", Example: "  slashdocs auth login slashdocs.example.com\n  slashdocs auth login   # reuses the active context's server", RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "login [server]", Short: "Log in through a slashdocs server", Example: "  slashdocs auth login slashdocs.example.com\n  slashdocs auth login   # reuses the active context's server", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		srv := first(g.server, env("SLASHDOCS_SERVER"))
 		if len(args) > 0 {
 			srv = args[0]
@@ -94,7 +94,10 @@ func loginCmd(g *globals, out io.Writer) *cobra.Command {
 		if srv == "" {
 			return usageError{errNoServer}
 		}
-		srv = normalizeServer(srv)
+		srv, err := serverURL(srv)
+		if err != nil {
+			return err
+		}
 		verifier := randomToken(32)
 		challenge := pkceChallenge(verifier)
 		state := randomToken(18)
@@ -113,9 +116,8 @@ func loginCmd(g *globals, out io.Writer) *cobra.Command {
 			_ = srvHTTP.Shutdown(sdCtx)
 		}()
 		loginURL := srv + "/v1/auth/google/start?mode=cli&state=" + url.QueryEscape(state) + "&cli_redirect=" + url.QueryEscape(redirect) + "&code_challenge=" + url.QueryEscape(challenge)
-		if err := message(out, g, "Opening "+loginURL); err != nil {
-			return err
-		}
+		// The URL is progress, not the result, so it goes to stderr.
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Opening "+loginURL)
 		openBrowser(loginURL)
 
 		ctx, cancel := context.WithTimeout(cmd.Context(), loginTimeout)

@@ -135,6 +135,10 @@ The application server exposes Streamable HTTP directly at:
 https://your-slashdocs-host.example/mcp
 ```
 
+The same URL serves MCP revisions 2024-11-05 through 2026-07-28: clients on
+2026-07-28 connect statelessly with `server/discover`, and older clients with
+the `initialize` handshake.
+
 Add that URL to a remote MCP client. Standards-based clients discover the
 server's OAuth metadata, open the normal slashdocs sign-in and consent flow, and
 receive a short-lived, audience-bound token using authorization code + PKCE.

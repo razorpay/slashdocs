@@ -50,6 +50,8 @@ format:
    syntax.
 5. Publish with the CLI.
 6. Return the printed slashdocs document URL.
+7. If the `ai-sessions` skill is installed, use it and follow its guidance to
+   link this session to the document.
 
 ### Updating an existing document
 
