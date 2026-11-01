@@ -27,7 +27,7 @@ type GoogleChat struct {
 func NewGoogleChatWebhook(webhookURL string) (*GoogleChat, error) {
 	u, err := url.Parse(webhookURL)
 	if err != nil || u.Scheme != "https" || u.Host != "chat.googleapis.com" || !strings.HasPrefix(u.Path, "/v1/spaces/") || !strings.HasSuffix(u.Path, "/messages") {
-		return nil, errors.New("Google Chat webhook URL must look like https://chat.googleapis.com/v1/spaces/<space>/messages?key=…&token=…")
+		return nil, errors.New("the Google Chat webhook URL must look like https://chat.googleapis.com/v1/spaces/<space>/messages?key=…&token=…")
 	}
 	client := &http.Client{Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	return &GoogleChat{webhookURL: webhookURL, client: client}, nil

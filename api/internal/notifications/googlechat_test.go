@@ -94,12 +94,22 @@ func TestGoogleChatWebhookRejectsForeignURLs(t *testing.T) {
 
 func TestGoogleChatHeaderNamesActorAsPlainText(t *testing.T) {
 	payload := googleChatMessage(Message{Reason: "owner", Actor: "Mallory <users/all>", DocumentTitle: "Plan", Body: "hi"}, "")
-	card := payload["cardsV2"].([]any)[0].(map[string]any)["card"].(map[string]any)
-	header := card["header"].(map[string]any)
+	encoded, _ := json.Marshal(payload)
+	var got struct {
+		Text    *string `json:"text"`
+		CardsV2 []struct {
+			Card struct {
+				Header struct{ Title string } `json:"header"`
+			} `json:"card"`
+		} `json:"cardsV2"`
+	}
+	if err := json.Unmarshal(encoded, &got); err != nil || len(got.CardsV2) != 1 {
+		t.Fatalf("payload: %s", encoded)
+	}
 	// Card headers are plain text in Chat, so markup stays literal rather than
 	// becoming a mention; the top-level text that would parse it is unset.
-	if header["title"] != "💬 Mallory <users/all> commented on your doc" || payload["text"] != nil {
-		t.Errorf("header=%v text=%v", header, payload["text"])
+	if got.CardsV2[0].Card.Header.Title != "💬 Mallory <users/all> commented on your doc" || got.Text != nil {
+		t.Errorf("payload: %s", encoded)
 	}
 }
 
