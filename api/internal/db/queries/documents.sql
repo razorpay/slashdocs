@@ -175,7 +175,11 @@ candidates AS NOT MATERIALIZED (
         WHERE g.resource_type='folder' AND g.revoked_at IS NULL
           AND ((g.principal_type= @owner_type AND g.principal_id= @owner_id)
             OR (g.principal_type='google_group' AND g.principal_id=ANY(@google_group_ids::text[]))
-            OR (@include_org_wide::boolean AND g.principal_type='anyone')))) AS subtree(id)
+            OR (@include_org_wide::boolean AND g.principal_type='anyone'))
+        -- Folder ownership counts like an editor grant on the folder.
+        UNION ALL
+        SELECT f.id FROM folders f
+        WHERE f.owner_type= @owner_type AND f.owner_id= @owner_id)) AS subtree(id)
     )
   )
 ),
@@ -246,8 +250,9 @@ WHERE id IN (
 -- name: DeleteDocument :execrows
 DELETE FROM documents WHERE id=$1;
 
--- name: MoveDocumentToFolder :execrows
-UPDATE documents SET parent_folder_id= @folder_id::text, updated_at=now() WHERE id= @document_id;
+-- name: MoveDocumentToFolder :one
+UPDATE documents SET parent_folder_id= @folder_id::text, updated_at=now() WHERE id= @document_id
+RETURNING owner_type, owner_id;
 
 -- name: MoveDocumentToRoot :exec
 UPDATE documents SET parent_folder_id=NULL, updated_at=now() WHERE id= @document_id AND parent_folder_id= @folder_id::text;

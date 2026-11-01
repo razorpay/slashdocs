@@ -133,6 +133,10 @@ export function ShareSheet({
   const inheritedSource = (item: EffectiveAccessItem) =>
     item.sources?.find((s) => s.resource_id !== id && s.grant_id);
 
+  // The owner of a folder above gets editor without a grant.
+  const ownedFolder = (item: EffectiveAccessItem) =>
+    item.sources?.find((s) => s.resource_id !== id && !s.grant_id);
+
   const invalidateAccess = () => {
     q.invalidateQueries({ queryKey: accessKey });
     q.invalidateQueries({ queryKey: queryKeys.documentAccessRequests(id) });
@@ -613,6 +617,7 @@ export function ShareSheet({
                     const grantId = directGrantId(item);
                     const src = inheritedSource(item);
                     const inherited = !!src;
+                    const folder = ownedFolder(item);
                     const isGroup = item.principal.type === "google_group";
                     const isOwner = item.effective_role === "owner";
                     const principalLabel =
@@ -642,9 +647,11 @@ export function ShareSheet({
                               ? "Owner"
                               : inherited && src
                                 ? `Inherited from ${src.resource_title}`
-                                : isGroup
-                                  ? "Google Group · direct access"
-                                  : "Direct access"}
+                                : folder
+                                  ? `Owner of ${folder.resource_title}`
+                                  : isGroup
+                                    ? "Google Group · direct access"
+                                    : "Direct access"}
                           </div>
                         </div>
                         {isOwner ? (
@@ -656,6 +663,7 @@ export function ShareSheet({
                             value={item.effective_role}
                             disabled={
                               !canManageAccess ||
+                              !(grantId || src) ||
                               updateGrant.isPending ||
                               revokeGrant.isPending ||
                               updateDirectGrant.isPending ||

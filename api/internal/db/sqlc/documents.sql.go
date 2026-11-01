@@ -301,8 +301,9 @@ func (q *Queries) ListFolderDocuments(ctx context.Context, folderID string) ([]L
 	return items, nil
 }
 
-const moveDocumentToFolder = `-- name: MoveDocumentToFolder :execrows
+const moveDocumentToFolder = `-- name: MoveDocumentToFolder :one
 UPDATE documents SET parent_folder_id= $1::text, updated_at=now() WHERE id= $2
+RETURNING owner_type, owner_id
 `
 
 type MoveDocumentToFolderParams struct {
@@ -310,12 +311,16 @@ type MoveDocumentToFolderParams struct {
 	DocumentID string
 }
 
-func (q *Queries) MoveDocumentToFolder(ctx context.Context, arg MoveDocumentToFolderParams) (int64, error) {
-	result, err := q.db.Exec(ctx, moveDocumentToFolder, arg.FolderID, arg.DocumentID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+type MoveDocumentToFolderRow struct {
+	OwnerType string
+	OwnerID   string
+}
+
+func (q *Queries) MoveDocumentToFolder(ctx context.Context, arg MoveDocumentToFolderParams) (MoveDocumentToFolderRow, error) {
+	row := q.db.QueryRow(ctx, moveDocumentToFolder, arg.FolderID, arg.DocumentID)
+	var i MoveDocumentToFolderRow
+	err := row.Scan(&i.OwnerType, &i.OwnerID)
+	return i, err
 }
 
 const moveDocumentToRoot = `-- name: MoveDocumentToRoot :exec
@@ -418,7 +423,11 @@ candidates AS NOT MATERIALIZED (
         WHERE g.resource_type='folder' AND g.revoked_at IS NULL
           AND ((g.principal_type= $6 AND g.principal_id= $7)
             OR (g.principal_type='google_group' AND g.principal_id=ANY($8::text[]))
-            OR ($9::boolean AND g.principal_type='anyone')))) AS subtree(id)
+            OR ($9::boolean AND g.principal_type='anyone'))
+        -- Folder ownership counts like an editor grant on the folder.
+        UNION ALL
+        SELECT f.id FROM folders f
+        WHERE f.owner_type= $6 AND f.owner_id= $7)) AS subtree(id)
     )
   )
 ),
