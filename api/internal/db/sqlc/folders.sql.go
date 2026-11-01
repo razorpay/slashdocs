@@ -144,26 +144,37 @@ func (q *Queries) FindRootFoldersByTitle(ctx context.Context, arg FindRootFolder
 	return items, nil
 }
 
-const folderOrAncestorsHaveGrants = `-- name: FolderOrAncestorsHaveGrants :one
+const folderMayBroadenAccess = `-- name: FolderMayBroadenAccess :one
 WITH RECURSIVE anc(fid, depth) AS (
-  SELECT $1::text, 1
+  SELECT $3::text, 1
   UNION ALL
   SELECT f.parent_folder_id, a.depth+1 FROM folders f JOIN anc a ON f.id=a.fid WHERE f.parent_folder_id IS NOT NULL AND a.depth < 20
 )
-SELECT EXISTS(
+SELECT (EXISTS(
   SELECT 1 FROM resource_grants g
   JOIN anc ON g.resource_id=anc.fid
   WHERE g.resource_type='folder' AND g.revoked_at IS NULL
-)::bool AS has_grants
+) OR EXISTS(
+  SELECT 1 FROM folders f
+  JOIN anc ON f.id=anc.fid
+  WHERE (f.owner_type, f.owner_id) <> ($1::text, $2::text)
+))::bool AS may_broaden
 `
 
-// Whether the folder or any of its ancestors carries an active grant, i.e.
-// placing content inside it may broaden who can see that content.
-func (q *Queries) FolderOrAncestorsHaveGrants(ctx context.Context, folderID string) (bool, error) {
-	row := q.db.QueryRow(ctx, folderOrAncestorsHaveGrants, folderID)
-	var has_grants bool
-	err := row.Scan(&has_grants)
-	return has_grants, err
+type FolderMayBroadenAccessParams struct {
+	OwnerType string
+	OwnerID   string
+	FolderID  string
+}
+
+// Whether placing content of the given owner inside the folder may broaden
+// who can see that content: the folder or one of its ancestors carries an
+// active grant or has another owner, whose ownership cascades as editor.
+func (q *Queries) FolderMayBroadenAccess(ctx context.Context, arg FolderMayBroadenAccessParams) (bool, error) {
+	row := q.db.QueryRow(ctx, folderMayBroadenAccess, arg.OwnerType, arg.OwnerID, arg.FolderID)
+	var may_broaden bool
+	err := row.Scan(&may_broaden)
+	return may_broaden, err
 }
 
 const getFolder = `-- name: GetFolder :one

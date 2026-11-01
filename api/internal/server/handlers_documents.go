@@ -108,7 +108,7 @@ func (h handlers) createDocument(c *gin.Context) {
 		ID:                d.ID,
 		CurrentVersionID:  d.CurrentVersionID,
 		FolderID:          folderID,
-		PermissionWarning: h.folderDocumentWarning(c, folderID),
+		PermissionWarning: h.folderDocumentWarning(c, folderID, d.Owner),
 		DefaultGrant:      granted,
 	})
 }

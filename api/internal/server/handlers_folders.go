@@ -87,16 +87,16 @@ func mayBroadenAccessWarning(message string) *permissionWarning {
 	return &permissionWarning{Kind: "may_broaden_access", Message: message}
 }
 
-const folderDocumentWarningMessage = "This folder has active grants — everyone with access may see this document."
+const folderDocumentWarningMessage = "Others have access to this folder — everyone with access may see this document."
 
 // folderDocumentWarning warns that the people who can see the folder can see
-// a document that was put in it. The warning is not essential, so a failed
-// lookup gives no warning.
-func (h handlers) folderDocumentWarning(c *gin.Context, folderID string) *permissionWarning {
+// a document of owner that was put in it. The warning is not essential, so a
+// failed lookup gives no warning.
+func (h handlers) folderDocumentWarning(c *gin.Context, folderID string, owner auth.Principal) *permissionWarning {
 	if folderID == "" {
 		return nil
 	}
-	if hasGrants, err := h.deps.repository.FolderHasGrants(c.Request.Context(), folderID); err != nil || !hasGrants {
+	if mayBroaden, err := h.deps.repository.FolderMayBroadenAccess(c.Request.Context(), folderID, owner); err != nil || !mayBroaden {
 		return nil
 	}
 	return mayBroadenAccessWarning(folderDocumentWarningMessage)
@@ -274,8 +274,8 @@ func (h handlers) patchFolder(c *gin.Context) {
 	out := updateFolderResponse{ID: f.ID, Title: f.Title, Owner: f.Owner, ParentFolderID: f.ParentFolderID}
 	if parentPtr != nil && *parentPtr != "" {
 		// The warning is advisory; a failed grant lookup must not fail the move.
-		if hasGrants, err := h.deps.repository.FolderHasGrants(c.Request.Context(), *parentPtr); err == nil && hasGrants {
-			out.PermissionWarning = mayBroadenAccessWarning("The destination folder has active grants — contents of the moved folder may become visible to others.")
+		if mayBroaden, err := h.deps.repository.FolderMayBroadenAccess(c.Request.Context(), *parentPtr, f.Owner); err == nil && mayBroaden {
+			out.PermissionWarning = mayBroadenAccessWarning("Others have access to the destination folder — contents of the moved folder may become visible to them.")
 		}
 	}
 	c.JSON(http.StatusOK, out)
@@ -335,12 +335,8 @@ type accessResponse struct {
 }
 
 func (h handlers) folderAccess(c *gin.Context) {
-	if !h.needFolderRole(c, c.Param("id"), repo.RoleViewer) {
-		return
-	}
-	role, err := h.deps.repository.RoleForFolder(c.Request.Context(), *current(c), c.Param("id"))
-	if err != nil {
-		internalErr(c, err)
+	chain, ok := h.needFolderChain(c, c.Param("id"), repo.RoleViewer)
+	if !ok {
 		return
 	}
 	items, err := h.deps.repository.ListEffectiveAccess(c.Request.Context(), "folder", c.Param("id"))
@@ -348,7 +344,7 @@ func (h handlers) folderAccess(c *gin.Context) {
 		internalErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, accessResponse{Items: items, CurrentRole: role})
+	c.JSON(http.StatusOK, accessResponse{Items: items, CurrentRole: chain[len(chain)-1].Role})
 }
 func (h handlers) documentAccess(c *gin.Context) {
 	if !h.needDocRole(c, c.Param("id"), repo.RoleViewer) {
@@ -399,7 +395,7 @@ func (h handlers) moveDocToFolder(c *gin.Context) {
 	if !h.needDocMove(c, in.DocumentID, folderID) {
 		return
 	}
-	hasGrants, err := h.deps.repository.MoveDocumentToFolder(c.Request.Context(), *current(c), folderID, in.DocumentID)
+	mayBroaden, err := h.deps.repository.MoveDocumentToFolder(c.Request.Context(), *current(c), folderID, in.DocumentID)
 	if err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
 			notFound(c)
@@ -409,7 +405,7 @@ func (h handlers) moveDocToFolder(c *gin.Context) {
 		return
 	}
 	out := moveDocResponse{DocumentID: in.DocumentID, FolderID: folderID, Moved: true}
-	if hasGrants {
+	if mayBroaden {
 		out.PermissionWarning = mayBroadenAccessWarning(folderDocumentWarningMessage)
 	}
 	c.JSON(http.StatusOK, out)

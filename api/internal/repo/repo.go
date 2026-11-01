@@ -556,7 +556,10 @@ type Repository interface {
 	GetFolder(ctx context.Context, id string) (Folder, error)
 	UpdateFolder(ctx context.Context, id, title string, parentFolderID *string) (Folder, error)
 	DeleteFolder(ctx context.Context, id string, principal auth.Principal) error
-	FolderHasGrants(ctx context.Context, folderID string) (bool, error)
+	// FolderMayBroadenAccess reports whether content of owner placed in the
+	// folder may become visible to others.
+	FolderMayBroadenAccess(ctx context.Context, folderID string, owner auth.Principal) (bool, error)
+	// MoveDocumentToFolder reports whether the move may broaden access.
 	MoveDocumentToFolder(ctx context.Context, principal auth.Principal, folderID, documentID string) (bool, error)
 	MoveDocumentToRoot(ctx context.Context, folderID, documentID string) error
 	ListFolderDocuments(ctx context.Context, principal auth.Principal, folderID string) ([]Document, error)

@@ -410,8 +410,8 @@ func (s *Store) SearchFoldersByTitle(ctx context.Context, p auth.Principal, quer
 	return out, nil
 }
 
-func (s *Store) FolderHasGrants(ctx context.Context, folderID string) (bool, error) {
-	return s.q.FolderOrAncestorsHaveGrants(ctx, folderID)
+func (s *Store) FolderMayBroadenAccess(ctx context.Context, folderID string, owner auth.Principal) (bool, error) {
+	return s.q.FolderMayBroadenAccess(ctx, dbsqlc.FolderMayBroadenAccessParams{FolderID: folderID, OwnerType: string(owner.Type), OwnerID: owner.ID})
 }
 
 func (s *Store) RecordFolderOpened(ctx context.Context, folderID string, p auth.Principal) error {
@@ -431,22 +431,19 @@ func (s *Store) MoveDocumentToFolder(ctx context.Context, _ auth.Principal, fold
 	if err := q.AcquireFolderTreeLock(ctx, folderTreeLockID); err != nil {
 		return false, err
 	}
-	moved, err := q.MoveDocumentToFolder(ctx, dbsqlc.MoveDocumentToFolderParams{FolderID: folderID, DocumentID: docID})
+	doc, err := q.MoveDocumentToFolder(ctx, dbsqlc.MoveDocumentToFolderParams{FolderID: folderID, DocumentID: docID})
 	if err != nil {
 		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23503" { // destination folder does not exist
+		if errors.Is(err, pgx.ErrNoRows) || errors.As(err, &pgErr) && pgErr.Code == "23503" { // document or destination folder does not exist
 			return false, repo.ErrNotFound
 		}
 		return false, err
 	}
-	if moved == 0 {
-		return false, repo.ErrNotFound
-	}
-	hasGrants, err := q.FolderOrAncestorsHaveGrants(ctx, folderID)
+	mayBroaden, err := q.FolderMayBroadenAccess(ctx, dbsqlc.FolderMayBroadenAccessParams{FolderID: folderID, OwnerType: doc.OwnerType, OwnerID: doc.OwnerID})
 	if err != nil {
 		return false, err
 	}
-	return hasGrants, tx.Commit(ctx)
+	return mayBroaden, tx.Commit(ctx)
 }
 
 func (s *Store) MoveDocumentToRoot(ctx context.Context, folderID, docID string) error {
