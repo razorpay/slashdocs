@@ -105,7 +105,7 @@ func (h handlers) createComment(c *gin.Context) {
 	}
 	incComment("created", cm.Status, actorType(c))
 	h.announce(c, repo.DocumentEventComments)
-	c.JSON(http.StatusCreated, commentJSON(cm, cm.VersionID, "", *p))
+	c.JSON(http.StatusCreated, commentJSON(cm, cm.VersionID, nil, *p))
 }
 
 // ListComments godoc
@@ -114,7 +114,7 @@ func (h handlers) createComment(c *gin.Context) {
 // @Security bearerAuth
 // @Security cookieAuth
 // @Param id path string true "Document ID"
-// @Param status query string false "open|resolved|stale|orphaned|all"
+// @Param status query string false "Thread status: open or resolved. Empty or all lists every thread. Replies travel with their thread."
 // @Param version_id query string false "Version ID"
 // @Success 200 {object} listResponse[commentResponse]
 // @Router /v1/documents/{id}/comments [get]
@@ -122,8 +122,16 @@ func (h handlers) listComments(c *gin.Context) {
 	if !h.needDocRole(c, c.Param("id"), repo.RoleViewer) {
 		return
 	}
+	status := c.Query("status")
+	if status == "all" {
+		status = ""
+	}
+	if status != "" && status != commentStatusOpen && status != commentStatusResolved {
+		badRequest(c, "status must be open, resolved or all")
+		return
+	}
 	versionID := c.Query("version_id")
-	items, err := h.deps.repository.ListComments(c.Request.Context(), c.Param("id"), c.Query("status"), versionID)
+	items, err := h.deps.repository.ListComments(c.Request.Context(), c.Param("id"), status, versionID)
 	if err != nil {
 		internalErr(c, err)
 		return
@@ -186,7 +194,7 @@ func (h handlers) createCommentReply(c *gin.Context) {
 	}
 	incComment("created", cm.Status, actorType(c))
 	h.announce(c, repo.DocumentEventComments)
-	c.JSON(http.StatusCreated, commentJSON(cm, "", "", *current(c)))
+	c.JSON(http.StatusCreated, commentJSON(cm, "", nil, *current(c)))
 }
 
 // PatchComment godoc
@@ -239,7 +247,7 @@ func (h handlers) patchComment(c *gin.Context) {
 	}
 	incComment(event, cm.Status, actorType(c))
 	h.announce(c, repo.DocumentEventComments)
-	c.JSON(http.StatusOK, commentJSON(cm, cm.VersionID, "", *current(c)))
+	c.JSON(http.StatusOK, commentJSON(cm, cm.VersionID, nil, *current(c)))
 }
 
 func normalizePatchCommentRequest(in *patchCommentRequest) string {
