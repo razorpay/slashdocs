@@ -111,7 +111,7 @@ func localCmd(g *globals, out io.Writer) *cobra.Command {
 	c.PersistentFlags().IntVar(&o.port, "port", 0, "local port (default 80, or 7070 if 80 is not available)")
 	c.PersistentPreRunE = func(*cobra.Command, []string) error {
 		if o.port < 0 || o.port > 65535 {
-			return usageError{fmt.Errorf("invalid --port %d: use a port from 1 to 65535", o.port)}
+			return usageError{fmt.Errorf("invalid --port %d: use a port from 1 to 65535, or 0 for the default", o.port)}
 		}
 		return nil
 	}

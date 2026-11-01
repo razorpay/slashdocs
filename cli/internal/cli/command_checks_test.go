@@ -3,6 +3,8 @@ package cli
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -101,6 +103,37 @@ func TestPullKeepsBaseVersionWhenWriteFails(t *testing.T) {
 	}
 	if _, cx, _ := currentContext(&globals{}); cx.Pulled["doc_1"] != "" {
 		t.Fatalf("base version = %q, want none after a failed write", cx.Pulled["doc_1"])
+	}
+}
+
+// TestPullKeepsACorruptConfig makes sure that pull does not replace an
+// unreadable config, which holds the other contexts, with one context.
+func TestPullKeepsACorruptConfig(t *testing.T) {
+	jsonTestEnv(t, jsonContractServer(t))
+	writeTestFile(t, configPath(), []byte("{"))
+
+	if _, err := Execute([]string{"docs", "pull", "doc_1", "--out", filepath.Join(t.TempDir(), "doc.html")}); err == nil || !strings.Contains(err.Error(), "is corrupt") {
+		t.Fatalf("err = %v, want the corrupt config", err)
+	}
+	if b, _ := os.ReadFile(configPath()); string(b) != "{" {
+		t.Fatalf("config = %q, want it unchanged", b)
+	}
+}
+
+// TestPullToStdoutFailsAfterJSONOnce makes sure that a failed save of the base
+// version does not add the error envelope after the HTML on stdout.
+func TestPullToStdoutFailsAfterJSONOnce(t *testing.T) {
+	jsonTestEnv(t, jsonContractServer(t))
+	if err := os.Chmod(configPath(), 0o400); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := Execute([]string{"--json", "docs", "pull", "doc_1"})
+	if err == nil {
+		t.Fatal("pull should fail when the base version cannot be saved")
+	}
+	if _, ok := decodeSingleJSON(t, out).(string); !ok {
+		t.Fatalf("output %q, want only the HTML as a JSON string", out)
 	}
 }
 

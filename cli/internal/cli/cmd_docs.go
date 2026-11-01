@@ -482,7 +482,12 @@ func pullCmd(g *globals, out io.Writer) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return recordBaseVersion(g, args[0], v)
+			err = recordBaseVersion(g, args[0], v)
+			if err != nil && g.json {
+				// The HTML is already the one JSON value on stdout.
+				return reportedError{err}
+			}
+			return err
 		}
 		if err := os.WriteFile(outp, b, pulledFilePerm); err != nil {
 			return err
@@ -501,7 +506,10 @@ func recordBaseVersion(g *globals, docID, versionID string) error {
 	if docID == "" || versionID == "" {
 		return nil
 	}
-	name, cx, cfg := currentContext(g)
+	name, cx, cfg, err := currentContextE(g)
+	if err != nil {
+		return err
+	}
 	cx.Pulled[docID] = versionID
 	cfg.Contexts[name] = cx
 	if cfg.ActiveContext == "" && !g.local {
