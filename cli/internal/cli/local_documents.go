@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -66,12 +67,17 @@ func (s *localDocs) document(doc string) (localDocument, error) {
 	return localDocument{ID: doc, Title: docTitle(s.root.FS(), doc), Owner: s.me, CurrentVersionID: localVersion(b), ParentFolderID: parent, UpdatedAt: st.ModTime().UTC()}, err
 }
 
-// listDocuments returns the documents with the most recent change first. A query
-// keeps the documents that have each of its words in the title or the path.
+// listDocuments returns a page of the documents with the most recent change
+// first, as the server does. A query keeps the documents that have each of its
+// words in the title or the path.
 func (s *localDocs) listDocuments(r *http.Request) (any, error) {
+	limit, offset, err := localPage(r.URL.Query())
+	if err != nil {
+		return nil, err
+	}
 	words := strings.Fields(strings.ToLower(r.URL.Query().Get("q")))
 	items := []localDocument{}
-	err := fs.WalkDir(s.root.FS(), ".", func(p string, de fs.DirEntry, err error) error {
+	err = fs.WalkDir(s.root.FS(), ".", func(p string, de fs.DirEntry, err error) error {
 		switch {
 		case err != nil:
 			return err
@@ -92,8 +98,27 @@ func (s *localDocs) listDocuments(r *http.Request) (any, error) {
 		}
 		return nil
 	})
-	slices.SortFunc(items, func(a, b localDocument) int { return b.UpdatedAt.Compare(a.UpdatedAt) })
-	return map[string][]localDocument{"items": items}, err
+	// The sort is stable, so that the pages do not overlap.
+	slices.SortStableFunc(items, func(a, b localDocument) int { return b.UpdatedAt.Compare(a.UpdatedAt) })
+	end := min(offset+limit, len(items))
+	return map[string]any{"items": items[min(offset, end):end], "has_more": end < len(items)}, err
+}
+
+// localPage reads the limit and offset parameters with the defaults and the
+// maximum of the server.
+func localPage(q url.Values) (limit, offset int, err error) {
+	limit, offset = 25, 0
+	if raw := q.Get("limit"); raw != "" {
+		if limit, err = strconv.Atoi(raw); err != nil || limit < 1 {
+			return 0, 0, localError{http.StatusBadRequest, "limit must be a positive integer"}
+		}
+	}
+	if raw := q.Get("offset"); raw != "" {
+		if offset, err = strconv.Atoi(raw); err != nil || offset < 0 {
+			return 0, 0, localError{http.StatusBadRequest, "offset must be zero or a positive integer"}
+		}
+	}
+	return min(limit, 100), offset, nil
 }
 
 // createDocument writes the file in the documents folder with the name of the

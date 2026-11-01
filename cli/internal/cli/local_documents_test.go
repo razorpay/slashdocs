@@ -70,6 +70,12 @@ func TestLocalDocumentsCLI(t *testing.T) {
 	if _, err := Execute([]string{"--server", info.URL, "docs", "create", notes, "--folder-id", ".git"}); err == nil {
 		t.Error("create put a document in a hidden folder")
 	}
+	if out := sd("docs", "list", "--limit", "2"); strings.Count(out, "title=") != 2 || !strings.Contains(out, "Use --offset 2") {
+		t.Errorf("list --limit 2 of 3 documents = %q, want 2 and the next offset", out)
+	}
+	if out := sd("docs", "list", "--limit", "2", "--offset", "2"); strings.Count(out, "title=") != 1 || strings.Contains(out, "--offset") {
+		t.Errorf("list --offset 2 of 3 documents = %q, want the last one", out)
+	}
 	sd("docs", "update", "notes.html", "--title", "Notes")
 	if out := sd("docs", "list", "notes"); !strings.Contains(out, "title=Notes ") {
 		t.Errorf("list after update --title = %q", out)
