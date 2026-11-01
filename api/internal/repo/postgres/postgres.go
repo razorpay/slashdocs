@@ -821,7 +821,7 @@ func pageOf[T any](rows []T, page repo.Page) ([]T, bool) {
 	return rows, false
 }
 
-func (s *Store) ListDocuments(ctx context.Context, p auth.Principal, page repo.Page) ([]repo.Document, bool, error) {
+func (s *Store) ListDocuments(ctx context.Context, p auth.Principal, page repo.Page, includeLabels bool) ([]repo.Document, bool, error) {
 	rows, err := s.q.ListDocuments(ctx, dbsqlc.ListDocumentsParams{OwnerID: p.ID, OwnerType: string(p.Type), Column3: p.GoogleGroupIDs, Limit: page.Limit + 1, Offset: page.Offset})
 	if err != nil {
 		return nil, false, err
@@ -831,7 +831,10 @@ func (s *Store) ListDocuments(ctx context.Context, p auth.Principal, page repo.P
 	for _, r := range rows {
 		out = append(out, docFromList(r))
 	}
-	return out, more, nil
+	if includeLabels {
+		err = s.addLabels(ctx, out)
+	}
+	return out, more, err
 }
 func (s *Store) SearchDocuments(ctx context.Context, p auth.Principal, search repo.DocumentSearch, includeOrgWide bool, page repo.Page) ([]repo.Document, bool, error) {
 	rows, err := s.q.SearchDocuments(ctx, dbsqlc.SearchDocumentsParams{
@@ -857,16 +860,12 @@ func (s *Store) SearchDocuments(ctx context.Context, p auth.Principal, search re
 	rows, more := pageOf(rows, page)
 	out := make([]repo.Document, 0, len(rows))
 	for _, r := range rows {
-		d := docFromSearch(r)
-		if search.IncludeLabels {
-			d.Labels, err = s.q.ListDocumentLabels(ctx, r.ID)
-			if err != nil {
-				return nil, false, err
-			}
-		}
-		out = append(out, d)
+		out = append(out, docFromSearch(r))
 	}
-	return out, more, nil
+	if search.IncludeLabels {
+		err = s.addLabels(ctx, out)
+	}
+	return out, more, err
 }
 func (s *Store) RecordDocumentOpened(ctx context.Context, documentID string, p auth.Principal) error {
 	return s.q.RecordWorkspaceEntry(ctx, dbsqlc.RecordWorkspaceEntryParams{
@@ -917,13 +916,32 @@ func (s *Store) ListDocumentsByLabel(ctx context.Context, p auth.Principal, labe
 		if r.UpdatedAt.Valid {
 			d.UpdatedAt = r.UpdatedAt.Time.UTC().Format(time.RFC3339Nano)
 		}
-		d.Labels, err = s.q.ListDocumentLabels(ctx, r.ID)
-		if err != nil {
-			return nil, err
-		}
 		out = append(out, d)
 	}
-	return out, nil
+	return out, s.addLabels(ctx, out)
+}
+
+// addLabels sets the labels of the documents with one query.
+func (s *Store) addLabels(ctx context.Context, docs []repo.Document) error {
+	if len(docs) == 0 {
+		return nil
+	}
+	ids := make([]string, len(docs))
+	for i, d := range docs {
+		ids[i] = d.ID
+	}
+	rows, err := s.q.ListLabelsForDocuments(ctx, ids)
+	if err != nil {
+		return err
+	}
+	labels := make(map[string][]string, len(docs))
+	for _, r := range rows {
+		labels[r.DocumentID] = append(labels[r.DocumentID], r.Label)
+	}
+	for i := range docs {
+		docs[i].Labels = labels[docs[i].ID]
+	}
+	return nil
 }
 
 func (s *Store) ListDocumentLabels(ctx context.Context, documentID string) ([]string, error) {

@@ -212,15 +212,10 @@ func (h handlers) listDocuments(c *gin.Context) {
 		c.JSON(http.StatusOK, documentListResponse{Items: items, HasMore: more})
 		return
 	}
-	items, more, err := h.deps.repository.ListDocuments(c.Request.Context(), *current(c), page)
+	items, more, err := h.deps.repository.ListDocuments(c.Request.Context(), *current(c), page, h.deps.labelsEnabled)
 	if err != nil {
 		internalErr(c, err)
 		return
-	}
-	if h.deps.labelsEnabled {
-		for i := range items {
-			items[i].Labels, _ = h.deps.repository.ListDocumentLabels(c.Request.Context(), items[i].ID)
-		}
 	}
 	c.JSON(http.StatusOK, documentListResponse{Items: items, HasMore: more})
 }

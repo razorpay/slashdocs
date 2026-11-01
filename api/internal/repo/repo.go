@@ -375,7 +375,7 @@ type Repository interface {
 	CreateDocument(ctx context.Context, owner auth.Principal, title, folderID string, html []byte) (Document, Version, error)
 	// ListDocuments and SearchDocuments return one page of documents, and
 	// whether more documents follow it.
-	ListDocuments(ctx context.Context, principal auth.Principal, page Page) ([]Document, bool, error)
+	ListDocuments(ctx context.Context, principal auth.Principal, page Page, includeLabels bool) ([]Document, bool, error)
 	SearchDocuments(ctx context.Context, principal auth.Principal, search DocumentSearch, includeOrgWide bool, page Page) ([]Document, bool, error)
 	// RecordDocumentOpened notes that a principal opened a document, so a
 	// broadly-shared ("anyone") document joins their workspace listing after

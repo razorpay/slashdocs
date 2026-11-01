@@ -165,7 +165,7 @@ func TestPostgresAnyoneGrantListsAfterOpen(t *testing.T) {
 
 func listed(t *testing.T, store *pgrepo.Store, p auth.Principal, docID string) bool {
 	t.Helper()
-	docs, _, err := store.ListDocuments(context.Background(), p, repo.Page{Limit: 100})
+	docs, _, err := store.ListDocuments(context.Background(), p, repo.Page{Limit: 100}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
