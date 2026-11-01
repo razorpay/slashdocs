@@ -4,6 +4,8 @@
 // first input; taking the burst reports each text node of the source as its
 // text before and after, and the app turns those into exact find-and-replace
 // edits on the document source. The DOM is never serialized back into HTML.
+// Only the blocks that the editor's own input reached count: the document's
+// scripts may change other text, such as a clock, while the editor types.
 
 export type TextChange = { before: string; after: string };
 export type TextChanges = { changes: TextChange[]; unsupported: boolean };
@@ -51,6 +53,13 @@ export function startTextEditing(
     burst = trackBurst(d, body, callbacks.onDirty);
   };
 
+  // touch marks the block of node, or else of the caret, as one the editor
+  // changes, when the editor and not a script made the input.
+  const touch = (event: Event, node?: Node | null) => {
+    node ??= d.getSelection()?.focusNode;
+    if (event.isTrusted && node) burst?.touch(node);
+  };
+
   // A burst starts before the browser changes anything: on a key that can
   // type, on paste or cut, or, for input with no key such as a spelling
   // fix, on the input itself.
@@ -68,6 +77,7 @@ export function startTextEditing(
     }
     begin();
     const target = event.inputType.startsWith("history") ? null : targetRange(d, event);
+    touch(event, target?.startContainer);
     if (target) {
       const text = trimToText(d, target);
       // Backspace at the start of a block, a selection over two paragraphs or
@@ -99,6 +109,8 @@ export function startTextEditing(
       insertPlainText(d, event.dataTransfer?.getData("text/plain") || "");
     }
   };
+  // Undo and redo change text where they put the caret.
+  const onInput = (event: Event) => touch(event);
   const onPasteOrCut = () => begin();
   const onDrop = (event: DragEvent) => {
     event.preventDefault();
@@ -109,6 +121,7 @@ export function startTextEditing(
   d.addEventListener("cut", onPasteOrCut, true);
   d.addEventListener("compositionstart", begin, true);
   d.addEventListener("beforeinput", onBeforeInput, true);
+  d.addEventListener("input", onInput, true);
   d.addEventListener("drop", onDrop, true);
 
   const previous = body.getAttribute("contenteditable");
@@ -143,6 +156,7 @@ export function startTextEditing(
       d.removeEventListener("cut", onPasteOrCut, true);
       d.removeEventListener("compositionstart", begin, true);
       d.removeEventListener("beforeinput", onBeforeInput, true);
+      d.removeEventListener("input", onInput, true);
       d.removeEventListener("drop", onDrop, true);
       if (previous === null) body.removeAttribute("contenteditable");
       else body.setAttribute("contenteditable", previous);
@@ -154,10 +168,10 @@ export function startTextEditing(
   };
 }
 
-type Burst = { diff(): TextChanges; stop(): void };
+type Burst = { diff(): TextChanges; touch(node: Node): void; stop(): void };
 
 // trackBurst records the text of every node of body and watches the changes
-// to it.
+// to the blocks that the editor touches.
 function trackBurst(
   d: Document,
   body: HTMLElement,
@@ -183,6 +197,21 @@ function trackBurst(
     parents.set(node, node.parentNode);
   }
 
+  // The blocks the editor touched, and the source nodes in them when they
+  // were first touched, before the browser changed them.
+  const blocks = new Set<Element>();
+  const touched = new Set<Text>();
+  const touch = (node: Node) => {
+    const block = blockOf(node);
+    if (!block || blocks.has(block)) return;
+    blocks.add(block);
+    const nodes = d.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+    for (let n = nodes.nextNode(); n; n = nodes.nextNode()) {
+      if (originals.has(n as Text)) touched.add(n as Text);
+    }
+  };
+  const inBlocks = (node: Node) => [...blocks].some((block) => block.contains(node));
+
   // Nodes the browser added while editing. Replacing all of a node's text
   // makes Chrome drop the node and type into a new one, so new text is
   // attributed to the original it replaced or sits next to; only added
@@ -190,6 +219,7 @@ function trackBurst(
   const addedText = new Set<Text>();
   const addedElements = new Set<Element>();
   const observer = new MutationObserver((records) => {
+    if (!records.some((record) => inBlocks(record.target))) return;
     for (const record of records) {
       for (const node of Array.from(record.addedNodes)) {
         if (node.nodeType === Node.TEXT_NODE) {
@@ -229,7 +259,8 @@ function trackBurst(
       return text;
     };
     const changes: TextChange[] = [];
-    for (const [node, before] of originals) {
+    for (const node of touched) {
+      const before = originals.get(node)!;
       let after: string;
       if (node.isConnected) {
         after = run(node, false) + node.data + run(node, true);
@@ -250,13 +281,17 @@ function trackBurst(
       if (after !== before) changes.push({ before, after });
     }
     const unsupported =
-      Array.from(addedElements).some((el) => el.isConnected && !filler(el)) ||
-      Array.from(addedText).some((n) => n.isConnected && n.data && !claimed.has(n));
+      Array.from(addedElements).some(
+        (el) => el.isConnected && inBlocks(el) && !filler(el),
+      ) ||
+      Array.from(addedText).some(
+        (n) => n.isConnected && n.data && !claimed.has(n) && inBlocks(n),
+      );
     return { changes, unsupported };
   }
   observer.observe(body, { characterData: true, childList: true, subtree: true });
   onDirty(0);
-  return { diff, stop: () => observer.disconnect() };
+  return { diff, touch, stop: () => observer.disconnect() };
 }
 
 function insertPlainText(d: Document, text: string) {
