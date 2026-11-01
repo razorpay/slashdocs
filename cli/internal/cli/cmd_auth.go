@@ -65,8 +65,9 @@ func loginCallback(q url.Values, state string) (res callbackResult, detail strin
 // readPastedCallback finishes a login whose browser runs on another machine,
 // for example over SSH, where the redirect to this machine's loopback listener
 // fails. The user pastes the callback URL that the browser could not open. It
-// must carry this login's state, and its code is useless without the PKCE
-// verifier that never leaves this process.
+// must be a /callback URL with this login's state (the login URL carries the
+// same state), and its code is useless without the PKCE verifier that never
+// leaves this process.
 func readPastedCallback(in io.Reader, errOut io.Writer, state string, resultCh chan<- callbackResult) {
 	lines := bufio.NewScanner(in)
 	for lines.Scan() {
@@ -75,7 +76,7 @@ func readPastedCallback(in io.Reader, errOut io.Writer, state string, resultCh c
 			continue
 		}
 		u, err := url.Parse(line)
-		if err != nil || u.Query().Get("state") != state {
+		if err != nil || u.Path != "/callback" || u.Query().Get("state") != state {
 			// Do not echo the input: it can hold an authorization code.
 			_, _ = fmt.Fprintln(errOut, "That is not the callback URL of this login. Paste the full http://127.0.0.1 URL from the browser address bar.")
 			continue
