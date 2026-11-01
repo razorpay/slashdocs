@@ -315,6 +315,13 @@ func newApplicationServer(ctx context.Context, store *pgrepo.Store, blobs blob.S
 	if googleGroups.directory != nil {
 		options = append(options, server.WithGoogleGroupDirectory(googleGroups.directory))
 	}
+	slackLinkPreviews, err := loadSlackLinkPreviews()
+	if err != nil {
+		return nil, err
+	}
+	if slackLinkPreviews != nil {
+		options = append(options, slackLinkPreviews)
+	}
 	return server.New(server.Config{
 		Environment:               server.EnvProduction,
 		AppOrigin:                 origins.appOrigin,

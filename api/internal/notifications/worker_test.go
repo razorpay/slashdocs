@@ -288,7 +288,7 @@ func TestEachProviderDeliversOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc, v, err := store.CreateDocument(ctx, owner, "Plan", []byte("<p>Review</p>"))
+	doc, v, err := store.CreateDocument(ctx, owner, "Plan", "", []byte("<p>Review</p>"))
 	if err != nil {
 		t.Fatal(err)
 	}

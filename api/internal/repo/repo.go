@@ -235,6 +235,15 @@ type Version struct {
 	CreatedAt     string         `json:"created_at"`
 }
 
+// VersionPreview is what a link preview shows of a version besides its
+// document's title and owner.
+type VersionPreview struct {
+	// Text is the start of what a reader sees in the version. It is empty
+	// until the version is indexed.
+	Text      string
+	CreatedAt time.Time
+}
+
 type GitHubConnection struct {
 	UserID                string `json:"-"`
 	GitHubUserID          int64  `json:"github_user_id"`
@@ -447,6 +456,9 @@ type Repository interface {
 	ListVersions(ctx context.Context, documentID string) ([]Version, error)
 	GetVersion(ctx context.Context, id string) (Version, error)
 	GetVersionHTML(ctx context.Context, id string) ([]byte, error)
+	// VersionPreview returns the start of a version's text, for link previews.
+	// Returns ErrNotFound when the version is missing.
+	VersionPreview(ctx context.Context, id string) (VersionPreview, error)
 	CreateComment(ctx context.Context, documentID, versionID, body string, anchor Anchor, author auth.Principal, mentions []CommentMention) (Comment, error)
 	CreateCommentReply(ctx context.Context, documentID, parentCommentID, body string, author auth.Principal, mentions []CommentMention) (Comment, error)
 	GetComment(ctx context.Context, id string) (Comment, error)

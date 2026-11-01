@@ -36,6 +36,10 @@ hostnames match; local or throwaway setups can override this with
 `SLASHDOCS_ALLOW_UNSAFE_RENDER_ORIGIN=true`, accepting that uploaded documents
 can then script against the app origin.
 
+Direct visits to frontend pages on the render hostname redirect to the app
+hostname. Tokenized `/v/...` and `/print/...` document routes continue to run
+on the render hostname.
+
 ## Configure sign-in
 
 slashdocs authenticates humans through OpenID Connect. Pick one provider:
@@ -624,6 +628,8 @@ a secret store. The server needs outbound HTTPS to `chat.googleapis.com` or
 | `SLASHDOCS_DEPLOYMENT`                      | `public`    | `public` or `org`. An org deployment gates login to `SLASHDOCS_ORG_DOMAINS`.                                                                                                                                                                                                                        |
 | `SLASHDOCS_ORG_DOMAINS`                     | unset       | Comma-separated org domains. Required when `SLASHDOCS_DEPLOYMENT=org`; also the login gate.                                                                                                                                                                                                         |
 | `SLASHDOCS_ORG_NAME`                        | unset       | Org display name used in share UI copy (e.g. "Anyone in Razorpay").                                                                                                                                                                                                                                 |
+| `SLASHDOCS_SLACK_LINK_PREVIEWS`             | `false`     | Set `true` to unfurl document links in Slack. Requires `SLASHDOCS_SLACK_BOT_TOKEN` and `SLASHDOCS_SLACK_SIGNING_SECRET`; startup fails without them. See [Slack link previews](comment-notifications.md#slack-link-previews). |
+| `SLASHDOCS_SLACK_SIGNING_SECRET`            | unset       | Slack app signing secret, used to verify `/v1/slack/events` requests. Keep it in your secret store. |
 | `BLOB_REGION`                               | `us-east-1` | AWS region for the S3 client.                                                                                                                                                                                                                                                                       |
 | `BLOB_ENDPOINT`                             | unset       | Custom S3 endpoint (MinIO, R2, etc.).                                                                                                                                                                                                                                                               |
 | `BLOB_ACCESS_KEY_ID`                        | unset       | Override AWS-SDK default credential chain.                                                                                                                                                                                                                                                          |
@@ -685,6 +691,30 @@ boot. This drives copy-paste-correct commands in the UI:
 
 No extra API call is made; the value comes from the same env you already
 configured for the server.
+
+## Document titles and link previews
+
+For a document page (`/app/d/:id`), the server also puts the document's title,
+a short description and Open Graph tags into `index.html`, so that browser
+tabs, bookmarks and link previews show the document before the app loads. The
+description is the start of the document's text, or the owner and the date of
+the last version when the text is not indexed yet. Sensitive values such as
+one-time codes are redacted from the description.
+
+Only a caller who may read the document gets them. Everyone else, including a
+chat app that fetches the link to preview it, gets the generic page. On a
+`public` deployment, a document shared with everyone therefore previews in any
+chat app; on an `org` deployment, link previews stay generic, because the app
+that fetches the link is not signed in. There, the Slack app can still preview
+documents that everyone in the organization can open (see [Slack link
+previews](comment-notifications.md#slack-link-previews)). `og:url` needs
+`SLASHDOCS_APP_ORIGIN`.
+
+Document pages are sent with `Cache-Control: private, no-cache`, because their
+content depends on who asks. If the lookups take longer than a second, the
+server sends the generic page. With Google Groups enabled, a reader whose access
+comes from a group gets the document's head only while their memberships are
+cached; the page never asks the directory.
 
 ## Storage notes
 

@@ -88,6 +88,9 @@ type dependencies struct {
 	googleGroupDirectory googlegroups.GoogleGroupDirectory
 	googleGroupResolver  *googlegroups.Resolver
 	labelsEnabled        bool
+	slackSigningSecret   string
+	slackUnfurler        notifications.Unfurler
+	previousOrigins      []string
 	frontend             fs.FS
 }
 
@@ -104,6 +107,12 @@ func WithNotificationSenders(senders map[string]notifications.Sender) Option {
 	return func(d *dependencies) { d.notificationSenders = senders }
 }
 
+// WithSlackLinkPreviews serves Slack link previews at POST /v1/slack/events.
+// signingSecret verifies that Slack sent each event.
+func WithSlackLinkPreviews(signingSecret string, unfurler notifications.Unfurler) Option {
+	return func(d *dependencies) { d.slackSigningSecret, d.slackUnfurler = signingSecret, unfurler }
+}
+
 func (s *Server) RunCommentNotifications(ctx context.Context) {
 	if s.notificationWorker != nil {
 		s.notificationWorker.Run(ctx)
@@ -111,6 +120,9 @@ func (s *Server) RunCommentNotifications(ctx context.Context) {
 }
 
 func WithRepository(r repo.Repository) Option { return func(d *dependencies) { d.repository = r } }
+
+// WithFrontend serves the web app from fsys instead of the embedded build.
+func WithFrontend(fsys fs.FS) Option { return func(d *dependencies) { d.frontend = fsys } }
 
 func WithGoogleGroupDirectory(directory googlegroups.GoogleGroupDirectory) Option {
 	return func(d *dependencies) { d.googleGroupDirectory = directory }
@@ -165,6 +177,7 @@ func New(cfg Config, opts ...Option) *Server {
 		githubAccessChecks:   new(singleflight.Group),
 		googleGroupsEnabled:  cfg.GoogleGroupsEnabled,
 		labelsEnabled:        !cfg.DisableLabels,
+		previousOrigins:      cfg.PreviousOrigins,
 		frontend:             embeddedFrontend(),
 	}
 	if cfg.GitHubClientID != "" && cfg.GitHubClientSecret != "" && cfg.AppOrigin != "" {
@@ -254,7 +267,7 @@ func (s *Server) routes(deps dependencies) {
 	registerAPIDocsRoutes(s.engine, deps)
 	s.engine.GET("/v/:id/:version_id", h.renderVersion)
 	s.engine.GET("/print/:id/:version_id", h.renderPrintVersion)
-	registerFrontendRoutes(s.engine, deps.frontend, deps.appOrigin)
+	registerFrontendRoutes(s.engine, h)
 
 	s.engine.GET("/livez", h.livez)
 	s.engine.GET("/readyz", h.readyz)
@@ -270,6 +283,11 @@ func (s *Server) routes(deps dependencies) {
 	v1.GET("/auth/oidc/callback", h.oauthCallback)
 	v1.POST("/auth/cli/exchange", h.cliExchange)
 	v1.POST("/auth/logout", h.logout)
+	// Slack link previews. Public, because Slack cannot sign in; every request
+	// must carry a valid Slack signature instead (see verifySlackSignature).
+	if deps.slackUnfurler != nil {
+		v1.POST("/slack/events", verifySlackSignature(deps.slackSigningSecret, time.Now), h.slackEvents)
+	}
 
 	// These routes read a document. A public deployment also serves them to
 	// anonymous readers of a document that is shared with anyone.
