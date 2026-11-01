@@ -204,17 +204,12 @@ export function RestoreButton({
 }: {
   docId: string;
   version?: Version;
-  onRestored: () => void;
+  onRestored: (restored: Version) => void;
 }) {
   const q = useQueryClient();
   const restore = useMutation({
-    mutationFn: (v: Version) =>
-      api.restoreVersion(
-        docId,
-        v.id,
-        `Restored the version from ${formatTimestamp(v.created_at)}`,
-      ),
-    onSuccess: () => {
+    mutationFn: (v: Version) => api.restoreVersion(docId, v.id),
+    onSuccess: (restored) => {
       for (const queryKey of [
         queryKeys.document(docId),
         queryKeys.versions(docId),
@@ -223,7 +218,7 @@ export function RestoreButton({
       ]) {
         q.invalidateQueries({ queryKey });
       }
-      onRestored();
+      onRestored(restored);
       toast.success("Restored.");
     },
     onError: (e) => toast.error(errorMessage(e, "Could not restore this version.")),

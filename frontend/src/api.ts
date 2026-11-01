@@ -422,10 +422,9 @@ export const api = {
       { method: "POST", body: JSON.stringify(input) },
     ),
   // Saves the content of an earlier version as the newest one.
-  restoreVersion: (doc: string, version: string, summary: string) =>
+  restoreVersion: (doc: string, version: string) =>
     request<Version>(`/v1/documents/${doc}/versions/${version}/restore`, {
       method: "POST",
-      body: JSON.stringify({ change_summary: summary }),
     }),
   renderToken: (doc: string, version: string) =>
     request<{ token: string; url: string }>(

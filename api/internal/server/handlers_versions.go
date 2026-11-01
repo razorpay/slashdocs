@@ -243,6 +243,7 @@ type restoreVersionRequest struct {
 // @Param version_id path string true "Version ID to restore"
 // @Param body body restoreVersionRequest false "Change summary"
 // @Success 201 {object} createVersionResponse
+// @Failure 400 {object} errorEnvelope
 // @Failure 409 {object} errorEnvelope
 // @Router /v1/documents/{id}/versions/{version_id}/restore [post]
 func (h handlers) restoreVersion(c *gin.Context) {
@@ -272,7 +273,7 @@ func (h handlers) restoreVersion(c *gin.Context) {
 	}
 	summary := strings.TrimSpace(in.ChangeSummary)
 	if summary == "" {
-		summary = fmt.Sprintf("Restored version %d", old.Number)
+		summary = restoredSummary(old)
 	}
 	v, err := h.deps.repository.CreateVersion(ctx, old.DocumentID, d.CurrentVersionID, summary, html, *current(c))
 	if errors.Is(err, repo.ErrVersionConflict) {
@@ -286,6 +287,16 @@ func (h handlers) restoreVersion(c *gin.Context) {
 	incVersion("restored", actorType(c))
 	h.announce(c, repo.DocumentEventDocument)
 	c.JSON(http.StatusCreated, createVersionResponse{ID: v.ID, Number: v.Number, SHA256: v.SHA256, ChangeSummary: v.ChangeSummary})
+}
+
+// restoredSummary names a restore by the time of the version it brings back,
+// since people know the history by time, not by version number.
+func restoredSummary(old repo.Version) string {
+	created, err := time.Parse(time.RFC3339, old.CreatedAt)
+	if err != nil {
+		return "Restored an earlier version"
+	}
+	return "Restored the version from " + created.UTC().Format("Jan 2, 2006, 15:04 UTC")
 }
 
 // versionConflict writes the 409 for a stale base, naming the current version.

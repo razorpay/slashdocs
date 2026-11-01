@@ -1742,6 +1742,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/server.createVersionResponse"
                         }
                     },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
                     "409": {
                         "description": "Conflict",
                         "schema": {
