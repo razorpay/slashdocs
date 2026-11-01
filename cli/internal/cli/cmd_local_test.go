@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 const (
@@ -46,7 +47,8 @@ func newTestLocal(t *testing.T) testLocal {
 	}
 	t.Cleanup(func() { _ = root.Close() })
 	me := localPrincipal{Type: "user", ID: "ada", Name: "Ada"}
-	return testLocal{dir, localHandler(root, localInfo{URL: localURL(7070), Port: 7070, Dir: "/docs"}, me)}
+	app := fstest.MapFS{"local.html": {Data: []byte(`<div id="root"></div>`)}}
+	return testLocal{dir, localHandler(root, app, localInfo{URL: localURL(7070), Port: 7070, Dir: "/docs"}, me)}
 }
 
 // do sends a request from the app page.

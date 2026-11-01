@@ -26,20 +26,20 @@ var frontendFS embed.FS
 // it with the document's head.
 const shellTitle = "<title>slashdocs</title>"
 
-// embeddedFrontend returns the embedded Vite build.
+// embeddedFrontend returns the root of the Vite build in frontendFS.
 func embeddedFrontend() fs.FS {
 	dist, err := fs.Sub(frontendFS, "frontend_dist")
 	if err != nil {
-		return nil
+		panic(err) // unreachable: "frontend_dist" is a valid path
 	}
 	return dist
 }
 
+// registerFrontendRoutes serves h.deps.frontend as a single-page app: existing
+// files as they are, and index.html with the public URL filled in for every
+// other GET or HEAD. Document pages also get the document's head.
 func registerFrontendRoutes(r *gin.Engine, h handlers) {
 	dist := h.deps.frontend
-	if dist == nil {
-		return
-	}
 	fileServer := http.FileServer(http.FS(dist))
 	appOrigin := strings.TrimRight(h.deps.appOrigin, "/")
 

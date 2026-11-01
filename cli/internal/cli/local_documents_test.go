@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 // TestLocalDocumentsCLI runs `slashdocs docs` commands on a local server at
@@ -24,7 +25,7 @@ func TestLocalDocumentsCLI(t *testing.T) {
 	_, p, _ := net.SplitHostPort(srv.Listener.Addr().String())
 	port, _ := strconv.Atoi(p)
 	info := localInfo{URL: localURL(port), Port: port, Dir: dir}
-	srv.Config.Handler = localHandler(root, info, localPrincipal{Type: "user", ID: "ada"})
+	srv.Config.Handler = localHandler(root, fstest.MapFS{}, info, localPrincipal{Type: "user", ID: "ada"})
 	srv.Start()
 	t.Cleanup(srv.Close)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
