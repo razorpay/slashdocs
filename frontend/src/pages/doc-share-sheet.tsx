@@ -576,6 +576,7 @@ export function ShareSheet({
                           variant="outline"
                           className="shrink-0"
                           disabled={!requesterAddress}
+                          aria-label={`Share with ${requesterAddress}`}
                           onClick={() => {
                             setShareMode("people");
                             setSelectedGroup(null);
