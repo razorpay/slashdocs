@@ -154,6 +154,10 @@ export function DocumentPage() {
   const approver = !!approvals.data?.items.some((item) =>
     samePrincipal(item.approver, me.data?.principal),
   );
+  // Until the approvals load, the reader may be an approver.
+  const approverKnown = !doc.data?.approval_status || approvals.isSuccess;
+  const canChangeContent = canEdit && approverKnown && !approver;
+  const editable = canChangeContent && !previewing;
 
   // The link keeps its fragment, such as a text link.
   const showLatest = useCallback(() => {
@@ -178,7 +182,8 @@ export function DocumentPage() {
   const currentRef = useRef(current);
   currentRef.current = current;
   const stayOnVersion = useCallback(
-    () => setPinnedVersion((version) => version || currentRef.current),
+    (version?: string) =>
+      setPinnedVersion((pinned) => version || pinned || currentRef.current),
     [],
   );
 
@@ -186,18 +191,23 @@ export function DocumentPage() {
     docId: id,
     version: current,
     principal: me.data?.principal,
-    // Keep the reader on the version they read when someone else edits.
-    onRemoteDocumentChange: stayOnVersion,
+    // Keep the reader on the version they read when someone else edits. An
+    // editor stays on it after any change, even their own from an agent or
+    // another tab, so the frame keeps what they type. Saves from this tab
+    // move the editor on (see RenderFrame).
+    onDocumentChange: (by) => {
+      if (editable || !samePrincipal(by, me.data?.principal)) stayOnVersion();
+    },
   });
 
-  // Offer the edits someone else made while this reader stayed on the
-  // version before them.
+  // Offer the edits made elsewhere while this reader stayed on the version
+  // before them.
   const seenLatest = useRef(latest);
   useEffect(() => {
     const previous = seenLatest.current;
     seenLatest.current = latest;
     if (!previous || previous === latest || current !== previous) return;
-    toast.info("Someone else edited this document.", {
+    toast.info("This document changed elsewhere.", {
       id: "document-changed",
       action: { label: "Show changes", onClick: showLatest },
     });
@@ -276,7 +286,7 @@ export function DocumentPage() {
       stream={stream}
       followedCursor={followedCursor}
       onDocumentClick={closeShare}
-      editable={canEdit && !approver && !previewing}
+      editable={editable}
       stayOnVersion={stayOnVersion}
       showLatest={showLatest}
       bar={(controls) => (
@@ -291,6 +301,7 @@ export function DocumentPage() {
           current={current}
           latest={latest}
           previewing={previewing}
+          canChangeContent={canChangeContent}
           versions={versionItems}
           labels={doc.data.labels || []}
           onSelectVersion={showVersion}

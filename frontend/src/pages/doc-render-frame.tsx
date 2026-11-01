@@ -187,12 +187,15 @@ export function RenderFrame() {
     loaded,
     take: takeTextEdits,
     setState: setSaveState,
+    // A clean save holds what is on screen, so the editor stays on it rather
+    // than on the latest, which may hold changes from elsewhere.
     onSaved: (saved, clean) => {
       if (clean) {
         setKept((k) => ({
           loaded: k?.loaded ?? frameVersion,
           saved: [...(k?.saved ?? []), saved],
         }));
+        stayOnVersion(saved);
       } else stayOnVersion();
       for (const queryKey of [
         queryKeys.document(docId),

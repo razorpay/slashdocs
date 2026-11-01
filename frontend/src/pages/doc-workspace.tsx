@@ -121,7 +121,7 @@ export function DocWorkspace({
   onDocumentClick?: () => void;
   // The reader may edit the version on screen.
   editable?: boolean;
-  stayOnVersion?: () => void;
+  stayOnVersion?: (version?: string) => void;
   showLatest?: () => void;
   bar: (controls: DocBarControls) => ReactNode;
 }) {

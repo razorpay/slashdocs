@@ -96,12 +96,14 @@ export function useDocumentStream({
   docId,
   version,
   principal,
-  onRemoteDocumentChange,
+  onDocumentChange,
 }: {
   docId: string;
   version: string;
   principal?: Principal;
-  onRemoteDocumentChange: () => void;
+  // Called on each change to the document, before it refreshes, with whoever
+  // made the change.
+  onDocumentChange: (by?: Principal) => void;
 }) {
   const q = useQueryClient();
   const [session] = useState(() => crypto.randomUUID());
@@ -129,7 +131,7 @@ export function useDocumentStream({
       kv: (event) => kvListeners.current.forEach((listener) => listener(event)),
       comments: () => q.invalidateQueries({ queryKey: queryKeys.comments(docId) }),
       document: (event) => {
-        if (!samePrincipal(event.updated_by, principal)) onRemoteDocumentChange();
+        onDocumentChange(event.updated_by);
         q.invalidateQueries({ queryKey: queryKeys.document(docId) });
         q.invalidateQueries({ queryKey: queryKeys.versions(docId) });
       },

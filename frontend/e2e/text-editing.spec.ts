@@ -223,3 +223,64 @@ test("restores an earlier version from the history", async ({ page, slashdocs })
   );
   expect(await source.text()).toBe(html);
 });
+
+test("keeps unsaved typing when the same person changes the document elsewhere", async ({
+  page,
+  slashdocs,
+}) => {
+  const title = uniqueName("Text editing elsewhere");
+  const html = documentHTML(title);
+  const document = await slashdocs.createDocument(title, html);
+
+  await openEditable(page, document.id);
+  const saved = nextEdit(page, document.id);
+  await selectWord(page, "#retry", "twice");
+  await page.keyboard.type("three times");
+  // An agent with the editor's own token changes other text before the pause.
+  await slashdocs.pushVersion(document.id, html.replace("10 minutes", "15 minutes"));
+  await expect(page.getByText("This document changed elsewhere.")).toBeVisible();
+
+  expect((await saved).status()).toBe(201);
+  await expect(renderedDocument(page).locator("#retry")).toHaveText(
+    "Clients retry three times before giving up.",
+  );
+  const latest = await slashdocs.getDocument(document.id);
+  const source = await page.request.get(
+    `/v1/documents/${document.id}/versions/${latest.current_version_id}/html`,
+  );
+  expect(await source.text()).toBe(
+    html.replace("10 minutes", "15 minutes").replace("twice", "three times"),
+  );
+});
+
+test("saves only the editor's words while a script changes other text", async ({
+  page,
+  slashdocs,
+}) => {
+  const title = uniqueName("Text editing script");
+  const html = documentHTML(title).replace(
+    "</body>",
+    `<p id="clock">0</p>
+    <script>
+      let ticks = 0;
+      setInterval(() => {
+        document.getElementById("clock").textContent = String(++ticks);
+        document.body.appendChild(document.createElement("span"));
+      }, 200);
+    </script>
+  </body>`,
+  );
+  const document = await slashdocs.createDocument(title, html);
+
+  await openEditable(page, document.id);
+  const saved = nextEdit(page, document.id);
+  await selectWord(page, "#ttl", "10");
+  await page.keyboard.type("5");
+  expect((await saved).request().postDataJSON()).toEqual({
+    edits: [{ old_string: "10", new_string: "5" }],
+  });
+  await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Only words can change here.", { exact: false }),
+  ).toBeHidden();
+});

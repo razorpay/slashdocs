@@ -78,8 +78,9 @@ export type DocContextValue = {
   saveState: SaveState;
   setSaveState: (state: SaveState) => void;
   // Keeps the reader on the version on screen when the document changes
-  // under them, as when edits land on top of someone else's.
-  stayOnVersion: () => void;
+  // under them, as when edits land on top of someone else's, or on a given
+  // version that holds what is on screen.
+  stayOnVersion: (version?: string) => void;
   // Shows the latest version again.
   showLatest: () => void;
 };

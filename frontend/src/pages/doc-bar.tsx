@@ -73,6 +73,7 @@ export function DocBar({
   current,
   latest,
   previewing,
+  canChangeContent,
   versions,
   labels,
   onSelectVersion,
@@ -98,6 +99,9 @@ export function DocBar({
   latest: string;
   // An earlier version from the history is on screen.
   previewing: boolean;
+  // The reader may change the content: an editor who is not an assigned
+  // approver.
+  canChangeContent: boolean;
   versions: Version[];
   labels: string[];
   onSelectVersion: (versionID: string) => void;
@@ -139,7 +143,13 @@ export function DocBar({
     },
     onError: (e) => toast.error(errorMessage(e, "Delete failed")),
   });
-  const { printDocument: exportPDF, signIn } = useDoc();
+  const { printDocument: exportPDF, signIn, stayOnVersion } = useDoc();
+  // The reader goes to a version they made here, even when the event for it
+  // came first and kept them on the one before.
+  const showSaved = (saved: Version) => {
+    onShowLatest();
+    stayOnVersion(saved.id);
+  };
   return (
     <DocBarFrame
       home="/app/documents"
@@ -169,12 +179,8 @@ export function DocBar({
       />
       <Viewers viewers={viewers} latest={latest} onFollow={onFollowViewer} />
       {viewers.length ? <CursorsToggle /> : null}
-      {previewing && canEdit ? (
-        <RestoreButton
-          docId={docId}
-          version={currentVersion}
-          onRestored={onShowLatest}
-        />
+      {previewing && canChangeContent ? (
+        <RestoreButton docId={docId} version={currentVersion} onRestored={showSaved} />
       ) : null}
       {behind ? (
         <Button
@@ -298,7 +304,9 @@ export function DocBar({
           </DropdownItem>
           {canManage ? (
             <>
-              <UploadVersionMenuItem onSelect={() => setUploadOpen(true)} />
+              {canChangeContent ? (
+                <UploadVersionMenuItem onSelect={() => setUploadOpen(true)} />
+              ) : null}
               <DropdownSeparator />
               <DropdownItem
                 onSelect={() => setDeleteOpen(true)}
@@ -315,6 +323,7 @@ export function DocBar({
           <UploadVersionSheet
             docId={docId}
             baseVersion={latest || current}
+            onUploaded={showSaved}
             open={uploadOpen}
             onOpenChange={setUploadOpen}
           />

@@ -14,7 +14,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { HtmlFileInput, useStagedFile } from "@/components/ui/upload";
-import { api } from "@/api";
+import { api, type Version } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
 
 // The menu item only asks for the sheet to open. The sheet is rendered by the
@@ -31,11 +31,13 @@ export function UploadVersionMenuItem({ onSelect }: { onSelect: () => void }) {
 export function UploadVersionSheet({
   docId,
   baseVersion,
+  onUploaded,
   open,
   onOpenChange,
 }: {
   docId: string;
   baseVersion: string;
+  onUploaded?: (uploaded: Version) => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -44,7 +46,8 @@ export function UploadVersionSheet({
   const { file, setFile, reset } = useStagedFile();
   const m = useMutation({
     mutationFn: () => api.createVersion(docId, baseVersion, summary, file!),
-    onSuccess: () => {
+    onSuccess: (uploaded) => {
+      onUploaded?.(uploaded);
       toast.success("Uploaded. The previous content is in the history.");
       onOpenChange(false);
       setSummary("");
