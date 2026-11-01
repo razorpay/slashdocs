@@ -56,10 +56,15 @@ func searchText(doc []byte) string {
 		}
 	}
 	// The limit cuts after the last whole word, because a part of a word
-	// matches searches for other words.
+	// matches searches for other words. Text with no space in the limit, such
+	// as CJK prose, is cut at the limit.
 	s := text.String()
 	if len(s) > maxSearchTextBytes {
-		s = s[:max(strings.LastIndexByte(s[:maxSearchTextBytes+1], ' '), 0)]
+		if i := strings.LastIndexByte(s[:maxSearchTextBytes+1], ' '); i > 0 {
+			s = s[:i]
+		} else {
+			s = s[:maxSearchTextBytes]
+		}
 	}
 	// PostgreSQL text must be UTF-8, and a document can have bytes in another
 	// encoding.
