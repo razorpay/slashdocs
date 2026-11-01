@@ -76,6 +76,8 @@ func documentListCmd(g *globals, out io.Writer) *cobra.Command {
 			"a month, or a year (last week, september, this year, 2026), or last 7 days.\n" +
 			"Dates use UTC. Repeat from: or in: to match any value.\n" +
 			"Quote the whole query when it contains spaces.\n\n" +
+			"Search reads the first 256 KiB of the text of a document (about 40,000 words).\n" +
+			"An exact phrase matches in the first 16,383 words only.\n\n" +
 			"A list shows 25 documents. Use --limit for up to 100, and --offset to see the next documents.\n\n" +
 			"With --local, the query finds each word in the title or the path of a document, and modifiers are not available.",
 		Example: "  slashdocs docs list 'incident from:alice@example.com label:api,review in:\"Product Specs\"'\n" +
