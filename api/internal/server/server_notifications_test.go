@@ -37,7 +37,7 @@ func TestNotificationPreferencesArePersonalAndRequireDocumentAccess(t *testing.T
 
 func TestDocumentLinksEnforceAccessAndDocumentMembership(t *testing.T) {
 	e := newTestEnv(t)
-	other, ver, err := e.store.CreateDocument(context.Background(), fixtureOwner, "other", []byte("<h1>Other</h1>"))
+	other, ver, err := e.store.CreateDocument(context.Background(), fixtureOwner, "other", "", []byte("<h1>Other</h1>"))
 	if err != nil {
 		t.Fatal(err)
 	}

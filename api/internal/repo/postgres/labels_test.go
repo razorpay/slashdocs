@@ -11,7 +11,7 @@ func TestDocumentLabelsReplaceAndFilter(t *testing.T) {
 	ctx := context.Background()
 	store := newStore(t)
 	owner := auth.Principal{Type: auth.PrincipalUser, ID: "label_owner", Email: "labels@example.com"}
-	doc, _, err := store.CreateDocument(ctx, owner, "Labelled", []byte("<html></html>"))
+	doc, _, err := store.CreateDocument(ctx, owner, "Labelled", "", []byte("<html></html>"))
 	if err != nil {
 		t.Fatal(err)
 	}

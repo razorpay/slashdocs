@@ -32,6 +32,7 @@ func mcpCommentID() mcp.ToolOption {
 func registerMCPDocumentTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 	registerMCPDocumentCRUDTools(server, api)
 	registerMCPDocumentMoveTool(server, api)
+	registerMCPDocumentLabelTools(server, api)
 	registerMCPVersionTools(server, api)
 	registerMCPCommentTools(server, api)
 	registerMCPCommentMutationTools(server, api)
@@ -73,9 +74,10 @@ func registerMCPDocumentCRUDTools(server *mcpserver.MCPServer, api mcpAPIAdapter
 	})
 
 	server.AddTool(mcp.NewTool("create_document", mutationOptions(false, false,
-		mcp.WithDescription("Create a slashdocs document from complete self-contained HTML. Returns its document and initial version IDs. The server applies its configured default sharing at create; when a default grant was applied, the result carries default_grant (grant_id, principal, role) plus a warning describing who can access the document and how to revoke the grant."),
+		mcp.WithDescription("Create a slashdocs document from complete self-contained HTML. Returns its document and initial version IDs. The server applies its configured default sharing at create; when a default grant was applied, the result carries default_grant (grant_id, principal, role) plus a warning describing who can access the document and how to revoke the grant. With folder_id, the document is in that folder from the start, and permission_warning tells when the folder is shared."),
 		mcp.WithString("title", mcp.Required(), mcp.Description("Human-readable document title.")),
 		mcp.WithString("html", mcp.Required(), mcp.Description("Complete self-contained HTML, up to 50 MiB.")),
+		mcp.WithString("folder_id", mcp.Description("Optional folder ID (fld_…) for the document. Requires editor on the folder. The default is the workspace root.")),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		title, invalid := mcpRequired(request, "title")
 		if invalid != nil {
@@ -85,7 +87,8 @@ func registerMCPDocumentCRUDTools(server *mcpserver.MCPServer, api mcpAPIAdapter
 		if invalid != nil {
 			return invalid, nil
 		}
-		response, err := api.multipartResponse(ctx, "/v1/documents", map[string]string{"title": title}, html, nil, api.handlers.createDocument)
+		fields := map[string]string{"title": title, "folder_id": request.GetString("folder_id", "")}
+		response, err := api.multipartResponse(ctx, "/v1/documents", fields, html, nil, api.handlers.createDocument)
 		if err != nil || response.status != http.StatusCreated {
 			return api.result(response, err, false)
 		}
@@ -165,6 +168,24 @@ func defaultGrantVerb(role string) string {
 	default:
 		return "read it"
 	}
+}
+
+func registerMCPDocumentLabelTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
+	server.AddTool(mcp.NewTool("set_document_labels", mutationOptions(true, true,
+		mcp.WithDescription("Replace all labels of a document. An empty list removes them. Requires editor on the document. Returns the labels."),
+		mcpDocumentID(),
+		mcp.WithArray("labels", mcp.Required(), mcp.WithStringItems(), mcp.Description("Up to 20 labels: lowercase letters, numbers, dots, underscores, or hyphens.")),
+	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		id, invalid := mcpRequired(request, "document_id")
+		if invalid != nil {
+			return invalid, nil
+		}
+		labels, err := request.RequireStringSlice("labels")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return api.json(ctx, http.MethodPut, "/v1/documents/"+id+"/labels", map[string]any{"labels": labels}, mcpParams("id", id), api.handlers.replaceDocumentLabels)
+	})
 }
 
 func registerMCPDocumentMoveTool(server *mcpserver.MCPServer, api mcpAPIAdapter) {

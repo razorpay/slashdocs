@@ -17,9 +17,11 @@ import (
 
 // createDocumentResponse is the payload of POST /v1/documents.
 type createDocumentResponse struct {
-	ID               string        `json:"id"`
-	CurrentVersionID string        `json:"current_version_id"`
-	DefaultGrant     *defaultGrant `json:"default_grant,omitempty"`
+	ID                string             `json:"id"`
+	CurrentVersionID  string             `json:"current_version_id"`
+	FolderID          string             `json:"folder_id,omitempty"`
+	PermissionWarning *permissionWarning `json:"permission_warning,omitempty"`
+	DefaultGrant      *defaultGrant      `json:"default_grant,omitempty"`
 }
 
 // defaultGrant reports the server-applied default "anyone" grant so clients
@@ -43,6 +45,7 @@ type defaultGrantPrincipal struct {
 // @Produce json
 // @Param title formData string true "Document title"
 // @Param file formData file true "Single-file HTML"
+// @Param folder_id formData string false "The folder for the document. The caller needs editor on it. The default is the root."
 // @Param default_permission formData string false "Default sharing applied at create: viewer, commenter, editor or private. Overrides the server-wide default."
 // @Success 201 {object} createDocumentResponse
 // @Router /v1/documents [post]
@@ -74,14 +77,14 @@ func (h handlers) createDocument(c *gin.Context) {
 		badRequest(c, "invalid document upload")
 		return
 	}
+	folderID := c.PostForm("folder_id")
+	if folderID != "" && !h.needFolderRole(c, folderID, repo.RoleEditor) {
+		return
+	}
 	observeHTML("document_create", len(html))
-	d, _, err := h.deps.repository.CreateDocument(c.Request.Context(), *p, title, html)
+	d, _, err := h.deps.repository.CreateDocument(c.Request.Context(), *p, title, folderID, html)
 	if err != nil {
-		if errors.Is(err, blob.ErrStorage) {
-			c.JSON(http.StatusBadGateway, errorResponse("blob_storage_failed", "could not upload HTML to blob storage", nil))
-			return
-		}
-		internalErr(c, err)
+		createDocumentErr(c, err)
 		return
 	}
 	incDocument("created", actorType(c))
@@ -101,7 +104,24 @@ func (h handlers) createDocument(c *gin.Context) {
 		incGrant("created", string(g.Role), string(g.Principal.Type), actorType(c))
 		granted = &defaultGrant{GrantID: g.ID, Principal: defaultGrantPrincipal{Type: auth.PrincipalAnyone}, Role: g.Role}
 	}
-	c.JSON(http.StatusCreated, createDocumentResponse{ID: d.ID, CurrentVersionID: d.CurrentVersionID, DefaultGrant: granted})
+	c.JSON(http.StatusCreated, createDocumentResponse{
+		ID:                d.ID,
+		CurrentVersionID:  d.CurrentVersionID,
+		FolderID:          folderID,
+		PermissionWarning: h.folderDocumentWarning(c, folderID),
+		DefaultGrant:      granted,
+	})
+}
+
+func createDocumentErr(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, blob.ErrStorage):
+		c.JSON(http.StatusBadGateway, errorResponse("blob_storage_failed", "could not upload HTML to blob storage", nil))
+	case errors.Is(err, repo.ErrNotFound): // The folder was deleted after the role check.
+		notFound(c)
+	default:
+		internalErr(c, err)
+	}
 }
 
 // documentListResponse is the payload of GET /v1/documents.

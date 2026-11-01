@@ -117,14 +117,16 @@ func (q *Queries) IndexDocuments(ctx context.Context, rowLimit int32) (int64, er
 }
 
 const insertDocument = `-- name: InsertDocument :exec
-INSERT INTO documents(id,title,owner_type,owner_id) VALUES($1,$2,$3,$4)
+INSERT INTO documents(id,title,owner_type,owner_id,parent_folder_id)
+VALUES($1,$2,$3,$4,NULLIF($5::text,''))
 `
 
 type InsertDocumentParams struct {
-	ID        string
-	Title     string
-	OwnerType string
-	OwnerID   string
+	ID             string
+	Title          string
+	OwnerType      string
+	OwnerID        string
+	ParentFolderID string
 }
 
 func (q *Queries) InsertDocument(ctx context.Context, arg InsertDocumentParams) error {
@@ -133,6 +135,7 @@ func (q *Queries) InsertDocument(ctx context.Context, arg InsertDocumentParams) 
 		arg.Title,
 		arg.OwnerType,
 		arg.OwnerID,
+		arg.ParentFolderID,
 	)
 	return err
 }

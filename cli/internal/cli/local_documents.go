@@ -104,11 +104,19 @@ func (s *localDocs) createDocument(r *http.Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	doc := path.Base(cleanLocal(name))
-	if !isHTML(doc) || strings.HasPrefix(doc, ".") {
+	file := path.Base(cleanLocal(name))
+	if !isHTML(file) || strings.HasPrefix(file, ".") {
 		return nil, localError{http.StatusBadRequest, "the file name must end in .html"}
 	}
+	// A folder ID is the path of the folder.
+	doc := path.Join(cleanLocal(r.FormValue("folder_id")), file)
+	if isHidden(doc) {
+		return nil, localError{http.StatusBadRequest, "a folder that starts with a dot is hidden, so it cannot keep documents"}
+	}
 	if err := s.free(doc); err != nil {
+		return nil, err
+	}
+	if err := s.root.MkdirAll(path.Dir(doc), configDirPerm); err != nil {
 		return nil, err
 	}
 	f, err := s.root.OpenFile(doc, os.O_WRONLY|os.O_CREATE|os.O_EXCL, pulledFilePerm)

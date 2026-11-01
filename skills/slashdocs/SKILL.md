@@ -48,7 +48,8 @@ format:
 3. Save it locally (for example `report.html`).
 4. Use `slashdocs docs --help` and `slashdocs docs create --help` to confirm current
    syntax.
-5. Publish with the CLI.
+5. Publish with the CLI. To put the document in a folder, add
+   `--folder-id fld_123`, so that it is never at the root.
 6. Return the printed slashdocs document URL.
 
 ### Updating an existing document
@@ -81,7 +82,8 @@ A list shows 25 documents, and `--limit` shows up to 100. When the JSON has
 `"has_more": true`, more documents follow: `--offset` skips the documents that
 you have, for example `--offset 25` for the second page of 25.
 
-Manage labels directly from the CLI:
+Manage labels directly from the CLI, or with the MCP `set_document_labels`
+tool:
 
 ```bash
 slashdocs docs labels list doc_123

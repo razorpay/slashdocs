@@ -346,8 +346,12 @@ definitions:
         type: string
       default_grant:
         $ref: '#/definitions/server.defaultGrant'
+      folder_id:
+        type: string
       id:
         type: string
+      permission_warning:
+        $ref: '#/definitions/server.permissionWarning'
     type: object
   server.createGrantResponse:
     properties:
@@ -624,6 +628,13 @@ definitions:
           $ref: '#/definitions/server.commentMentionRequest'
         type: array
       status:
+        type: string
+    type: object
+  server.permissionWarning:
+    properties:
+      kind:
+        type: string
+      message:
         type: string
     type: object
   server.principalRef:
@@ -955,6 +966,11 @@ paths:
         name: file
         required: true
         type: file
+      - description: The folder for the document. The caller needs editor on it. The
+          default is the root.
+        in: formData
+        name: folder_id
+        type: string
       - description: 'Default sharing applied at create: viewer, commenter, editor
           or private. Overrides the server-wide default.'
         in: formData

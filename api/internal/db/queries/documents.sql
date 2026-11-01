@@ -2,7 +2,8 @@
 SELECT owner_type, owner_id FROM documents WHERE id=$1;
 
 -- name: InsertDocument :exec
-INSERT INTO documents(id,title,owner_type,owner_id) VALUES($1,$2,$3,$4);
+INSERT INTO documents(id,title,owner_type,owner_id,parent_folder_id)
+VALUES(@id,@title,@owner_type,@owner_id,NULLIF(@parent_folder_id::text,''));
 
 -- name: UpdateDocumentCurrentVersion :exec
 UPDATE documents SET current_version_id=$1, updated_at=now() WHERE id=$2;

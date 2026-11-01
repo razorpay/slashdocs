@@ -197,8 +197,8 @@ func normalizedLabelArgs(args []string) ([]string, error) {
 }
 
 func documentCreateCmd(g *globals, out io.Writer) *cobra.Command {
-	var title string
-	cmd := &cobra.Command{Use: "create <file>", Short: "Create a document from an HTML file", Long: "Create a document from a single self-contained HTML file.\n\nThe sharing default for new documents is controlled by the server. Set SLASHDOCS_DEFAULT_DOC_PERMISSION to viewer, commenter, editor, or private to override it per-user; private keeps new documents private.\n\nRun 'slashdocs guidelines' for authoring rules (single-file, base64 images, reader theme).", Example: "  slashdocs docs create report.html --title 'Report'", Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	var title, folderID string
+	cmd := &cobra.Command{Use: "create <file>", Short: "Create a document from an HTML file", Long: "Create a document from a single self-contained HTML file.\n\nWith --folder-id, the document is in the folder from the start. Use 'slashdocs docs labels set' to label it.\n\nThe sharing default for new documents is controlled by the server. Set SLASHDOCS_DEFAULT_DOC_PERMISSION to viewer, commenter, editor, or private to override it per-user; private keeps new documents private.\n\nRun 'slashdocs guidelines' for authoring rules (single-file, base64 images, reader theme).", Example: "  slashdocs docs create report.html --title 'Report'\n  slashdocs docs create report.html --title 'Report' --folder-id fld_123", Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		perm, err := defaultDocPermission()
 		if err != nil {
 			return err
@@ -214,7 +214,7 @@ func documentCreateCmd(g *globals, out io.Writer) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		fields := map[string]string{"title": title}
+		fields := map[string]string{"title": title, "folder_id": folderID}
 		if perm != "" {
 			fields["default_permission"] = perm
 		}
@@ -235,6 +235,7 @@ func documentCreateCmd(g *globals, out io.Writer) *cobra.Command {
 		return renderCreatedDocument(out, g, cl, title, perm, b)
 	}}
 	cmd.Flags().StringVar(&title, "title", "", "document title (defaults to the file name)")
+	cmd.Flags().StringVar(&folderID, "folder-id", "", "folder for the document (defaults to the root)")
 	return cmd
 }
 
@@ -287,7 +288,11 @@ func renderCreatedDocument(out io.Writer, g *globals, cl *Client, title, request
 	if g.json {
 		return renderCreatedDocumentJSON(out, g, id, requestedPermission, documentURL, role, grantID, payload)
 	}
-	if err := confirm(out, g, fmt.Sprintf("Created document %q (%s). Review it at %s", title, id, documentURL)); err != nil {
+	msg := fmt.Sprintf("Created document %q (%s). Review it at %s", title, id, documentURL)
+	if w, ok := payload["permission_warning"].(map[string]any); ok {
+		msg += " Warning: " + fmt.Sprint(value(w, "message"))
+	}
+	if err := confirm(out, g, msg); err != nil {
 		return err
 	}
 	if grantID != "" {

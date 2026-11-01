@@ -16,7 +16,7 @@ func TestPostgresRepositoryDocumentGrantVersionCommentFlow(t *testing.T) {
 	store := newStore(t)
 
 	owner := auth.Principal{Type: auth.PrincipalUser, ID: "usr_pg_owner", Email: "pg-owner@example.com", Name: "Owner"}
-	doc, ver, err := store.CreateDocument(context.Background(), owner, "Postgres doc", []byte("<html>v1</html>"))
+	doc, ver, err := store.CreateDocument(context.Background(), owner, "Postgres doc", "", []byte("<html>v1</html>"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestPostgresCreateGrantDoesNotUpdateProfiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc, _, err := store.CreateDocument(ctx, owner, "Document", []byte("<p>Test</p>"))
+	doc, _, err := store.CreateDocument(ctx, owner, "Document", "", []byte("<p>Test</p>"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestPostgresAnyoneGrantListsAfterOpen(t *testing.T) {
 	ctx := context.Background()
 
 	owner := auth.Principal{Type: auth.PrincipalUser, ID: "usr_pg_anyone_owner", Email: "anyone-owner@example.com", Name: "Owner"}
-	doc, _, err := store.CreateDocument(ctx, owner, "Public sample", []byte("<html>public</html>"))
+	doc, _, err := store.CreateDocument(ctx, owner, "Public sample", "", []byte("<html>public</html>"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestPostgresCreateDocumentDeletesBlobWhenDBFailsAfterPut(t *testing.T) {
 	defer store.Close()
 
 	owner := auth.Principal{Type: auth.PrincipalUser, ID: "usr_blob_cleanup_doc", Email: "blob-cleanup-doc@example.com", Name: "Owner"}
-	_, _, err = store.CreateDocument(ctx, owner, "cleanup doc", []byte("<html>cleanup</html>"))
+	_, _, err = store.CreateDocument(ctx, owner, "cleanup doc", "", []byte("<html>cleanup</html>"))
 	if err == nil {
 		t.Fatal("CreateDocument succeeded; want context cancellation after blob put")
 	}
@@ -208,7 +208,7 @@ func TestPostgresCreateVersionDeletesBlobWhenDBFailsAfterPut(t *testing.T) {
 	defer store.Close()
 
 	owner := auth.Principal{Type: auth.PrincipalUser, ID: "usr_blob_cleanup_ver", Email: "blob-cleanup-ver@example.com", Name: "Owner"}
-	doc, ver, err := store.CreateDocument(context.Background(), owner, "cleanup version", []byte("<html>v1</html>"))
+	doc, ver, err := store.CreateDocument(context.Background(), owner, "cleanup version", "", []byte("<html>v1</html>"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func TestPostgresSearchDocumentsViaFolderGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc, _, err := store.CreateDocument(ctx, owner, "SearchableInFolder", []byte("<html>hello</html>"))
+	doc, _, err := store.CreateDocument(ctx, owner, "SearchableInFolder", "", []byte("<html>hello</html>"))
 	if err != nil {
 		t.Fatal(err)
 	}
