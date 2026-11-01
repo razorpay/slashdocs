@@ -62,7 +62,8 @@ func (h handlers) documentHead(r *http.Request, documentID string) []byte {
 // documentHeadData authorizes the caller as GET /v1/documents/:id does, except
 // that Google Group memberships come only from the cache, and returns what the
 // head shows. It returns nil data and no error when the caller may not read
-// the document.
+// the document. Without fresh cached memberships, the principal has no groups,
+// so access through a group gives no head but other access still does.
 func (h handlers) documentHeadData(r *http.Request, documentID string) (*documentHeadData, error) {
 	ctx := r.Context()
 	p, err := h.deps.readerAuthenticator().Authenticate(r)
@@ -74,9 +75,6 @@ func (h handlers) documentHeadData(r *http.Request, documentID string) (*documen
 	}
 	if h.deps.googleGroupResolver != nil {
 		p = h.deps.googleGroupResolver.ResolveCached(ctx, p)
-	}
-	if groupMembershipUnavailable(p) {
-		return nil, nil
 	}
 	role, err := h.deps.repository.RoleForDocument(ctx, *p, documentID)
 	if err != nil {

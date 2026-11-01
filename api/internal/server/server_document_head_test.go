@@ -140,6 +140,10 @@ func TestDocumentPageHeadUsesCachedGroupMemberships(t *testing.T) {
 
 	directory.blocked.Store(true)
 	assertGenericShell(t, getPage(t, e.h, "/app/d/"+e.doc.ID, &fixtureStranger))
+	// Access that does not come from a group needs no memberships.
+	for _, p := range []*auth.Principal{&fixtureOwner, &fixtureViewer} {
+		assertContains(t, getPage(t, e.h, "/app/d/"+e.doc.ID, p).Body.String(), "<title>fixture · slashdocs</title>")
+	}
 	directory.blocked.Store(false)
 	rr = do(t, e.h, http.MethodGet, "/v1/documents/"+e.doc.ID, "", map[string]string{"X-Test-Principal": principalHeader(fixtureStranger)})
 	assertStatus(t, rr, http.StatusOK)
