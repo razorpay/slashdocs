@@ -87,6 +87,26 @@ const (
 	DecisionRejected = "rejected"
 )
 
+// Approval event types, one per kind of change to a document's approvals. A
+// new version is an event because it changes which decisions count without
+// changing any decision.
+const (
+	ApprovalEventRequested      = "approval.requested"
+	ApprovalEventRemoved        = "approval.removed"
+	ApprovalEventApproved       = "approval.approved"
+	ApprovalEventRejected       = "approval.rejected"
+	ApprovalEventRevoked        = "approval.revoked"
+	ApprovalEventVersionCreated = "approval.version_created"
+)
+
+// ApprovalEvent is a queued webhook event: Payload is the JSON body, and ID is
+// its idempotency key.
+type ApprovalEvent struct {
+	ID       string
+	Payload  []byte
+	Attempts int
+}
+
 // ErrApproverIsAuthor reports that a principal created a version of the
 // document: they wrote what is under review, so they cannot approve it.
 var ErrApproverIsAuthor = errors.New("approver created a version")
@@ -525,7 +545,7 @@ type Repository interface {
 	// approver's decisions on the document.
 	CreateApprovalRequest(ctx context.Context, documentID string, approver, requestedBy auth.Principal) (ApprovalRequest, error)
 	ListApprovalRequests(ctx context.Context, documentID string) ([]ApprovalRequest, error)
-	DeleteApprovalRequest(ctx context.Context, documentID, requestID string) error
+	DeleteApprovalRequest(ctx context.Context, documentID, requestID string, removedBy auth.Principal) error
 	// CreateOrUpdateApproval upserts the approver's decision on the content of
 	// a version. The bool reports whether a new decision row was created
 	// (false = replaced). ErrNotFound when the version is not part of the

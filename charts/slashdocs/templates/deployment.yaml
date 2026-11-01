@@ -156,6 +156,18 @@ spec:
                   name: {{ default (include "slashdocs.secretName" .) .Values.kvEvents.existingSecret }}
                   key: {{ .Values.kvEvents.listenerDatabaseURLKey }}
             {{- end }}
+            {{- if or .Values.approvalWebhook.existingSecret .Values.approvalWebhook.url }}
+            - name: SLASHDOCS_APPROVAL_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (include "slashdocs.secretName" .) .Values.approvalWebhook.existingSecret }}
+                  key: {{ .Values.approvalWebhook.urlKey }}
+            - name: SLASHDOCS_APPROVAL_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (include "slashdocs.secretName" .) .Values.approvalWebhook.existingSecret }}
+                  key: {{ .Values.approvalWebhook.secretKey }}
+            {{- end }}
             {{- if .Values.oidc.issuerURL }}
             - name: SLASHDOCS_OIDC_ISSUER_URL
               value: {{ .Values.oidc.issuerURL | quote }}

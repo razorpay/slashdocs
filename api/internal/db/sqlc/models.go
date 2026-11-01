@@ -21,6 +21,25 @@ type Approval struct {
 	RevokedAt    pgtype.Timestamptz
 }
 
+type ApprovalEventOutbox struct {
+	ID          string
+	Payload     []byte
+	Attempts    int32
+	AvailableAt pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+}
+
+type ApprovalNotificationOutbox struct {
+	DocumentID   string
+	ApproverType string
+	ApproverID   string
+	Reason       string
+	RecipientID  string
+	Attempts     int32
+	AvailableAt  pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+}
+
 type ApprovalRequest struct {
 	ID              string
 	DocumentID      string

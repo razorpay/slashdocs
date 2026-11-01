@@ -27,6 +27,7 @@ const htmlContentType = "text/html; charset=utf-8"
 
 type Store struct {
 	notificationsEnabled bool
+	approvalEventOrigin  string
 	db                   *pgxpool.Pool
 	q                    *dbsqlc.Queries
 	blobs                blob.Store
@@ -522,7 +523,10 @@ func (s *Store) CreateVersion(ctx context.Context, documentID, baseVersionID, ch
 	if err := q.UpdateDocumentCurrentVersion(ctx, dbsqlc.UpdateDocumentCurrentVersionParams{CurrentVersionID: pgtype.Text{String: id, Valid: true}, ID: documentID}); err != nil {
 		return repo.Version{}, err
 	}
-	if err := removeAuthorApprover(ctx, q, documentID, createdBy); err != nil {
+	if err := s.removeAuthorApprover(ctx, q, documentID, createdBy); err != nil {
+		return repo.Version{}, err
+	}
+	if err := s.recordApprovalEvent(ctx, q, approvalEvent{documentID: documentID, kind: repo.ApprovalEventVersionCreated, actor: createdBy}); err != nil {
 		return repo.Version{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

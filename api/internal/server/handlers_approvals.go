@@ -289,7 +289,7 @@ func (h handlers) deleteApprover(c *gin.Context) {
 	if !h.needDocRole(c, c.Param("id"), repo.RoleOwner) {
 		return
 	}
-	err := h.deps.repository.DeleteApprovalRequest(c.Request.Context(), c.Param("id"), c.Param("approver_id"))
+	err := h.deps.repository.DeleteApprovalRequest(c.Request.Context(), c.Param("id"), c.Param("approver_id"), *current(c))
 	if errors.Is(err, repo.ErrNotFound) {
 		notFound(c)
 		return

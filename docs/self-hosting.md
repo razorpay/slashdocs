@@ -454,6 +454,7 @@ Sealed Secrets, etc.).
 | `deployment.{mode,orgDomains,orgName,defaultDocPermission}`                | `public` (default) or `org`; org mode gates login to `orgDomains` and may set a sharing default for new documents.              |
 | `allowedOAuthDomains`                                                      | Comma-separated email domain allowlist (public mode); empty = no gate.                                                          |
 | `kvEvents.{mode,listenerDatabaseURL,existingSecret}`                       | Realtime KV events: `SLASHDOCS_KV_EVENTS_MODE` and the dedicated LISTEN connection URL (secret-backed). Rendered only when set. |
+| `approvalWebhook.{url,secret,existingSecret}`                              | Webhook for [approval events](#approval-events) (secret-backed). Rendered only when set.                                        |
 | `commitSha`                                                                | Optional revision surfaced at `/commit.txt`.                                                                                    |
 | `ingress`                                                                  | Standard ingress block; supports multiple hosts.                                                                                |
 | `extraEnv` / `extraEnvFrom`                                                | Append arbitrary env vars / envFrom sources.                                                                                    |
@@ -548,13 +549,15 @@ both. The redirect URI to register is
 | `SLASHDOCS_FEATURED`                        | unset       | JSON object of sections that the Documents page shows above each user's own items. See [Featured sections](#featured-sections).                                                                                                                                                                     |
 | `SLASHDOCS_KV_EVENTS_MODE`                  | `auto`      | `auto`, `notify`, or `poll`; controls how document KV streams discover persisted events.                                                                                                                                                                                                            |
 | `SLASHDOCS_KV_EVENTS_LISTENER_DATABASE_URL` | unset       | Direct or session-pooled URL to the same database for the dedicated LISTEN connection. Never use a transaction-pooling endpoint.                                                                                                                                                                    |
+| `SLASHDOCS_APPROVAL_WEBHOOK_URL`            | unset       | Webhook that receives [approval events](#approval-events). Unset turns them off.                                                                                                                                                                                                                    |
+| `SLASHDOCS_APPROVAL_WEBHOOK_SECRET`         | unset       | At least 32 random bytes that sign each approval event. Required with the URL.                                                                                                                                                                                                                      |
 | `SLASHDOCS_PREVIOUS_ORIGINS`                | unset       | Comma-separated app origins that this deployment used before. Requests to them get a permanent redirect to the same path on `SLASHDOCS_APP_ORIGIN`, and the CLI saves the new URL. MCP clients on an old origin get one tool that tells the agent the new MCP URL. Route these hosts to the server. |
 | `SLASHDOCS_ALLOW_UNSAFE_RENDER_ORIGIN`      | `false`     | Set `true` to allow app and render origins on the same hostname. Unsafe: documents can script against the app. Never in prod.                                                                                                                                                                       |
 | `SLASHDOCS_COMMIT_SHA` / `COMMIT_SHA`       | unset       | Build revision exposed at `/commit.txt`.                                                                                                                                                                                                                                                            |
 | `ALLOWED_OAUTH_DOMAINS`                     | unset       | Comma-separated email-domain allowlist for OAuth logins (public deployments).                                                                                                                                                                                                                       |
 | `SLASHDOCS_DEPLOYMENT`                      | `public`    | `public` or `org`. An org deployment gates login to `SLASHDOCS_ORG_DOMAINS`.                                                                                                                                                                                                                        |
 | `SLASHDOCS_ORG_DOMAINS`                     | unset       | Comma-separated org domains. Required when `SLASHDOCS_DEPLOYMENT=org`; also the login gate.                                                                                                                                                                                                         |
-| `SLASHDOCS_ORG_NAME`                        | unset       | Org display name used in share UI copy (e.g. "Anyone in Razorpay").                                                                                                                                                                                                                                     |
+| `SLASHDOCS_ORG_NAME`                        | unset       | Org display name used in share UI copy (e.g. "Anyone in Razorpay").                                                                                                                                                                                                                                 |
 | `BLOB_REGION`                               | `us-east-1` | AWS region for the S3 client.                                                                                                                                                                                                                                                                       |
 | `BLOB_ENDPOINT`                             | unset       | Custom S3 endpoint (MinIO, R2, etc.).                                                                                                                                                                                                                                                               |
 | `BLOB_ACCESS_KEY_ID`                        | unset       | Override AWS-SDK default credential chain.                                                                                                                                                                                                                                                          |
@@ -591,6 +594,73 @@ URL in a pre-created Secret) instead of `extraEnv`.
 If `BLOB_ACCESS_KEY_ID` and `BLOB_SECRET_ACCESS_KEY` are omitted, the
 AWS SDK default credential chain is used (IRSA, instance profile,
 shared config, etc.).
+
+## Approval events
+
+Set `SLASHDOCS_APPROVAL_WEBHOOK_URL` and `SLASHDOCS_APPROVAL_WEBHOOK_SECRET` to
+send approval changes to another system, for example a task tracker that files
+a review task for each approver. Each change writes one event in the database
+transaction of the change. A worker posts the event as JSON and deletes it when
+the webhook answers with a 2xx status.
+
+| `type`                     | When                                                           |
+| -------------------------- | -------------------------------------------------------------- |
+| `approval.requested`       | The owner asks someone to approve                              |
+| `approval.removed`         | The owner removes an approver, or an approver pushes a version |
+| `approval.approved`        | An approver approves                                           |
+| `approval.rejected`        | An approver rejects                                            |
+| `approval.revoked`         | An approver revokes their decision                             |
+| `approval.version_created` | A new version of a document that has approvers                 |
+
+```json
+{
+  "id": "evt_…",
+  "type": "approval.rejected",
+  "created_at": "2026-11-01T12:00:00.000000Z",
+  "document": {
+    "id": "doc_…",
+    "title": "Launch plan",
+    "url": "https://slashdocs.example.com/app/d/doc_…"
+  },
+  "version": { "id": "ver_…", "number": 3, "sha256": "…" },
+  "approver": {
+    "type": "user",
+    "id": "usr_…",
+    "email": "reviewer@example.com",
+    "name": "Reviewer"
+  },
+  "actor": {
+    "type": "user",
+    "id": "usr_…",
+    "email": "reviewer@example.com",
+    "name": "Reviewer"
+  },
+  "note": "Needs a rollback plan.",
+  "status": "rejected",
+  "summary": { "total": 2, "approved": 1, "rejected": 1, "pending": 0 }
+}
+```
+
+`version` is the document's current version after the change, and `status` and
+`summary` are its approval state. `approver` is absent on
+`approval.version_created`; `note`, `status` and the names are absent when
+empty.
+
+Each request has three headers, in the
+[Standard Webhooks](https://www.standardwebhooks.com/) layout:
+
+- `webhook-id`: the event `id`. Delivery is at least once, so use it to drop
+  duplicates.
+- `webhook-timestamp`: Unix seconds when the request was sent.
+- `webhook-signature`: `v1,` and the base64 HMAC-SHA256 of
+  `<webhook-id>.<webhook-timestamp>.<body>`, keyed with the secret bytes.
+  Compute it over the raw body, compare in constant time, and refuse old
+  timestamps.
+
+A failed request (an error, a timeout after 10 seconds, or a non-2xx status)
+is tried again after 2 seconds, then after double the delay, up to one hour.
+Events still undelivered after seven days are dropped with an error log.
+Events can arrive out of order after a retry: order them by `created_at`.
 
 ## Health and metadata endpoints
 

@@ -144,6 +144,73 @@ func (q *Queries) HasActiveApprovalRequest(ctx context.Context, arg HasActiveApp
 	return exists, err
 }
 
+const insertApprovalEvent = `-- name: InsertApprovalEvent :exec
+INSERT INTO approval_event_outbox(id, payload)
+SELECT $1::text, jsonb_strip_nulls(jsonb_build_object(
+  'id', $1::text,
+  'type', $2::text,
+  'created_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+  'document', jsonb_build_object('id', d.id, 'title', d.title, 'url', $3::text),
+  'version', jsonb_build_object('id', v.id, 'number', v.number, 'sha256', v.sha256),
+  'approver', CASE WHEN $4::text <> '' THEN jsonb_build_object(
+    'type', $5::text, 'id', $4::text, 'email', ap.email, 'name', COALESCE(ap.name, aps.name)) END,
+  'actor', jsonb_build_object(
+    'type', $6::text, 'id', $7::text, 'email', ac.email, 'name', COALESCE(ac.name, acs.name)),
+  'note', NULLIF($8::text, ''),
+  'status', NULLIF($9::text, ''),
+  'summary', $10::jsonb
+))
+FROM documents d
+JOIN versions v ON v.id = d.current_version_id
+LEFT JOIN users ap
+  ON $5::text = 'user' AND ap.id = $4::text
+LEFT JOIN service_accounts aps -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON $5::text = 'service_account' AND aps.id = $4::text -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+LEFT JOIN users ac
+  ON $6::text = 'user' AND ac.id = $7::text
+LEFT JOIN service_accounts acs -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON $6::text = 'service_account' AND acs.id = $7::text -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+WHERE d.id = $11
+`
+
+type InsertApprovalEventParams struct {
+	ID           string
+	EventType    string
+	DocumentUrl  string
+	ApproverID   string
+	ApproverType string
+	ActorType    string
+	ActorID      string
+	Note         string
+	Status       string
+	Summary      []byte
+	DocumentID   string
+}
+
+// A webhook event about a change to a document's approvals, written in the
+// transaction of the change. It names who and what at the time of the change,
+// so a receiver can act on it without reading the API.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+func (q *Queries) InsertApprovalEvent(ctx context.Context, arg InsertApprovalEventParams) error {
+	_, err := q.db.Exec(ctx, insertApprovalEvent,
+		arg.ID,
+		arg.EventType,
+		arg.DocumentUrl,
+		arg.ApproverID,
+		arg.ApproverType,
+		arg.ActorType,
+		arg.ActorID,
+		arg.Note,
+		arg.Status,
+		arg.Summary,
+		arg.DocumentID,
+	)
+	return err
+}
+
 const insertApprovalRequest = `-- name: InsertApprovalRequest :exec
 INSERT INTO approval_requests(id, document_id, approver_type, approver_id, requested_by_type, requested_by_id)
 VALUES($1, $2, $3, $4, $5, $6)

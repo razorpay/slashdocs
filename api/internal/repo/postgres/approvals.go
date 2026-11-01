@@ -67,6 +67,9 @@ func (s *Store) CreateApprovalRequest(ctx context.Context, documentID string, ap
 	if err := s.enqueueApprovalNotification(ctx, tx, documentID, approver, requestedBy, repo.ApprovalNotificationRequested); err != nil {
 		return repo.ApprovalRequest{}, err
 	}
+	if err := s.recordApprovalEvent(ctx, q, approvalEvent{documentID: documentID, kind: repo.ApprovalEventRequested, approver: approver, actor: requestedBy}); err != nil {
+		return repo.ApprovalRequest{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return repo.ApprovalRequest{}, err
 	}
@@ -90,7 +93,7 @@ func (s *Store) ListApprovalRequests(ctx context.Context, documentID string) ([]
 	return out, nil
 }
 
-func (s *Store) DeleteApprovalRequest(ctx context.Context, documentID, requestID string) error {
+func (s *Store) DeleteApprovalRequest(ctx context.Context, documentID, requestID string, removedBy auth.Principal) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
@@ -104,26 +107,40 @@ func (s *Store) DeleteApprovalRequest(ctx context.Context, documentID, requestID
 	if err != nil {
 		return err
 	}
-	// A removed approver's decisions no longer count toward any content.
-	if err := q.RevokeApprovalsForApprover(ctx, dbsqlc.RevokeApprovalsForApproverParams{
-		DocumentID:   documentID,
-		ApproverType: approver.ApproverType,
-		ApproverID:   approver.ApproverID,
-	}); err != nil {
+	removed := auth.Principal{Type: auth.PrincipalType(approver.ApproverType), ID: approver.ApproverID}
+	if err := s.dropApproverDecisions(ctx, q, documentID, removed, removedBy); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
+// dropApproverDecisions revokes the decisions of an approver who was just
+// removed, which no longer count toward any content, and records the removal.
+func (s *Store) dropApproverDecisions(ctx context.Context, q *dbsqlc.Queries, documentID string, approver, removedBy auth.Principal) error {
+	if err := q.RevokeApprovalsForApprover(ctx, dbsqlc.RevokeApprovalsForApproverParams{
+		DocumentID:   documentID,
+		ApproverType: string(approver.Type),
+		ApproverID:   approver.ID,
+	}); err != nil {
+		return err
+	}
+	return s.recordApprovalEvent(ctx, q, approvalEvent{documentID: documentID, kind: repo.ApprovalEventRemoved, approver: approver, actor: removedBy})
+}
+
 // removeAuthorApprover removes the creator of a new version as an approver of
 // the document, with their decisions: they now wrote part of what is under
 // review. Runs inside the CreateVersion transaction.
-func removeAuthorApprover(ctx context.Context, q *dbsqlc.Queries, documentID string, author auth.Principal) error {
+func (s *Store) removeAuthorApprover(ctx context.Context, q *dbsqlc.Queries, documentID string, author auth.Principal) error {
 	removed, err := q.RevokeApproverRequest(ctx, dbsqlc.RevokeApproverRequestParams{DocumentID: documentID, ApproverType: string(author.Type), ApproverID: author.ID})
 	if err != nil || removed == 0 {
 		return err
 	}
-	return q.RevokeApprovalsForApprover(ctx, dbsqlc.RevokeApprovalsForApproverParams{DocumentID: documentID, ApproverType: string(author.Type), ApproverID: author.ID})
+	return s.dropApproverDecisions(ctx, q, documentID, author, author)
+}
+
+var approvalDecisionEvent = map[string]string{
+	repo.DecisionApproved: repo.ApprovalEventApproved,
+	repo.DecisionRejected: repo.ApprovalEventRejected,
 }
 
 func (s *Store) CreateOrUpdateApproval(ctx context.Context, documentID, versionID, decision, note string, approver auth.Principal) (repo.Approval, bool, error) {
@@ -176,6 +193,9 @@ func (s *Store) CreateOrUpdateApproval(ctx context.Context, documentID, versionI
 	if err := s.enqueueApprovalNotification(ctx, tx, documentID, approver, approver, repo.ApprovalNotificationDecided); err != nil {
 		return repo.Approval{}, false, err
 	}
+	if err := s.recordApprovalEvent(ctx, q, approvalEvent{documentID: documentID, kind: approvalDecisionEvent[decision], approver: approver, actor: approver, note: note}); err != nil {
+		return repo.Approval{}, false, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return repo.Approval{}, false, err
 	}
@@ -203,14 +223,23 @@ func (s *Store) DeleteApproval(ctx context.Context, documentID, approvalID strin
 	if row.ApproverType != string(approver.Type) || row.ApproverID != approver.ID {
 		return repo.ErrForbidden
 	}
-	revoked, err := s.q.RevokeApproval(ctx, approvalID)
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer rollback(ctx, tx)
+	q := s.q.WithTx(tx)
+	revoked, err := q.RevokeApproval(ctx, approvalID)
 	if err != nil {
 		return err
 	}
 	if revoked == 0 {
 		return repo.ErrNotFound
 	}
-	return nil
+	if err := s.recordApprovalEvent(ctx, q, approvalEvent{documentID: documentID, kind: repo.ApprovalEventRevoked, approver: approver, actor: approver}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) ListApprovals(ctx context.Context, documentID, sha256 string) ([]repo.Approval, error) {
@@ -245,14 +274,18 @@ func (s *Store) DocumentApprovalSummaries(ctx context.Context, documentIDs []str
 	}
 	out := make(map[string]repo.ApprovalSummary, len(rows))
 	for _, r := range rows {
-		total, approved, rejected := int(r.Total), int(r.Approved), int(r.Rejected)
-		out[r.DocumentID] = repo.ApprovalSummary{
-			Total:    total,
-			Approved: approved,
-			Rejected: rejected,
-			Pending:  total - approved - rejected,
-			Status:   repo.DeriveApprovalStatus(total, approved, rejected),
-		}
+		out[r.DocumentID] = approvalSummary(r)
 	}
 	return out, nil
+}
+
+func approvalSummary(r dbsqlc.DocumentApprovalSummariesRow) repo.ApprovalSummary {
+	total, approved, rejected := int(r.Total), int(r.Approved), int(r.Rejected)
+	return repo.ApprovalSummary{
+		Total:    total,
+		Approved: approved,
+		Rejected: rejected,
+		Pending:  total - approved - rejected,
+		Status:   repo.DeriveApprovalStatus(total, approved, rejected),
+	}
 }

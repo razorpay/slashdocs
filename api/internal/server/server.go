@@ -19,6 +19,7 @@ import (
 	"github.com/razorpay/slashdocs/api/internal/kvevents"
 	"github.com/razorpay/slashdocs/api/internal/notifications"
 	"github.com/razorpay/slashdocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/webhooks"
 )
 
 // Config holds static configuration for the server.
@@ -56,6 +57,7 @@ type Config struct {
 type Server struct {
 	engine             *gin.Engine
 	notificationWorker *notifications.Worker
+	webhookWorker      *webhooks.Worker
 }
 
 type readinessCheck struct {
@@ -65,6 +67,7 @@ type readinessCheck struct {
 
 type dependencies struct {
 	commentNotificationSender notifications.Sender
+	approvalWebhook           *webhooks.Endpoint
 	authenticator             auth.Authenticator
 	repository                repo.Repository
 	stateStore                auth.LoginStateStore
@@ -103,6 +106,18 @@ func WithCommentNotificationSender(sender notifications.Sender) Option {
 func (s *Server) RunCommentNotifications(ctx context.Context) {
 	if s.notificationWorker != nil {
 		s.notificationWorker.Run(ctx)
+	}
+}
+
+// WithApprovalWebhook posts approval events to the endpoint. The repository
+// must queue them (postgres.Store.EnableApprovalEvents).
+func WithApprovalWebhook(endpoint webhooks.Endpoint) Option {
+	return func(d *dependencies) { d.approvalWebhook = &endpoint }
+}
+
+func (s *Server) RunApprovalWebhooks(ctx context.Context) {
+	if s.webhookWorker != nil {
+		s.webhookWorker.Run(ctx)
 	}
 }
 
@@ -202,6 +217,13 @@ func New(cfg Config, opts ...Option) *Server {
 		r.Use(movedOriginMiddleware(cfg.AppOrigin, cfg.PreviousOrigins))
 	}
 	s := &Server{engine: r}
+	s.addWorkers(deps)
+	s.routes(deps)
+	return s
+}
+
+// addWorkers builds the outbox workers that the dependencies configure.
+func (s *Server) addWorkers(deps dependencies) {
 	if deps.commentNotificationSender != nil {
 		store, ok := deps.repository.(notifications.Store)
 		if !ok {
@@ -212,8 +234,13 @@ func New(cfg Config, opts ...Option) *Server {
 			s.notificationWorker.ResolvePrincipal = deps.googleGroupResolver.Resolve
 		}
 	}
-	s.routes(deps)
-	return s
+	if deps.approvalWebhook != nil {
+		store, ok := deps.repository.(webhooks.Store)
+		if !ok {
+			panic("approval webhook requires an outbox store")
+		}
+		s.webhookWorker = webhooks.NewWorker(store, *deps.approvalWebhook)
+	}
 }
 
 type unavailableDocumentKVEvents struct{}

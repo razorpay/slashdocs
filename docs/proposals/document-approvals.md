@@ -20,6 +20,7 @@
 | 2026-11-01 | An approver who pushes a version stops being an approver              | The push removes them and their decisions in its transaction, so the "creators cannot approve" rule always holds. Before, they stayed assigned but could never decide, so the document waited forever      |
 | 2026-11-01 | One name: reject                                                      | The decision value, the CLI verb (`docs reject`), the UI and the events all say "rejected". The value was `changes_requested` while the UI said Reject                                                     |
 | 2026-11-01 | Approvers and owners get Slack notifications                          | An approver hears when they are asked. The owner hears each approval or rejection. Revoking does not notify                                                                                                |
+| 2026-11-01 | Approval events go to a webhook through an outbox                     | Replaces the insert-only event log proposal (#245). Off by default. See "Events"                                                                                                                           |
 
 ## Summary
 
@@ -155,6 +156,16 @@ With Slack configured, approvals use the same outbox as comment and access notif
 - Assigning a human approver queues a message to them: "Owner asked you to approve a document", with a **Review document** button that opens the approvals dialog (`?approvals=1`).
 - An approval or a rejection queues a message to the document's human owner (for a bot-owned document, the bot's owner), with the reason when there is one.
 - One row per approver and reason: a newer decision replaces a queued one. The worker reads the current state before it sends, so a revoked decision or a removed approver sends nothing. Nobody hears about their own action, and the usual preferences and mutes apply.
+
+## Events
+
+An external system, such as a task tracker, can follow approvals through a webhook (`SLASHDOCS_APPROVAL_WEBHOOK_URL` and `SLASHDOCS_APPROVAL_WEBHOOK_SECRET`; off by default). This uses the outbox pattern of the notifications, so there is one mechanism, not a log plus a separate delivery:
+
+- Each change writes one row in `approval_event_outbox`, in the transaction of the change: `approval.requested`, `approval.removed`, `approval.approved`, `approval.rejected`, `approval.revoked`, and `approval.version_created` for a document that has approvers.
+- The row holds the complete JSON body, built when the change happens: the document (with its link), its current version, the approver, the actor, the note, and the approval status and summary after the change. A receiver can act without reading the API.
+- A worker posts each event with Standard Webhooks headers (`webhook-id`, `webhook-timestamp`, `webhook-signature` with HMAC-SHA256), deletes it on a 2xx answer, and otherwise tries again with exponential backoff up to one hour. Delivery is at least once; the event ID is the idempotency key. Events still undelivered after seven days are dropped with an error log.
+
+The earlier proposal (#245) wrote a retained, insert-only log of bare signals with no delivery. The outbox replaces it: rows exist only until delivered, so nothing personal is kept, and there is nothing to prune on a timer.
 
 ## Edge Cases
 

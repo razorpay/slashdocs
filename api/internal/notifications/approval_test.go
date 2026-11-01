@@ -83,14 +83,14 @@ func TestApprovalNotifications(t *testing.T) {
 		t.Fatal(err)
 	}
 	deliver()
-	if err := store.DeleteApprovalRequest(ctx, doc.ID, request.ID); err != nil {
+	if err := store.DeleteApprovalRequest(ctx, doc.ID, request.ID, owner); err != nil {
 		t.Fatal(err)
 	}
 	again, err := store.CreateApprovalRequest(ctx, doc.ID, approver, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.DeleteApprovalRequest(ctx, doc.ID, again.ID); err != nil {
+	if err := store.DeleteApprovalRequest(ctx, doc.ID, again.ID, owner); err != nil {
 		t.Fatal(err)
 	}
 	deliver()

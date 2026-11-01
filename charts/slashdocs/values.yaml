@@ -208,6 +208,18 @@ kvEvents:
   existingSecret: ""
   listenerDatabaseURLKey: SLASHDOCS_KV_EVENTS_LISTENER_DATABASE_URL
 
+# Optional webhook that receives approval events (see docs/self-hosting.md,
+# "Approval events"). Off unless url or existingSecret is set. The URL can
+# hold a credential, so both values are stored in the chart-managed Secret; or
+# reference a pre-created Secret instead via existingSecret + urlKey/secretKey.
+approvalWebhook:
+  url: ""
+  # At least 32 random bytes (e.g. `openssl rand -hex 32`); signs each request.
+  secret: ""
+  existingSecret: ""
+  urlKey: SLASHDOCS_APPROVAL_WEBHOOK_URL
+  secretKey: SLASHDOCS_APPROVAL_WEBHOOK_SECRET
+
 # Optional runtime revision surfaced at /commit.txt.
 commitSha: ""
 

@@ -135,3 +135,38 @@ LEFT JOIN approvals a
  AND a.approver_id = r.approver_id
 WHERE r.document_id = ANY(@document_ids::text[]) AND r.revoked_at IS NULL
 GROUP BY r.document_id;
+
+-- name: InsertApprovalEvent :exec
+-- A webhook event about a change to a document's approvals, written in the
+-- transaction of the change. It names who and what at the time of the change,
+-- so a receiver can act on it without reading the API.
+INSERT INTO approval_event_outbox(id, payload)
+SELECT @id::text, jsonb_strip_nulls(jsonb_build_object(
+  'id', @id::text,
+  'type', @event_type::text,
+  'created_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+  'document', jsonb_build_object('id', d.id, 'title', d.title, 'url', @document_url::text),
+  'version', jsonb_build_object('id', v.id, 'number', v.number, 'sha256', v.sha256),
+  'approver', CASE WHEN @approver_id::text <> '' THEN jsonb_build_object(
+    'type', @approver_type::text, 'id', @approver_id::text, 'email', ap.email, 'name', COALESCE(ap.name, aps.name)) END,
+  'actor', jsonb_build_object(
+    'type', @actor_type::text, 'id', @actor_id::text, 'email', ac.email, 'name', COALESCE(ac.name, acs.name)),
+  'note', NULLIF(@note::text, ''),
+  'status', NULLIF(@status::text, ''),
+  'summary', @summary::jsonb
+))
+FROM documents d
+JOIN versions v ON v.id = d.current_version_id
+LEFT JOIN users ap
+  ON @approver_type::text = 'user' AND ap.id = @approver_id::text
+-- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts aps -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON @approver_type::text = 'service_account' AND aps.id = @approver_id::text -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+LEFT JOIN users ac
+  ON @actor_type::text = 'user' AND ac.id = @actor_id::text
+-- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts acs -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON @actor_type::text = 'service_account' AND acs.id = @actor_id::text -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+WHERE d.id = @document_id;

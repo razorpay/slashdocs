@@ -95,6 +95,28 @@ func TestBoolEnv(t *testing.T) {
 	}
 }
 
+func TestLoadApprovalWebhook(t *testing.T) {
+	const secret = "0123456789abcdef0123456789abcdef"
+	for _, tc := range []struct {
+		name, url, secret string
+		on, fails         bool
+	}{
+		{name: "off by default"},
+		{name: "on", url: "https://tracker.example.com/hooks/slashdocs", secret: secret, on: true},
+		{name: "needs a secret", url: "https://tracker.example.com/hooks", secret: "short", fails: true},
+		{name: "needs an absolute URL", url: "tracker.example.com/hooks", secret: secret, fails: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("SLASHDOCS_APPROVAL_WEBHOOK_URL", tc.url)
+			t.Setenv("SLASHDOCS_APPROVAL_WEBHOOK_SECRET", tc.secret)
+			endpoint, err := loadApprovalWebhook()
+			if (err != nil) != tc.fails || (endpoint != nil) != tc.on {
+				t.Fatalf("loadApprovalWebhook() = %+v, %v", endpoint, err)
+			}
+		})
+	}
+}
+
 func TestValidateOrigin(t *testing.T) {
 	t.Parallel()
 
