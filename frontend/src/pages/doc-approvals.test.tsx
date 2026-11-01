@@ -199,31 +199,30 @@ describe("ApprovalsDialog", () => {
     expect(screen.queryByText("Request approval")).toBeNull();
   });
 
-  it("names the earlier version a decision on the same content was made on", async () => {
+  it("shows a pending approver what they decided before the latest edits", async () => {
     const reviewer: Principal = { type: "user", id: "rev", email: "rev@example.com" };
     installFetch({
       approvalsByVersion: {
         ver_2: {
-          status: "approved",
-          approved: 1,
+          status: "pending",
+          approved: 0,
           total: 1,
           items: [
             {
               approver: reviewer,
-              decision: "approved",
-              version_id: "ver_1",
-              version_number: 1,
+              decision: null,
+              earlier: { decision: "approved", decided_at: "2026-10-30T10:00:00Z" },
             },
           ],
         },
       },
     });
-    renderDialog({ status: "approved", approved: 1, total: 1 });
+    renderDialog({ status: "pending", approved: 0, total: 1 });
     await userEvent.click(
       await screen.findByRole("button", { name: /Open approvals/ }),
     );
 
-    expect(await screen.findByText("on v1")).toBeTruthy();
+    expect(await screen.findByText(/approved before the latest edits/)).toBeTruthy();
   });
 
   it("scopes the chip to the version on screen, not the latest one", async () => {

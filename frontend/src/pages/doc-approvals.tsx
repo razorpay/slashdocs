@@ -176,24 +176,14 @@ function ApprovalsDialogBody({ onClose }: { onClose: () => void }) {
   );
 }
 
-// versionSuffix names the version a decision was made on when it is not the
-// listed one (an earlier version with the same content), so it reads
-// "Approved on v3".
-function versionSuffix(item: ApprovalListItem, listed?: number) {
-  if (!item.version_number || item.version_number === listed) return null;
-  return (
-    <span className="font-normal text-[var(--color-fg-muted)]">
-      {` on v${item.version_number}`}
-    </span>
-  );
-}
-
-function decisionLabel(item: ApprovalListItem, listed?: number) {
+// decisionLabel says where an approver stands. A pending approver who
+// decided before the latest edits sees that their decision no longer counts,
+// because edits save as people type.
+function decisionLabel(item: ApprovalListItem, current: boolean) {
   if (item.decision === "approved") {
     return (
       <span className="flex items-center gap-1 text-xs font-medium text-green-700 dark:text-green-300">
         <Check className="h-3.5 w-3.5" /> Approved
-        {versionSuffix(item, listed)}
       </span>
     );
   }
@@ -201,13 +191,15 @@ function decisionLabel(item: ApprovalListItem, listed?: number) {
     return (
       <span className="flex items-center gap-1 text-xs font-medium text-red-700 dark:text-red-300">
         <X className="h-3.5 w-3.5" /> Rejected
-        {versionSuffix(item, listed)}
       </span>
     );
   }
   return (
     <span className="flex items-center gap-1 text-xs text-[var(--color-fg-muted)]">
       <CircleDashed className="h-3.5 w-3.5" /> Pending
+      {current && item.earlier
+        ? ` · ${item.earlier.decision === "approved" ? "approved" : "rejected"} before the latest edits`
+        : null}
     </span>
   );
 }
@@ -542,7 +534,7 @@ export function Approvals({ onClose }: { onClose?: () => void }) {
               item={item}
               docId={docId}
               isOwner={isOwner}
-              listedVersion={approvals.data?.version_number}
+              current={isCurrentVersion}
               onChanged={invalidate}
             />
           ))
@@ -561,13 +553,14 @@ function ApproverRow({
   item,
   docId,
   isOwner,
-  listedVersion,
+  current,
   onChanged,
 }: {
   item: ApprovalListItem;
   docId: string;
   isOwner: boolean;
-  listedVersion?: number;
+  // The list is about the current version.
+  current: boolean;
   onChanged: () => void;
 }) {
   const approvers = useQuery({
@@ -593,7 +586,7 @@ function ApproverRow({
       <Avatar name={label} src={item.approver.picture_url} size={24} />
       <div className="min-w-0 flex-1">
         <div className="truncate text-xs font-medium">{label}</div>
-        {decisionLabel(item, listedVersion)}
+        {decisionLabel(item, current)}
         {item.comments_total ? (
           <span className="block text-[11px] text-[var(--color-fg-muted)]">
             {item.comments_open ?? 0} open of {item.comments_total}{" "}

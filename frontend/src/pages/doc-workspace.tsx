@@ -31,7 +31,7 @@ import {
   type CommentViewport,
   type DocContextValue,
   type PendingSelection,
-  type TextEditResult,
+  type SaveState,
 } from "./doc-context";
 import { RenderFrame } from "./doc-render-frame";
 import { Comments } from "./doc-comments";
@@ -77,6 +77,8 @@ const NO_STREAM = {
   subscribeCursors: () => () => {},
 };
 
+const noop = () => {};
+
 export type DocBarControls = {
   commentsOpen: boolean;
   onToggleComments: () => void;
@@ -97,6 +99,9 @@ export function DocWorkspace({
   stream = NO_STREAM,
   followedCursor,
   onDocumentClick,
+  editable = false,
+  stayOnVersion = noop,
+  showLatest = noop,
   bar,
 }: {
   docId: string;
@@ -114,6 +119,10 @@ export function DocWorkspace({
   };
   followedCursor?: DocContextValue["followedCursor"];
   onDocumentClick?: () => void;
+  // The reader may edit the version on screen.
+  editable?: boolean;
+  stayOnVersion?: () => void;
+  showLatest?: () => void;
   bar: (controls: DocBarControls) => ReactNode;
 }) {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -146,27 +155,10 @@ export function DocWorkspace({
   const printDocument = useCallback(() => {
     documentPrinterRef.current?.();
   }, []);
-  const [textEditing, setTextEditing] = useState(false);
-  const [textEditCount, setTextEditCount] = useState(0);
-  // Editing belongs to the version on screen.
+  const [saveState, setSaveState] = useState<SaveState>("idle");
   useEffect(() => {
-    setTextEditing(false);
-  }, [docId, version]);
-  useEffect(() => {
-    if (!textEditing) setTextEditCount(0);
-  }, [textEditing]);
-  const textEditCollectorRef = useRef<(() => Promise<TextEditResult>) | null>(null);
-  const registerTextEditCollector = useCallback(
-    (collect: (() => Promise<TextEditResult>) | null) => {
-      textEditCollectorRef.current = collect;
-    },
-    [],
-  );
-  const collectTextEdits = useCallback(async (): Promise<TextEditResult> => {
-    const collect = textEditCollectorRef.current;
-    if (!collect) throw new Error("The document is not ready to save.");
-    return collect();
-  }, []);
+    setSaveState("idle");
+  }, [docId]);
   const documentScrollerRef = useRef<((top: number) => void) | null>(null);
   const registerDocumentScroller = useCallback(
     (scroller: ((top: number) => void) | null) => {
@@ -292,11 +284,6 @@ export function DocWorkspace({
     const id = window.requestAnimationFrame(restore);
     return () => window.cancelAnimationFrame(id);
   }, [mobilePanelOpen]);
-
-  useEffect(() => {
-    setCommentPositions(new Map());
-    setCommentViewport({ scrollTop: 0, scrollHeight: 1 });
-  }, [version]);
 
   const [drafts, updateDrafts] = useCommentDrafts(docId);
   // Drafts left empty on an earlier visit hold nothing worth keeping.
@@ -508,12 +495,11 @@ export function DocWorkspace({
       moveCursor: stream.moveCursor,
       subscribeCursors: stream.subscribeCursors,
       followedCursor,
-      textEditing,
-      setTextEditing,
-      textEditCount,
-      setTextEditCount,
-      registerTextEditCollector,
-      collectTextEdits,
+      editable,
+      saveState,
+      setSaveState,
+      stayOnVersion,
+      showLatest,
     }),
     [
       docId,
@@ -547,10 +533,10 @@ export function DocWorkspace({
       stream.moveCursor,
       stream.subscribeCursors,
       followedCursor,
-      textEditing,
-      textEditCount,
-      registerTextEditCollector,
-      collectTextEdits,
+      editable,
+      saveState,
+      stayOnVersion,
+      showLatest,
     ],
   );
 

@@ -1,30 +1,42 @@
-// Text editing lets a reader change the words of a rendered document in
-// place. Only text may change: new paragraphs, pasted markup and dropped
-// content are refused. When asked, the editor reports each text node of the
-// source as its text before and after, and the app turns
-// those into exact find-and-replace edits on the document source. The DOM is
-// never serialized back into HTML.
+// Text editing lets an editor change the words of a rendered document in
+// place, at any time. Only text may change: new paragraphs, pasted markup and
+// dropped content are refused. The editor tracks a burst of typing from its
+// first input; taking the burst reports each text node of the source as its
+// text before and after, and the app turns those into exact find-and-replace
+// edits on the document source. The DOM is never serialized back into HTML.
 
 export type TextChange = { before: string; after: string };
+export type TextChanges = { changes: TextChange[]; unsupported: boolean };
 
 export interface TextEditor {
-  // The changed nodes, and whether anything changed other than text.
-  collect(): { changes: TextChange[]; unsupported: boolean };
+  // The changed nodes since the burst started, and whether anything changed
+  // other than text. Taking them ends the burst: the next input starts one.
+  take(): TextChanges;
   stop(): void;
 }
 
-const NOT_TEXT = "script,style,noscript,template,textarea";
+// Elements whose text is not document text: code, and the bridge's own
+// controls that it adds to the document.
+const NOT_TEXT =
+  "script,style,noscript,template,textarea,.slashdocs-selection-action,.slashdocs-text-flash";
 
 // Input that would change structure rather than text.
 const STRUCTURAL_INPUT =
   /^(insertParagraph|insertLineBreak|insertOrderedList|insertUnorderedList|insertHorizontalRule|insertLink|insertFromDrop|deleteByDrag|format)/;
+
+// Keys that only move the caret, select or open menus.
+const NO_INPUT_KEY =
+  /^(Arrow|Page|Home$|End$|Shift$|Control$|Alt$|Meta$|Escape$|Tab$|CapsLock$|F\d)/;
 
 const STYLE_ID = "slashdocs-text-editing-style";
 
 export function startTextEditing(
   d: Document,
   callbacks: {
-    // The number of nodes whose text differs from the start.
+    // A burst starts: anything that splits text nodes, such as comment
+    // highlights, must come off first.
+    beforeBurst(): void;
+    // The number of nodes whose text differs from the start of the burst.
     onDirty(count: number): void;
     // A structural change was refused.
     onRefused(): void;
@@ -32,6 +44,125 @@ export function startTextEditing(
 ): TextEditor | null {
   const body = d.body;
   if (!body) return null;
+  let burst: Burst | null = null;
+  const begin = () => {
+    if (burst) return;
+    callbacks.beforeBurst();
+    burst = trackBurst(d, body, callbacks.onDirty);
+  };
+
+  // A burst starts before the browser changes anything: on a key that can
+  // type, on paste or cut, or, for input with no key such as a spelling
+  // fix, on the input itself.
+  const onKeyDown = (event: KeyboardEvent) => {
+    const shortcut = event.metaKey || event.ctrlKey;
+    if (shortcut ? /^[vxyz]$/i.test(event.key) : !NO_INPUT_KEY.test(event.key)) {
+      begin();
+    }
+  };
+  const onBeforeInput = (event: InputEvent) => {
+    if (STRUCTURAL_INPUT.test(event.inputType)) {
+      event.preventDefault();
+      callbacks.onRefused();
+      return;
+    }
+    begin();
+    const target = event.inputType.startsWith("history") ? null : targetRange(d, event);
+    if (target) {
+      const text = trimToText(d, target);
+      // Backspace at the start of a block, a selection over two paragraphs or
+      // select-all would merge or remove blocks rather than change words.
+      const edges = text || target;
+      if (blockOf(edges.startContainer) !== blockOf(edges.endContainer)) {
+        event.preventDefault();
+        callbacks.onRefused();
+        return;
+      }
+      // A triple click selects up to the start of the next block; typing over
+      // it would pull that block in. Keep the selection to the text it shows.
+      if (text && !sameRange(text, target)) {
+        event.preventDefault();
+        const selection = d.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(text);
+        const data = event.inputType.startsWith("delete")
+          ? ""
+          : (event.data ?? event.dataTransfer?.getData("text/plain") ?? "");
+        if (data) insertPlainText(d, data);
+        else d.execCommand("delete");
+        return;
+      }
+    }
+    if (event.inputType === "insertFromPaste") {
+      // Paste as plain text on one line, so pasting never adds markup.
+      event.preventDefault();
+      insertPlainText(d, event.dataTransfer?.getData("text/plain") || "");
+    }
+  };
+  const onPasteOrCut = () => begin();
+  const onDrop = (event: DragEvent) => {
+    event.preventDefault();
+    callbacks.onRefused();
+  };
+  d.addEventListener("keydown", onKeyDown, true);
+  d.addEventListener("paste", onPasteOrCut, true);
+  d.addEventListener("cut", onPasteOrCut, true);
+  d.addEventListener("compositionstart", begin, true);
+  d.addEventListener("beforeinput", onBeforeInput, true);
+  d.addEventListener("drop", onDrop, true);
+
+  const previous = body.getAttribute("contenteditable");
+  const previousSpellcheck = body.getAttribute("spellcheck");
+  body.setAttribute("contenteditable", "true");
+  body.setAttribute("spellcheck", "true");
+  d.documentElement.setAttribute("data-slashdocs-text-editing", "");
+  if (!d.getElementById(STYLE_ID)) {
+    const style = d.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent =
+      "[data-slashdocs-text-editing] body{outline:none!important;caret-color:auto}" +
+      "[data-slashdocs-text-editing] a{cursor:text!important}" +
+      // The bridge's copy-link button sits inside each heading; hidden, the
+      // caret cannot land in it and typed text stays in the heading's text.
+      "[data-slashdocs-text-editing] .slashdocs-heading-link{display:none!important}";
+    (d.head || d.documentElement).appendChild(style);
+  }
+
+  const take = (): TextChanges => {
+    const changes = burst?.diff() || { changes: [], unsupported: false };
+    burst?.stop();
+    burst = null;
+    return changes;
+  };
+  return {
+    take,
+    stop() {
+      take();
+      d.removeEventListener("keydown", onKeyDown, true);
+      d.removeEventListener("paste", onPasteOrCut, true);
+      d.removeEventListener("cut", onPasteOrCut, true);
+      d.removeEventListener("compositionstart", begin, true);
+      d.removeEventListener("beforeinput", onBeforeInput, true);
+      d.removeEventListener("drop", onDrop, true);
+      if (previous === null) body.removeAttribute("contenteditable");
+      else body.setAttribute("contenteditable", previous);
+      if (previousSpellcheck === null) body.removeAttribute("spellcheck");
+      else body.setAttribute("spellcheck", previousSpellcheck);
+      d.documentElement.removeAttribute("data-slashdocs-text-editing");
+      d.getElementById(STYLE_ID)?.remove();
+    },
+  };
+}
+
+type Burst = { diff(): TextChanges; stop(): void };
+
+// trackBurst records the text of every node of body and watches the changes
+// to it.
+function trackBurst(
+  d: Document,
+  body: HTMLElement,
+  onDirty: (count: number) => void,
+): Burst {
   // Removing highlights leaves the text they split in pieces; join them so
   // each node is one run of the source again.
   body.normalize();
@@ -64,12 +195,12 @@ export function startTextEditing(
         if (node.nodeType === Node.TEXT_NODE) {
           if (!originals.has(node as Text)) addedText.add(node as Text);
         } else if (node.nodeType === Node.ELEMENT_NODE) {
-          addedElements.add(node as Element);
+          if (!(node as Element).matches(NOT_TEXT)) addedElements.add(node as Element);
         }
       }
     }
     const { changes, unsupported } = diff();
-    callbacks.onDirty(changes.length + (unsupported ? 1 : 0));
+    onDirty(changes.length + (unsupported ? 1 : 0));
   });
 
   // filler is markup the browser adds that the source never had: a <br>
@@ -80,7 +211,7 @@ export function startTextEditing(
   const isAdded = (node: Node | null): node is Text =>
     !!node && addedText.has(node as Text) && !!(node as Text).data;
 
-  function diff(): { changes: TextChange[]; unsupported: boolean } {
+  function diff(): TextChanges {
     const claimed = new Set<Text>();
     // The added text nodes around node on one side, up to the first node that
     // came from the source.
@@ -124,83 +255,8 @@ export function startTextEditing(
     return { changes, unsupported };
   }
   observer.observe(body, { characterData: true, childList: true, subtree: true });
-
-  const onBeforeInput = (event: InputEvent) => {
-    if (STRUCTURAL_INPUT.test(event.inputType)) {
-      event.preventDefault();
-      callbacks.onRefused();
-      return;
-    }
-    const target = event.inputType.startsWith("history") ? null : targetRange(d, event);
-    if (target) {
-      const text = trimToText(d, target);
-      // Backspace at the start of a block, a selection over two paragraphs or
-      // select-all would merge or remove blocks rather than change words.
-      const edges = text || target;
-      if (blockOf(edges.startContainer) !== blockOf(edges.endContainer)) {
-        event.preventDefault();
-        callbacks.onRefused();
-        return;
-      }
-      // A triple click selects up to the start of the next block; typing over
-      // it would pull that block in. Keep the selection to the text it shows.
-      if (text && !sameRange(text, target)) {
-        event.preventDefault();
-        const selection = d.getSelection();
-        selection?.removeAllRanges();
-        selection?.addRange(text);
-        const data = event.inputType.startsWith("delete")
-          ? ""
-          : (event.data ?? event.dataTransfer?.getData("text/plain") ?? "");
-        if (data) insertPlainText(d, data);
-        else d.execCommand("delete");
-        return;
-      }
-    }
-    if (event.inputType === "insertFromPaste") {
-      // Paste as plain text on one line, so pasting never adds markup.
-      event.preventDefault();
-      insertPlainText(d, event.dataTransfer?.getData("text/plain") || "");
-    }
-  };
-  const onDrop = (event: DragEvent) => {
-    event.preventDefault();
-    callbacks.onRefused();
-  };
-  d.addEventListener("beforeinput", onBeforeInput, true);
-  d.addEventListener("drop", onDrop, true);
-
-  const previous = body.getAttribute("contenteditable");
-  const previousSpellcheck = body.getAttribute("spellcheck");
-  body.setAttribute("contenteditable", "true");
-  body.setAttribute("spellcheck", "true");
-  d.documentElement.setAttribute("data-slashdocs-text-editing", "");
-  if (!d.getElementById(STYLE_ID)) {
-    const style = d.createElement("style");
-    style.id = STYLE_ID;
-    style.textContent =
-      "[data-slashdocs-text-editing] body{outline:none!important;caret-color:auto}" +
-      "[data-slashdocs-text-editing] a{cursor:text!important}" +
-      // The bridge's copy-link button sits inside each heading; hidden, the
-      // caret cannot land in it and typed text stays in the heading's text.
-      "[data-slashdocs-text-editing] .slashdocs-heading-link{display:none!important}";
-    (d.head || d.documentElement).appendChild(style);
-  }
-
-  return {
-    collect: diff,
-    stop() {
-      observer.disconnect();
-      d.removeEventListener("beforeinput", onBeforeInput, true);
-      d.removeEventListener("drop", onDrop, true);
-      if (previous === null) body.removeAttribute("contenteditable");
-      else body.setAttribute("contenteditable", previous);
-      if (previousSpellcheck === null) body.removeAttribute("spellcheck");
-      else body.setAttribute("spellcheck", previousSpellcheck);
-      d.documentElement.removeAttribute("data-slashdocs-text-editing");
-      d.getElementById(STYLE_ID)?.remove();
-    },
-  };
+  onDirty(0);
+  return { diff, stop: () => observer.disconnect() };
 }
 
 function insertPlainText(d: Document, text: string) {

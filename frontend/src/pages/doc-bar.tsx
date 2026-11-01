@@ -5,12 +5,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { errorMessage } from "@/lib/errors";
 import {
-  Check,
   ExternalLink,
   FileDown,
   ArrowUpToLine,
   Maximize2,
-  GitBranch,
   Keyboard,
   MoreHorizontal,
   MousePointer2,
@@ -22,7 +20,6 @@ import {
 import { AccountMenu } from "@/components/layout/topbar";
 import { CommentsToggle, DocBarFrame } from "@/components/layout/doc-bar-frame";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Avatar } from "@/components/ui/misc";
 import {
   Dropdown,
@@ -50,17 +47,18 @@ import {
   type ApprovalStatus,
   type ApprovalSummary,
 } from "@/api";
-import { canManageSharing, ROLE_RANK } from "@/lib/constants";
-import { changeSummaryLines } from "@/lib/change-summary";
+import { canManageSharing } from "@/lib/constants";
 import { formatTimestamp } from "@/lib/format-date";
+import { useDocumentRole } from "@/lib/hooks";
 import { queryKeys } from "@/lib/queryKeys";
 import { cursorsShownStore } from "@/lib/live-cursors";
-import { principalColor, samePrincipal } from "@/lib/principals";
+import { principalColor } from "@/lib/principals";
 import { ShareSheet } from "./doc-share-sheet";
 import { ApprovalsDialog } from "./doc-approvals";
 import { useDoc } from "./doc-context";
 import { UploadVersionMenuItem, UploadVersionSheet } from "./doc-upload-version";
-import { TextEditControls } from "./doc-text-edit";
+import { EditStatus } from "./doc-edit-status";
+import { HistoryDialog, RestoreButton } from "./doc-history";
 import type { Viewer } from "./use-document-stream";
 
 const MAX_VIEWER_AVATARS = 4;
@@ -74,9 +72,11 @@ export function DocBar({
   parentFolder,
   current,
   latest,
+  previewing,
   versions,
   labels,
   onSelectVersion,
+  onShowLatest,
   viewers,
   onFollowViewer,
   commentsOpen,
@@ -96,9 +96,12 @@ export function DocBar({
   parentFolder?: { id: string; title: string };
   current: string;
   latest: string;
+  // An earlier version from the history is on screen.
+  previewing: boolean;
   versions: Version[];
   labels: string[];
   onSelectVersion: (versionID: string) => void;
+  onShowLatest: () => void;
   viewers: Viewer[];
   onFollowViewer: (viewer: Viewer) => void;
   commentsOpen: boolean;
@@ -118,18 +121,14 @@ export function DocBar({
   const backTo = parentFolder ? `/app/folders/${parentFolder.id}` : "/app/documents";
   const config = useQuery({ queryKey: queryKeys.config(), queryFn: api.getConfig });
   const currentVersion = versions.find((v) => v.id === current);
-  const isViewingOlder = !!current && !!latest && current !== latest;
-  const canManage = samePrincipal(principal, owner);
-  const access = useQuery({
-    queryKey: queryKeys.documentAccess(docId),
-    queryFn: () => api.documentAccess(docId),
-    enabled: !!docId && !!principal && !canManage,
-    staleTime: 30_000,
-  });
-  const currentAccessRole = access.data?.current_role;
-  const canManageAccess = canManage || canManageSharing(currentAccessRole);
-  const canEdit =
-    canManage || (ROLE_RANK[currentAccessRole || ""] || 0) >= ROLE_RANK.editor;
+  // Behind: someone else edited while the reader stayed on this version.
+  const behind = !!current && !!latest && current !== latest;
+  const {
+    isOwner: canManage,
+    role,
+    canEdit,
+  } = useDocumentRole(docId, owner, principal);
+  const canManageAccess = canManageSharing(role);
   const shareFrameFocusRef = useRef<HTMLIFrameElement | null>(null);
   const del = useMutation({
     mutationFn: () => api.deleteDocument(docId),
@@ -152,14 +151,12 @@ export function DocBar({
       }
       title={title}
       meta={
-        currentVersion && (
-          <span
-            className={`hidden shrink-0 text-xs tabular-nums sm:inline ${isViewingOlder ? "text-amber-600 dark:text-amber-300" : "text-[var(--color-fg-muted)]"}`}
-            title={isViewingOlder ? "Viewing an older version" : "Latest version"}
-          >
-            v{currentVersion.number}
-            {isViewingOlder ? " · older" : ""}
+        previewing ? (
+          <span className="hidden shrink-0 text-xs text-amber-600 sm:inline dark:text-amber-300">
+            From {formatTimestamp(currentVersion?.created_at)}
           </span>
+        ) : (
+          <EditStatus />
         )
       }
     >
@@ -170,24 +167,30 @@ export function DocBar({
         isOwner={canManage}
         defaultOpen={approvalsOpen}
       />
-      <Viewers viewers={viewers} versions={versions} onFollow={onFollowViewer} />
+      <Viewers viewers={viewers} latest={latest} onFollow={onFollowViewer} />
       {viewers.length ? <CursorsToggle /> : null}
-      {isViewingOlder ? (
+      {previewing && canEdit ? (
+        <RestoreButton
+          docId={docId}
+          version={currentVersion}
+          onRestored={onShowLatest}
+        />
+      ) : null}
+      {behind ? (
         <Button
           variant="ghost"
           size="icon"
-          title="Back to latest version"
-          aria-label="Back to latest version"
+          title={previewing ? "Back to the current document" : "Show the latest edits"}
+          aria-label={
+            previewing ? "Back to the current document" : "Show the latest edits"
+          }
           className="shrink-0"
-          onClick={() => onSelectVersion(latest)}
+          onClick={onShowLatest}
         >
           <ArrowUpToLine className="h-4 w-4" />
         </Button>
       ) : null}
-      {canEdit && !isViewingOlder && current ? (
-        <TextEditControls docId={docId} version={current} onSaved={onSelectVersion} />
-      ) : null}
-      <VersionHistoryDialog
+      <HistoryDialog
         current={current}
         latest={latest}
         versions={versions}
@@ -341,11 +344,11 @@ export function DocBar({
 // Clicking one goes to their cursor, or else to what they see.
 function Viewers({
   viewers,
-  versions,
+  latest,
   onFollow,
 }: {
   viewers: Viewer[];
-  versions: Version[];
+  latest: string;
   onFollow: (viewer: Viewer) => void;
 }) {
   if (!viewers.length) return null;
@@ -358,11 +361,11 @@ function Viewers({
     >
       {viewers.slice(0, MAX_VIEWER_AVATARS).map((viewer) => {
         const name = principalLabel(viewer.principal);
-        const number = versions.find((v) => v.id === viewer.version)?.number;
+        const earlier = !!viewer.version && viewer.version !== latest;
         return (
           <Tooltip
             key={`${viewer.principal.type}:${viewer.principal.id}`}
-            label={number ? `${name} · viewing v${number}` : name}
+            label={earlier ? `${name} · viewing an earlier version` : name}
           >
             <button
               type="button"
@@ -485,111 +488,6 @@ function LabelsDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function VersionHistoryDialog({
-  current,
-  latest,
-  versions,
-  onSelectVersion,
-}: {
-  current: string;
-  latest: string;
-  versions: Version[];
-  onSelectVersion: (versionID: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const sorted = [...versions].sort((a, b) => b.number - a.number);
-  const select = (versionID: string) => {
-    if (versionID === current) return;
-    onSelectVersion(versionID);
-    setOpen(false);
-  };
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="hidden shrink-0 sm:inline-flex"
-          aria-label="Version history"
-          title="Version history"
-        >
-          <GitBranch className="h-4 w-4" />
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>Version history</DialogTitle>
-          <DialogDescription>
-            Immutable HTML revisions for this document. Open any version to inspect the
-            exact HTML your reviewers saw.
-          </DialogDescription>
-        </DialogHeader>
-        {sorted.length === 0 ? (
-          <div className="rounded-lg border border-[var(--color-border)] p-4 text-sm text-[var(--color-fg-muted)]">
-            No versions available yet.
-          </div>
-        ) : (
-          <div className="max-h-[60vh] space-y-2 overflow-auto pr-1">
-            {sorted.map((v) => (
-              <button
-                key={v.id}
-                type="button"
-                onClick={() => select(v.id)}
-                className={`flex w-full gap-3 rounded-xl border border-[var(--color-border)] p-4 text-left transition-colors hover:bg-[var(--color-surface-muted)]/60 ${
-                  v.id === current
-                    ? "bg-[var(--color-accent-muted)]/35"
-                    : "bg-[var(--color-surface)]"
-                }`}
-                aria-current={v.id === current ? "true" : undefined}
-              >
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-accent-muted)] text-sm font-semibold text-[var(--color-accent)]">
-                  {v.number}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="font-medium">Version {v.number}</div>
-                    {v.id === current ? (
-                      <Badge variant="accent">
-                        <Check className="h-3 w-3" /> Viewing
-                      </Badge>
-                    ) : null}
-                    {v.id === latest ? <Badge variant="muted">Latest</Badge> : null}
-                  </div>
-                  <ChangeSummary version={v} />
-                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--color-fg-muted)]">
-                    <span>Created by {principalLabel(v.created_by)}</span>
-                    {v.created_at ? <span>{formatTimestamp(v.created_at)}</span> : null}
-                    <span className="font-mono">{v.id}</span>
-                  </div>
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function ChangeSummary({ version }: { version: Version }) {
-  const lines = changeSummaryLines(version.change_summary);
-  const className = "mt-1 text-sm text-[var(--color-fg-muted)]";
-  if (lines.length > 1) {
-    return (
-      <ul className={`${className} list-disc space-y-0.5 pl-5`}>
-        {lines.map((line, i) => (
-          <li key={i}>{line}</li>
-        ))}
-      </ul>
-    );
-  }
-  return (
-    <p className={className}>
-      {lines[0] || (version.number === 1 ? "Initial version" : "No change summary")}
-    </p>
   );
 }
 

@@ -84,16 +84,18 @@ describe("editFor", () => {
 describe("buildEdits", () => {
   it("matches each change against the source the earlier edits left", () => {
     const source = "<p>one two</p><p>three</p>";
-    const { edits, unmatched } = buildEdits(source, [
+    const built = buildEdits(source, [
       { before: "one two", after: "one 2" },
       { before: "three", after: "two" },
       { before: "same", after: "same" },
     ]);
-    expect(unmatched).toEqual([]);
-    expect(edits).toEqual([
+    expect(built.unmatched).toEqual([]);
+    expect(built.edits).toEqual([
       { old_string: "two", new_string: "2" },
       { old_string: "three", new_string: "two" },
     ]);
+    // The source the server saves, so the next edits match against it.
+    expect(built.source).toBe("<p>one 2</p><p>two</p>");
   });
 
   it("keeps going past a change it cannot place", () => {

@@ -97,6 +97,16 @@ declare global {
   }
 }
 
+// A selection as character offsets into the body text. trailing marks a
+// caret at the end of its text node, which the same offset at the start of
+// the next node must not take.
+interface SavedSelection {
+  start: number;
+  end: number;
+  backward: boolean;
+  trailing: boolean;
+}
+
 interface PaintItem {
   id?: string;
   anchor?: CommentAnchor;
@@ -473,27 +483,51 @@ type Theme = "dark" | "light";
 
   let printPreparing = false;
   let textEditor: TextEditor | null = null;
+  // Highlights split the text nodes the editor tracks, so they come off when
+  // a burst of typing starts and go back when the app takes the burst. Paints
+  // and repairs wait meanwhile, and the comment rail keeps its positions.
+  let highlightsHeld = false;
 
-  // Text editing makes the words of the document editable. Highlights split
-  // text nodes, so they come off first; the app sends no paint while editing.
+  // Text editing makes the words of the document editable.
   function setTextEditing(on: boolean): void {
     const d = doc();
     if (!on) {
-      if (!textEditor) return;
-      textEditor.stop();
+      textEditor?.stop();
       textEditor = null;
-      // Reload the document so it shows its source again, not the edits.
-      frame.setAttribute("srcdoc", frame.getAttribute("srcdoc") || "");
+      releaseHighlights();
       return;
     }
     if (textEditor || !d) return;
-    paint([], null);
     textEditor = startTextEditing(d, {
+      beforeBurst: holdHighlights,
       onDirty: (count) =>
         parent.postMessage({ type: "slashdocs:text-dirty", count }, targetOrigin()),
       onRefused: () =>
         parent.postMessage({ type: "slashdocs:text-refused" }, targetOrigin()),
     });
+  }
+
+  function holdHighlights(): void {
+    const d = doc();
+    if (highlightsHeld || !d || !d.body) return;
+    highlightsHeld = true;
+    suspendMutationObserver();
+    const caret = saveSelection(d, d.body, true);
+    clearHighlights(d);
+    if (caret) restoreSelection(d, d.body, caret);
+    resumeMutationObserver();
+  }
+
+  function releaseHighlights(): void {
+    const d = doc();
+    if (!highlightsHeld || !d || !d.body) return;
+    highlightsHeld = false;
+    // The marks are gone, so the same comments must be anchored again.
+    // Wrapping text in marks moves the caret, so it goes back after.
+    lastPaintKey = null;
+    const caret = saveSelection(d, d.body, true);
+    if (lastPaint) paint(lastPaint.items, lastPaint.active);
+    if (caret) restoreSelection(d, d.body, caret);
   }
   const exportPending = new Map<string, { resolve: () => void; reject: () => void }>();
   let exportID = 0;
@@ -682,13 +716,15 @@ type Theme = "dark" | "light";
   // body.textContent (unchanged by highlight wrapping) so a repaint can put
   // it back. Without this, unwrapping and re-wrapping the text nodes under
   // the selection makes the browser drop the native selection highlight
-  // while the user is still selecting.
+  // while the user is still selecting. With caret set, a collapsed selection
+  // (the editor's caret) is kept too.
   function saveSelection(
     d: Document,
     body: HTMLElement,
-  ): { start: number; end: number; backward: boolean } | null {
+    caret = false,
+  ): SavedSelection | null {
     const sel = d.getSelection();
-    if (!sel || sel.isCollapsed || sel.rangeCount < 1) return null;
+    if (!sel || (sel.isCollapsed && !caret) || sel.rangeCount < 1) return null;
     try {
       const range = sel.getRangeAt(0);
       if (!body.contains(range.commonAncestorContainer)) return null;
@@ -697,7 +733,17 @@ type Theme = "dark" | "light";
       probe.setStart(sel.anchorNode!, sel.anchorOffset);
       probe.collapse(true);
       const backward = probe.comparePoint(sel.focusNode!, sel.focusOffset) === -1;
-      return { start: textRange.start.offset, end: textRange.end.offset, backward };
+      const trailing =
+        sel.isCollapsed &&
+        sel.focusNode!.nodeType === Node.TEXT_NODE &&
+        sel.focusOffset > 0 &&
+        sel.focusOffset === (sel.focusNode as Text).data.length;
+      return {
+        start: textRange.start.offset,
+        end: textRange.end.offset,
+        backward,
+        trailing,
+      };
     } catch {
       return null;
     }
@@ -706,15 +752,19 @@ type Theme = "dark" | "light";
   function restoreSelection(
     d: Document,
     body: HTMLElement,
-    saved: { start: number; end: number; backward: boolean },
+    saved: SavedSelection,
   ): void {
     try {
       const range = TextRange.fromOffsets(body, saved.start, saved.end).toRange();
       // Offset resolution is forward-biased: an end offset on a node
       // boundary resolves to (nextNode, 0), which visually stretches the
       // restored selection across the block boundary. Pull it back to the
-      // end of the preceding text node.
-      if (range.endOffset === 0 && range.endContainer !== range.startContainer) {
+      // end of the preceding text node, as for a caret that was at the end of
+      // its text.
+      if (
+        range.endOffset === 0 &&
+        (range.endContainer !== range.startContainer || saved.trailing)
+      ) {
         const tw = d.createTreeWalker(body, NodeFilter.SHOW_TEXT);
         tw.currentNode = range.endContainer;
         const prev = tw.previousNode() as Text | null;
@@ -881,7 +931,7 @@ type Theme = "dark" | "light";
     commentPositionFrame = view.requestAnimationFrame(() => {
       commentPositionFrame = 0;
       const current = doc();
-      if (!current) return;
+      if (!current || highlightsHeld) return;
       refreshSVGRects(current);
       postCommentPositions();
     });
@@ -944,7 +994,14 @@ type Theme = "dark" | "light";
   function repairAfterMutations(): void {
     const d = doc();
     const body = d && d.body;
-    if (!d || !body || !lastPaint || !lastPaint.items.length || !lastPaintResults) {
+    if (
+      !d ||
+      !body ||
+      highlightsHeld ||
+      !lastPaint ||
+      !lastPaint.items.length ||
+      !lastPaintResults
+    ) {
       return;
     }
     refreshSVGRects(d);
@@ -1037,6 +1094,8 @@ type Theme = "dark" | "light";
     const list = items || [];
     const activeID = typeof active === "string" ? active : null;
     lastPaint = { items: list, active: activeID };
+    // Held highlights take this paint when they go back.
+    if (highlightsHeld) return;
     const key = paintKeyOf(list);
     const body = d && d.body;
 
@@ -1151,15 +1210,16 @@ type Theme = "dark" | "light";
   }
 
   function handleLinkClick(e: MouseEvent): void {
-    // A click while editing places the caret; it does not follow the link.
-    if (textEditor) {
-      e.preventDefault();
-      return;
-    }
     const d = doc();
     if (!d || !e.target || !(e.target as Element).closest) return;
     const a = (e.target as Element).closest("a[href]") as HTMLAnchorElement | null;
     if (!a) return;
+    // A click on a link while editing places the caret. Cmd or Ctrl and
+    // click follows the link, as in other editors.
+    if (textEditor && !e.metaKey && !e.ctrlKey) {
+      e.preventDefault();
+      return;
+    }
     const href = a.getAttribute("href") || "";
     if (!href || /^javascript:/i.test(href)) {
       e.preventDefault();
@@ -1319,7 +1379,10 @@ type Theme = "dark" | "light";
     const d = doc();
     if (!d || !d.body) return;
     const range = selectedRange(d.getSelection());
-    if (!range || isTextEditingTarget(d.activeElement)) {
+    // Text selected in the document editor is still document text to
+    // comment on; text in the document's own inputs is not.
+    const inEditor = !!textEditor && d.activeElement === d.body;
+    if (!range || (isTextEditingTarget(d.activeElement) && !inEditor)) {
       dismissSelectionAction();
       actionRange = null;
       return;
@@ -1674,6 +1737,7 @@ type Theme = "dark" | "light";
     lastPaint = null;
     lastPaintKey = null;
     lastPaintResults = null;
+    highlightsHeld = false;
     commentPositionFrame = 0;
     revealedActive = null;
     restoredSelection = null;
@@ -1807,12 +1871,14 @@ type Theme = "dark" | "light";
       if (ev.key === "Escape") dismissSelectionAction();
       const modified = ev.metaKey || ev.ctrlKey || ev.altKey;
       // C comments on the selected text, as in Figma. Esc then C still
-      // toggles the comments panel.
+      // toggles the comments panel. Where C types, as in the document
+      // editor, Ctrl or Cmd with Alt and M comments, as in Google Docs.
       if (
-        ev.key === "c" &&
-        !modified &&
-        !chordArmedAt &&
-        !isTextEditingTarget(ev.target)
+        (ev.key === "c" &&
+          !modified &&
+          !chordArmedAt &&
+          !isTextEditingTarget(ev.target)) ||
+        ((ev.metaKey || ev.ctrlKey) && ev.altKey && ev.code === "KeyM")
       ) {
         const range = selectedRange(d.getSelection());
         if (range) {
@@ -1822,10 +1888,14 @@ type Theme = "dark" | "light";
         }
       }
       const target = ev.target as Element | null;
-      const textEditing = !!target?.closest?.(
+      const editable = target?.closest?.(
         'input,textarea,select,[contenteditable="true"]',
       );
-      if (ev.defaultPrevented || textEditing) {
+      // In the document editor every key types, except Esc chords: Escape
+      // types nothing, so it and the key after it still work there.
+      const editorChord =
+        !!editable && editable === d.body && (ev.key === "Escape" || !!chordArmedAt);
+      if (ev.defaultPrevented || (editable && !editorChord)) {
         chordArmedAt = 0;
         vimGArmed = false;
         clearTimeout(vimGTimer);
@@ -1844,9 +1914,11 @@ type Theme = "dark" | "light";
         chordArmedAt = 0;
         const key = ev.key.toLowerCase();
         if (withinWindow && !modified && chordKeys.includes(key)) {
+          if (editorChord) ev.preventDefault();
           parent.postMessage({ type: "slashdocs:keydown", key }, targetOrigin());
         }
       }
+      if (editorChord) return;
       if (ev.key === "?" && !modified) {
         parent.postMessage({ type: "slashdocs:keydown", key: "?" }, targetOrigin());
       }
@@ -1980,17 +2052,16 @@ type Theme = "dark" | "light";
       e.data.type === "slashdocs:text-collect" &&
       typeof e.data.requestId === "string"
     ) {
-      const result = textEditor?.collect() || { changes: [], unsupported: false };
+      const result = textEditor?.take() || { changes: [], unsupported: false };
+      releaseHighlights();
       parent.postMessage(
         { type: "slashdocs:text-changes", requestId: e.data.requestId, ...result },
         targetOrigin(),
       );
       return;
     }
-    if (e.data.type === "slashdocs:paint") {
-      // Painting would split the text nodes the editor is watching.
-      if (!textEditor) paint(e.data.comments, e.data.active);
-    } else if (e.data.type === "slashdocs:theme") applyTheme(e.data.theme);
+    if (e.data.type === "slashdocs:paint") paint(e.data.comments, e.data.active);
+    else if (e.data.type === "slashdocs:theme") applyTheme(e.data.theme);
     else if (e.data.type === "slashdocs:kv-response") {
       const requestId = String(e.data.requestId || "");
       const pending = kvPending[requestId];

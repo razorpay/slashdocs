@@ -164,6 +164,8 @@ export type ApprovalListItem = {
   // Comment threads this approver started on the document.
   comments_open?: number;
   comments_total?: number;
+  // A pending approver's most recent decision, made on other content.
+  earlier?: { decision: ApprovalDecision; decided_at: string };
 };
 export type ApprovalsList = {
   version_id: string;
@@ -419,6 +421,12 @@ export const api = {
       `/v1/documents/${doc}/edits`,
       { method: "POST", body: JSON.stringify(input) },
     ),
+  // Saves the content of an earlier version as the newest one.
+  restoreVersion: (doc: string, version: string, summary: string) =>
+    request<Version>(`/v1/documents/${doc}/versions/${version}/restore`, {
+      method: "POST",
+      body: JSON.stringify({ change_summary: summary }),
+    }),
   renderToken: (doc: string, version: string) =>
     request<{ token: string; url: string }>(
       `/v1/documents/${doc}/versions/${version}/render-token`,

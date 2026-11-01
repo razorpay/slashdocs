@@ -13,7 +13,8 @@ import { toast } from "sonner";
 import { Check, KeyRound, Send } from "lucide-react";
 import { api, APIError, currentVersionID, docTitle, versionID } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
-import { useMe } from "@/lib/hooks";
+import { useDocumentRole, useMe } from "@/lib/hooks";
+import { samePrincipal } from "@/lib/principals";
 import { useSignInPath } from "@/lib/auth-state";
 import { textLinkFragment } from "../../bridge/text-link";
 import { Center, Skeleton } from "@/components/ui/misc";
@@ -118,7 +119,11 @@ export function DocumentPage() {
     enabled: !!id && !doc.error,
     meta: { suppressGlobalError: true },
   });
+  // A version picked from the history, or the one on screen when someone else
+  // changed the document: the reader stays on it until they ask for the
+  // latest.
   const [selectedVersion, setSelectedVersion] = useState<string>();
+  const [pinnedVersion, setPinnedVersion] = useState<string>();
   const [shareOpen, setShareOpen] = useState(searchParams.get("share") === "1");
   const closeShare = useCallback(() => setShareOpen(false), []);
   const nav = useNavigate();
@@ -134,27 +139,69 @@ export function DocumentPage() {
   const latest =
     currentVersionID(doc.data || {}) ||
     versionID(versionItems[versionItems.length - 1] || {});
-  const current = selectedVersion || queryVersion || latest;
+  const browsed = selectedVersion || queryVersion;
+  const current = browsed || pinnedVersion || latest;
+  // An earlier version from the history is a preview: it does not change.
+  const previewing = !!browsed && browsed !== latest;
+  const { canEdit } = useDocumentRole(id, doc.data?.owner, me.data?.principal);
+  // An assigned approver reviews the document. Typing in it would make them
+  // an author, which removes them as an approver, so it stays read-only.
+  const approvals = useQuery({
+    queryKey: queryKeys.approvals(id),
+    queryFn: () => api.listApprovals(id),
+    enabled: canEdit && !!doc.data?.approval_status,
+  });
+  const approver = !!approvals.data?.items.some((item) =>
+    samePrincipal(item.approver, me.data?.principal),
+  );
+
+  // The link keeps its fragment, such as a text link.
+  const showLatest = useCallback(() => {
+    setSelectedVersion(undefined);
+    setPinnedVersion(undefined);
+    const search = new URLSearchParams(location.search);
+    if (!search.has("version")) return;
+    search.delete("version");
+    nav({ search: search.toString(), hash: location.hash }, { replace: true });
+  }, [nav, location.search, location.hash]);
+  // Going to the latest version follows it, so the reader's own edits keep
+  // the page on it.
+  const showVersion = useCallback(
+    (version: string) =>
+      version === latest ? showLatest() : setSelectedVersion(version),
+    [latest, showLatest],
+  );
+  // A link to the latest version is a link to the document.
+  useEffect(() => {
+    if (queryVersion && queryVersion === latest) showLatest();
+  }, [queryVersion, latest, showLatest]);
+  const currentRef = useRef(current);
+  currentRef.current = current;
+  const stayOnVersion = useCallback(
+    () => setPinnedVersion((version) => version || currentRef.current),
+    [],
+  );
 
   const stream = useDocumentStream({
     docId: id,
     version: current,
     principal: me.data?.principal,
-    // Keep the reader on the version they read when someone else publishes.
-    onRemoteDocumentChange: () => setSelectedVersion((version) => version || current),
+    // Keep the reader on the version they read when someone else edits.
+    onRemoteDocumentChange: stayOnVersion,
   });
 
-  // Offer the version someone else published while this reader stayed on the
-  // one before it.
+  // Offer the edits someone else made while this reader stayed on the
+  // version before them.
   const seenLatest = useRef(latest);
   useEffect(() => {
     const previous = seenLatest.current;
     seenLatest.current = latest;
     if (!previous || previous === latest || current !== previous) return;
-    toast.info("A new version is available.", {
-      action: { label: "View", onClick: () => setSelectedVersion(latest) },
+    toast.info("Someone else edited this document.", {
+      id: "document-changed",
+      action: { label: "Show changes", onClick: showLatest },
     });
-  }, [latest, current]);
+  }, [latest, current, showLatest]);
 
   // Show the version another viewer reads, at their cursor, or else at the
   // passage they look at.
@@ -165,15 +212,15 @@ export function DocumentPage() {
     (viewer: Viewer) => {
       const version = cursorsShown && cursorVersion(viewer.session);
       if (version) {
-        setSelectedVersion(version);
+        showVersion(version);
         setFollowedCursor({ session: viewer.session });
         return;
       }
-      if (viewer.version) setSelectedVersion(viewer.version);
+      if (viewer.version) showVersion(viewer.version);
       const hash = textLinkFragment(viewer.anchor);
       if (hash) nav({ search: location.search, hash }, { replace: true });
     },
-    [cursorsShown, cursorVersion, nav, location.search],
+    [cursorsShown, cursorVersion, showVersion, nav, location.search],
   );
 
   if (doc.isLoading) {
@@ -229,6 +276,9 @@ export function DocumentPage() {
       stream={stream}
       followedCursor={followedCursor}
       onDocumentClick={closeShare}
+      editable={canEdit && !approver && !previewing}
+      stayOnVersion={stayOnVersion}
+      showLatest={showLatest}
       bar={(controls) => (
         <DocBar
           {...controls}
@@ -240,9 +290,11 @@ export function DocumentPage() {
           parentFolder={doc.data.parent_folder}
           current={current}
           latest={latest}
+          previewing={previewing}
           versions={versionItems}
           labels={doc.data.labels || []}
-          onSelectVersion={setSelectedVersion}
+          onSelectVersion={showVersion}
+          onShowLatest={showLatest}
           viewers={stream.viewers}
           onFollowViewer={followViewer}
           shareOpen={shareOpen}

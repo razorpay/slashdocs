@@ -23,7 +23,7 @@ import { queryKeys } from "@/lib/queryKeys";
 export function UploadVersionMenuItem({ onSelect }: { onSelect: () => void }) {
   return (
     <DropdownItem onSelect={onSelect} className="text-[var(--color-fg-muted)]">
-      <Upload className="h-3.5 w-3.5" /> Upload new version (backup)
+      <Upload className="h-3.5 w-3.5" /> Replace with an HTML file
     </DropdownItem>
   );
 }
@@ -45,7 +45,7 @@ export function UploadVersionSheet({
   const m = useMutation({
     mutationFn: () => api.createVersion(docId, baseVersion, summary, file!),
     onSuccess: () => {
-      toast.success("Version uploaded.");
+      toast.success("Uploaded. The previous content is in the history.");
       onOpenChange(false);
       setSummary("");
       reset();
@@ -60,7 +60,7 @@ export function UploadVersionSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent>
         <SheetHeader>
-          <SheetTitle>Upload new version</SheetTitle>
+          <SheetTitle>Replace with an HTML file</SheetTitle>
         </SheetHeader>
         <SheetBody>
           <form
@@ -77,7 +77,7 @@ export function UploadVersionSheet({
             />
             <HtmlFileInput file={file} onFile={setFile} />
             <Button type="submit" disabled={!file || m.isPending}>
-              {m.isPending ? "Uploading…" : "Upload version"}
+              {m.isPending ? "Uploading…" : "Upload"}
             </Button>
           </form>
         </SheetBody>
