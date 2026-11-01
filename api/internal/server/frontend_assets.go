@@ -16,7 +16,7 @@ import (
 // populated by `make frontend` (or `npm run build` in frontend/) and is
 // gitignored apart from .gitkeep placeholders, so this embed always has
 // something to point at even when no build has happened yet. The
-// fallback path in registerFrontendRoutes returns 404 for index.html in
+// fallback path in serveFrontend returns 404 for index.html in
 // that case.
 //
 //go:embed all:frontend_dist
@@ -27,6 +27,12 @@ func registerFrontendRoutes(r *gin.Engine, publicURL string) {
 	if err != nil {
 		return
 	}
+	serveFrontend(r, dist, publicURL)
+}
+
+// serveFrontend serves dist as a single-page app: existing files as they are,
+// and index.html with the public URL filled in for every other GET or HEAD.
+func serveFrontend(r *gin.Engine, dist fs.FS, publicURL string) {
 	fileServer := http.FileServer(http.FS(dist))
 	publicURL = strings.TrimRight(publicURL, "/")
 
