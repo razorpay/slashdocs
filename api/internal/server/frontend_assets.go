@@ -22,11 +22,19 @@ import (
 //go:embed all:frontend_dist
 var frontendFS embed.FS
 
-func registerFrontendRoutes(r *gin.Engine, publicURL string) {
+// embeddedFrontend returns the root of the Vite build in frontendFS.
+func embeddedFrontend() fs.FS {
 	dist, err := fs.Sub(frontendFS, "frontend_dist")
 	if err != nil {
-		return
+		panic(err) // unreachable: "frontend_dist" is a valid path
 	}
+	return dist
+}
+
+// registerFrontendRoutes serves dist as a single-page app: existing files as
+// they are, and index.html with the public URL filled in for every other GET
+// or HEAD.
+func registerFrontendRoutes(r *gin.Engine, dist fs.FS, publicURL string) {
 	fileServer := http.FileServer(http.FS(dist))
 	publicURL = strings.TrimRight(publicURL, "/")
 

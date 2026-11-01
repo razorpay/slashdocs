@@ -376,7 +376,8 @@ func serveLocal(ctx context.Context, dir string, port int) error {
 	_, p, _ := net.SplitHostPort(l.Addr().String())
 	port, _ = strconv.Atoi(p)
 	info := localInfo{URL: localURL(port), Port: port, Dir: abs, PID: os.Getpid(), Version: Version}
-	srv := &http.Server{Handler: localHandler(root, info, currentLocalPrincipal()), ReadHeaderTimeout: 10 * time.Second}
+	app, _ := fs.Sub(localApp, "local_dist")
+	srv := &http.Server{Handler: localHandler(root, app, info, currentLocalPrincipal()), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
 		_ = srv.Shutdown(context.WithoutCancel(ctx))
@@ -438,10 +439,10 @@ func (l loopbackListener) Accept() (net.Conn, error) {
 
 // localHandler serves the app on localHost and documents on the loopback
 // address. The two origins keep document scripts away from the app and its
-// API, as the separate render origin of the server does.
-func localHandler(root *os.Root, info localInfo, me localPrincipal) http.Handler {
+// API, as the separate render origin of the server does. app holds the built
+// web app, with local.html at its root.
+func localHandler(root *os.Root, app fs.FS, info localInfo, me localPrincipal) http.Handler {
 	docs := root.FS()
-	app, _ := fs.Sub(localApp, "local_dist")
 	renderOrigin, _ := url.Parse(httpOrigin("127.0.0.1", info.Port))
 	key := make([]byte, 32)
 	_, _ = rand.Read(key)
