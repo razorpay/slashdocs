@@ -909,7 +909,7 @@ func TestMCPCreateDocumentInFolderAndSetLabels(t *testing.T) {
 	assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "list_folder_documents", map[string]any{"folder_id": folderID}), docID)
 	assertMCPToolError(t, callMCPToolHTTP(t, e, token, "create_document", map[string]any{
 		"title": "Refused", "html": "<html><body>x</body></html>", "folder_id": "fld_missing",
-	}), "forbidden")
+	}), "not_found")
 
 	assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "set_document_labels", map[string]any{
 		"document_id": docID, "labels": []string{"Review", "api", "api"},
