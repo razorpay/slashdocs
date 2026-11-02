@@ -1,7 +1,6 @@
 package server_test
 
 import (
-	"context"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -17,33 +16,35 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/repo"
 	"github.com/razorpay/slashdocs/api/internal/server"
 )
 
 const identityTestIssuer = "https://sso.example"
 
-// TestOIDCCallbackRelinksUsersAfterIssuerChange covers #203: an existing user
-// whose generic OIDC identity key came from another issuer URL keeps their
-// account, while a user linked to a Google identity is not taken over.
+// TestOIDCCallbackRelinksUsersAfterIssuerChange covers #203: a user keeps
+// their account after SLASHDOCS_OIDC_ISSUER_URL changes, when the earlier
+// issuer is listed and the subject is the same. Another subject with the same
+// email, such as a recreated IdP account, does not take the account over.
 func TestOIDCCallbackRelinksUsersAfterIssuerChange(t *testing.T) {
+	const previousIssuer = "https://old-sso.example"
 	for _, tc := range []struct {
-		name, existingIdentity string
-		wantStatus             int
+		name                string
+		seedIssuer, seedSub string
+		previousIssuers     []string
+		wantStatus          int
 	}{
-		{"generic OIDC identity", "oidc_sha256_before_issuer_change", http.StatusFound},
-		{"Google identity", "google-sub-1", http.StatusConflict},
+		{"same subject under a previous issuer", previousIssuer, "sub-1", []string{previousIssuer}, http.StatusFound},
+		{"same subject under an unlisted issuer", previousIssuer, "sub-1", nil, http.StatusConflict},
+		{"another subject under a previous issuer", previousIssuer, "sub-0", []string{previousIssuer}, http.StatusConflict},
+		{"another subject under the same issuer", identityTestIssuer, "sub-0", []string{previousIssuer}, http.StatusConflict},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := newTestStore(t)
-			if _, err := store.UpsertGoogleUser(context.Background(), "usr_existing", "reviewer@acme.com", "Reviewer", tc.existingIdentity, ""); err != nil {
-				t.Fatal(err)
-			}
-			h := server.New(server.Config{
-				Environment:   "test",
-				AppOrigin:     "https://app.example",
-				SessionSecret: oauthTestSigningMaterial,
-				OIDC:          identityTestOIDC(t),
-			}, server.WithRepository(store), server.WithStateStore(auth.NewStateStore())).Handler()
+			seed := oidcWebSignIn(t, identityTestHandler(t, store, identityTestOIDC(t, tc.seedIssuer, tc.seedSub), nil))
+			assertStatus(t, seed, http.StatusFound)
+			existingUserID := sessionUserID(t, seed)
+			h := identityTestHandler(t, store, identityTestOIDC(t, identityTestIssuer, "sub-1"), tc.previousIssuers)
 
 			for range 2 {
 				rr := oidcWebSignIn(t, h)
@@ -57,12 +58,23 @@ func TestOIDCCallbackRelinksUsersAfterIssuerChange(t *testing.T) {
 					}`)
 					continue
 				}
-				if got := sessionUserID(t, rr); got != "usr_existing" {
-					t.Fatalf("signed in as %q, want the existing user", got)
+				if got := sessionUserID(t, rr); got != existingUserID {
+					t.Fatalf("signed in as %q, want the existing user %q", got, existingUserID)
 				}
 			}
 		})
 	}
+}
+
+func identityTestHandler(t *testing.T, store repo.Repository, provider auth.OIDC, previousIssuers []string) http.Handler {
+	t.Helper()
+	return server.New(server.Config{
+		Environment:         "test",
+		AppOrigin:           "https://app.example",
+		SessionSecret:       oauthTestSigningMaterial,
+		OIDC:                provider,
+		PreviousOIDCIssuers: previousIssuers,
+	}, server.WithRepository(store), server.WithStateStore(auth.NewStateStore())).Handler()
 }
 
 func oidcWebSignIn(t *testing.T, h http.Handler) *httptest.ResponseRecorder {
@@ -88,9 +100,10 @@ func sessionUserID(t *testing.T, rr *httptest.ResponseRecorder) string {
 	return ""
 }
 
-// identityTestOIDC returns an OIDC client whose token endpoint issues an ID
-// token for reviewer@acme.com, signed by a key its verifier trusts.
-func identityTestOIDC(t *testing.T) auth.OIDC {
+// identityTestOIDC returns an OIDC client of issuer whose token endpoint
+// issues an ID token of subject for reviewer@acme.com, signed by a key its
+// verifier trusts.
+func identityTestOIDC(t *testing.T, issuer, subject string) auth.OIDC {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -101,9 +114,9 @@ func identityTestOIDC(t *testing.T) auth.OIDC {
 		t.Fatal(err)
 	}
 	claims, err := json.Marshal(map[string]any{
-		"iss":            identityTestIssuer,
+		"iss":            issuer,
 		"aud":            "client-id",
-		"sub":            "sub-1",
+		"sub":            subject,
 		"exp":            time.Now().Add(time.Hour).Unix(),
 		"email":          "reviewer@acme.com",
 		"email_verified": true,
@@ -125,11 +138,11 @@ func identityTestOIDC(t *testing.T) auth.OIDC {
 	}))
 	t.Cleanup(tokenServer.Close)
 	return auth.OIDC{
-		Issuer:   identityTestIssuer,
-		Verifier: oidc.NewVerifier(identityTestIssuer, &oidc.StaticKeySet{PublicKeys: []crypto.PublicKey{key.Public()}}, &oidc.Config{ClientID: "client-id"}),
+		Issuer:   issuer,
+		Verifier: oidc.NewVerifier(issuer, &oidc.StaticKeySet{PublicKeys: []crypto.PublicKey{key.Public()}}, &oidc.Config{ClientID: "client-id"}),
 		Config: &oauth2.Config{
 			ClientID: "client-id",
-			Endpoint: oauth2.Endpoint{AuthURL: identityTestIssuer + "/auth", TokenURL: tokenServer.URL},
+			Endpoint: oauth2.Endpoint{AuthURL: issuer + "/auth", TokenURL: tokenServer.URL},
 		},
 	}
 }

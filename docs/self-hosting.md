@@ -151,13 +151,18 @@ internal URL while ID tokens are still validated against the public
 Each user's identity key in `users.google_sub` comes from the exact issuer
 URL and the token `sub`. If you change `SLASHDOCS_OIDC_ISSUER_URL` (a new
 host, port, scheme, or trailing slash, or a backup restored into another
-deployment), the next sign-in of each user moves their existing account to the
-new key, matched by verified email. The server logs
-`relinked user to a new oidc identity` with the old and new keys. slashdocs
-does not relink an account between Google and a generic OIDC provider. That
-sign-in fails with `409 conflict` and the log names both keys. To move such
-an account on purpose, clear its key. The next sign-in with the same verified
-email then adopts the account:
+deployment), add the earlier issuer URL to `SLASHDOCS_OIDC_PREVIOUS_ISSUER_URLS`.
+The next sign-in of each user then moves their existing account to the new
+key when the verified email and the token `sub` are the same. The server logs
+`relinked user to a new oidc identity` with the old and new keys.
+
+Any other sign-in whose verified email belongs to an account with another key
+fails with `409 conflict`, and the log names both keys. This includes a new
+`sub` at the same issuer, for example when the IdP deletes and recreates a
+user or gives a mailbox to a new person. It also includes a move between
+Google and a generic OIDC provider. To move such an account on purpose, clear
+its key. The next sign-in with the same verified email then adopts the
+account:
 
 ```sql
 UPDATE users SET google_sub = NULL WHERE email = 'person@example.com';
@@ -581,15 +586,16 @@ Terminate TLS at nginx, Caddy, or any reverse proxy of your choice.
 
 ### Sign-in (exactly one provider)
 
-| Variable                             | Purpose                                                                                                                                        |
-| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GOOGLE_OAUTH_CLIENT_ID`             | Google OAuth web client ID.                                                                                                                    |
-| `GOOGLE_OAUTH_CLIENT_SECRET`         | Google OAuth web client secret.                                                                                                                |
-| `SLASHDOCS_OIDC_ISSUER_URL`          | Issuer URL of a generic OIDC provider (Okta, Entra ID, Keycloak, Dex, ...). Endpoints are discovered from `/.well-known/openid-configuration`. |
-| `SLASHDOCS_OIDC_CLIENT_ID`           | OIDC client ID.                                                                                                                                |
-| `SLASHDOCS_OIDC_CLIENT_SECRET`       | OIDC client secret.                                                                                                                            |
-| `SLASHDOCS_OIDC_PROVIDER_NAME`       | Optional display label for the login button. Defaults to `SSO` (`Google` when the Google pair is used).                                        |
-| `SLASHDOCS_OIDC_INTERNAL_ISSUER_URL` | Optional server-side base URL for the IdP when it differs from the browser-facing issuer (split horizon, e.g. docker-compose).                 |
+| Variable                              | Purpose                                                                                                                                                                                        |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GOOGLE_OAUTH_CLIENT_ID`              | Google OAuth web client ID.                                                                                                                                                                    |
+| `GOOGLE_OAUTH_CLIENT_SECRET`          | Google OAuth web client secret.                                                                                                                                                                |
+| `SLASHDOCS_OIDC_ISSUER_URL`           | Issuer URL of a generic OIDC provider (Okta, Entra ID, Keycloak, Dex, ...). Endpoints are discovered from `/.well-known/openid-configuration`.                                                 |
+| `SLASHDOCS_OIDC_CLIENT_ID`            | OIDC client ID.                                                                                                                                                                                |
+| `SLASHDOCS_OIDC_CLIENT_SECRET`        | OIDC client secret.                                                                                                                                                                            |
+| `SLASHDOCS_OIDC_PROVIDER_NAME`        | Optional display label for the login button. Defaults to `SSO` (`Google` when the Google pair is used).                                                                                        |
+| `SLASHDOCS_OIDC_INTERNAL_ISSUER_URL`  | Optional server-side base URL for the IdP when it differs from the browser-facing issuer (split horizon, e.g. docker-compose).                                                                 |
+| `SLASHDOCS_OIDC_PREVIOUS_ISSUER_URLS` | Optional comma-separated issuer URLs that the deployment used before. A user with the same `sub` under one of them keeps their account. See [Generic OIDC providers](#generic-oidc-providers). |
 
 Set either the `GOOGLE_OAUTH_*` pair or the `SLASHDOCS_OIDC_*` variables, never
 both. The redirect URI to register is
@@ -631,8 +637,8 @@ a secret store. The server needs outbound HTTPS to `chat.googleapis.com` or
 | `SLASHDOCS_DEPLOYMENT`                      | `public`    | `public` or `org`. An org deployment gates login to `SLASHDOCS_ORG_DOMAINS`.                                                                                                                                                                                                                        |
 | `SLASHDOCS_ORG_DOMAINS`                     | unset       | Comma-separated org domains. Required when `SLASHDOCS_DEPLOYMENT=org`; also the login gate.                                                                                                                                                                                                         |
 | `SLASHDOCS_ORG_NAME`                        | unset       | Org display name used in share UI copy (e.g. "Anyone in Razorpay").                                                                                                                                                                                                                                 |
-| `SLASHDOCS_SLACK_LINK_PREVIEWS`             | `false`     | Set `true` to unfurl document links in Slack. Requires `SLASHDOCS_SLACK_BOT_TOKEN` and `SLASHDOCS_SLACK_SIGNING_SECRET`; startup fails without them. See [Slack link previews](comment-notifications.md#slack-link-previews). |
-| `SLASHDOCS_SLACK_SIGNING_SECRET`            | unset       | Slack app signing secret, used to verify `/v1/slack/events` requests. Keep it in your secret store. |
+| `SLASHDOCS_SLACK_LINK_PREVIEWS`             | `false`     | Set `true` to unfurl document links in Slack. Requires `SLASHDOCS_SLACK_BOT_TOKEN` and `SLASHDOCS_SLACK_SIGNING_SECRET`; startup fails without them. See [Slack link previews](comment-notifications.md#slack-link-previews).                                                                       |
+| `SLASHDOCS_SLACK_SIGNING_SECRET`            | unset       | Slack app signing secret, used to verify `/v1/slack/events` requests. Keep it in your secret store.                                                                                                                                                                                                 |
 | `BLOB_REGION`                               | `us-east-1` | AWS region for the S3 client.                                                                                                                                                                                                                                                                       |
 | `BLOB_ENDPOINT`                             | unset       | Custom S3 endpoint (MinIO, R2, etc.).                                                                                                                                                                                                                                                               |
 | `BLOB_ACCESS_KEY_ID`                        | unset       | Override AWS-SDK default credential chain.                                                                                                                                                                                                                                                          |
