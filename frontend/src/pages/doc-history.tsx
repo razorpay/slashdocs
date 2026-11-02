@@ -227,7 +227,7 @@ export function RestoreButton({
       showSaved(restored);
       toast.success("Restored.");
     },
-    onError: (e) => toast.error(errorMessage(e, "Could not restore this version.")),
+    onError: (e) => toast.error(errorMessage(e, "Could not restore this entry.")),
   });
   if (!version) return null;
   return (

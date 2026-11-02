@@ -40,7 +40,7 @@ export function PreviewBanner({
             This is the document as it was <RelativeTime iso={version.created_at} />.
           </>
         ) : (
-          "This is an earlier version of the document."
+          "This is an earlier state of the document."
         )}
       </p>
       {canRestore ? <RestoreButton docId={docId} version={version} /> : null}

@@ -37,12 +37,12 @@ const QUESTIONS = [
   {
     icon: MessageSquareQuote,
     title: "Where does feedback go?",
-    body: "On the exact words. Comments stay through new versions, with replies and reactions. Agents pull them, then revise or reply.",
+    body: "On the exact words. Comments stay through edits, with replies and reactions. Agents pull them, then revise or reply.",
   },
   {
     icon: History,
     title: "Which copy is current?",
-    body: "Each push makes a version that never changes. You can roll back to any earlier version.",
+    body: "History keeps every earlier state of the document. You can restore any of them.",
   },
   {
     icon: ShieldCheck,

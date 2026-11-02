@@ -53,6 +53,6 @@ it("restores the previewed entry and shows the restored document", async () => {
 it("still warns before the history loads", () => {
   renderBanner({ canRestore: true });
   expect(screen.getByRole("status")).toHaveTextContent(
-    "This is an earlier version of the document.",
+    "This is an earlier state of the document.",
   );
 });

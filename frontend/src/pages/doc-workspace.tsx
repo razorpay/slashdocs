@@ -546,7 +546,7 @@ export function DocWorkspace({
 
   const frame = (
     <>
-      {version ? <RenderFrame /> : <Center>No version available.</Center>}
+      {version ? <RenderFrame /> : <Center>Nothing to show yet.</Center>}
       <Keycast state={chord} available={chordKeys} label={chordLabel} />
     </>
   );
