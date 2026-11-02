@@ -209,6 +209,7 @@ test("restores an earlier version from the history", async ({ page, slashdocs })
     "contenteditable",
     "true",
   );
+  await expect(page.getByText("This is the document as it was")).toBeVisible();
 
   await page.getByRole("button", { name: "Restore" }).click();
   await expect(page.getByText("Restored.")).toBeVisible();

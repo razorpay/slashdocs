@@ -21,7 +21,7 @@ import { Center, Skeleton } from "@/components/ui/misc";
 import { Button } from "@/components/ui/button";
 import { DocBar } from "./doc-bar";
 import { DocWorkspace } from "./doc-workspace";
-import { OlderVersionBanner } from "./doc-older-version-banner";
+import { PreviewBanner } from "./doc-preview-banner";
 import { cursorsShownStore } from "@/lib/live-cursors";
 import { useDocumentStream, type Viewer } from "./use-document-stream";
 
@@ -316,15 +316,16 @@ export function DocumentPage() {
           approvalsOpen={searchParams.get("approvals") === "1"}
         />
       )}
-      banner={(floating) => (
-        <OlderVersionBanner
-          current={current}
-          latest={latest}
-          versions={versionItems}
-          onViewLatest={() => setSelectedVersion(latest)}
-          floating={floating}
-        />
-      )}
+      banner={(floating) =>
+        previewing ? (
+          <PreviewBanner
+            docId={id}
+            version={versionItems.find((v) => v.id === current)}
+            canRestore={canChangeContent}
+            floating={floating}
+          />
+        ) : null
+      }
     />
   );
 }

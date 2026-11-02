@@ -1,29 +1,28 @@
 import { History } from "lucide-react";
 import type { Version } from "@/api";
 import { Button } from "@/components/ui/button";
+import { RelativeTime } from "@/components/ui/relative-time";
 import { cn } from "@/lib/cn";
-import { formatTimestamp } from "@/lib/format-date";
+import { useDoc } from "./doc-context";
+import { RestoreButton } from "./doc-history";
 
-// A reader pinned to an older version (a shared ?version= link, the history
-// dialog, or a held comment draft) must not mistake it for the current doc.
-export function OlderVersionBanner({
-  current,
-  latest,
-  versions,
-  onViewLatest,
+// A reader who previews an earlier entry of the history (a shared ?version=
+// link, the History dialog, or a held comment draft) must not mistake it for
+// the current document.
+export function PreviewBanner({
+  docId,
+  version,
+  canRestore,
   floating,
 }: {
-  current: string;
-  latest: string;
-  versions: Version[];
-  onViewLatest: () => void;
+  docId: string;
+  // The previewed entry, once the history has loaded.
+  version?: Version;
+  canRestore: boolean;
   // In full screen there is no doc bar, so the banner floats over the document.
   floating?: boolean;
 }) {
-  if (!current || !latest || current === latest) return null;
-  const viewing = versions.find((v) => v.id === current);
-  const newest = versions.find((v) => v.id === latest);
-  const published = formatTimestamp(viewing?.created_at);
+  const { showLatest } = useDoc();
   return (
     <div
       role="status"
@@ -36,18 +35,17 @@ export function OlderVersionBanner({
     >
       <History className="h-4 w-4 shrink-0" aria-hidden="true" />
       <p className="min-w-0 flex-1">
-        {viewing ? (
+        {version?.created_at ? (
           <>
-            You're viewing an older version (v{viewing.number}
-            {published ? `, published ${published}` : ""}).
-            {newest ? ` The latest is v${newest.number}.` : ""}
+            This is the document as it was <RelativeTime iso={version.created_at} />.
           </>
         ) : (
-          "You're viewing an older version of this document."
+          "This is an earlier version of the document."
         )}
       </p>
-      <Button size="sm" variant="outline" className="shrink-0" onClick={onViewLatest}>
-        View latest
+      {canRestore ? <RestoreButton docId={docId} version={version} /> : null}
+      <Button size="sm" variant="outline" className="shrink-0" onClick={showLatest}>
+        Back to the current document
       </Button>
     </div>
   );

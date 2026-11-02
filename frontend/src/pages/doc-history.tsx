@@ -20,6 +20,7 @@ import { formatTimestamp } from "@/lib/format-date";
 import { historySessions, type HistorySession } from "@/lib/history";
 import { principalLabel } from "@/lib/principals";
 import { queryKeys } from "@/lib/queryKeys";
+import { useShowSaved } from "./use-show-saved";
 
 // HistoryDialog lists every saved state of the document, in sessions of one
 // person's edits. Opening an entry previews the document as it was then.
@@ -206,13 +207,12 @@ function ChangeSummary({ version }: { version: Version }) {
 export function RestoreButton({
   docId,
   version,
-  onRestored,
 }: {
   docId: string;
   version?: Version;
-  onRestored: (restored: Version) => void;
 }) {
   const q = useQueryClient();
+  const showSaved = useShowSaved();
   const restore = useMutation({
     mutationFn: (v: Version) => api.restoreVersion(docId, v.id),
     onSuccess: (restored) => {
@@ -224,7 +224,7 @@ export function RestoreButton({
       ]) {
         q.invalidateQueries({ queryKey });
       }
-      onRestored(restored);
+      showSaved(restored);
       toast.success("Restored.");
     },
     onError: (e) => toast.error(errorMessage(e, "Could not restore this version.")),
