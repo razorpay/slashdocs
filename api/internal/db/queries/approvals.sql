@@ -83,8 +83,8 @@ RETURNING r.approver_type, r.approver_id;
 -- name: LockApproversWithoutAccess :many
 -- The approvers of the documents at or under a resource who can no longer
 -- read their document, after a grant on that resource was revoked. Access is
--- ownership or a grant on the document or a folder above it, as in
--- RoleForDocument. It locks each document as LockDocumentForApproval does, in
+-- ownership of the document or of a folder above it, or a grant on the
+-- document or a folder above it, as in RoleForDocument. It locks each document as LockDocumentForApproval does, in
 -- id order, before the caller removes the approvers.
 WITH RECURSIVE subtree(id) AS (
   SELECT @resource_id::text
@@ -112,6 +112,11 @@ JOIN documents d ON d.id = r.document_id
 WHERE r.revoked_at IS NULL
   AND r.document_id IN (SELECT document_id FROM ancestors)
   AND NOT (d.owner_type = r.approver_type AND d.owner_id = r.approver_id)
+  AND NOT EXISTS (
+    SELECT 1 FROM folders f
+    JOIN ancestors a ON a.document_id = r.document_id AND a.rid = f.id
+    WHERE f.owner_type = r.approver_type AND f.owner_id = r.approver_id
+  )
   AND NOT EXISTS (
     SELECT 1 FROM resource_grants g
     JOIN ancestors a ON a.document_id = r.document_id AND a.rid = g.resource_id

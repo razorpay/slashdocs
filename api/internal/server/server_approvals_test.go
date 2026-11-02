@@ -950,6 +950,34 @@ func TestApproverWhoLosesAccessIsRemoved(t *testing.T) {
 	}
 }
 
+// The owner of a folder can read what is inside it without a grant, so a
+// revoked grant does not remove them as an approver.
+func TestFolderOwnerApproverStaysWhenAGrantIsRevoked(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	folderID := createFolder(t, e, `{"title":"Theirs"}`, principalHeader(fixtureStranger))
+	if _, err := e.store.MoveDocumentToFolder(ctx, fixtureOwner, folderID, e.doc.ID); err != nil {
+		t.Fatal(err)
+	}
+	mustAssignApprover(t, e, e.doc.ID, fixtureStranger.Email, fixtureOwner)
+
+	grants, err := e.store.ListGrants(ctx, e.doc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, grant := range grants {
+		if grant.Principal.ID == fixtureViewer.ID {
+			rr := do(t, e.h, http.MethodDelete, "/v1/documents/"+e.doc.ID+"/grants/"+grant.ID, "", map[string]string{"X-Test-Principal": principalHeader(fixtureOwner)})
+			assertStatus(t, rr, http.StatusNoContent)
+		}
+	}
+
+	list := listApprovals(t, e, e.doc.ID, "", fixtureOwner)
+	if len(list.Items) != 1 || list.Items[0].Approver.Email != fixtureStranger.Email {
+		t.Fatalf("list = %+v, want the folder owner to stay an approver", list)
+	}
+}
+
 func TestDecisionOnReplacedContentIsRefused(t *testing.T) {
 	e := newTestEnv(t)
 	mustAssignApprover(t, e, e.doc.ID, "viewer@example.com", fixtureOwner)
