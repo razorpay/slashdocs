@@ -49,6 +49,17 @@ definitions:
       suffix:
         type: string
     type: object
+  repo.ApprovalSummary:
+    properties:
+      approved:
+        type: integer
+      pending:
+        type: integer
+      rejected:
+        type: integer
+      total:
+        type: integer
+    type: object
   repo.CLICredential:
     properties:
       id:
@@ -58,6 +69,13 @@ definitions:
     type: object
   repo.Document:
     properties:
+      approval_status:
+        description: |-
+          ApprovalStatus and ApprovalSummary are handler-populated (like
+          ParentFolder) and only present when the document has assigned approvers.
+        type: string
+      approval_summary:
+        $ref: '#/definitions/repo.ApprovalSummary'
       current_version_id:
         type: string
       id:
@@ -173,6 +191,90 @@ definitions:
       number:
         type: integer
       sha256:
+        type: string
+    type: object
+  server.approvalListItem:
+    properties:
+      approver:
+        $ref: '#/definitions/server.principalResponse'
+      comments_open:
+        description: |-
+          CommentsOpen and CommentsTotal count the comment threads this approver
+          started on the document, so a rejection can say "2 open of 3".
+        type: integer
+      comments_total:
+        type: integer
+      decided_at:
+        type: string
+      decision:
+        type: string
+      earlier:
+        allOf:
+        - $ref: '#/definitions/server.earlierDecision'
+        description: |-
+          Earlier is set while the approver is pending on this content: their most
+          recent decision, made on other content of the document. On the current
+          version it lets the UI say "Approved before the latest edits".
+      id:
+        type: string
+      note:
+        type: string
+      version_id:
+        description: |-
+          VersionID and VersionNumber name the version the approver decided on.
+          It can be older than the listed version when the content is the same,
+          so the UI can say "Approved on v3".
+        type: string
+      version_number:
+        type: integer
+    type: object
+  server.approvalRequestResponse:
+    properties:
+      approver:
+        $ref: '#/definitions/server.principalResponse'
+      document_id:
+        type: string
+      id:
+        type: string
+      requested_by:
+        $ref: '#/definitions/server.requestedByJSON'
+    type: object
+  server.approvalResponse:
+    properties:
+      approver:
+        $ref: '#/definitions/server.principalResponse'
+      decided_at:
+        type: string
+      decision:
+        type: string
+      document_id:
+        type: string
+      id:
+        type: string
+      note:
+        type: string
+      version_id:
+        type: string
+      version_number:
+        type: integer
+      version_sha256:
+        type: string
+    type: object
+  server.approvalsListResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/server.approvalListItem'
+        type: array
+      status:
+        type: string
+      summary:
+        $ref: '#/definitions/repo.ApprovalSummary'
+      version_id:
+        type: string
+      version_number:
+        type: integer
+      version_sha256:
         type: string
     type: object
   server.cliExchangePrincipal:
@@ -447,6 +549,44 @@ definitions:
           $ref: '#/definitions/repo.Document'
         type: array
     type: object
+  server.earlierDecision:
+    properties:
+      decided_at:
+        type: string
+      decision:
+        type: string
+    type: object
+  server.editDocumentRequest:
+    properties:
+      base_version_id:
+        description: |-
+          BaseVersionID, when set, must be the current version. When it is
+          empty the edits apply to whatever version is current, which is safe
+          because each edit must still find its text there.
+        type: string
+      change_summary:
+        type: string
+      edits:
+        items:
+          $ref: '#/definitions/textedit.Edit'
+        type: array
+    type: object
+  server.editDocumentResponse:
+    properties:
+      base_version_id:
+        description: BaseVersionID is the version the edits were applied to.
+        type: string
+      change_summary:
+        type: string
+      edits_applied:
+        type: integer
+      id:
+        type: string
+      number:
+        type: integer
+      sha256:
+        type: string
+    type: object
   server.errorBody:
     properties:
       code:
@@ -585,6 +725,13 @@ definitions:
           $ref: '#/definitions/repo.Version'
         type: array
     type: object
+  server.listResponse-server_approvalRequestResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/server.approvalRequestResponse'
+        type: array
+    type: object
   server.listResponse-server_commentResponse:
     properties:
       items:
@@ -678,6 +825,18 @@ definitions:
       url:
         type: string
     type: object
+  server.requestedByJSON:
+    properties:
+      email:
+        type: string
+      id:
+        type: string
+    type: object
+  server.restoreVersionRequest:
+    properties:
+      change_summary:
+        type: string
+    type: object
   server.serviceAccountKey:
     properties:
       id:
@@ -702,6 +861,15 @@ definitions:
         type: string
       picture_url:
         type: string
+    type: object
+  textedit.Edit:
+    properties:
+      new_string:
+        type: string
+      old_string:
+        type: string
+      replace_all:
+        type: boolean
     type: object
 info:
   contact: {}
@@ -1100,6 +1268,151 @@ paths:
       summary: Request access to a document
       tags:
       - documents
+  /v1/documents/{id}/approvals:
+    get:
+      description: Per-approver decisions on the content of a version (current version
+        by default), merged with pending approvers, plus the derived aggregate status.
+        A decision made on an earlier version with the same content counts, and names
+        that version.
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Version ID (defaults to the current version)
+        in: query
+        name: version
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/server.approvalsListResponse'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: List decisions and aggregate status
+      tags:
+      - approvals
+    post:
+      description: Records the caller's decision on the content of a version. The
+        decision vouches for that content, so every version with the same content
+        shows it. Submitting again replaces the previous decision on that content.
+        A rejection needs a note unless the caller has open comment threads on the
+        document (the comments say what to change). Returns 403 when the caller created
+        a version of the document (nobody approves their own work) and 409 when the
+        document's content changed since that version.
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/server.approvalResponse'
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/server.approvalResponse'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Submit or update a decision
+      tags:
+      - approvals
+  /v1/documents/{id}/approvals/{approval_id}:
+    delete:
+      description: Removes the caller's decision, returning them to pending. Assignment
+        is unaffected.
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Approval ID
+        in: path
+        name: approval_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Revoke own decision
+      tags:
+      - approvals
+  /v1/documents/{id}/approvers:
+    get:
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/server.listResponse-server_approvalRequestResponse'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: List assigned approvers
+      tags:
+      - approvals
+    post:
+      description: Assigns a user or service account as an approver. The approver
+        must already have at least viewer access on the document, and must not have
+        created a version of it. A service account counts as its owner. An approver
+        who loses viewer access when a grant is revoked stops being an approver.
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/server.approvalRequestResponse'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Assign an approver
+      tags:
+      - approvals
+  /v1/documents/{id}/approvers/{approver_id}:
+    delete:
+      description: Removes the assignment and revokes all of that approver's decisions
+        on the document.
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Approval request ID
+        in: path
+        name: approver_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Remove an approver
+      tags:
+      - approvals
   /v1/documents/{id}/comments:
     get:
       parameters:
@@ -1327,6 +1640,45 @@ paths:
       summary: Create comment reply
       tags:
       - comments
+  /v1/documents/{id}/edits:
+    post:
+      consumes:
+      - application/json
+      description: Applies exact find-and-replace edits to the document HTML on the
+        server and saves the result as a new version. Each old_string must occur exactly
+        once; edits apply in order and either all apply or none do. The HTML is never
+        parsed, so everything else stays byte-for-byte the same.
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Edits
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/server.editDocumentRequest'
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/server.editDocumentResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Edit document text
+      tags:
+      - versions
   /v1/documents/{id}/grants:
     post:
       parameters:
@@ -1618,6 +1970,48 @@ paths:
       - bearerAuth: []
       - cookieAuth: []
       summary: Create render token
+      tags:
+      - versions
+  /v1/documents/{id}/versions/{version_id}/restore:
+    post:
+      consumes:
+      - application/json
+      description: Saves the content of an earlier version as the newest version,
+        as an edit by the caller. History keeps every version, so a restore can itself
+        be undone by restoring again.
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Version ID to restore
+        in: path
+        name: version_id
+        required: true
+        type: string
+      - description: Change summary
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/server.restoreVersionRequest'
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/server.createVersionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Restore version
       tags:
       - versions
   /v1/folders/{id}/grants:

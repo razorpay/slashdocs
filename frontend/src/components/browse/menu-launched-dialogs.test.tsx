@@ -118,7 +118,7 @@ describe("dialogs launched from a dropdown menu", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
-  it("uploads a new version after the window lost focus", async () => {
+  it("uploads an HTML file after the window lost focus", async () => {
     const user = userEvent.setup();
     const create = vi
       .spyOn(api, "createVersion")
@@ -139,10 +139,10 @@ describe("dialogs launched from a dropdown menu", () => {
       />,
     );
 
-    const dialog = await openFromMenuAndBlurWindow(user, "Upload new version");
+    const dialog = await openFromMenuAndBlurWindow(user, "Replace with an HTML file");
     await user.type(screen.getByPlaceholderText("Change summary"), "Fix typo");
     await chooseFile(user, dialog);
-    await user.click(screen.getByRole("button", { name: "Upload version" }));
+    await user.click(screen.getByRole("button", { name: "Upload" }));
 
     await waitFor(() =>
       expect(create).toHaveBeenCalledWith("doc_1", "ver_1", "Fix typo", HTML),

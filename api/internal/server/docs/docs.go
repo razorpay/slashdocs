@@ -637,6 +637,225 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/documents/{id}/approvals": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Per-approver decisions on the content of a version (current version by default), merged with pending approvers, plus the derived aggregate status. A decision made on an earlier version with the same content counts, and names that version.",
+                "tags": [
+                    "approvals"
+                ],
+                "summary": "List decisions and aggregate status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Version ID (defaults to the current version)",
+                        "name": "version",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server.approvalsListResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Records the caller's decision on the content of a version. The decision vouches for that content, so every version with the same content shows it. Submitting again replaces the previous decision on that content. A rejection needs a note unless the caller has open comment threads on the document (the comments say what to change). Returns 403 when the caller created a version of the document (nobody approves their own work) and 409 when the document's content changed since that version.",
+                "tags": [
+                    "approvals"
+                ],
+                "summary": "Submit or update a decision",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server.approvalResponse"
+                        }
+                    },
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/server.approvalResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}/approvals/{approval_id}": {
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Removes the caller's decision, returning them to pending. Assignment is unaffected.",
+                "tags": [
+                    "approvals"
+                ],
+                "summary": "Revoke own decision",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Approval ID",
+                        "name": "approval_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}/approvers": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "tags": [
+                    "approvals"
+                ],
+                "summary": "List assigned approvers",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server.listResponse-server_approvalRequestResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Assigns a user or service account as an approver. The approver must already have at least viewer access on the document, and must not have created a version of it. A service account counts as its owner. An approver who loses viewer access when a grant is revoked stops being an approver.",
+                "tags": [
+                    "approvals"
+                ],
+                "summary": "Assign an approver",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/server.approvalRequestResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}/approvers/{approver_id}": {
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Removes the assignment and revokes all of that approver's decisions on the document.",
+                "tags": [
+                    "approvals"
+                ],
+                "summary": "Remove an approver",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Approval request ID",
+                        "name": "approver_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
         "/v1/documents/{id}/comments": {
             "get": {
                 "security": [
@@ -975,6 +1194,64 @@ const docTemplate = `{
                         "description": "Created",
                         "schema": {
                             "$ref": "#/definitions/server.commentResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}/edits": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Applies exact find-and-replace edits to the document HTML on the server and saves the result as a new version. Each old_string must occur exactly once; edits apply in order and either all apply or none do. The HTML is never parsed, so everything else stays byte-for-byte the same.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "versions"
+                ],
+                "summary": "Edit document text",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Edits",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/server.editDocumentRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/server.editDocumentResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
                         }
                     }
                 }
@@ -1461,6 +1738,70 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/server.renderTokenResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}/versions/{version_id}/restore": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Saves the content of an earlier version as the newest version, as an edit by the caller. History keeps every version, so a restore can itself be undone by restoring again.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "versions"
+                ],
+                "summary": "Restore version",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Version ID to restore",
+                        "name": "version_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Change summary",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/server.restoreVersionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/server.createVersionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
                         }
                     }
                 }
@@ -2031,6 +2372,23 @@ const docTemplate = `{
                 }
             }
         },
+        "repo.ApprovalSummary": {
+            "type": "object",
+            "properties": {
+                "approved": {
+                    "type": "integer"
+                },
+                "pending": {
+                    "type": "integer"
+                },
+                "rejected": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
         "repo.CLICredential": {
             "type": "object",
             "properties": {
@@ -2045,6 +2403,13 @@ const docTemplate = `{
         "repo.Document": {
             "type": "object",
             "properties": {
+                "approval_status": {
+                    "description": "ApprovalStatus and ApprovalSummary are handler-populated (like\nParentFolder) and only present when the document has assigned approvers.",
+                    "type": "string"
+                },
+                "approval_summary": {
+                    "$ref": "#/definitions/repo.ApprovalSummary"
+                },
                 "current_version_id": {
                     "type": "string"
                 },
@@ -2213,6 +2578,123 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "sha256": {
+                    "type": "string"
+                }
+            }
+        },
+        "server.approvalListItem": {
+            "type": "object",
+            "properties": {
+                "approver": {
+                    "$ref": "#/definitions/server.principalResponse"
+                },
+                "comments_open": {
+                    "description": "CommentsOpen and CommentsTotal count the comment threads this approver\nstarted on the document, so a rejection can say \"2 open of 3\".",
+                    "type": "integer"
+                },
+                "comments_total": {
+                    "type": "integer"
+                },
+                "decided_at": {
+                    "type": "string"
+                },
+                "decision": {
+                    "type": "string"
+                },
+                "earlier": {
+                    "description": "Earlier is set while the approver is pending on this content: their most\nrecent decision, made on other content of the document. On the current\nversion it lets the UI say \"Approved before the latest edits\".",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/server.earlierDecision"
+                        }
+                    ]
+                },
+                "id": {
+                    "type": "string"
+                },
+                "note": {
+                    "type": "string"
+                },
+                "version_id": {
+                    "description": "VersionID and VersionNumber name the version the approver decided on.\nIt can be older than the listed version when the content is the same,\nso the UI can say \"Approved on v3\".",
+                    "type": "string"
+                },
+                "version_number": {
+                    "type": "integer"
+                }
+            }
+        },
+        "server.approvalRequestResponse": {
+            "type": "object",
+            "properties": {
+                "approver": {
+                    "$ref": "#/definitions/server.principalResponse"
+                },
+                "document_id": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "requested_by": {
+                    "$ref": "#/definitions/server.requestedByJSON"
+                }
+            }
+        },
+        "server.approvalResponse": {
+            "type": "object",
+            "properties": {
+                "approver": {
+                    "$ref": "#/definitions/server.principalResponse"
+                },
+                "decided_at": {
+                    "type": "string"
+                },
+                "decision": {
+                    "type": "string"
+                },
+                "document_id": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "note": {
+                    "type": "string"
+                },
+                "version_id": {
+                    "type": "string"
+                },
+                "version_number": {
+                    "type": "integer"
+                },
+                "version_sha256": {
+                    "type": "string"
+                }
+            }
+        },
+        "server.approvalsListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/server.approvalListItem"
+                    }
+                },
+                "status": {
+                    "type": "string"
+                },
+                "summary": {
+                    "$ref": "#/definitions/repo.ApprovalSummary"
+                },
+                "version_id": {
+                    "type": "string"
+                },
+                "version_number": {
+                    "type": "integer"
+                },
+                "version_sha256": {
                     "type": "string"
                 }
             }
@@ -2632,6 +3114,59 @@ const docTemplate = `{
                 }
             }
         },
+        "server.earlierDecision": {
+            "type": "object",
+            "properties": {
+                "decided_at": {
+                    "type": "string"
+                },
+                "decision": {
+                    "type": "string"
+                }
+            }
+        },
+        "server.editDocumentRequest": {
+            "type": "object",
+            "properties": {
+                "base_version_id": {
+                    "description": "BaseVersionID, when set, must be the current version. When it is\nempty the edits apply to whatever version is current, which is safe\nbecause each edit must still find its text there.",
+                    "type": "string"
+                },
+                "change_summary": {
+                    "type": "string"
+                },
+                "edits": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/textedit.Edit"
+                    }
+                }
+            }
+        },
+        "server.editDocumentResponse": {
+            "type": "object",
+            "properties": {
+                "base_version_id": {
+                    "description": "BaseVersionID is the version the edits were applied to.",
+                    "type": "string"
+                },
+                "change_summary": {
+                    "type": "string"
+                },
+                "edits_applied": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "number": {
+                    "type": "integer"
+                },
+                "sha256": {
+                    "type": "string"
+                }
+            }
+        },
         "server.errorBody": {
             "type": "object",
             "properties": {
@@ -2849,6 +3384,17 @@ const docTemplate = `{
                 }
             }
         },
+        "server.listResponse-server_approvalRequestResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/server.approvalRequestResponse"
+                    }
+                }
+            }
+        },
         "server.listResponse-server_commentResponse": {
             "type": "object",
             "properties": {
@@ -2994,6 +3540,25 @@ const docTemplate = `{
                 }
             }
         },
+        "server.requestedByJSON": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                }
+            }
+        },
+        "server.restoreVersionRequest": {
+            "type": "object",
+            "properties": {
+                "change_summary": {
+                    "type": "string"
+                }
+            }
+        },
         "server.serviceAccountKey": {
             "type": "object",
             "properties": {
@@ -3030,6 +3595,20 @@ const docTemplate = `{
                 },
                 "picture_url": {
                     "type": "string"
+                }
+            }
+        },
+        "textedit.Edit": {
+            "type": "object",
+            "properties": {
+                "new_string": {
+                    "type": "string"
+                },
+                "old_string": {
+                    "type": "string"
+                },
+                "replace_all": {
+                    "type": "boolean"
                 }
             }
         }

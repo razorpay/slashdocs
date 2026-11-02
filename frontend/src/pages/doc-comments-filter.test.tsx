@@ -61,6 +61,11 @@ function contextValue(over: Partial<DocContextValue> = {}): DocContextValue {
     reportViewport: vi.fn(),
     moveCursor: vi.fn(),
     subscribeCursors: () => () => {},
+    editable: false,
+    saveState: "idle",
+    setSaveState: vi.fn(),
+    stayOnVersion: vi.fn(),
+    showLatest: vi.fn(),
     ...over,
   };
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/razorpay/slashdocs/api/internal/kvevents"
 	"github.com/razorpay/slashdocs/api/internal/notifications"
 	"github.com/razorpay/slashdocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/webhooks"
 )
 
 // Config holds static configuration for the server.
@@ -57,6 +58,7 @@ type Config struct {
 type Server struct {
 	engine             *gin.Engine
 	notificationWorker *notifications.Worker
+	webhookWorker      *webhooks.Worker
 }
 
 type readinessCheck struct {
@@ -66,6 +68,7 @@ type readinessCheck struct {
 
 type dependencies struct {
 	notificationSenders  map[string]notifications.Sender
+	approvalWebhook      *webhooks.Endpoint
 	authenticator        auth.Authenticator
 	repository           repo.Repository
 	stateStore           auth.LoginStateStore
@@ -116,6 +119,18 @@ func WithSlackLinkPreviews(signingSecret string, unfurler notifications.Unfurler
 func (s *Server) RunCommentNotifications(ctx context.Context) {
 	if s.notificationWorker != nil {
 		s.notificationWorker.Run(ctx)
+	}
+}
+
+// WithApprovalWebhook posts approval events to the endpoint. The repository
+// must queue them (postgres.Store.EnableApprovalEvents).
+func WithApprovalWebhook(endpoint webhooks.Endpoint) Option {
+	return func(d *dependencies) { d.approvalWebhook = &endpoint }
+}
+
+func (s *Server) RunApprovalWebhooks(ctx context.Context) {
+	if s.webhookWorker != nil {
+		s.webhookWorker.Run(ctx)
 	}
 }
 
@@ -220,6 +235,13 @@ func New(cfg Config, opts ...Option) *Server {
 		r.Use(movedOriginMiddleware(cfg.AppOrigin, cfg.PreviousOrigins))
 	}
 	s := &Server{engine: r}
+	s.addWorkers(deps)
+	s.routes(deps)
+	return s
+}
+
+// addWorkers builds the outbox workers that the dependencies configure.
+func (s *Server) addWorkers(deps dependencies) {
 	if len(deps.notificationSenders) > 0 {
 		store, ok := deps.repository.(notifications.Store)
 		if !ok {
@@ -230,8 +252,13 @@ func New(cfg Config, opts ...Option) *Server {
 			s.notificationWorker.ResolvePrincipal = deps.googleGroupResolver.Resolve
 		}
 	}
-	s.routes(deps)
-	return s
+	if deps.approvalWebhook != nil {
+		store, ok := deps.repository.(webhooks.Store)
+		if !ok {
+			panic("approval webhook requires an outbox store")
+		}
+		s.webhookWorker = webhooks.NewWorker(store, *deps.approvalWebhook)
+	}
 }
 
 type unavailableDocumentKVEvents struct{}
@@ -334,7 +361,15 @@ func (s *Server) routes(deps dependencies) {
 	authed.POST("/documents/:id/grants", h.createGrant)
 	authed.PATCH("/documents/:id/grants/:grant_id", h.patchGrant)
 	authed.DELETE("/documents/:id/grants/:grant_id", h.deleteGrant)
+	authed.POST("/documents/:id/approvers", h.createApprover)
+	authed.GET("/documents/:id/approvers", h.listApprovers)
+	authed.DELETE("/documents/:id/approvers/:approver_id", h.deleteApprover)
+	authed.POST("/documents/:id/approvals", h.createApproval)
+	authed.GET("/documents/:id/approvals", h.listApprovals)
+	authed.DELETE("/documents/:id/approvals/:approval_id", h.deleteApproval)
 	authed.POST("/documents/:id/versions", h.createVersion)
+	authed.POST("/documents/:id/edits", h.editDocument)
+	authed.POST("/documents/:id/versions/:version_id/restore", h.restoreVersion)
 	authed.GET("/documents/:id/labels", h.listDocumentLabels)
 	authed.PUT("/documents/:id/labels", h.replaceDocumentLabels)
 	authed.POST("/documents/:id/github/raw", h.githubRawContent)

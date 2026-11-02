@@ -1,5 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api, APIError, type Principal } from "@/api";
+import { ROLE_RANK } from "@/lib/constants";
+import { samePrincipal } from "@/lib/principals";
 import { queryKeys } from "@/lib/queryKeys";
 
 // A signed-out reader stays signed out until sign-in reloads the page, so a
@@ -26,4 +28,26 @@ export function useSelf(principal?: Principal): Principal | undefined {
       name: principal.name || me.data?.user?.name,
     }
   );
+}
+
+// useDocumentRole is what the signed-in reader may do with a document. The
+// owner may do everything; anyone else has the role their grants give.
+export function useDocumentRole(
+  docId: string,
+  owner?: Principal,
+  principal?: Principal,
+) {
+  const isOwner = samePrincipal(principal, owner);
+  const access = useQuery({
+    queryKey: queryKeys.documentAccess(docId),
+    queryFn: () => api.documentAccess(docId),
+    enabled: !!docId && !!principal && !isOwner,
+    staleTime: 30_000,
+  });
+  const role = isOwner ? "owner" : access.data?.current_role;
+  return {
+    isOwner,
+    role,
+    canEdit: (ROLE_RANK[role || ""] || 0) >= ROLE_RANK.editor,
+  };
 }

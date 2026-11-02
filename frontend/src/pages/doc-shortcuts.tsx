@@ -20,7 +20,8 @@ const SECTIONS: { title: string; rows: [keys: string[], label: string][] }[] = [
     ]),
   },
   {
-    title: "Reading",
+    // In a document the reader edits, these letters type.
+    title: "Reading, outside the text you edit",
     rows: [
       [["J"], "Scroll down"],
       [["K"], "Scroll up"],
@@ -34,6 +35,7 @@ const SECTIONS: { title: string; rows: [keys: string[], label: string][] }[] = [
     title: "Comments",
     rows: [
       [["C"], "Comment on the selected text"],
+      [[MOD, "Alt", "M"], "Comment on the text you edit"],
       [[MOD, "Enter"], "Post a comment"],
     ],
   },

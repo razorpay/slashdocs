@@ -22,6 +22,8 @@ export type Document = {
   current_version_id?: string;
   parent_folder_id?: string;
   parent_folder?: { id: string; title: string };
+  approval_status?: ApprovalStatus;
+  approval_summary?: ApprovalSummary;
   updated_at?: string;
   labels?: string[];
   // Search results only: the matching text. U+0002 and U+0003 surround each match.
@@ -123,6 +125,55 @@ export type Grant = {
   id: string;
   principal?: Principal;
   role: string;
+};
+export type ApprovalStatus = "approved" | "rejected" | "pending";
+export type ApprovalDecision = "approved" | "rejected";
+export type ApprovalSummary = {
+  total: number;
+  approved: number;
+  rejected: number;
+  pending: number;
+};
+export type ApprovalRequest = {
+  id: string;
+  document_id: string;
+  approver: Principal;
+  requested_by?: { id: string; email?: string };
+};
+export type Approval = {
+  id: string;
+  document_id: string;
+  version_id: string;
+  version_number: number;
+  version_sha256: string;
+  approver: Principal;
+  decision: ApprovalDecision;
+  note?: string;
+  decided_at?: string;
+};
+export type ApprovalListItem = {
+  id?: string;
+  approver: Principal;
+  decision: ApprovalDecision | null;
+  note?: string;
+  decided_at?: string;
+  // The version the approver decided on: older than the listed version when
+  // both have the same content.
+  version_id?: string;
+  version_number?: number;
+  // Comment threads this approver started on the document.
+  comments_open?: number;
+  comments_total?: number;
+  // A pending approver's most recent decision, made on other content.
+  earlier?: { decision: ApprovalDecision; decided_at: string };
+};
+export type ApprovalsList = {
+  version_id: string;
+  version_number?: number;
+  version_sha256?: string;
+  status?: ApprovalStatus;
+  summary: ApprovalSummary;
+  items: ApprovalListItem[];
 };
 export type FolderBreadcrumb = {
   id: string;
@@ -358,11 +409,61 @@ export const api = {
       body: fd,
     });
   },
+  getVersionHTML: (doc: string, version: string) =>
+    request<string>(`/v1/documents/${doc}/versions/${version}/html`),
+  // Applies exact find-and-replace edits on the server. Without a base
+  // version they apply to whatever version is current.
+  editDocument: (
+    doc: string,
+    input: {
+      edits: { old_string: string; new_string: string }[];
+      base_version_id?: string;
+      change_summary?: string;
+    },
+  ) =>
+    request<Version & { base_version_id: string; edits_applied: number }>(
+      `/v1/documents/${doc}/edits`,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+  // Saves the content of an earlier version as the newest one.
+  restoreVersion: (doc: string, version: string) =>
+    request<Version>(`/v1/documents/${doc}/versions/${version}/restore`, {
+      method: "POST",
+    }),
   renderToken: (doc: string, version: string) =>
     request<{ token: string; url: string }>(
       `/v1/documents/${doc}/versions/${version}/render-token`,
       { method: "POST" },
     ),
+  listApprovers: (doc: string) =>
+    request<{ items: ApprovalRequest[] }>(`/v1/documents/${doc}/approvers`),
+  createApprover: (doc: string, address: string) =>
+    request<ApprovalRequest>(`/v1/documents/${doc}/approvers`, {
+      method: "POST",
+      body: JSON.stringify({ address }),
+    }),
+  deleteApprover: (doc: string, approverId: string) =>
+    request<undefined>(`/v1/documents/${doc}/approvers/${approverId}`, {
+      method: "DELETE",
+    }),
+  listApprovals: (doc: string, version?: string) =>
+    request<ApprovalsList>(
+      `/v1/documents/${doc}/approvals${version ? `?version=${encodeURIComponent(version)}` : ""}`,
+    ),
+  createApproval: (
+    doc: string,
+    versionId: string,
+    decision: ApprovalDecision,
+    note?: string,
+  ) =>
+    request<Approval>(`/v1/documents/${doc}/approvals`, {
+      method: "POST",
+      body: JSON.stringify({ version_id: versionId, decision, note }),
+    }),
+  deleteApproval: (doc: string, approvalId: string) =>
+    request<undefined>(`/v1/documents/${doc}/approvals/${approvalId}`, {
+      method: "DELETE",
+    }),
   printToken: (doc: string, version: string) =>
     request<{ token: string; url: string }>(
       `/v1/documents/${doc}/versions/${version}/print-token`,

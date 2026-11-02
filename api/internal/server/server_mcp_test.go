@@ -32,6 +32,7 @@ var expectedMCPTools = []string{
 	"delete_comment",
 	"delete_document",
 	"delete_folder",
+	"edit_document",
 	"get_authoring_guidelines",
 	"get_document",
 	"get_document_html",
@@ -41,6 +42,8 @@ var expectedMCPTools = []string{
 	"list_comments",
 	"list_document_access",
 	"list_document_access_requests",
+	"list_document_approvals",
+	"list_document_approvers",
 	"list_document_versions",
 	"list_documents",
 	"list_folder_access",
@@ -54,11 +57,13 @@ var expectedMCPTools = []string{
 	"move_document_to_root",
 	"move_folder",
 	"react_comment",
+	"remove_document_approver",
 	"rename_document",
 	"rename_folder",
 	"reopen_comment",
 	"reply_comment",
 	"request_document_access",
+	"request_document_approval",
 	"resolve_comment",
 	"revoke_document_grant",
 	"revoke_folder_grant",
@@ -151,6 +156,7 @@ func TestMCPStreamableHTTPInitializeListAndCall(t *testing.T) {
 		"move_document_to_folder":          true,
 		"move_document_to_root":            true,
 		"move_folder":                      true,
+		"remove_document_approver":         true,
 		"rename_document":                  true,
 		"rename_folder":                    true,
 		"reopen_comment":                   true,
@@ -419,6 +425,23 @@ func TestMCPDocumentAndFolderToolParity(t *testing.T) {
 		"html": "<html><body>second version</body></html>", "change_summary": "MCP parity update",
 	}), "MCP parity update"))
 	versionID = requiredMCPString(t, updated, "id")
+
+	edited := mustMCPObject(t, assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "edit_document", map[string]any{
+		"document_id": docID,
+		"edits":       []map[string]any{{"old_string": "second version", "new_string": "second version, edited"}},
+	}), "edits_applied"))
+	if got := edited["base_version_id"]; got != versionID {
+		t.Fatalf("edit_document base_version_id = %v, want %s", got, versionID)
+	}
+	versionID = requiredMCPString(t, edited, "id")
+	assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "get_document_html", map[string]any{"document_id": docID}), "second version, edited")
+	assertMCPToolError(t, callMCPToolHTTP(t, e, token, "edit_document", map[string]any{
+		"document_id": docID,
+		"edits":       []map[string]any{{"old_string": "no such text", "new_string": "x"}},
+	}), "old_string was not found")
+	assertMCPToolError(t, callMCPToolHTTP(t, e, token, "edit_document", map[string]any{
+		"document_id": docID, "edits": "second version",
+	}), "edits must be a list")
 
 	comment := mustMCPObject(t, assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "create_comment", map[string]any{
 		"document_id": docID, "version_id": versionID, "body": "Please check this",

@@ -14,7 +14,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { HtmlFileInput, useStagedFile } from "@/components/ui/upload";
-import { api } from "@/api";
+import { api, type Version } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
 
 // The menu item only asks for the sheet to open. The sheet is rendered by the
@@ -23,7 +23,7 @@ import { queryKeys } from "@/lib/queryKeys";
 export function UploadVersionMenuItem({ onSelect }: { onSelect: () => void }) {
   return (
     <DropdownItem onSelect={onSelect} className="text-[var(--color-fg-muted)]">
-      <Upload className="h-3.5 w-3.5" /> Upload new version (backup)
+      <Upload className="h-3.5 w-3.5" /> Replace with an HTML file
     </DropdownItem>
   );
 }
@@ -31,11 +31,13 @@ export function UploadVersionMenuItem({ onSelect }: { onSelect: () => void }) {
 export function UploadVersionSheet({
   docId,
   baseVersion,
+  onUploaded,
   open,
   onOpenChange,
 }: {
   docId: string;
   baseVersion: string;
+  onUploaded?: (uploaded: Version) => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -44,14 +46,16 @@ export function UploadVersionSheet({
   const { file, setFile, reset } = useStagedFile();
   const m = useMutation({
     mutationFn: () => api.createVersion(docId, baseVersion, summary, file!),
-    onSuccess: () => {
-      toast.success("Version uploaded.");
+    onSuccess: (uploaded) => {
+      onUploaded?.(uploaded);
+      toast.success("Uploaded. The previous content is in the history.");
       onOpenChange(false);
       setSummary("");
       reset();
       q.invalidateQueries({ queryKey: queryKeys.versions(docId) });
       q.invalidateQueries({ queryKey: queryKeys.document(docId) });
       q.invalidateQueries({ queryKey: queryKeys.comments(docId) });
+      q.invalidateQueries({ queryKey: queryKeys.approvalsAll(docId) });
     },
     onError: (e) => toast.error(errorMessage(e, "Upload failed")),
   });
@@ -59,7 +63,7 @@ export function UploadVersionSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent>
         <SheetHeader>
-          <SheetTitle>Upload new version</SheetTitle>
+          <SheetTitle>Replace with an HTML file</SheetTitle>
         </SheetHeader>
         <SheetBody>
           <form
@@ -76,7 +80,7 @@ export function UploadVersionSheet({
             />
             <HtmlFileInput file={file} onFile={setFile} />
             <Button type="submit" disabled={!file || m.isPending}>
-              {m.isPending ? "Uploading…" : "Upload version"}
+              {m.isPending ? "Uploading…" : "Upload"}
             </Button>
           </form>
         </SheetBody>

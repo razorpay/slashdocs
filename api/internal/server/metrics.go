@@ -56,6 +56,10 @@ var (
 		Name: "slashdocs_grant_events_total",
 		Help: "Document grant lifecycle events.",
 	}, []string{"event", "role", "principal_type", "actor_type"})
+	approvalEventsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "slashdocs_approval_events_total",
+		Help: "Document approval lifecycle events.",
+	}, []string{"event", "decision", "actor_type"})
 	serviceAccountEventsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "slashdocs_service_account_events_total",
 		Help: "Service account lifecycle and key events.",
@@ -123,6 +127,7 @@ func init() {
 		versionEventsTotal,
 		commentEventsTotal,
 		grantEventsTotal,
+		approvalEventsTotal,
 		serviceAccountEventsTotal,
 		renderEventsTotal,
 		htmlBytes,
@@ -189,6 +194,9 @@ func incComment(event, status, actor string) {
 }
 func incGrant(event, role, principalType, actor string) {
 	grantEventsTotal.WithLabelValues(event, role, principalType, actor).Inc()
+}
+func incApproval(event, decision, actor string) {
+	approvalEventsTotal.WithLabelValues(event, decision, actor).Inc()
 }
 func incServiceAccount(event, actor string) {
 	serviceAccountEventsTotal.WithLabelValues(event, actor).Inc()

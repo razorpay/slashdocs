@@ -27,6 +27,7 @@ const htmlContentType = "text/html; charset=utf-8"
 
 type Store struct {
 	notificationsEnabled bool
+	approvalEventOrigin  string
 	db                   *pgxpool.Pool
 	q                    *dbsqlc.Queries
 	blobs                blob.Store
@@ -542,6 +543,12 @@ func (s *Store) CreateVersion(ctx context.Context, documentID, baseVersionID, ch
 		return repo.Version{}, err
 	}
 	if err := q.UpdateDocumentCurrentVersion(ctx, dbsqlc.UpdateDocumentCurrentVersionParams{CurrentVersionID: pgtype.Text{String: id, Valid: true}, ID: documentID}); err != nil {
+		return repo.Version{}, err
+	}
+	if err := s.removeAuthorApprovers(ctx, q, documentID, createdBy); err != nil {
+		return repo.Version{}, err
+	}
+	if err := s.recordApprovalEvent(ctx, q, approvalEvent{documentID: documentID, kind: repo.ApprovalEventVersionCreated, actor: createdBy}); err != nil {
 		return repo.Version{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -1185,7 +1192,8 @@ func (s *Store) DeleteGrant(ctx context.Context, resourceID, grantID string, del
 	if err != nil {
 		return err
 	}
-	revoked, err := s.q.WithTx(tx).RevokeResourceGrant(ctx, dbsqlc.RevokeResourceGrantParams{GrantID: grantID, ResourceID: resourceID})
+	q := s.q.WithTx(tx)
+	revoked, err := q.RevokeResourceGrant(ctx, dbsqlc.RevokeResourceGrantParams{GrantID: grantID, ResourceID: resourceID})
 	if err != nil {
 		return err
 	}
@@ -1197,6 +1205,9 @@ func (s *Store) DeleteGrant(ctx context.Context, resourceID, grantID string, del
 		return err
 	}
 	if err := s.enqueueDocumentAccessChanges(ctx, tx, resourceID, accessNotificationSource(existing.Principal), deletedBy, before, after); err != nil {
+		return err
+	}
+	if err := s.removeApproversWithoutAccess(ctx, q, resourceID, deletedBy); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
