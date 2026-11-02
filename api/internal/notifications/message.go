@@ -177,18 +177,24 @@ func slackAccessMessage(channel, title string, message Message) map[string]any {
 	}
 }
 
-func slackApprovalMessage(channel, title string, message Message) map[string]any {
+// approvalSummary is the provider-neutral wording for approval notifications.
+// The actor is user-controlled text, so it is masked and bounded.
+func approvalSummary(message Message) (activity, buttonLabel string) {
 	actor := notificationPreview(message.Actor, 150)
 	if actor == "" {
 		actor = "Someone"
 	}
-	activity, buttonLabel := "📝 "+actor+" asked you to approve a document", "Review document"
 	switch message.Reason {
 	case "approval_approved":
-		activity, buttonLabel = "✅ "+actor+" approved your document", "View approvals"
+		return "✅ " + actor + " approved your document", "View approvals"
 	case "approval_rejected":
-		activity, buttonLabel = "❌ "+actor+" rejected your document", "View approvals"
+		return "❌ " + actor + " rejected your document", "View approvals"
 	}
+	return "📝 " + actor + " asked you to approve a document", "Review document"
+}
+
+func slackApprovalMessage(channel, title string, message Message) map[string]any {
+	activity, buttonLabel := approvalSummary(message)
 	text := func(value string) map[string]any {
 		return map[string]any{"type": "text", "text": value}
 	}
