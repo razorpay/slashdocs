@@ -117,10 +117,10 @@ func TestCreateDocumentInFolder(t *testing.T) {
 		t.Fatalf("the root has the document: %s", root.Body.String())
 	}
 
-	// A folder that the caller cannot edit, or that does not exist, refuses
-	// the document before it exists.
+	// A folder that the caller cannot edit (403), or that does not exist
+	// (404), refuses the document before it exists.
 	assertStatus(t, create("Refused", folderID, principalHeader(fixtureStranger)), http.StatusForbidden)
-	assertStatus(t, create("Refused", "fld_missing", owner), http.StatusForbidden)
+	assertStatus(t, create("Refused", "fld_missing", owner), http.StatusNotFound)
 	if strings.Contains(folderDocuments(), "Refused") {
 		t.Fatal("a refused create made a document")
 	}
