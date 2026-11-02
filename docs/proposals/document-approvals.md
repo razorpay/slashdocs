@@ -155,7 +155,7 @@ slashdocs docs revoke-approval <doc_id> [--version <version_id>]
 
 ## Notifications
 
-With Slack configured, approvals use the same outbox as comment and access notifications (`approval_notification_outbox`):
+With a notification provider configured (Slack, Google Chat, or both), approvals use the same outbox as comment and access notifications (`approval_notification_outbox`). Each configured provider delivers each message, and a retry repeats only the providers that failed for a short time:
 
 - Assigning a human approver queues a message to them: "Owner asked you to approve a document", with a **Review document** button that opens the approvals dialog (`?approvals=1`).
 - An approval or a rejection queues a message to the document's human owner (for a bot-owned document, the bot's owner), with the reason when there is one.
