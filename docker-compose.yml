@@ -88,8 +88,15 @@ services:
       BLOB_SECRET_ACCESS_KEY: blobadmin
       BLOB_REGION: us-east-1
 
-      # Optional: supplied by the local process environment for Slack testing.
+      # Optional: supplied by the local process environment to test
+      # notifications, Slack link previews, approval events and labels.
       SLASHDOCS_SLACK_BOT_TOKEN: ${SLASHDOCS_SLACK_BOT_TOKEN:-}
+      SLASHDOCS_SLACK_LINK_PREVIEWS: ${SLASHDOCS_SLACK_LINK_PREVIEWS:-}
+      SLASHDOCS_SLACK_SIGNING_SECRET: ${SLASHDOCS_SLACK_SIGNING_SECRET:-}
+      SLASHDOCS_GOOGLE_CHAT_WEBHOOK_URL: ${SLASHDOCS_GOOGLE_CHAT_WEBHOOK_URL:-}
+      SLASHDOCS_APPROVAL_WEBHOOK_URL: ${SLASHDOCS_APPROVAL_WEBHOOK_URL:-}
+      SLASHDOCS_APPROVAL_WEBHOOK_SECRET: ${SLASHDOCS_APPROVAL_WEBHOOK_SECRET:-}
+      SLASHDOCS_LABELS_ENABLED: ${SLASHDOCS_LABELS_ENABLED:-}
 
       SLASHDOCS_APP_ORIGIN: http://localhost:8080
       # Distinct browser origin, same listener: the server only serves /v/…
