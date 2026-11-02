@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -255,18 +256,17 @@ func (h handlers) oauthCallback(c *gin.Context) {
 // signInOIDCUser creates or updates the user of a verified ID token.
 //
 // Generic OIDC identity keys hash the issuer URL, so a change to
-// SLASHDOCS_OIDC_ISSUER_URL gives every user a new key. When the new key
-// matches no user but the email belongs to a user with another generic OIDC
-// key, that user moves to the new key. Only the configured issuer can sign the
-// token and ExchangeAndVerify accepts only verified emails, so this trusts the
-// issuer no more than adopting a user without a key by email already does.
-// Google subjects never change, so a collision with a Google key is not an
-// issuer change and stays a conflict.
+// SLASHDOCS_OIDC_ISSUER_URL gives every user a new key. When the email of the
+// token belongs to a user whose key is the same subject under one of
+// SLASHDOCS_OIDC_PREVIOUS_ISSUER_URLS, that user moves to the new key. Any
+// other key stays a conflict: a new subject with a known email can be a
+// recreated or recycled account at the IdP, which must not inherit the old
+// user's documents.
 func (h handlers) signInOIDCUser(ctx context.Context, u auth.OIDCUser) (auth.Principal, error) {
 	uid, externalSubject := oidcIdentityKeys(h.deps.oidc.Issuer, u.Sub)
 	p, err := h.deps.repository.UpsertGoogleUser(ctx, uid, u.Email, u.Name, externalSubject, u.PictureURL)
 	var conflict *repo.EmailIdentityConflictError
-	if !errors.As(err, &conflict) || !genericOIDCIdentity(conflict.ExistingIdentity) || !genericOIDCIdentity(externalSubject) {
+	if !errors.As(err, &conflict) || !h.previousOIDCIdentity(conflict.ExistingIdentity, u.Sub) {
 		return p, err
 	}
 	switch err := h.deps.repository.RelinkUserIdentity(ctx, conflict.ExistingIdentity, externalSubject); {
@@ -320,8 +320,13 @@ func oidcIdentityKeys(issuer, subject string) (userID, externalSubject string) {
 	return oidcUserIDPrefix + namespace, oidcIdentityPrefix + namespace
 }
 
-func genericOIDCIdentity(externalSubject string) bool {
-	return strings.HasPrefix(externalSubject, oidcIdentityPrefix)
+// previousOIDCIdentity reports whether identity is the key of subject under
+// one of the previous issuers.
+func (h handlers) previousOIDCIdentity(identity, subject string) bool {
+	return slices.ContainsFunc(h.deps.previousOIDCIssuers, func(issuer string) bool {
+		_, previous := oidcIdentityKeys(issuer, subject)
+		return previous == identity
+	})
 }
 
 func webOAuthStateCookieName(state string, secure bool) string {

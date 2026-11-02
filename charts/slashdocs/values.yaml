@@ -154,6 +154,9 @@ oidc:
   # Base URL where the server reaches the IdP when that differs from the
   # browser-facing issuer (split horizon). Usually empty.
   internalIssuerURL: ""
+  # Comma-separated issuer URLs that this deployment used before. A user with
+  # the same subject under one of them keeps their account. Usually empty.
+  previousIssuerURLs: ""
   clientID: ""
   clientSecret: ""
   existingSecret: ""

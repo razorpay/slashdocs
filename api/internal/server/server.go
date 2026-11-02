@@ -30,8 +30,11 @@ type Config struct {
 	RenderOrigin string
 	// PreviousOrigins are app origins that this deployment used before. A
 	// request to one of them is sent to AppOrigin (see movedOriginMiddleware).
-	PreviousOrigins     []string
-	OIDC                auth.OIDC
+	PreviousOrigins []string
+	OIDC            auth.OIDC
+	// PreviousOIDCIssuers are issuer URLs that OIDC used before. A user whose
+	// identity key came from one of them moves to the key of OIDC.Issuer.
+	PreviousOIDCIssuers []string
 	OIDCProviderName    string
 	SessionSecret       string
 	AllowedOAuthDomains []string
@@ -73,6 +76,7 @@ type dependencies struct {
 	repository           repo.Repository
 	stateStore           auth.LoginStateStore
 	oidc                 auth.OIDC
+	previousOIDCIssuers  []string
 	oidcProviderName     string
 	sessionSecret        string
 	appOrigin            string
@@ -179,6 +183,7 @@ func New(cfg Config, opts ...Option) *Server {
 		authenticator:        denyAllAuthenticator{},
 		stateStore:           auth.NewStateStore(),
 		oidc:                 cfg.OIDC,
+		previousOIDCIssuers:  cfg.PreviousOIDCIssuers,
 		oidcProviderName:     cfg.OIDCProviderName,
 		sessionSecret:        cfg.SessionSecret,
 		appOrigin:            cfg.AppOrigin,

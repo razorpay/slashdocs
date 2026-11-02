@@ -186,6 +186,10 @@ spec:
             - name: SLASHDOCS_OIDC_INTERNAL_ISSUER_URL
               value: {{ .Values.oidc.internalIssuerURL | quote }}
             {{- end }}
+            {{- with .Values.oidc.previousIssuerURLs }}
+            - name: SLASHDOCS_OIDC_PREVIOUS_ISSUER_URLS
+              value: {{ . | quote }}
+            {{- end }}
             - name: SLASHDOCS_OIDC_CLIENT_ID
               valueFrom:
                 secretKeyRef:

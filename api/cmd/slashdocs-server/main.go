@@ -337,6 +337,7 @@ func newApplicationServer(ctx context.Context, store *pgrepo.Store, blobs blob.S
 		RenderOrigin:              origins.renderOrigin,
 		PreviousOrigins:           splitCSV(os.Getenv("SLASHDOCS_PREVIOUS_ORIGINS")),
 		OIDC:                      oidcProvider,
+		PreviousOIDCIssuers:       splitCSV(os.Getenv("SLASHDOCS_OIDC_PREVIOUS_ISSUER_URLS")),
 		OIDCProviderName:          providerName,
 		SessionSecret:             origins.sessionSecret,
 		AllowedOAuthDomains:       deployment.allowedOAuthDomains,
