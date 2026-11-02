@@ -68,7 +68,7 @@ function renderDocBar(labelsEnabled = true) {
           { headers: { "Content-Type": "application/json" } },
         );
       }
-      return new Response(JSON.stringify({}), {
+      return new Response(JSON.stringify({ items: [] }), {
         headers: { "Content-Type": "application/json" },
       });
     }),
@@ -196,9 +196,7 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     await user.click(moreButton);
 
     await waitFor(() => {
-      expect(
-        screen.getByRole("menuitem", { name: /^History$/ }),
-      ).toBeInTheDocument();
+      expect(screen.getByRole("menuitem", { name: /^History$/ })).toBeInTheDocument();
     });
 
     expect(
