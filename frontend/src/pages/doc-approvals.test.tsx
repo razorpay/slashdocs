@@ -163,7 +163,7 @@ describe("ApprovalsDialog", () => {
 
   it.each([
     ["ver_2", "On the current document"],
-    ["ver_1", "On an earlier version"],
+    ["ver_1", "On earlier content"],
   ])(
     "says whether the status of %s is for the current document",
     async (viewed, label) => {
@@ -194,7 +194,7 @@ describe("ApprovalsDialog", () => {
       await screen.findByPlaceholderText("Add approver by email or bot address…"),
     ).toBeTruthy();
     // The form says who cannot approve, so the owner is not surprised by a 400.
-    expect(screen.getByText(/Anyone who has uploaded a version/)).toBeTruthy();
+    expect(screen.getByText(/Anyone who edited it, in the browser/)).toBeTruthy();
   });
 
   it("shows nothing to a non-owner when no approvers are assigned", async () => {

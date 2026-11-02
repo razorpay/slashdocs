@@ -115,9 +115,9 @@ func validApprovalDecision(d string) bool {
 // they cannot be the one who approves it (as an author cannot approve their own
 // pull request).
 const (
-	errCreatedVersionApprover = "That person created a version of this document, so they can't approve it. Ask someone who hasn't worked on it."
-	errCreatedVersionDecider  = "You created a version of this document, so you can't approve it. Ask someone who hasn't worked on it."
-	errVersionSuperseded      = "This document changed since that version. Review the latest version before deciding."
+	errCreatedVersionApprover = "That person edited this document, so they can't approve it. Ask someone who hasn't worked on it."
+	errCreatedVersionDecider  = "You edited this document, so you can't approve it. Ask someone who hasn't worked on it."
+	errVersionSuperseded      = "This document changed. Review the current document before deciding."
 	errRejectionNeedsWords    = "Add a comment on the document or a reason saying what needs to change."
 )
 

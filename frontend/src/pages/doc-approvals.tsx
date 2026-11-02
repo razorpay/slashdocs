@@ -503,7 +503,7 @@ export function Approvals({ onClose }: { onClose?: () => void }) {
               ? "No approvers assigned"
               : isCurrentVersion
                 ? "On the current document"
-                : "On an earlier version"}
+                : "On earlier content"}
           </p>
           <ApprovalStatusBadge
             status={approvals.data?.status}
@@ -656,8 +656,8 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
         </Button>
       </div>
       <p className="mt-1.5 text-[11px] text-[var(--color-fg-muted)]">
-        Approvers need access to this document. Anyone who has uploaded a version,
-        including you if you published it, can&apos;t approve it.
+        Approvers need access to this document. Anyone who edited it, in the browser, by
+        upload, or by an agent, can&apos;t approve it. This includes you.
       </p>
       {address && items.length > 0 ? (
         <div className="mt-1 overflow-hidden rounded-md border border-[var(--color-border)]">

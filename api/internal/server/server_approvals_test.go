@@ -829,8 +829,8 @@ func TestCreatorOfTheFirstVersionCannotBeAssignedAsApprover(t *testing.T) {
 	// The owner uploaded version 1, so they wrote what is under review.
 	rr := assignApprover(t, e, e.doc.ID, `{"principal": {"type": "user", "email": "owner@example.com"}}`, fixtureOwner)
 	assertStatus(t, rr, http.StatusBadRequest)
-	if !strings.Contains(rr.Body.String(), "created a version of this document") {
-		t.Fatalf("body = %s, want the created-a-version message", rr.Body.String())
+	if !strings.Contains(rr.Body.String(), "That person edited this document") {
+		t.Fatalf("body = %s, want the edited-this-document message", rr.Body.String())
 	}
 }
 
@@ -868,8 +868,8 @@ func TestApproverWhoCreatesAVersionIsRemoved(t *testing.T) {
 	for _, decision := range []string{"approved", "rejected"} {
 		rr := submitApproval(t, e, e.doc.ID, second, decision, fixtureEditor)
 		assertStatus(t, rr, http.StatusForbidden)
-		if !strings.Contains(rr.Body.String(), "You created a version") {
-			t.Fatalf("body = %s, want the created-a-version message", rr.Body.String())
+		if !strings.Contains(rr.Body.String(), "You edited this document") {
+			t.Fatalf("body = %s, want the edited-this-document message", rr.Body.String())
 		}
 	}
 }
@@ -905,8 +905,8 @@ func TestBotOfTheCreatorCannotBeAssignedAsApprover(t *testing.T) {
 	grantServiceAccountViewer(t, e, e.sa.ID)
 	rr := assignApprover(t, e, e.doc.ID, fmt.Sprintf(`{"principal": {"type": "service_account", "id": %q}}`, e.sa.ID), fixtureOwner)
 	assertStatus(t, rr, http.StatusBadRequest)
-	if !strings.Contains(rr.Body.String(), "created a version of this document") {
-		t.Fatalf("body = %s, want the created-a-version message", rr.Body.String())
+	if !strings.Contains(rr.Body.String(), "That person edited this document") {
+		t.Fatalf("body = %s, want the edited-this-document message", rr.Body.String())
 	}
 }
 
