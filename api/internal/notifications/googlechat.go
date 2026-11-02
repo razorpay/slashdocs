@@ -79,11 +79,17 @@ func googleChatMessage(message Message, recipient string) map[string]any {
 	if recipient != "" {
 		widgets = append(widgets, paragraph("<b>For:</b> "+esc(recipient)))
 	}
-	if strings.HasPrefix(message.Reason, "access_") {
+	switch {
+	case strings.HasPrefix(message.Reason, "access_"):
 		var detail string
 		activity, detail, buttonLabel = accessSummary(message)
 		widgets = append(widgets, paragraph(esc(detail)))
-	} else {
+	case strings.HasPrefix(message.Reason, "approval_"):
+		activity, buttonLabel = approvalSummary(message)
+		if note := notificationPreview(message.Body, 2200); note != "" {
+			widgets = append(widgets, paragraph(esc(note)))
+		}
+	default:
 		activity, buttonLabel = commentActivity(message), "View comment"
 		if highlight := notificationPreview(message.Highlight, 600); highlight != "" {
 			widgets = append(widgets, paragraph("<i>“"+esc(highlight)+"”</i>"))

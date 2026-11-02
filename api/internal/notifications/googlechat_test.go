@@ -120,3 +120,19 @@ func TestGoogleChatAccessRemovalHasNoButton(t *testing.T) {
 		t.Errorf("payload: %s", s)
 	}
 }
+
+func TestGoogleChatApprovalNamesTheDecision(t *testing.T) {
+	var buf strings.Builder
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(googleChatMessage(Message{Reason: "approval_rejected", Actor: "Bob", DocumentTitle: "Plan", Body: "Needs a <b>rollback</b> plan", Link: "https://slashdocs.example.com/app/d/doc_1?approvals=1"}, ""))
+	s := buf.String()
+	for _, want := range []string{"❌ Bob rejected your document", "View approvals", "Needs a &lt;b&gt;rollback&lt;/b&gt; plan"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("payload missing %q: %s", want, s)
+		}
+	}
+	if strings.Contains(s, "View comment") {
+		t.Errorf("approval rendered as a comment: %s", s)
+	}
+}
