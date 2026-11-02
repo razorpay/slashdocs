@@ -375,7 +375,7 @@ function Viewers({
         return (
           <Tooltip
             key={`${viewer.principal.type}:${viewer.principal.id}`}
-            label={earlier ? `${name} · viewing an earlier version` : name}
+            label={earlier ? `${name} · viewing an earlier edit` : name}
           >
             <button
               type="button"

@@ -21,7 +21,7 @@ export function DeleteDocumentDialog({
   open,
   onOpenChange,
   onConfirm,
-  description = "This permanently removes the document, all versions, and all comments. This cannot be undone.",
+  description = "This permanently removes the document, its history, and all comments. This cannot be undone.",
 }: {
   title: string;
   trigger?: React.ReactNode;
