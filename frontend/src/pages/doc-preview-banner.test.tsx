@@ -1,54 +1,58 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Version } from "@/api";
-import { OlderVersionBanner } from "./doc-older-version-banner";
+import { DocProvider, type DocContextValue } from "./doc-context";
+import { PreviewBanner } from "./doc-preview-banner";
 
-afterEach(cleanup);
-
-const versions = [
-  { id: "v7", number: 7, created_at: "2026-10-10T10:00:00Z" },
-  { id: "v3", number: 3, created_at: "2026-09-01T10:00:00Z" },
-] as Version[];
-
-it("tells the reader they are on an older version and links back to latest", () => {
-  const onViewLatest = vi.fn();
-  render(
-    <OlderVersionBanner
-      current="v3"
-      latest="v7"
-      versions={versions}
-      onViewLatest={onViewLatest}
-    />,
-  );
-  const banner = screen.getByRole("status");
-  expect(banner).toHaveTextContent("You're viewing an older version (v3");
-  expect(banner).toHaveTextContent("The latest is v7.");
-  fireEvent.click(screen.getByRole("button", { name: "View latest" }));
-  expect(onViewLatest).toHaveBeenCalledOnce();
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
 });
 
-it("renders nothing on the latest version", () => {
-  const { container } = render(
-    <OlderVersionBanner
-      current="v7"
-      latest="v7"
-      versions={versions}
-      onViewLatest={() => {}}
-    />,
-  );
-  expect(container).toBeEmptyDOMElement();
-});
+const earlier = { id: "v3", number: 3, created_at: "2026-09-01T10:00:00Z" } as Version;
 
-it("still warns when version numbers have not loaded", () => {
+function renderBanner(props: { version?: Version; canRestore: boolean }) {
+  const doc = { showLatest: vi.fn(), stayOnVersion: vi.fn() };
   render(
-    <OlderVersionBanner
-      current="v3"
-      latest="v7"
-      versions={[]}
-      onViewLatest={() => {}}
-    />,
+    <QueryClientProvider client={new QueryClient()}>
+      <DocProvider value={doc as unknown as DocContextValue}>
+        <PreviewBanner docId="doc_1" {...props} />
+      </DocProvider>
+    </QueryClientProvider>,
   );
+  return doc;
+}
+
+it("says when the previewed entry is from and goes back to the current document", () => {
+  const doc = renderBanner({ version: earlier, canRestore: false });
   expect(screen.getByRole("status")).toHaveTextContent(
-    "You're viewing an older version of this document.",
+    "This is the document as it was",
+  );
+  expect(screen.queryByRole("button", { name: /Restore/ })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Back to the current document" }));
+  expect(doc.showLatest).toHaveBeenCalledOnce();
+});
+
+it("restores the previewed entry and shows the restored document", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(JSON.stringify({ id: "v9", number: 9 }), {
+          headers: { "Content-Type": "application/json" },
+        }),
+    ),
+  );
+  const doc = renderBanner({ version: earlier, canRestore: true });
+  fireEvent.click(screen.getByRole("button", { name: /Restore/ }));
+  await waitFor(() => expect(doc.stayOnVersion).toHaveBeenCalledWith("v9"));
+  expect(doc.showLatest).toHaveBeenCalled();
+});
+
+it("still warns before the history loads", () => {
+  renderBanner({ canRestore: true });
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "This is an earlier version of the document.",
   );
 });

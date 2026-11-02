@@ -49,7 +49,6 @@ import {
   type ApprovalSummary,
 } from "@/api";
 import { canManageSharing } from "@/lib/constants";
-import { formatTimestamp } from "@/lib/format-date";
 import { useDocumentRole } from "@/lib/hooks";
 import { queryKeys } from "@/lib/queryKeys";
 import { cursorsShownStore } from "@/lib/live-cursors";
@@ -57,9 +56,10 @@ import { principalColor } from "@/lib/principals";
 import { ShareSheet } from "./doc-share-sheet";
 import { ApprovalsDialog } from "./doc-approvals";
 import { useDoc } from "./doc-context";
+import { useShowSaved } from "./use-show-saved";
 import { UploadVersionMenuItem, UploadVersionSheet } from "./doc-upload-version";
 import { EditStatus } from "./doc-edit-status";
-import { HistoryDialog, RestoreButton } from "./doc-history";
+import { HistoryDialog } from "./doc-history";
 import type { Viewer } from "./use-document-stream";
 
 const MAX_VIEWER_AVATARS = 4;
@@ -127,9 +127,9 @@ export function DocBar({
   const [labelsOpen, setLabelsOpen] = useState(false);
   const backTo = parentFolder ? `/app/folders/${parentFolder.id}` : "/app/documents";
   const config = useQuery({ queryKey: queryKeys.config(), queryFn: api.getConfig });
-  const currentVersion = versions.find((v) => v.id === current);
-  // Behind: someone else edited while the reader stayed on this version.
-  const behind = !!current && !!latest && current !== latest;
+  // Behind: the document changed elsewhere while the reader stayed on the
+  // version on screen. A preview is not behind: it has its own banner.
+  const behind = !previewing && !!current && !!latest && current !== latest;
   const {
     isOwner: canManage,
     role,
@@ -146,13 +146,8 @@ export function DocBar({
     },
     onError: (e) => toast.error(errorMessage(e, "Delete failed")),
   });
-  const { printDocument: exportPDF, signIn, stayOnVersion } = useDoc();
-  // The reader goes to a version they made here, even when the event for it
-  // came first and kept them on the one before.
-  const showSaved = (saved: Version) => {
-    onShowLatest();
-    stayOnVersion(saved.id);
-  };
+  const { printDocument: exportPDF, signIn } = useDoc();
+  const showSaved = useShowSaved();
   return (
     <DocBarFrame
       home="/app/documents"
@@ -163,15 +158,7 @@ export function DocBar({
         }
       }
       title={title}
-      meta={
-        previewing ? (
-          <span className="hidden shrink-0 text-xs text-amber-600 sm:inline dark:text-amber-300">
-            From {formatTimestamp(currentVersion?.created_at)}
-          </span>
-        ) : (
-          <EditStatus />
-        )
-      }
+      meta={previewing ? null : <EditStatus />}
     >
       <ApprovalsDialog
         status={approvalStatus}
@@ -182,17 +169,12 @@ export function DocBar({
       />
       <Viewers viewers={viewers} latest={latest} onFollow={onFollowViewer} />
       {viewers.length ? <CursorsToggle /> : null}
-      {previewing && canChangeContent ? (
-        <RestoreButton docId={docId} version={currentVersion} onRestored={showSaved} />
-      ) : null}
       {behind ? (
         <Button
           variant="ghost"
           size="icon"
-          title={previewing ? "Back to the current document" : "Show the latest edits"}
-          aria-label={
-            previewing ? "Back to the current document" : "Show the latest edits"
-          }
+          title="Show the latest edits"
+          aria-label="Show the latest edits"
           className="shrink-0"
           onClick={onShowLatest}
         >
