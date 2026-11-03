@@ -1,8 +1,10 @@
 package books
 
 import (
+	"encoding/json"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -128,5 +130,37 @@ func TestDocIDs(t *testing.T) {
 	o := Outline{Front: []Entry{{Doc: "f"}}, Parts: []Part{{Chapters: []Entry{{Doc: "a"}, {Planned: "p"}, {Doc: "b"}}}}, Back: []Entry{{Doc: "z"}}}
 	if got, want := DocIDs(o), []string{"f", "a", "b", "z"}; !reflect.DeepEqual(want, got) {
 		t.Fatalf("DocIDs = %#v, want %#v", got, want)
+	}
+}
+
+func TestFillPlaceholderKeepsEmptySlicesNonNull(t *testing.T) {
+	o, _ := Seed("Book", []DocTitle{{"d1", "01 · A"}})
+	o.Parts[0].Chapters = append(o.Parts[0].Chapters, Entry{Planned: "Serving"})
+	o.Parts = append(o.Parts, Part{Title: "II", Chapters: []Entry{}})
+	o2, _, ok := FillPlaceholder(o, DocTitle{"d2", "Serving"})
+	if !ok {
+		t.Fatalf("expected placeholder to be filled")
+	}
+	b, err := json.Marshal(o2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "null") {
+		t.Fatalf("serialized outline contains null: %s", b)
+	}
+}
+
+func TestFillPlaceholderRejectsDocAlreadyPlacedWhilePlaceholderRemains(t *testing.T) {
+	o := Outline{Title: "B", Parts: []Part{{Title: "I", Chapters: []Entry{{Doc: "d2"}, {Planned: "Serving"}}}}}
+	if _, _, ok := FillPlaceholder(o, DocTitle{"d2", "Serving"}); ok {
+		t.Fatalf("doc already in outline filled a matching placeholder, want ok=false")
+	}
+}
+
+func TestFillPlaceholderNumbersAcrossParts(t *testing.T) {
+	o := Outline{Title: "B", Parts: []Part{{Title: "I", Chapters: []Entry{{Doc: "a"}, {Planned: "X"}}}, {Title: "II", Chapters: []Entry{{Planned: "Y"}}}}}
+	o2, n, ok := FillPlaceholder(o, DocTitle{"d3", "03 · Whatever"})
+	if !ok || n != 3 || o2.Parts[1].Chapters[0].Doc != "d3" || o2.Parts[0].Chapters[1].Planned != "X" {
+		t.Fatalf("ok=%v n=%d parts=%#v", ok, n, o2.Parts)
 	}
 }

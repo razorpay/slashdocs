@@ -246,11 +246,22 @@ func DocIDs(o Outline) []string {
 // clone deep-copies the outline's slices.
 func clone(o Outline) Outline {
 	out := o
-	out.Front = append([]Entry(nil), o.Front...)
-	out.Back = append([]Entry(nil), o.Back...)
+	out.Front = copyEntries(o.Front)
+	out.Back = copyEntries(o.Back)
 	out.Parts = make([]Part, len(o.Parts))
 	for i, p := range o.Parts {
-		out.Parts[i] = Part{Title: p.Title, Chapters: append([]Entry(nil), p.Chapters...)}
+		out.Parts[i] = Part{Title: p.Title, Chapters: copyEntries(p.Chapters)}
 	}
+	return out
+}
+
+// copyEntries copies es, keeping nil as nil and empty as empty so JSON output
+// does not change between null and [].
+func copyEntries(es []Entry) []Entry {
+	if es == nil {
+		return nil
+	}
+	out := make([]Entry, len(es))
+	copy(out, es)
 	return out
 }
