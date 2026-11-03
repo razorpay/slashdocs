@@ -8,6 +8,38 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Book struct {
+	ID                      string
+	FolderID                string
+	CurrentOutlineVersionID pgtype.Text
+	CreatedByType           string
+	CreatedByID             string
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+}
+
+type BookOutlineVersion struct {
+	ID            string
+	BookID        string
+	Number        int32
+	Outline       []byte
+	ChangeNote    string
+	CreatedByType string
+	CreatedByID   string
+	CreatedAt     pgtype.Timestamptz
+}
+
+type ChapterRead struct {
+	UserID              string
+	DocumentID          string
+	SeenVersionID       pgtype.Text
+	LastReadVersionID   pgtype.Text
+	FurthestProgression float32
+	ReachedEndAt        pgtype.Timestamptz
+	DoneAt              pgtype.Timestamptz
+	LastOpenedAt        pgtype.Timestamptz
+}
+
 type CliCredential struct {
 	ID         string
 	UserID     string
@@ -267,6 +299,19 @@ type Pin struct {
 	PinnedAt      pgtype.Timestamptz
 }
 
+type ReadingPosition struct {
+	UserID      string
+	BookID      string
+	DeviceID    string
+	DocumentID  string
+	VersionID   string
+	SectionID   string
+	Anchor      []byte
+	Progression float32
+	ClientTs    pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
 type ResourceGrant struct {
 	ID              string
 	ResourceType    string
@@ -322,4 +367,15 @@ type Version struct {
 	CreatedAt       pgtype.Timestamptz
 	SearchText      pgtype.Text
 	SearchVector    interface{}
+	SectionsIndexed bool
+}
+
+type VersionSection struct {
+	VersionID string
+	Ord       int32
+	SectionID string
+	Title     string
+	Level     int32
+	TextHash  string
+	Words     int32
 }
