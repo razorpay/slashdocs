@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/books"
 )
 
 type Role string
@@ -449,4 +450,35 @@ type Repository interface {
 	DeletePin(ctx context.Context, principal auth.Principal, resourceType, resourceID string) error
 	ListHiddenFeaturedItems(ctx context.Context, principal auth.Principal) ([]string, error)
 	HideFeaturedItem(ctx context.Context, principal auth.Principal, resourceID string) error
+
+	// CreateBook makes the folder a book with outline as version 1. It
+	// returns ErrConflict when the folder already is a book and ErrNotFound
+	// when the folder does not exist.
+	CreateBook(ctx context.Context, folderID string, outline books.Outline, actor auth.Principal) (Book, error)
+	GetBook(ctx context.Context, id string) (Book, error)
+	// GetBookIDByFolder returns ErrNotFound when the folder is not a book.
+	GetBookIDByFolder(ctx context.Context, folderID string) (string, error)
+	// DeleteBook removes the book, its outline versions and reading
+	// positions. The folder and its documents stay.
+	DeleteBook(ctx context.Context, id string) error
+	// PushOutline saves outline as a new version. It returns an
+	// *OutlineConflictError when baseVersionID is not the current version.
+	PushOutline(ctx context.Context, bookID, baseVersionID string, outline books.Outline, note string, actor auth.Principal) (Book, error)
+	// ListOutlineVersions lists a book's outline versions, newest first.
+	ListOutlineVersions(ctx context.Context, bookID string) ([]OutlineVersion, error)
+	// ListVersionSections returns the indexed sections of a version in order.
+	// Call EnsureVersionSections first: a version that is not indexed yet
+	// has no rows.
+	ListVersionSections(ctx context.Context, versionID string) ([]SectionInfo, error)
+	// EnsureVersionSections indexes the version's sections now when it is
+	// not indexed yet, and does nothing otherwise.
+	EnsureVersionSections(ctx context.Context, versionID string) error
+	// VersionWords returns the indexed word count of each version.
+	VersionWords(ctx context.Context, versionIDs []string) (map[string]int, error)
+	// ListVersionsAfter lists the document's versions newer than
+	// afterVersionID (all of them when it is empty), newest first.
+	ListVersionsAfter(ctx context.Context, documentID, afterVersionID string) ([]VersionNote, error)
+	// IndexVersionSections indexes the sections of versions of documents in
+	// book folders that are not indexed yet. It returns how many it indexed.
+	IndexVersionSections(ctx context.Context) (int, error)
 }

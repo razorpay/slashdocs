@@ -26,7 +26,18 @@ UPDATE versions SET sections_indexed=true WHERE id = @id;
 -- name: ListVersionSections :many
 SELECT ord,section_id,title,level,text_hash,words FROM version_sections WHERE version_id = @version_id ORDER BY ord;
 -- name: ListUnsectionedVersions :many
-SELECT id,html_blob_key FROM versions WHERE NOT sections_indexed ORDER BY created_at LIMIT @row_limit FOR UPDATE SKIP LOCKED;
+-- Versions of documents in book folders that have no sections yet (A12). Locks
+-- the rows, so that servers that index at the same time skip each other's.
+SELECT v.id,v.html_blob_key FROM versions v
+JOIN documents d ON d.id = v.document_id
+JOIN books b ON b.folder_id = d.parent_folder_id
+WHERE NOT v.sections_indexed AND v.id <> ALL(COALESCE(@skipped::text[], '{}'))
+ORDER BY v.created_at LIMIT @row_limit FOR UPDATE OF v SKIP LOCKED;
+-- name: GetVersionSectionsForUpdate :one
+-- Locks the version so that concurrent on-demand indexing inserts its sections once.
+SELECT sections_indexed, html_blob_key FROM versions WHERE id = @id FOR UPDATE;
+-- name: DocumentInBook :one
+SELECT EXISTS(SELECT 1 FROM documents d JOIN books b ON b.folder_id = d.parent_folder_id WHERE d.id = @document_id);
 -- name: VersionWords :many
 SELECT version_id, COALESCE(SUM(words),0)::int AS words FROM version_sections WHERE version_id = ANY(@version_ids::text[]) GROUP BY version_id;
 -- name: ListVersionsAfter :many

@@ -191,13 +191,15 @@ WHERE id IN (
   FOR NO KEY UPDATE SKIP LOCKED
 );
 
--- name: DeleteDocument :execrows
-DELETE FROM documents WHERE id=$1;
+-- name: DeleteDocument :one
+-- Returns the folder the document was in ('' at the root), so that a book on
+-- that folder can drop the chapter in the same transaction.
+DELETE FROM documents WHERE id=$1 RETURNING COALESCE(parent_folder_id,'')::text AS parent_folder_id;
 
 -- name: MoveDocumentToFolder :execrows
 UPDATE documents SET parent_folder_id= @folder_id::text, updated_at=now() WHERE id= @document_id;
 
--- name: MoveDocumentToRoot :exec
+-- name: MoveDocumentToRoot :execrows
 UPDATE documents SET parent_folder_id=NULL, updated_at=now() WHERE id= @document_id AND parent_folder_id= @folder_id::text;
 
 -- name: ListFolderDocuments :many

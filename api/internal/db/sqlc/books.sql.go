@@ -23,6 +23,17 @@ func (q *Queries) DeleteBook(ctx context.Context, id string) (int64, error) {
 	return result.RowsAffected(), nil
 }
 
+const documentInBook = `-- name: DocumentInBook :one
+SELECT EXISTS(SELECT 1 FROM documents d JOIN books b ON b.folder_id = d.parent_folder_id WHERE d.id = $1)
+`
+
+func (q *Queries) DocumentInBook(ctx context.Context, documentID string) (bool, error) {
+	row := q.db.QueryRow(ctx, documentInBook, documentID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const getBook = `-- name: GetBook :one
 SELECT b.id,b.folder_id,COALESCE(b.current_outline_version_id,'') AS outline_version_id,
        COALESCE(v.number,0)::int AS outline_number, COALESCE(v.outline,'{}'::jsonb) AS outline, b.created_at
@@ -126,6 +137,23 @@ func (q *Queries) GetChapterReads(ctx context.Context, arg GetChapterReadsParams
 		return nil, err
 	}
 	return items, nil
+}
+
+const getVersionSectionsForUpdate = `-- name: GetVersionSectionsForUpdate :one
+SELECT sections_indexed, html_blob_key FROM versions WHERE id = $1 FOR UPDATE
+`
+
+type GetVersionSectionsForUpdateRow struct {
+	SectionsIndexed bool
+	HtmlBlobKey     string
+}
+
+// Locks the version so that concurrent on-demand indexing inserts its sections once.
+func (q *Queries) GetVersionSectionsForUpdate(ctx context.Context, id string) (GetVersionSectionsForUpdateRow, error) {
+	row := q.db.QueryRow(ctx, getVersionSectionsForUpdate, id)
+	var i GetVersionSectionsForUpdateRow
+	err := row.Scan(&i.SectionsIndexed, &i.HtmlBlobKey)
+	return i, err
 }
 
 const insertBook = `-- name: InsertBook :exec
@@ -295,16 +323,27 @@ func (q *Queries) ListReadingPositions(ctx context.Context, arg ListReadingPosit
 }
 
 const listUnsectionedVersions = `-- name: ListUnsectionedVersions :many
-SELECT id,html_blob_key FROM versions WHERE NOT sections_indexed ORDER BY created_at LIMIT $1 FOR UPDATE SKIP LOCKED
+SELECT v.id,v.html_blob_key FROM versions v
+JOIN documents d ON d.id = v.document_id
+JOIN books b ON b.folder_id = d.parent_folder_id
+WHERE NOT v.sections_indexed AND v.id <> ALL(COALESCE($1::text[], '{}'))
+ORDER BY v.created_at LIMIT $2 FOR UPDATE OF v SKIP LOCKED
 `
+
+type ListUnsectionedVersionsParams struct {
+	Skipped  []string
+	RowLimit int32
+}
 
 type ListUnsectionedVersionsRow struct {
 	ID          string
 	HtmlBlobKey string
 }
 
-func (q *Queries) ListUnsectionedVersions(ctx context.Context, rowLimit int32) ([]ListUnsectionedVersionsRow, error) {
-	rows, err := q.db.Query(ctx, listUnsectionedVersions, rowLimit)
+// Versions of documents in book folders that have no sections yet (A12). Locks
+// the rows, so that servers that index at the same time skip each other's.
+func (q *Queries) ListUnsectionedVersions(ctx context.Context, arg ListUnsectionedVersionsParams) ([]ListUnsectionedVersionsRow, error) {
+	rows, err := q.db.Query(ctx, listUnsectionedVersions, arg.Skipped, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}

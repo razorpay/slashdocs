@@ -431,6 +431,15 @@ func (s *Store) MoveDocumentToFolder(ctx context.Context, _ auth.Principal, fold
 	if err := q.AcquireFolderTreeLock(ctx, folderTreeLockID); err != nil {
 		return false, err
 	}
+	// The tree lock serializes moves, so the folder read here is the one the
+	// document leaves.
+	doc, err := q.GetDocument(ctx, docID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, repo.ErrNotFound
+	}
+	if err != nil {
+		return false, err
+	}
 	moved, err := q.MoveDocumentToFolder(ctx, dbsqlc.MoveDocumentToFolderParams{FolderID: folderID, DocumentID: docID})
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -442,6 +451,17 @@ func (s *Store) MoveDocumentToFolder(ctx context.Context, _ auth.Principal, fold
 	if moved == 0 {
 		return false, repo.ErrNotFound
 	}
+	if doc.ParentFolderID != folderID {
+		// Book mode (A8, A10): leave the source book's outline, then fill a
+		// placeholder in the target's. Each takes its book row lock after the
+		// tree lock.
+		if err := removeFromFolderBook(ctx, q, doc.ParentFolderID, docID, removedMovedOut); err != nil {
+			return false, err
+		}
+		if err := s.fillFolderPlaceholder(ctx, q, folderID, doc); err != nil {
+			return false, err
+		}
+	}
 	hasGrants, err := q.FolderOrAncestorsHaveGrants(ctx, folderID)
 	if err != nil {
 		return false, err
@@ -450,7 +470,23 @@ func (s *Store) MoveDocumentToFolder(ctx context.Context, _ auth.Principal, fold
 }
 
 func (s *Store) MoveDocumentToRoot(ctx context.Context, folderID, docID string) error {
-	return s.q.MoveDocumentToRoot(ctx, dbsqlc.MoveDocumentToRootParams{DocumentID: docID, FolderID: folderID})
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer rollback(ctx, tx)
+	q := s.q.WithTx(tx)
+	moved, err := q.MoveDocumentToRoot(ctx, dbsqlc.MoveDocumentToRootParams{DocumentID: docID, FolderID: folderID})
+	if err != nil {
+		return err
+	}
+	if moved > 0 {
+		// A10: a chapter that leaves its book's folder leaves the outline.
+		if err := removeFromFolderBook(ctx, q, folderID, docID, removedMovedOut); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) ListFolderDocuments(ctx context.Context, _ auth.Principal, folderID string) ([]repo.Document, error) {
