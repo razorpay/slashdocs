@@ -7,12 +7,14 @@ function renderedDocument(page: Page): FrameLocator {
     .frameLocator("iframe#slashdocs-doc");
 }
 
-function documentHTML(title: string) {
+// The source holds no random text, so the shortest unique edit of a word is
+// the word itself.
+function documentHTML() {
   return `<!doctype html>
 <html>
-  <head><meta charset="utf-8"><title>${title}</title></head>
+  <head><meta charset="utf-8"><title>Cache settings</title></head>
   <body>
-    <h1>${title}</h1>
+    <h1>Cache settings</h1>
     <p id="ttl">Entries live in Redis with a TTL of 10 minutes.</p>
     <p id="retry">Clients retry twice before giving up.</p>
   </body>
@@ -60,7 +62,7 @@ test("saves edited words as the editor pauses, and only the changed text", async
   slashdocs,
 }) => {
   const title = uniqueName("Text editing");
-  const html = documentHTML(title);
+  const html = documentHTML();
   const document = await slashdocs.createDocument(title, html);
 
   await openEditable(page, document.id);
@@ -101,7 +103,7 @@ test("typing over a triple-clicked paragraph keeps the next one", async ({
   slashdocs,
 }) => {
   const title = uniqueName("Text editing triple click");
-  const html = documentHTML(title);
+  const html = documentHTML();
   const document = await slashdocs.createDocument(title, html);
 
   await openEditable(page, document.id);
@@ -133,7 +135,7 @@ test("replaces all of a heading's and a paragraph's text", async ({
 }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   const title = uniqueName("Text editing replace");
-  const html = documentHTML(title);
+  const html = documentHTML();
   const document = await slashdocs.createDocument(title, html);
 
   await openEditable(page, document.id);
@@ -147,7 +149,7 @@ test("replaces all of a heading's and a paragraph's text", async ({
   await page.keyboard.press("ControlOrMeta+v");
 
   const expected = html
-    .replace(`<h1>${title}</h1>`, "<h1>Cache notes</h1>")
+    .replace("<h1>Cache settings</h1>", "<h1>Cache notes</h1>")
     .replace(
       "Entries live in Redis with a TTL of 10 minutes.",
       "https://example.com/ttl",
@@ -165,7 +167,7 @@ test("replaces all of a heading's and a paragraph's text", async ({
 
 test("refuses joining paragraphs and new paragraphs", async ({ page, slashdocs }) => {
   const title = uniqueName("Text editing structure");
-  const document = await slashdocs.createDocument(title, documentHTML(title));
+  const document = await slashdocs.createDocument(title, documentHTML());
 
   await openEditable(page, document.id);
 
@@ -187,7 +189,7 @@ test("refuses joining paragraphs and new paragraphs", async ({ page, slashdocs }
 
 test("restores an earlier version from the history", async ({ page, slashdocs }) => {
   const title = uniqueName("Text editing history");
-  const html = documentHTML(title);
+  const html = documentHTML();
   const document = await slashdocs.createDocument(title, html);
 
   await openEditable(page, document.id);
@@ -230,7 +232,7 @@ test("keeps unsaved typing when the same person changes the document elsewhere",
   slashdocs,
 }) => {
   const title = uniqueName("Text editing elsewhere");
-  const html = documentHTML(title);
+  const html = documentHTML();
   const document = await slashdocs.createDocument(title, html);
 
   await openEditable(page, document.id);
@@ -259,7 +261,7 @@ test("saves only the editor's words while a script changes other text", async ({
   slashdocs,
 }) => {
   const title = uniqueName("Text editing script");
-  const html = documentHTML(title).replace(
+  const html = documentHTML().replace(
     "</body>",
     `<p id="clock">0</p>
     <script>
