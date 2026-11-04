@@ -172,6 +172,24 @@ test("creates a structured mention with a clean API body", async ({
   await expect(renderedMention).toHaveClass(/bg-\[var\(--color-accent-muted\)\]/);
 });
 
+test("shows more documents after the first page", async ({ page, slashdocs }) => {
+  // The server sends 25 documents a page. One word finds only these ones.
+  const word = uniqueName("paged").split(" ").at(-1)!;
+  for (let i = 0; i < 26; i++) {
+    const title = `Paged ${word} ${i}`;
+    await slashdocs.createDocument(title, documentHTML(title));
+  }
+
+  await page.goto("/app/documents");
+  await page.getByRole("combobox", { name: "Search documents" }).fill(word);
+  const rows = page.locator("tbody tr");
+  const more = page.getByRole("button", { name: "Show more documents" });
+  await expect(rows).toHaveCount(25);
+  await more.click();
+  await expect(rows).toHaveCount(26);
+  await expect(more).toHaveCount(0);
+});
+
 test("shares a document through its general access role", async ({
   page,
   slashdocs,
