@@ -451,3 +451,59 @@ func TestMissingResourcesAreNotFound(t *testing.T) {
 		assertStatus(t, rr, http.StatusForbidden)
 	}
 }
+
+// A folder search gives each folder its path, so folders with the same title
+// differ. The contents of a folder have the time of their last change.
+func TestFolderSearchPathsAndContentTimes(t *testing.T) {
+	e := newTestEnv(t)
+	owner := principalHeader(fixtureOwner)
+	north := createFolder(t, e, `{"title":"North"}`, owner)
+	south := createFolder(t, e, `{"title":"South"}`, owner)
+	createFolder(t, e, `{"title":"Reports","parent_folder_id":"`+north+`"}`, owner)
+	createFolder(t, e, `{"title":"Reports","parent_folder_id":"`+south+`"}`, owner)
+	docID, _ := e.createDocument("Plan", "<p>x</p>", fixtureOwner)
+	headers := map[string]string{"X-Test-Principal": owner, "Content-Type": "application/json"}
+	rr := do(t, e.h, http.MethodPost, "/v1/folders/"+north+"/documents", `{"document_id":"`+docID+`"}`, headers)
+	assertStatus(t, rr, http.StatusOK)
+
+	type listing struct {
+		Items []struct {
+			Type   string `json:"type"`
+			Folder *struct {
+				Ancestors []struct{ Title string } `json:"ancestors"`
+			} `json:"folder"`
+			LastActive string `json:"last_active"`
+		} `json:"items"`
+	}
+	list := func(path string) listing {
+		rr := do(t, e.h, http.MethodGet, path, "", headers)
+		assertStatus(t, rr, http.StatusOK)
+		var out listing
+		if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	var paths []string
+	for _, item := range list("/v1/folders?q=Reports").Items {
+		var titles []string
+		for _, a := range item.Folder.Ancestors {
+			titles = append(titles, a.Title)
+		}
+		paths = append(paths, strings.Join(titles, "/"))
+	}
+	if strings.Join(paths, ",") != "North,South" && strings.Join(paths, ",") != "South,North" {
+		t.Fatalf("search paths = %v, want North and South", paths)
+	}
+
+	contents := list("/v1/folders?folder_id=" + north).Items
+	if len(contents) != 2 {
+		t.Fatalf("folder has %d entries, want 2", len(contents))
+	}
+	for _, item := range contents {
+		if item.LastActive == "" {
+			t.Errorf("%s entry has no last_active", item.Type)
+		}
+	}
+}

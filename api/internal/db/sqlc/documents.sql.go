@@ -251,7 +251,8 @@ SELECT d.id, d.title, d.owner_type, d.owner_id,
        COALESCE(d.current_version_id,'') AS current_version_id,
        COALESCE(d.parent_folder_id,'') AS parent_folder_id,
        COALESCE(u.name,sa.name,'') AS owner_name,
-       COALESCE(u.email,'') AS owner_email
+       COALESCE(u.email,'') AS owner_email,
+       d.updated_at
 FROM documents d
 LEFT JOIN users u ON d.owner_type='user' AND d.owner_id=u.id
 LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
@@ -269,6 +270,7 @@ type ListFolderDocumentsRow struct {
 	ParentFolderID   string
 	OwnerName        string
 	OwnerEmail       string
+	UpdatedAt        pgtype.Timestamptz
 }
 
 // nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
@@ -290,6 +292,7 @@ func (q *Queries) ListFolderDocuments(ctx context.Context, folderID string) ([]L
 			&i.ParentFolderID,
 			&i.OwnerName,
 			&i.OwnerEmail,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
