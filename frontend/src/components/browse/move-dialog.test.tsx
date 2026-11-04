@@ -73,4 +73,45 @@ describe("MoveDialog", () => {
     await user.click(await screen.findByRole("button", { name: "Documents" }));
     await waitFor(() => expect(update).toHaveBeenCalledWith("fld_1", undefined, null));
   });
+
+  it("names the path of folders with the same title", async () => {
+    vi.spyOn(api, "listFolders").mockResolvedValue({
+      items: [
+        {
+          type: "folder",
+          folder: {
+            id: "fld_n",
+            title: "Reports",
+            ancestors: [{ id: "n", title: "North" }],
+          },
+        },
+        {
+          type: "folder",
+          folder: {
+            id: "fld_s",
+            title: "Reports",
+            ancestors: [{ id: "s", title: "South" }],
+          },
+        },
+      ],
+      has_more: false,
+    });
+    renderMove({ type: "document", id: "doc_1" });
+    expect(
+      await screen.findByRole("button", { name: "Reports, in North" }),
+    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Reports, in South" })).toBeEnabled();
+  });
+
+  it("offers Retry when the folders do not load", async () => {
+    const user = userEvent.setup();
+    const list = vi
+      .spyOn(api, "listFolders")
+      .mockRejectedValueOnce(new Error("503"))
+      .mockResolvedValue({ items: [folder("fld_a", "Reports")], has_more: false });
+    renderMove({ type: "document", id: "doc_1" });
+    await user.click(await screen.findByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("button", { name: "Reports" })).toBeEnabled();
+    expect(list).toHaveBeenCalledTimes(2);
+  });
 });

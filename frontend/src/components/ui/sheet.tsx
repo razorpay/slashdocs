@@ -70,11 +70,14 @@ export function SheetBody({ className, ...p }: React.HTMLAttributes<HTMLDivEleme
 
 // The grab handle at the top of a bottom sheet, which shows that the panel is
 // a sheet over the page.
-export function SheetHandle() {
+export function SheetHandle({ className }: { className?: string }) {
   return (
     <div
       aria-hidden
-      className="mx-auto mt-2 h-1 w-9 shrink-0 rounded-full bg-[var(--color-border-strong)]"
+      className={cn(
+        "mx-auto mt-2 h-1 w-9 shrink-0 rounded-full bg-[var(--color-border-strong)]",
+        className,
+      )}
     />
   );
 }

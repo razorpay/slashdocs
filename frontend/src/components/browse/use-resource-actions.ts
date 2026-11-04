@@ -58,12 +58,13 @@ export function useDeleteResource(resourceType: ResourceType, resourceId: string
 
 // A move of a document or folder into the folder `to`, or to the top level
 // when `to` is null. A document leaves the top level through `from`, the
-// folder that it is in.
+// folder that it is in. The toast names the folder `toTitle`.
 export type Move = {
   type: ResourceType;
   id: string;
   from?: string;
   to: string | null;
+  toTitle?: string;
 };
 
 // Move mutation shared by drag and drop and the Move dialog. A move that
@@ -81,7 +82,7 @@ export function useMoveResource() {
         return (await api.moveDocumentToFolder(to, id)).permission_warning?.message;
       await api.moveDocumentToRoot(from!, id);
     },
-    onSuccess: (warning, { type, id }) => {
+    onSuccess: (warning, { type, id, from, to, toTitle }) => {
       qc.invalidateQueries({ queryKey: queryKeys.foldersAll() });
       qc.invalidateQueries({ queryKey: queryKeys.documents() });
       qc.invalidateQueries({ queryKey: queryKeys.pins() });
@@ -89,7 +90,14 @@ export function useMoveResource() {
         queryKey: type === "folder" ? queryKeys.folder(id) : queryKeys.document(id),
       });
       if (warning) setWarning(warning);
-      else toast.success("Moved.");
+      else
+        toast.success(toTitle ? `Moved to ${toTitle}.` : "Moved.", {
+          action: {
+            label: "Undo",
+            onClick: () =>
+              move.mutate({ type, id, from: to ?? undefined, to: from ?? null }),
+          },
+        });
     },
     onError: (e) => toast.error(errorMessage(e, "Move failed")),
   });
