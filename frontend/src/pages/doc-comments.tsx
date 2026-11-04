@@ -1,35 +1,29 @@
 import {
   useCallback,
-  type KeyboardEvent,
-  type ReactNode,
   useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
+  type KeyboardEvent,
 } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { errorMessage } from "@/lib/errors";
-import { MessageSquareText, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { MapPin, MessageSquareText, X } from "lucide-react";
+import { api, type Comment, type Principal } from "@/api";
 import { Badge } from "@/components/ui/badge";
-import { Center, EmptyState, Skeleton } from "@/components/ui/misc";
-import { api, type Comment } from "@/api";
-import { cn } from "@/lib/cn";
-import { principalLabel } from "@/lib/principals";
-import { queryKeys } from "@/lib/queryKeys";
-import { layoutCommentRail } from "@/lib/comment-rail";
-import type { MentionDraft } from "@/lib/comment-mentions";
-import {
-  COMMENT_FILTERS,
-  COMMENT_STATUS,
-  type CommentFilter,
-  matchesCommentFilter,
-} from "@/lib/constants";
+import { Button } from "@/components/ui/button";
+import { EmptyState, Skeleton } from "@/components/ui/misc";
+import { RelativeTime } from "@/components/ui/relative-time";
 import { NotificationToggle } from "@/components/notification-toggle";
+import { cn } from "@/lib/cn";
+import { errorMessage } from "@/lib/errors";
+import { principalLabel, samePrincipal } from "@/lib/principals";
+import { queryKeys } from "@/lib/queryKeys";
+import { anchorLabel } from "@/lib/comment-pins";
 import type { CommentDraft } from "@/lib/comment-drafts";
+import type { MentionDraft } from "@/lib/comment-mentions";
+import { COMMENT_FILTERS, COMMENT_STATUS, matchesCommentFilter } from "@/lib/constants";
 import { useSelf } from "@/lib/hooks";
 import { useDoc } from "./doc-context";
 import {
@@ -41,154 +35,30 @@ import {
   Replies,
   ResolveButton,
 } from "./doc-comment-parts";
-import { CommentMap } from "./comment-map";
 
-export function Comments({ mobile = false }: { mobile?: boolean }) {
-  const {
-    docId,
-    comments,
-    commentsLoading,
-    commentsError,
-    notifications,
-    drafts,
-    commentFilter: filter,
-    setCommentFilter: setFilter,
-    setActiveComment,
-  } = useDoc();
-  const headerRef = useRef<HTMLDivElement>(null);
-  const [headerHeight, setHeaderHeight] = useState(0);
+const QUOTE_PREVIEW = 160;
 
-  useLayoutEffect(() => {
-    const header = headerRef.current;
-    if (!header) return;
-    const update = () => setHeaderHeight(header.offsetHeight);
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(header);
-    return () => observer.disconnect();
-  }, []);
-
-  const items = useMemo(
-    () => comments.filter((c) => matchesCommentFilter(c.status, filter)),
-    [comments, filter],
-  );
-
-  const chooseFilter = (next: CommentFilter) => {
-    if (next === filter) return;
-    setFilter(next);
-    // Let the bridge reveal the first matching highlight after repainting.
-    // With no match there is nothing to reveal, so the reader stays in place.
-    setActiveComment(comments.find((c) => matchesCommentFilter(c.status, next))?.id);
-  };
-
+function Quote({ text }: { text: string }) {
+  if (!text) return null;
   return (
-    <div
-      className="flex h-full min-h-0 flex-col border-l border-[var(--color-border)]"
-      aria-label="Document comments"
-    >
-      <div
-        ref={headerRef}
-        className="shrink-0 border-b border-[var(--color-border)] px-4 pt-3"
-      >
-        <div className="flex items-center gap-2 pr-10 md:pr-0">
-          <h2 className="text-sm font-semibold">Comments</h2>
-          {!commentsLoading && !commentsError && (
-            <span
-              className="text-xs text-[var(--color-fg-muted)] tabular-nums"
-              aria-label={`${items.length} comment threads (${filter})`}
-            >
-              {items.length}
-            </span>
-          )}
-          {notifications && (
-            <div className="ml-auto">
-              <NotificationToggle documentId={docId} />
-            </div>
-          )}
-        </div>
-        <div
-          role="group"
-          aria-label="Filter comments"
-          className="mt-1 flex gap-4 text-xs"
-        >
-          {COMMENT_FILTERS.map((f) => (
-            <button
-              key={f}
-              type="button"
-              aria-pressed={filter === f}
-              onClick={() => chooseFilter(f)}
-              className={cn(
-                "min-h-10 min-w-10 border-b-2 px-1 capitalize transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]",
-                filter === f
-                  ? "border-[var(--color-accent)] font-medium text-[var(--color-accent)]"
-                  : "border-transparent text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]",
-              )}
-            >
-              {f}
-            </button>
-          ))}
-        </div>
-      </div>
-      {mobile ? (
-        <div
-          data-comment-scroll
-          className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
-        >
-          {drafts.length > 0 ? (
-            <div className="space-y-3 p-4">
-              {drafts.map((draft) => (
-                <CommentComposer key={draft.id} draft={draft} />
-              ))}
-            </div>
-          ) : null}
-          {commentsLoading ? (
-            <div className="space-y-3 p-4">
-              <Skeleton className="h-20 w-full rounded-md" />
-              <Skeleton className="h-20 w-full rounded-md" />
-            </div>
-          ) : commentsError ? (
-            <Center>Could not load comments.</Center>
-          ) : items.length === 0 ? (
-            drafts.length === 0 && (
-              <div className="p-4">
-                <CommentsEmptyState filter={filter} />
-              </div>
-            )
-          ) : (
-            <div className="space-y-3 p-3">
-              {items.map((c) => (
-                <CommentCard key={c.id} c={c} docId={docId} />
-              ))}
-            </div>
-          )}
-        </div>
-      ) : (
-        <div className="relative min-h-0 flex-1">
-          <CommentRail comments={items} filter={filter} topInset={headerHeight} />
-          <CommentMap comments={items} topInset={headerHeight} />
-        </div>
-      )}
-    </div>
+    <blockquote className="mt-1 rounded-r-md border-l-2 border-[var(--color-accent)] bg-[var(--color-surface-muted)] py-1.5 pl-2 pr-2 text-xs leading-relaxed break-words text-[var(--color-fg-muted)]">
+      {text.length > QUOTE_PREVIEW ? text.slice(0, QUOTE_PREVIEW) + "…" : text}
+    </blockquote>
   );
 }
 
-function CommentsEmptyState({ filter }: { filter: CommentFilter }) {
+function CloseButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
-    <EmptyState
-      icon={<MessageSquareText className="h-5 w-5" />}
-      title={
-        filter === COMMENT_STATUS.resolved
-          ? "No resolved comments yet"
-          : filter === COMMENT_STATUS.open
-            ? "No open comments"
-            : "No comments yet"
-      }
-      description={
-        filter === COMMENT_STATUS.resolved
-          ? "Resolved conversations will appear here."
-          : "Select text in the document to start a thread."
-      }
-    />
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      onClick={onClick}
+      aria-label={label}
+      className="-my-1 h-7 w-7 shrink-0 text-[var(--color-fg-muted)]"
+    >
+      <X className="h-4 w-4" />
+    </Button>
   );
 }
 
@@ -196,10 +66,11 @@ function CommentsEmptyState({ filter }: { filter: CommentFilter }) {
 // keystroke does not re-render the whole page.
 const DRAFT_SAVE_DELAY = 300;
 
-function CommentComposer({ draft }: { draft: CommentDraft }) {
+// CommentComposer writes a new thread: who writes it, what it is on, and the
+// same field and send button as a reply.
+export function CommentComposer({ draft }: { draft: CommentDraft }) {
   const {
     docId,
-    activeComment,
     setActiveComment,
     unanchoredComments,
     saveDraft,
@@ -207,7 +78,6 @@ function CommentComposer({ draft }: { draft: CommentDraft }) {
     principal,
   } = useDoc();
   const q = useQueryClient();
-  const formRef = useRef<HTMLDivElement>(null);
   const [text, setText] = useState<MentionDraft>(() => ({
     body: draft.body,
     mentions: draft.mentions,
@@ -227,12 +97,6 @@ function CommentComposer({ draft }: { draft: CommentDraft }) {
   };
   useEffect(() => save, [save]);
 
-  const active = activeComment === draft.id;
-  useEffect(() => {
-    if (active)
-      formRef.current?.querySelector("textarea")?.focus({ preventScroll: true });
-  }, [active]);
-
   const create = useMutation({
     mutationFn: () =>
       api.createComment(
@@ -243,9 +107,11 @@ function CommentComposer({ draft }: { draft: CommentDraft }) {
         draft.anchor,
         text.mentions,
       ),
-    onSuccess: () => {
+    onSuccess: (created) => {
       unsaved.current = null;
       discardDraft(draft.id);
+      // The new thread opens where the draft was.
+      setActiveComment(created.id);
       toast.success("Comment added.");
       q.invalidateQueries({ queryKey: queryKeys.comments(docId) });
     },
@@ -261,48 +127,24 @@ function CommentComposer({ draft }: { draft: CommentDraft }) {
   };
 
   const self = useSelf(principal);
-  const { quote } = draft;
-  // Laid out like a thread card: who is writing, what they picked, then the
-  // same field and send button as a reply.
   return (
-    <div
-      ref={formRef}
-      onFocusCapture={() => setActiveComment(draft.id)}
-      onKeyDown={discardOnEscape}
-      className={cn(
-        "overflow-hidden rounded-xl bg-[var(--color-surface)]",
-        active && "ring-[1.5px] ring-inset ring-[var(--color-accent)]",
-      )}
-    >
-      <div className="px-3 pb-1 pt-3">
-        <div className="flex min-h-6 items-center gap-2">
-          {self ? <PersonAvatar who={self} /> : null}
-          <span className="min-w-0 flex-1 truncate text-xs font-semibold">
-            {self ? principalLabel(self) : "New comment"}
-          </span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            onClick={discard}
-            aria-label="Cancel comment"
-            className="-my-1 h-7 w-7 shrink-0 text-[var(--color-fg-muted)]"
-          >
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
+    <div onKeyDown={discardOnEscape} className="px-3 pb-3 pt-3">
+      <div className="flex min-h-6 items-center gap-2">
+        {self ? <PersonAvatar who={self} /> : null}
+        <span className="min-w-0 flex-1 truncate text-xs font-semibold">
+          {self ? principalLabel(self) : "New comment"}
+        </span>
+        <CloseButton label="Cancel comment" onClick={discard} />
+      </div>
+      <div className="ml-7">
         {unanchoredComments.has(draft.id) && (
-          <Badge variant="warning" className="ml-7 mt-1">
-            Text not found in this version
+          <Badge variant="warning" className="mt-1">
+            Not found in this version
           </Badge>
         )}
-        {quote ? (
-          <blockquote className="ml-7 mt-1 rounded-r-md border-l-2 border-[var(--color-accent)] bg-[var(--color-surface-muted)] py-1.5 pl-2 pr-2 text-xs leading-relaxed break-words text-[var(--color-fg-muted)]">
-            {quote.length > 160 ? quote.slice(0, 160) + "…" : quote}
-          </blockquote>
-        ) : null}
+        <Quote text={draft.quote} />
       </div>
-      <div className="px-3 pb-3 pt-2">
+      <div className="pt-2">
         <ComposeField
           value={text}
           onChange={edit}
@@ -310,438 +152,241 @@ function CommentComposer({ draft }: { draft: CommentDraft }) {
           pending={create.isPending}
           placeholder="Add a comment…"
           sendLabel="Post comment"
-          autoFocus={active}
+          autoFocus
         />
       </div>
     </div>
   );
 }
 
-const RAIL_CARD_ESTIMATE = 190;
-const RAIL_COMPOSER_ESTIMATE = 210;
+// CommentThread is a whole thread, for its popover: the first comment with
+// the thread's actions, the replies set in under it, and the reply field.
+export function CommentThread({ c, onClose }: { c: Comment; onClose: () => void }) {
+  const { docId, signIn, unanchoredComments } = useDoc();
+  const ref = useRef<HTMLElement>(null);
+  const [params] = useSearchParams();
+  const linked = params.get("comment");
+  // A link to a reply shows that reply.
+  useLayoutEffect(() => {
+    const target = Array.from(
+      ref.current?.querySelectorAll<HTMLElement>("[data-comment-id]") ?? [],
+    ).find((el) => el.dataset.commentId === linked);
+    target?.scrollIntoView({ block: "nearest" });
+  }, [linked]);
+  const resolved = c.status === COMMENT_STATUS.resolved;
+  return (
+    <article ref={ref} data-comment-id={c.id} className="px-3 py-3">
+      {unanchoredComments.has(c.id) && (
+        <Badge variant="warning" className="mb-2">
+          Not found in this version
+        </Badge>
+      )}
+      <Message
+        c={c}
+        docId={docId}
+        thread
+        actions={
+          <>
+            {resolved ? (
+              <span className="shrink-0 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                Resolved
+              </span>
+            ) : null}
+            <span className="-my-1 ml-auto flex shrink-0 items-center">
+              {!signIn ? (
+                <ResolveButton c={c} docId={docId} className="h-7 w-7" />
+              ) : null}
+              <MoreMenu c={c} docId={docId} thread className="h-7 w-7" />
+              <CloseButton label="Close comment" onClick={onClose} />
+            </span>
+          </>
+        }
+      />
+      <Replies c={c} docId={docId} />
+      {/* The reply field sits at the replies' level: what you type there
+          becomes one of them. */}
+      {!signIn ? (
+        <div className="ml-7 mt-3">
+          <ReplyRow c={c} docId={docId} className="border-0 p-0" />
+        </div>
+      ) : null}
+    </article>
+  );
+}
 
-function CommentRail({
-  comments: timelineComments,
-  filter,
-  topInset,
+const LIST_FILTERS = [...COMMENT_FILTERS, "for you"] as const;
+type ListFilter = (typeof LIST_FILTERS)[number];
+
+// mentions tells whether a thread mentions the reader, in its first comment
+// or a reply.
+function mentions(c: Comment, self?: Principal): boolean {
+  return [c, ...(c.replies ?? [])].some((m) =>
+    m.mentions?.some((mention) => samePrincipal(mention.principal, self)),
+  );
+}
+
+// CommentsList is the comment history: every thread, open or resolved, also
+// those whose text or element is gone. Picking one opens it in place.
+export function CommentsList({
+  onPick,
+  onPlacePin,
+  onClose,
 }: {
-  comments: Comment[];
-  filter: CommentFilter;
-  topInset: number;
+  onPick: (id: string) => void;
+  onPlacePin: () => void;
+  onClose: () => void;
 }) {
   const {
     docId,
+    comments,
     commentsLoading,
     commentsError,
-    version,
-    drafts,
-    activeComment,
-    commentPositions,
+    notifications,
+    principal,
     unanchoredComments,
-    commentViewport,
-    scrollDocumentTo,
-    registerCommentRailSync,
   } = useDoc();
-  const railRef = useRef<HTMLDivElement>(null);
-  const applyingDocumentScroll = useRef(false);
-  const scrollSyncFrame = useRef(0);
-  const [railHeight, setRailHeight] = useState(0);
-  const [heights, setHeights] = useState<ReadonlyMap<string, number>>(new Map());
-
-  useLayoutEffect(() => {
-    const rail = railRef.current;
-    if (!rail) return;
-    const update = () => setRailHeight(rail.clientHeight);
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(rail);
-    return () => observer.disconnect();
-  }, []);
-
-  const layoutItems = useMemo(() => {
-    const item = (id: string, top: number | undefined, estimate: number) => ({
-      id,
-      anchorTop: (top ?? 0) - topInset,
-      height: heights.get(id) ?? estimate,
-      atStart: top === undefined,
-    });
-    return [
-      ...timelineComments.map((comment) =>
-        item(comment.id, commentPositions.get(comment.id)?.top, RAIL_CARD_ESTIMATE),
-      ),
-      // A new draft sits at its selection until its highlight reports a
-      // position. A draft whose text is gone sits at the start.
-      ...drafts.map((draft) =>
-        item(
-          draft.id,
-          commentPositions.get(draft.id)?.top ??
-            (draft.version === version ? draft.top : undefined),
-          RAIL_COMPOSER_ESTIMATE,
-        ),
-      ),
-    ];
-  }, [commentPositions, drafts, heights, timelineComments, topInset, version]);
-  const priorityId = layoutItems.find(
-    (item) => item.id === activeComment && !item.atStart,
-  )?.id;
-  const priorityMaxHeight = Math.max(1, railHeight - 24);
-
-  const timelineHeight = Math.max(
-    commentViewport.scrollHeight - topInset,
-    railHeight,
-    1,
+  const [filter, setFilter] = useState<ListFilter>("all");
+  // The document shows open threads, so the bridge knows which of those it
+  // could not place. The server knows it for the rest.
+  const lost = (c: Comment) =>
+    unanchoredComments.has(c.id) || c.current_placement?.status === "orphaned";
+  const items = comments.filter((c) =>
+    filter === "for you"
+      ? mentions(c, principal)
+      : matchesCommentFilter(c.status, filter),
   );
-
-  const placements = useMemo(
-    () =>
-      layoutCommentRail(layoutItems, timelineHeight, {
-        priorityId,
-        viewport: { top: commentViewport.scrollTop, height: railHeight },
-      }),
-    [layoutItems, timelineHeight, priorityId, commentViewport.scrollTop, railHeight],
-  );
-  const contentHeight = Math.max(
-    timelineHeight,
-    ...placements.map((placement) => placement.y + placement.height + 12),
-  );
-  const commentByID = useMemo(
-    () => new Map(timelineComments.map((comment) => [comment.id, comment])),
-    [timelineComments],
-  );
-  const draftByID = useMemo(
-    () => new Map(drafts.map((draft) => [draft.id, draft])),
-    [drafts],
-  );
-  const onHeight = useCallback((id: string, height: number) => {
-    setHeights((current) => {
-      if (Math.abs((current.get(id) || 0) - height) < 1) return current;
-      const next = new Map(current);
-      next.set(id, height);
-      return next;
-    });
-  }, []);
-
-  const applyDocumentScroll = useCallback((top: number) => {
-    const rail = railRef.current;
-    if (!rail) return;
-    const target = Math.max(0, Math.min(top, rail.scrollHeight - rail.clientHeight));
-    if (Math.abs(rail.scrollTop - target) < 0.5) return;
-    if (scrollSyncFrame.current) cancelAnimationFrame(scrollSyncFrame.current);
-    applyingDocumentScroll.current = true;
-    rail.scrollTop = target;
-    scrollSyncFrame.current = requestAnimationFrame(() => {
-      applyingDocumentScroll.current = false;
-      scrollSyncFrame.current = 0;
-    });
-  }, []);
-
-  useLayoutEffect(() => {
-    applyDocumentScroll(commentViewport.scrollTop);
-  }, [applyDocumentScroll, commentViewport.scrollTop, contentHeight]);
-
-  const revealedComment = useRef<string | undefined>(undefined);
-  const [linkParams] = useSearchParams();
-  const linkedComment = linkParams.get("comment");
-  useLayoutEffect(() => {
-    if (revealedComment.current === activeComment) return;
-    if (!activeComment) {
-      revealedComment.current = undefined;
-      return;
-    }
-    const rail = railRef.current;
-    const placement = placements.find((item) => item.id === activeComment);
-    if (!rail || !placement || !heights.has(activeComment)) return;
-    // A thread has no position until the bridge paints it, as after a filter
-    // switch. Wait for the paint: only an unanchored thread stays at the start.
-    if (placement.atStart && !unanchoredComments.has(activeComment)) return;
-    revealedComment.current = activeComment;
-    if (!placement.atStart) return;
-    // Reveal unanchored threads where they already are. Clicking a visible
-    // card must not reorder the stack or reset the document's scroll position.
-    const card = Array.from(
-      rail.querySelectorAll<HTMLElement>("article[data-comment-id]"),
-    ).find((element) => element.dataset.commentId === activeComment);
-    if (!card) return;
-    const target =
-      Array.from(card.querySelectorAll<HTMLElement>("[data-comment-id]")).find(
-        (element) => element.dataset.commentId === linkedComment,
-      ) || card;
-    const bounds = target.getBoundingClientRect();
-    const viewport = rail.getBoundingClientRect();
-    const delta =
-      bounds.top < viewport.top
-        ? bounds.top - viewport.top - 12
-        : bounds.top >= viewport.bottom
-          ? bounds.top -
-            viewport.bottom +
-            Math.min(bounds.height, rail.clientHeight - 24) +
-            12
-          : 0;
-    if (delta) {
-      const top = rail.scrollTop + delta;
-      applyDocumentScroll(top);
-      scrollDocumentTo(top);
-    }
-  }, [
-    activeComment,
-    placements,
-    heights,
-    unanchoredComments,
-    linkedComment,
-    applyDocumentScroll,
-    scrollDocumentTo,
-  ]);
-
-  useEffect(() => {
-    registerCommentRailSync(applyDocumentScroll);
-    return () => registerCommentRailSync(null);
-  }, [applyDocumentScroll, registerCommentRailSync]);
-
-  useEffect(
-    () => () => {
-      if (scrollSyncFrame.current) cancelAnimationFrame(scrollSyncFrame.current);
-    },
-    [],
-  );
-
   return (
-    <div
-      ref={railRef}
-      className="relative h-full overflow-x-hidden overflow-y-auto overscroll-contain [overflow-anchor:none]"
-      onScroll={(event) => {
-        if (applyingDocumentScroll.current) return;
-        scrollDocumentTo(event.currentTarget.scrollTop);
-      }}
-    >
-      {commentsLoading ? (
-        <div className="sticky top-0 space-y-3 px-3 py-3">
-          <Skeleton className="h-28 w-full rounded-md" />
-          <Skeleton className="h-28 w-full rounded-md" />
-        </div>
-      ) : commentsError ? (
-        <div className="sticky top-0 px-3 py-3">
-          <div className="rounded-md bg-[var(--color-surface)] p-3 text-sm text-[var(--color-fg-muted)] shadow-lg ring-1 ring-[var(--color-border)]">
-            Could not load comments.
-          </div>
-        </div>
-      ) : (
-        <div className="relative min-h-full" style={{ height: contentHeight }}>
-          {timelineComments.length === 0 && drafts.length === 0 && (
-            <div className="sticky top-0 p-4">
-              <CommentsEmptyState filter={filter} />
-            </div>
+    <div className="flex max-h-full min-h-0 flex-col">
+      <div className="shrink-0 border-b border-[var(--color-border)] px-4 pt-3">
+        <div className="flex items-center gap-2">
+          <h2 className="text-sm font-semibold">Comments</h2>
+          {!commentsLoading && !commentsError && (
+            <span
+              className="text-xs text-[var(--color-fg-muted)] tabular-nums"
+              aria-label={`${items.length} comment threads (${filter})`}
+            >
+              {items.length}
+            </span>
           )}
-          {placements.map((placement) => {
-            const comment = commentByID.get(placement.id);
-            const draft = draftByID.get(placement.id);
-            if (!comment && !draft) return null;
-            return (
-              <MeasuredRailItem
-                key={placement.id}
-                id={placement.id}
-                y={placement.y}
-                connected={!placement.atStart}
-                priority={placement.id === priorityId}
-                maxHeight={railHeight > 0 ? priorityMaxHeight : undefined}
-                connectorOffset={Math.max(
-                  12,
-                  Math.min(
-                    placement.height - 12,
-                    placement.anchorTop - placement.y + 9,
-                  ),
-                )}
-                onHeight={onHeight}
-              >
-                {draft ? (
-                  <CommentComposer draft={draft} />
-                ) : (
-                  <CommentCard c={comment!} docId={docId} autoReveal={false} />
-                )}
-              </MeasuredRailItem>
-            );
-          })}
+          <span className="ml-auto flex items-center gap-1">
+            {notifications && <NotificationToggle documentId={docId} />}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={onPlacePin}
+              aria-label="Comment on a spot"
+              tooltip="Comment on a spot (C)"
+              className="h-8 w-8 text-[var(--color-fg-muted)]"
+            >
+              <MapPin className="h-4 w-4" />
+            </Button>
+            <CloseButton label="Close comments" onClick={onClose} />
+          </span>
         </div>
-      )}
-    </div>
-  );
-}
-
-function MeasuredRailItem({
-  id,
-  y,
-  connected,
-  priority,
-  maxHeight,
-  connectorOffset,
-  onHeight,
-  children,
-}: {
-  id: string;
-  y: number;
-  connected: boolean;
-  priority: boolean;
-  maxHeight?: number;
-  connectorOffset: number;
-  onHeight: (id: string, height: number) => void;
-  children: ReactNode;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
-  const [linkParams] = useSearchParams();
-  const linkedComment = linkParams.get("comment");
-  useLayoutEffect(() => {
-    const container = contentRef.current;
-    if (!priority || !container || !linkedComment) return;
-    const target = Array.from(
-      container.querySelectorAll<HTMLElement>("[data-comment-id]"),
-    ).find((element) => element.dataset.commentId === linkedComment);
-    if (target) {
-      // Scroll only the thread, keeping its document highlight in place.
-      container.scrollTop +=
-        target.getBoundingClientRect().top - container.getBoundingClientRect().top;
-    }
-  }, [priority, linkedComment, maxHeight]);
-  useLayoutEffect(() => {
-    const element = ref.current;
-    if (!element) return;
-    const update = () => onHeight(id, element.offsetHeight);
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [id, onHeight]);
-  return (
-    <div
-      ref={ref}
-      className={cn(
-        "absolute inset-x-3 top-0",
-        !priority &&
-          "transition-[top] duration-200 ease-out motion-reduce:transition-none",
-      )}
-      style={{ top: y }}
-    >
-      {connected ? (
-        <span
-          aria-hidden="true"
-          className="pointer-events-none absolute -left-3 h-px w-3 bg-[var(--color-border-strong)]"
-          style={{ top: priority ? connectorOffset : 20 }}
-        />
-      ) : null}
-      <div
-        ref={contentRef}
-        className={
-          priority ? "overflow-y-auto overscroll-contain rounded-md" : undefined
-        }
-        style={{ maxHeight: priority ? maxHeight : undefined }}
-      >
-        {children}
+        <div
+          role="group"
+          aria-label="Filter comments"
+          className="mt-1 flex gap-4 text-xs"
+        >
+          {LIST_FILTERS.map((f) => (
+            <button
+              key={f}
+              type="button"
+              aria-pressed={filter === f}
+              onClick={() => setFilter(f)}
+              className={cn(
+                "min-h-10 min-w-10 border-b-2 px-1 capitalize transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]",
+                filter === f
+                  ? "border-[var(--color-accent)] font-medium text-[var(--color-accent)]"
+                  : "border-transparent text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]",
+              )}
+            >
+              {f}
+            </button>
+          ))}
+        </div>
       </div>
-    </div>
-  );
-}
-
-function CommentCard({
-  c,
-  docId,
-  autoReveal = true,
-}: {
-  c: Comment;
-  docId: string;
-  autoReveal?: boolean;
-}) {
-  const { activeComment, setActiveComment, signIn, unanchoredComments } = useDoc();
-  const cardRef = useRef<HTMLElement>(null);
-  const active = activeComment === c.id;
-  const [linkParams] = useSearchParams();
-  const linkedComment = linkParams.get("comment");
-  useEffect(() => {
-    const card = cardRef.current;
-    if (!active || !autoReveal || !card) return;
-    const container = card.closest<HTMLElement>("[data-comment-scroll]");
-    if (!container) return;
-    const target =
-      Array.from(card.querySelectorAll<HTMLElement>("[data-comment-id]")).find(
-        (element) => element.dataset.commentId === linkedComment,
-      ) || card;
-    container.scrollTop +=
-      target.getBoundingClientRect().top - container.getBoundingClientRect().top - 16;
-  }, [active, autoReveal, linkedComment]);
-  const resolved = c.status === COMMENT_STATUS.resolved;
-  const toggleActive = () => setActiveComment(active ? undefined : c.id);
-  // The reply field is always there on an open thread; on a resolved one,
-  // once the thread is picked.
-  const showReply = !signIn && (!resolved || active);
-  return (
-    <article
-      ref={cardRef}
-      data-comment-id={c.id}
-      role="button"
-      tabIndex={0}
-      aria-current={active || undefined}
-      // A card: the thread's messages, then the reply field.
-      className={cn(
-        "group cursor-pointer overflow-hidden rounded-xl bg-[var(--color-surface)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]",
-        // Fill only, no stroke or shadow: the picked one gets a thin accent ring.
-        active && "ring-[1.5px] ring-inset ring-[var(--color-accent)]",
-      )}
-      onClick={toggleActive}
-      onFocusCapture={(event) => {
-        if (event.target instanceof HTMLTextAreaElement) setActiveComment(c.id);
-      }}
-      onKeyDown={(e) => {
-        // Only toggle when the card itself is focused, not when typing in the
-        // reply field or activating a nested button.
-        if (e.target !== e.currentTarget) return;
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          toggleActive();
-        }
-      }}
-    >
-      <div className="px-3 py-3">
-        {unanchoredComments.has(c.id) && (
-          <Badge variant="warning" className="mb-2">
-            Highlight not currently visible
-          </Badge>
-        )}
-        <Message
-          c={c}
-          docId={docId}
-          thread
-          actions={
-            <>
-              {resolved ? (
-                <span className="shrink-0 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-                  Resolved
-                </span>
-              ) : null}
-              {/* Shown on hover and while the thread is open, so a list of
-                  threads reads as text, not as rows of icons. */}
-              <span
-                className={cn(
-                  "-my-1 ml-auto flex shrink-0 items-center transition-opacity duration-150",
-                  active
-                    ? "opacity-100"
-                    : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
-                )}
-              >
-                {!signIn ? (
-                  <ResolveButton c={c} docId={docId} className="h-7 w-7" />
-                ) : null}
-                <MoreMenu c={c} docId={docId} thread className="h-7 w-7" />
-              </span>
-            </>
-          }
-        />
-        <Replies c={c} docId={docId} />
-        {/* The reply field sits at the replies' level: what you type there
-            becomes one of them. */}
-        {showReply ? (
-          <div className="ml-7 mt-3" onClick={(event) => event.stopPropagation()}>
-            <ReplyRow c={c} docId={docId} className="border-0 p-0" />
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2">
+        {commentsLoading ? (
+          <div className="space-y-2 p-2">
+            <Skeleton className="h-16 w-full rounded-md" />
+            <Skeleton className="h-16 w-full rounded-md" />
           </div>
-        ) : null}
+        ) : commentsError ? (
+          <p className="p-3 text-sm text-[var(--color-fg-muted)]">
+            Could not load comments.
+          </p>
+        ) : items.length === 0 ? (
+          <CommentsEmptyState filter={filter} />
+        ) : (
+          <ul className="space-y-1">
+            {items.map((c) => (
+              <li key={c.id}>
+                <button
+                  type="button"
+                  onClick={() => onPick(c.id)}
+                  className="w-full rounded-lg px-2 py-2 text-left transition-colors hover:bg-[var(--color-surface-muted)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
+                >
+                  <span className="flex items-center gap-2">
+                    <PersonAvatar who={c.author} />
+                    <span className="min-w-0 truncate text-xs font-semibold">
+                      {principalLabel(c.author)}
+                    </span>
+                    {c.created_at ? (
+                      <span className="shrink-0 text-[11px] text-[var(--color-fg-muted)]">
+                        <RelativeTime iso={c.created_at} />
+                      </span>
+                    ) : null}
+                    {c.status === COMMENT_STATUS.resolved ? (
+                      <span className="ml-auto shrink-0 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                        Resolved
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="ml-7 block">
+                    <Quote text={anchorLabel(c)} />
+                    <span className="mt-1 line-clamp-2 block text-sm break-words">
+                      {c.body}
+                    </span>
+                    {lost(c) ? (
+                      <Badge variant="warning" className="mt-1">
+                        Not found in this version
+                      </Badge>
+                    ) : null}
+                    {c.replies?.length ? (
+                      <span className="mt-0.5 block text-xs text-[var(--color-fg-muted)]">
+                        {c.replies.length}{" "}
+                        {c.replies.length === 1 ? "reply" : "replies"}
+                      </span>
+                    ) : null}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
-    </article>
+    </div>
+  );
+}
+
+function CommentsEmptyState({ filter }: { filter: ListFilter }) {
+  const titles: Record<ListFilter, string> = {
+    all: "No comments yet",
+    open: "No open comments",
+    resolved: "No resolved comments yet",
+    "for you": "No comments mention you",
+  };
+  return (
+    <EmptyState
+      icon={<MessageSquareText className="h-5 w-5" />}
+      title={titles[filter]}
+      description={
+        filter === COMMENT_STATUS.resolved
+          ? "Resolved conversations will appear here."
+          : "Select text, or press C and click a spot, to start a thread."
+      }
+    />
   );
 }

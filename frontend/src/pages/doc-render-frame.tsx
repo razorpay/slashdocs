@@ -10,14 +10,17 @@ import { useLocation } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type Anchor } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
-import { matchesCommentFilter } from "@/lib/constants";
+import { COMMENT_STATUS } from "@/lib/constants";
 import { Center } from "@/components/ui/misc";
 import { CHORD_KEYS } from "@/lib/esc-chord";
 import { cursorsShownStore, parseCursorSpot } from "@/lib/live-cursors";
+import { principalColor } from "@/lib/principals";
 import { useDocumentExport } from "./use-document-export";
 import { useDoc } from "./doc-context";
 import { useBridgeHost } from "./use-bridge-host";
 import { useTextAutosave } from "./use-text-autosave";
+import { typingOrInLayer, useCommentPins } from "./use-comment-pins";
+import { CommentPopovers } from "./doc-comment-popover";
 import type { TextEditResult } from "./doc-context";
 
 const FORWARDED_KEYS = new Set<string>([
@@ -35,24 +38,24 @@ export function RenderFrame() {
     docId,
     version,
     comments,
-    commentFilter,
     drafts,
     activeComment,
     startDraft,
+    principal,
     signIn,
     handleDocCommentClick,
     setUnanchoredComments,
     setCommentPositions,
-    setCommentViewport,
+    setDocumentHeight,
     registerDocumentScroller,
     registerDocumentPrinter,
-    syncCommentRail,
     handleRenderedDocumentClick,
     subscribeDocumentKV,
     reportViewport,
     moveCursor,
     subscribeCursors,
     followedCursor,
+    onUnfollowCursor,
     editable,
     setSaveState,
     stayOnVersion,
@@ -100,20 +103,26 @@ export function RenderFrame() {
   const readyRef = useRef(ready);
   readyRef.current = ready;
 
+  // Open threads on text are highlighted, and a resolved one while it is
+  // open, as from the comments list. Point comments are pins instead.
   const paintPayload = useMemo(
     () => [
       ...comments
-        // Match the sidebar filter so resolved threads can also be positioned
-        // beside their text when browsing All or Resolved.
-        .filter((c) => matchesCommentFilter(c.status, commentFilter))
+        .filter(
+          (c) =>
+            !c.anchor?.point &&
+            (c.status !== COMMENT_STATUS.resolved || c.id === activeComment),
+        )
         .map((c) => ({
           id: c.id,
           quote: c.selected_text || c.anchor?.quote,
           anchor: c.anchor,
         })),
-      ...drafts.map(({ id, quote, anchor }) => ({ id, quote, anchor })),
+      ...drafts
+        .filter((d) => !d.anchor?.point)
+        .map(({ id, quote, anchor }) => ({ id, quote, anchor })),
     ],
-    [comments, commentFilter, drafts],
+    [comments, activeComment, drafts],
   );
 
   useDocumentExport(ref, frameOrigin, ready, registerDocumentPrinter);
@@ -121,15 +130,16 @@ export function RenderFrame() {
   useEffect(() => {
     // Anchoring results belong to the frame that produced them; drop them so
     // "highlight not found" badges never linger across version switches.
-    setUnanchoredComments(new Set());
+    setUnanchoredComments("text", new Set());
+    setUnanchoredComments("pins", new Set());
     setCommentPositions(new Map());
-    setCommentViewport({ scrollTop: 0, scrollHeight: 1 });
+    setDocumentHeight(1);
   }, [
     frameOrigin,
     token.data?.url,
     setUnanchoredComments,
     setCommentPositions,
-    setCommentViewport,
+    setDocumentHeight,
   ]);
 
   useEffect(() => {
@@ -379,9 +389,7 @@ export function RenderFrame() {
       if (e.data?.type === "slashdocs:selection") {
         const anchor = e.data.anchor as Partial<Anchor> | undefined;
         const quote = anchor?.quote ?? e.data.quote;
-        const top =
-          typeof e.data.top === "number" ? e.data.top * scaleRef.current : undefined;
-        if (quote) startDraft({ quote, anchor, top });
+        if (quote) startDraft({ quote, anchor });
       }
       if (e.data?.type === "slashdocs:viewport") {
         reportViewport(textLinkAnchor(e.data.anchor) ?? undefined);
@@ -419,6 +427,9 @@ export function RenderFrame() {
       if (e.data?.type === "slashdocs:document-click") {
         handleRenderedDocumentClick();
       }
+      if (e.data?.type === "slashdocs:unfollowed") {
+        onUnfollowCursor?.();
+      }
       // The document reloaded itself in place: it has no highlights until it
       // is painted again.
       if (e.data?.type === "slashdocs:ready" && readyRef.current) {
@@ -453,21 +464,12 @@ export function RenderFrame() {
           e.data.results as Array<{ id?: unknown; anchored?: unknown }>
         ).slice(0, 10_000);
         setUnanchoredComments(
+          "text",
           new Set(
             results
               .filter((r) => r && r.anchored === false && typeof r.id === "string")
               .map((r) => r.id as string),
           ),
-        );
-      }
-      if (
-        e.data?.type === "slashdocs:comment-scroll" &&
-        typeof e.data.scrollTop === "number" &&
-        Number.isFinite(e.data.scrollTop) &&
-        readyRef.current
-      ) {
-        syncCommentRail(
-          e.data.scrollTop * scaleRef.current + (wrapperRef.current?.scrollTop || 0),
         );
       }
       if (
@@ -494,19 +496,10 @@ export function RenderFrame() {
         }
         setCommentPositions(positions);
         if (
-          typeof e.data.scrollTop === "number" &&
           typeof e.data.scrollHeight === "number" &&
-          Number.isFinite(e.data.scrollTop) &&
           Number.isFinite(e.data.scrollHeight)
-        ) {
-          const scrollTop =
-            e.data.scrollTop * scaleRef.current + (wrapperRef.current?.scrollTop || 0);
-          syncCommentRail(scrollTop);
-          setCommentViewport({
-            scrollTop,
-            scrollHeight: Math.max(1, e.data.scrollHeight * scaleRef.current),
-          });
-        }
+        )
+          setDocumentHeight(Math.max(1, e.data.scrollHeight * scaleRef.current));
       }
       if (
         e.data?.type === "slashdocs:keydown" &&
@@ -541,11 +534,34 @@ export function RenderFrame() {
     handleRenderedDocumentClick,
     setUnanchoredComments,
     setCommentPositions,
-    setCommentViewport,
-    syncCommentRail,
+    setDocumentHeight,
     applyZoom,
     textChanged,
+    onUnfollowCursor,
   ]);
+
+  useCommentPins(ref, frameOrigin, ready, postToFrame);
+
+  // "/" opens cursor chat at the pointer even when the app has the focus, as
+  // right after following someone from the bar. The document opens it only
+  // when the pointer is over it.
+  useEffect(() => {
+    if (!ready) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey || typingOrInLayer(e))
+        return;
+      postToFrame({ type: "slashdocs:open-cursor-chat" });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [ready, postToFrame]);
+
+  // A signed-in reader chats at their cursor in their cursor color. A
+  // signed-out reader sees the chat of others but cannot send.
+  const chatColor = principal && !signIn ? principalColor(principal) : undefined;
+  useEffect(() => {
+    if (ready) postToFrame({ type: "slashdocs:cursor-chat", color: chatColor });
+  }, [ready, chatColor, postToFrame]);
 
   // The page holds the event stream; the bridge host forwards its KV changes.
   useEffect(() => subscribeDocumentKV(deliverKV), [subscribeDocumentKV, deliverKV]);
@@ -562,13 +578,17 @@ export function RenderFrame() {
     };
   }, [ready, cursorsShown, subscribeCursors, postToFrame]);
 
-  // Go to a followed cursor once the frame shows its version. The effect above
-  // gave the frame the cursor first.
+  // Go to a viewer, or follow them, once the frame shows their version, or
+  // stop. The effect above gave the frame the cursor first.
   const followed = useRef(followedCursor);
   useEffect(() => {
-    if (!ready || !followedCursor || followed.current === followedCursor) return;
+    if (!ready || followed.current === followedCursor) return;
     followed.current = followedCursor;
-    postToFrame({ type: "slashdocs:follow-cursor", session: followedCursor.session });
+    postToFrame(
+      followedCursor
+        ? { type: "slashdocs:follow-cursor", ...followedCursor }
+        : { type: "slashdocs:unfollow-cursor" },
+    );
   }, [ready, followedCursor, postToFrame]);
 
   // Push fresh paint data once the frame is ready and whenever it changes.
@@ -612,6 +632,13 @@ export function RenderFrame() {
           sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
         />
       </div>
+      <CommentPopovers
+        frame={ref}
+        bounds={wrapperRef}
+        origin={frameOrigin}
+        ready={ready}
+        postToFrame={postToFrame}
+      />
       {showZoomBadge && (
         <button
           type="button"

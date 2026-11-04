@@ -1,16 +1,15 @@
 import { createContext, useContext } from "react";
-import type { Anchor, Comment, CursorSpot, Principal } from "@/api";
-import type { CommentFilter } from "@/lib/constants";
+import type { Anchor, AnchorPoint, Comment, CursorSpot, Principal } from "@/api";
 import type { CommentDraft } from "@/lib/comment-drafts";
 import type { TextChange } from "@/lib/text-edits";
 import type { CursorListener, DocumentKVListener } from "./use-document-stream";
 
-// A text selection captured from the render bridge that a new comment will
-// anchor to. `anchor` is present only when the bridge supplies real offsets.
+// What a new comment anchors to, from the render bridge: a text selection, or
+// a spot in an element (anchor.point). `anchor` is present only when the
+// bridge supplies real offsets.
 export type PendingSelection = {
   quote: string;
   anchor?: Partial<Anchor>;
-  top?: number;
 };
 
 export type CommentPosition = {
@@ -18,10 +17,9 @@ export type CommentPosition = {
   bottom: number;
 };
 
-export type CommentViewport = {
-  scrollTop: number;
-  scrollHeight: number;
-};
+// Comments whose highlight or pin the bridge could not place in the version
+// on screen. Text and pins report on their own.
+export type UnanchoredKind = "text" | "pins";
 
 // What the rendered document reports when asked for its text edits.
 export type TextEditResult = { changes: TextChange[]; unsupported: boolean };
@@ -30,12 +28,15 @@ export type TextEditResult = { changes: TextChange[]; unsupported: boolean };
 // saved, or failed and waiting to try again.
 export type SaveState = "idle" | "unsaved" | "saving" | "saved" | "failed";
 
+// A request to go to another viewer: once to their cursor, or continuously
+// to their view. Each request is a new object, so the same viewer can be
+// gone to again.
+export type FollowRequest = { session: string; continuous: boolean };
+
 export type DocContextValue = {
   docId: string;
   version: string;
   comments: Comment[];
-  commentFilter: CommentFilter;
-  setCommentFilter: (filter: CommentFilter) => void;
   commentsLoading: boolean;
   commentsError: boolean;
   // The server can notify about comments. `slashdocs local` cannot.
@@ -46,32 +47,40 @@ export type DocContextValue = {
   drafts: CommentDraft[];
   startDraft: (selection: PendingSelection) => void;
   saveDraft: (id: string, text: Pick<CommentDraft, "body" | "mentions">) => void;
+  // moveDraft moves an unsent point comment to a new spot.
+  moveDraft: (id: string, anchor: Partial<Anchor> & { point: AnchorPoint }) => void;
   discardDraft: (id: string) => void;
+  // The thread or draft whose popover is open.
   activeComment?: string;
   setActiveComment: (id?: string) => void;
-  // Ids of comments and drafts whose highlight the bridge could not anchor in the
-  // currently rendered version; replaced wholesale on every repaint.
+  // Ids of comments and drafts that the bridge could not place in the version
+  // on screen; replaced wholesale on every repaint.
   unanchoredComments: ReadonlySet<string>;
-  setUnanchoredComments: (ids: ReadonlySet<string>) => void;
+  setUnanchoredComments: (kind: UnanchoredKind, ids: ReadonlySet<string>) => void;
   commentPositions: ReadonlyMap<string, CommentPosition>;
   setCommentPositions: (positions: ReadonlyMap<string, CommentPosition>) => void;
-  commentViewport: CommentViewport;
-  setCommentViewport: (viewport: CommentViewport) => void;
+  // The scroll height of the document, in which commentPositions lie.
+  documentHeight: number;
+  setDocumentHeight: (height: number) => void;
   registerDocumentPrinter: (print: (() => void) | null) => void;
   printDocument: () => void;
   registerDocumentScroller: (scroller: ((top: number) => void) | null) => void;
   scrollDocumentTo: (top: number) => void;
-  registerCommentRailSync: (sync: ((top: number) => void) | null) => void;
-  syncCommentRail: (top: number) => void;
   handleDocCommentClick: (id: string) => void;
   handleRenderedDocumentClick: () => void;
+  // The reader is placing a comment pin: the next click in the document
+  // drops it.
+  placingPin: boolean;
+  setPlacingPin: (on: boolean) => void;
   subscribeDocumentKV: (listener: DocumentKVListener) => () => void;
   reportViewport: (anchor?: Partial<Anchor>) => void;
   moveCursor: (spot: CursorSpot | null) => void;
   subscribeCursors: (listener: CursorListener) => () => void;
-  // The cursor of the viewer the reader asked to go to. Each request is a new
-  // object, so the same viewer can be followed again.
-  followedCursor?: { session: string };
+  // The viewer the reader asked to go to, if any.
+  followedCursor?: FollowRequest;
+  // The reader stopped following in the document, by moving the view or with
+  // the stop button.
+  onUnfollowCursor?: () => void;
   // An editor edits the words of the rendered document in place, and the
   // edits save as they pause.
   editable: boolean;

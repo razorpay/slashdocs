@@ -1,0 +1,203 @@
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
+import { cn } from "@/lib/cn";
+import { EDGE, placeBeside, type Rect } from "@/lib/place-beside";
+import { anchorLabel } from "@/lib/comment-pins";
+import { principalLabel } from "@/lib/principals";
+import { useIsMobile } from "@/lib/use-media-query";
+import { useDoc } from "./doc-context";
+import { CommentComposer, CommentThread } from "./doc-comments";
+import { PersonAvatar } from "./doc-comment-parts";
+import { useFrameMessage } from "./use-frame-message";
+
+const WIDTH = 340;
+
+// toApp turns a box in the render frame's viewport into one in the app's.
+function toApp(frame: HTMLIFrameElement, r: Rect): Rect {
+  const f = frame.getBoundingClientRect();
+  const scale = frame.offsetWidth > 0 ? f.width / frame.offsetWidth : 1;
+  return {
+    left: f.left + r.left * scale,
+    top: f.top + r.top * scale,
+    width: r.width * scale,
+    height: r.height * scale,
+  };
+}
+
+function parseRect(value: unknown): Rect | null {
+  const r = value as Record<string, unknown> | null;
+  const num = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
+  return r && num(r.left) && num(r.top) && num(r.width) && num(r.height)
+    ? { left: r.left, top: r.top, width: r.width, height: r.height }
+    : null;
+}
+
+// Popover floats beside its anchor, or at the top right of the document when
+// it has none. On a narrow screen it is a sheet at the bottom of the screen,
+// which leaves the document above it.
+function Popover({
+  anchor,
+  bounds,
+  label,
+  onClose,
+  children,
+}: {
+  anchor: Rect | null;
+  bounds: RefObject<HTMLElement | null>;
+  label: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const mobile = useIsMobile();
+  const [at, setAt] = useState<{ x: number; y: number }>();
+  useLayoutEffect(() => {
+    const box = bounds.current?.getBoundingClientRect();
+    const el = ref.current;
+    if (mobile || !box || !el) return;
+    const size = { width: el.offsetWidth, height: el.offsetHeight };
+    setAt(
+      placeBeside(
+        anchor ?? { left: box.right - EDGE, top: box.top, width: 0, height: 0 },
+        size,
+        box,
+      ),
+    );
+  }, [anchor, bounds, mobile, children]);
+  const closeOnEscape = (e: KeyboardEvent) => {
+    if (e.key !== "Escape") return;
+    e.stopPropagation();
+    onClose();
+  };
+  return (
+    <div
+      ref={ref}
+      role="dialog"
+      aria-label={label}
+      onKeyDown={closeOnEscape}
+      style={
+        mobile ? undefined : { left: at?.x ?? -9999, top: at?.y ?? -9999, width: WIDTH }
+      }
+      className={cn(
+        "fixed z-40 flex flex-col overflow-hidden bg-[var(--color-surface)] shadow-xl ring-1 ring-[var(--color-border)]",
+        mobile
+          ? "inset-x-0 bottom-0 max-h-[70vh] rounded-t-2xl pb-[env(safe-area-inset-bottom)]"
+          : "max-h-[min(70vh,560px)] rounded-xl transition-opacity duration-150",
+        !mobile && !at && "opacity-0",
+      )}
+    >
+      <div className="min-h-0 overflow-y-auto overscroll-contain">{children}</div>
+    </div>
+  );
+}
+
+// CommentPopovers shows the open thread, or the new comment, beside its
+// highlight or pin, and the threads of a pin cluster. The bridge reports
+// where the open one's anchor is on each frame that it moves.
+export function CommentPopovers({
+  frame,
+  bounds,
+  origin,
+  ready,
+  postToFrame,
+}: {
+  frame: RefObject<HTMLIFrameElement | null>;
+  bounds: RefObject<HTMLElement | null>;
+  origin: string | null;
+  ready: boolean;
+  postToFrame: (message: Record<string, unknown>) => void;
+}) {
+  const { activeComment, setActiveComment, comments, drafts, unanchoredComments } =
+    useDoc();
+  const [anchor, setAnchor] = useState<{ id: string; rect: Rect | null }>();
+  const [cluster, setCluster] = useState<{ ids: string[]; rect: Rect }>();
+  useEffect(() => {
+    if (ready) postToFrame({ type: "slashdocs:watch", id: activeComment ?? null });
+  }, [ready, activeComment, postToFrame]);
+  useFrameMessage(frame, origin, ready, (data) => {
+    const iframe = frame.current;
+    if (!iframe) return;
+    if (data.type === "slashdocs:anchor-rect" && typeof data.id === "string") {
+      const rect = parseRect(data.rect);
+      setAnchor({ id: data.id, rect: rect && toApp(iframe, rect) });
+    }
+    if (data.type === "slashdocs:pin-cluster" && Array.isArray(data.ids)) {
+      const rect = parseRect(data.rect);
+      const ids = data.ids.filter((id): id is string => typeof id === "string");
+      if (rect) setCluster({ ids: ids.slice(0, 500), rect: toApp(iframe, rect) });
+    }
+    if (data.type === "slashdocs:document-click") setCluster(undefined);
+  });
+
+  const close = () => setActiveComment(undefined);
+  const draft = drafts.find((d) => d.id === activeComment);
+  const thread = comments.find((c) => c.id === activeComment);
+  const rect = anchor && anchor.id === activeComment ? anchor.rect : null;
+  // Until the bridge reports the anchor, a thread waits, so it does not
+  // jump; one whose text or pin is gone floats at the top right.
+  const placed = !!rect || (!!activeComment && unanchoredComments.has(activeComment));
+  const clustered = cluster && comments.filter((c) => cluster.ids.includes(c.id));
+  return (
+    <>
+      {(draft || thread) && placed ? (
+        <Popover
+          key={activeComment}
+          anchor={rect}
+          bounds={bounds}
+          label={draft ? "New comment" : "Comment thread"}
+          onClose={close}
+        >
+          {draft ? (
+            <CommentComposer draft={draft} />
+          ) : (
+            <CommentThread c={thread!} onClose={close} />
+          )}
+        </Popover>
+      ) : null}
+      {cluster && clustered?.length ? (
+        <Popover
+          anchor={cluster.rect}
+          bounds={bounds}
+          label="Comment threads"
+          onClose={() => setCluster(undefined)}
+        >
+          <ul className="p-1.5">
+            {clustered.map((c) => (
+              <li key={c.id}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCluster(undefined);
+                    setActiveComment(c.id);
+                  }}
+                  className="flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left hover:bg-[var(--color-surface-muted)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
+                >
+                  <PersonAvatar who={c.author} />
+                  <span className="min-w-0">
+                    <span className="block truncate text-xs font-semibold">
+                      {principalLabel(c.author)}
+                      {anchorLabel(c) ? (
+                        <span className="font-normal text-[var(--color-fg-muted)]">
+                          {" "}
+                          on {anchorLabel(c)}
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="line-clamp-2 text-sm break-words">{c.body}</span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </Popover>
+      ) : null}
+    </>
+  );
+}

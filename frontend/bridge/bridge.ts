@@ -13,7 +13,8 @@ import {
   highlightRange,
   refreshSVGRects,
 } from "./highlight.ts";
-import { createCursorLayer, trackPointer } from "./cursors.ts";
+import { createCursorChat, createCursorLayer, trackPointer } from "./cursors.ts";
+import { createPinLayer, parsePins, type PinRect } from "./pins.ts";
 import { startTextEditing, type TextEditor } from "./text-editing.ts";
 import { CHORD_KEYS } from "../src/lib/esc-chord.ts";
 import {
@@ -122,7 +123,29 @@ type Theme = "dark" | "light";
 (function bridge(): void {
   const appOrigin = window.__SLASHDOCS_APP_ORIGIN__ || "*";
   const frame = document.getElementById("slashdocs-doc") as HTMLIFrameElement;
-  const cursors = createCursorLayer(doc);
+  const cursors = createCursorLayer(doc, () =>
+    parent.postMessage({ type: "slashdocs:unfollowed" }, targetOrigin()),
+  );
+  const pins = createPinLayer({
+    doc,
+    post: (message) => parent.postMessage(message, targetOrigin()),
+  });
+  // This reader's cursor color, which the app gives only to a reader who can
+  // chat at their cursor.
+  let chatColor: string | undefined;
+  // The cursor chat of the current document, which the app opens when "/" is
+  // pressed outside the document.
+  let chat: { open: () => boolean } | null = null;
+  // A focused pin sits in this window, over the document, so its keys reach
+  // this window, not the document. Give them the document's shortcuts (Esc,
+  // C, the Esc chords) but leave the button its own keys.
+  let documentKeys: ((ev: KeyboardEvent) => void) | null = null;
+  document.addEventListener("keydown", (ev) => {
+    const target = ev.target as Element | null;
+    if (!target?.closest?.(".sd-pins")) return;
+    if (ev.key === "Enter" || ev.key === " " || ev.key === "Tab") return;
+    documentKeys?.(ev);
+  });
   let kvRequestID = 0;
   const kvPending: Record<string, KVPendingRequest> = {};
   let githubRequestID = 0;
@@ -824,18 +847,6 @@ type Theme = "dark" | "light";
   // whether a highlight survived a document mutation intact.
   const paintedQuotes = new Map<string, string>();
 
-  function postCommentScroll(): void {
-    const d = doc();
-    if (!d) return;
-    parent.postMessage(
-      {
-        type: "slashdocs:comment-scroll",
-        scrollTop: d.defaultView?.scrollY || d.documentElement.scrollTop || 0,
-      },
-      targetOrigin(),
-    );
-  }
-
   // Report a short passage in the middle of the viewport, so other viewers
   // can follow this reader. Debounced: one scroll fires many events.
   const VIEWPORT_QUOTE_LENGTH = 64;
@@ -921,7 +932,6 @@ type Theme = "dark" | "light";
       {
         type: "slashdocs:comment-positions",
         positions,
-        scrollTop,
         scrollHeight,
       },
       targetOrigin(),
@@ -1166,6 +1176,58 @@ type Theme = "dark" | "light";
     scheduleCommentPositions();
   }
 
+  // The thread whose popover the app shows, and the last rect sent for it.
+  let watched: string | null = null;
+  let watchFrame = 0;
+  let watchedRect = "";
+
+  // watchAnchor reports where a thread's pin or highlight is, each frame
+  // that it moves, so the app keeps its popover beside it. A rect of null
+  // means that this version has neither.
+  function watchAnchor(id: string | null): void {
+    watched = id;
+    watchedRect = "";
+    cancelAnimationFrame(watchFrame);
+    if (id) watchFrame = requestAnimationFrame(postWatched);
+  }
+
+  function postWatched(): void {
+    const id = watched;
+    if (!id) return;
+    const rect = pins.rect(id) ?? marksRect(id);
+    const key = JSON.stringify(rect);
+    if (key !== watchedRect) {
+      watchedRect = key;
+      parent.postMessage({ type: "slashdocs:anchor-rect", id, rect }, targetOrigin());
+    }
+    watchFrame = requestAnimationFrame(postWatched);
+  }
+
+  // marksRect gives the box around a text comment's highlight, or null when
+  // it has none.
+  function marksRect(id: string): PinRect | null {
+    const d = doc();
+    if (!d) return null;
+    const cid = CSS.escape(id);
+    let box: DOMRect | null = null;
+    for (const mark of d.querySelectorAll(
+      `mark.slashdocs-mark[data-cid="${cid}"],.slashdocs-svg-mark-rect[data-cid="${cid}"]`,
+    )) {
+      const r = mark.getBoundingClientRect();
+      if (!r.width && !r.height) continue;
+      box = box
+        ? new DOMRect(
+            Math.min(box.left, r.left),
+            Math.min(box.top, r.top),
+            Math.max(box.right, r.right) - Math.min(box.left, r.left),
+            Math.max(box.bottom, r.bottom) - Math.min(box.top, r.top),
+          )
+        : r;
+    }
+    if (!box) return null;
+    return { left: box.left, top: box.top, width: box.width, height: box.height };
+  }
+
   function activate(e: MouseEvent): void {
     const m = (e.target &&
       (e.target as Element).closest &&
@@ -1293,6 +1355,7 @@ type Theme = "dark" | "light";
     // The prelude in the document reads this before its own scripts run, and
     // a document that reloads itself reads it again on the way back.
     window.__slashdocsTheme = t;
+    pins.setTheme(t);
     const d = doc();
     if (!d || !d.documentElement) return;
     for (const name of PUBLIC_NAMES) {
@@ -1382,13 +1445,8 @@ type Theme = "dark" | "light";
     if (!d?.body) return;
     const anchor = describeAnchor(d.body, range);
     if (!anchor) return;
-    const rect = range.getBoundingClientRect();
-    const scrollTop = d.defaultView?.scrollY || d.documentElement.scrollTop || 0;
     dismissSelectionAction();
-    parent.postMessage(
-      { type: "slashdocs:selection", anchor, top: rect.top + scrollTop },
-      targetOrigin(),
-    );
+    parent.postMessage({ type: "slashdocs:selection", anchor }, targetOrigin());
   }
 
   function selection(): void {
@@ -1762,6 +1820,9 @@ type Theme = "dark" | "light";
     mutationRepaintTimer = null;
     mutationRepaintDeadline = 0;
     observeMutations(d);
+    // Before the click listeners below: a click that places a pin goes no
+    // further.
+    pins.start(d);
     resetKVHistory();
     injectStyles();
     installSlashdocsAPI();
@@ -1887,23 +1948,36 @@ type Theme = "dark" | "light";
           behavior,
         });
     };
-    d.addEventListener("keydown", (ev) => {
+    const onKey = (ev: KeyboardEvent) => {
       if (ev.key === "Escape") dismissSelectionAction();
       const modified = ev.metaKey || ev.ctrlKey || ev.altKey;
-      // C comments on the selected text, as in Figma. Esc then C still
-      // toggles the comments panel. Where C types, as in the document
-      // editor, Ctrl or Cmd with Alt and M comments, as in Google Docs.
-      if (
-        (ev.key === "c" &&
-          !modified &&
-          !chordArmedAt &&
-          !isTextEditingTarget(ev.target)) ||
-        ((ev.metaKey || ev.ctrlKey) && ev.altKey && ev.code === "KeyM")
-      ) {
+      if (ev.key === "Escape" && pins.isPlacing()) {
+        ev.preventDefault();
+        pins.setPlacing(false);
+        return;
+      }
+      // C comments on the selected text, as in Figma, and with nothing
+      // selected it places a comment pin. Esc then C still opens the
+      // comments. Where C types, as in the document editor, Ctrl or Cmd
+      // with Alt and M comments on the selection, as in Google Docs.
+      const inChord = chordArmedAt > 0 && Date.now() - chordArmedAt <= 800;
+      const plainC =
+        ev.key === "c" &&
+        !modified &&
+        !inChord &&
+        !ev.defaultPrevented &&
+        !isTextEditingTarget(ev.target);
+      if (plainC || ((ev.metaKey || ev.ctrlKey) && ev.altKey && ev.code === "KeyM")) {
         const range = selectedRange(d.getSelection());
         if (range) {
           ev.preventDefault();
           commitSelection(range);
+          return;
+        }
+        if (plainC) {
+          ev.preventDefault();
+          chordArmedAt = 0;
+          pins.setPlacing(!pins.isPlacing());
           return;
         }
       }
@@ -1964,13 +2038,16 @@ type Theme = "dark" | "light";
         runVimScroll(vim.action, ev.repeat);
       }
       handleKVUndoRedoShortcut(ev);
-    });
+    };
+    d.addEventListener("keydown", onKey);
+    documentKeys = onKey;
     // Forward trackpad pinch-to-zoom (wheel + ctrlKey) to parent so the
-    // app can scale only the document iframe instead of browser-zooming.
-    d.addEventListener(
+    // app can scale only the document iframe instead of browser-zooming. A
+    // document that zooms itself takes the wheel first, and keeps it.
+    d.defaultView?.addEventListener(
       "wheel",
       function (ev) {
-        if (!ev.ctrlKey) return;
+        if (!ev.ctrlKey || ev.defaultPrevented) return;
         ev.preventDefault();
         parent.postMessage(
           {
@@ -1991,17 +2068,17 @@ type Theme = "dark" | "light";
       () => parent.postMessage({ type: "slashdocs:document-click" }, targetOrigin()),
       true,
     );
-    d.defaultView?.addEventListener("scroll", postCommentScroll, {
-      passive: true,
-    });
     d.defaultView?.addEventListener("resize", scheduleCommentPositions);
     // Capture scrolls of nested containers too, not only the window.
     d.addEventListener("scroll", scheduleViewport, { capture: true, passive: true });
     d.addEventListener("scroll", cursors.refresh, { capture: true, passive: true });
     d.defaultView?.addEventListener("resize", cursors.refresh);
-    trackPointer(d, (spot) =>
+    d.defaultView?.addEventListener("resize", cursors.refollow);
+    cursors.watchInput(d);
+    const pointer = trackPointer(d, (spot) =>
       parent.postMessage({ type: "slashdocs:pointer", spot }, targetOrigin()),
     );
+    chat = pointer ? createCursorChat(d, pointer, () => chatColor) : null;
     // A document that reloads by itself while being edited stays editable.
     if (textEditor) {
       textEditor = null;
@@ -2137,7 +2214,27 @@ type Theme = "dark" | "light";
     } else if (e.data.type === "slashdocs:clear-cursors") {
       cursors.clear();
     } else if (e.data.type === "slashdocs:follow-cursor") {
-      cursors.follow(String(e.data.session || ""));
+      cursors.follow(String(e.data.session || ""), e.data.continuous === true);
+    } else if (e.data.type === "slashdocs:unfollow-cursor") {
+      cursors.unfollow();
+    } else if (e.data.type === "slashdocs:open-cursor-chat") {
+      chat?.open();
+    } else if (e.data.type === "slashdocs:cursor-chat") {
+      chatColor =
+        typeof e.data.color === "string" && /^#[0-9a-f]{3,8}$/i.test(e.data.color)
+          ? e.data.color
+          : undefined;
+    } else if (e.data.type === "slashdocs:pins") {
+      pins.setPins(
+        parsePins(e.data.pins),
+        typeof e.data.active === "string" ? e.data.active : undefined,
+      );
+    } else if (e.data.type === "slashdocs:pin-placing") {
+      pins.setPlacing(e.data.on === true);
+    } else if (e.data.type === "slashdocs:pins-release") {
+      pins.releaseOutside();
+    } else if (e.data.type === "slashdocs:watch") {
+      watchAnchor(typeof e.data.id === "string" ? e.data.id : null);
     }
   });
 })();

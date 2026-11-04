@@ -34,10 +34,15 @@ const SECTIONS: { title: string; rows: [keys: string[], label: string][] }[] = [
   {
     title: "Comments",
     rows: [
-      [["C"], "Comment on the selected text"],
+      [["C"], "Comment on the selected text, or on a spot you click"],
+      [["Esc"], "Stop placing a comment"],
       [[MOD, "Alt", "M"], "Comment on the text you edit"],
       [[MOD, "Enter"], "Post a comment"],
     ],
+  },
+  {
+    title: "Cursors",
+    rows: [[["/"], "Chat at your cursor"]],
   },
 ];
 

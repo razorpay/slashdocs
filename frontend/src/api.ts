@@ -67,6 +67,19 @@ export type Anchor = {
   dom_path?: string;
   start_offset?: number;
   end_offset?: number;
+  // Pins the comment to a spot in an element instead of to the quote, which
+  // then holds the start of the element's text.
+  point?: AnchorPoint;
+};
+// A spot in a rendered document: the element by its data-slashdocs-target
+// value or id, and by its child-index path, a label for lists, and x and y
+// as fractions of its box.
+export type AnchorPoint = {
+  target?: string;
+  path?: string;
+  label?: string;
+  x: number;
+  y: number;
 };
 // REACTION_EMOJI is the closed set the server accepts. Values are stable ASCII
 // slugs rather than literal emoji, so each client picks its own glyph.
@@ -118,6 +131,8 @@ export type CommentPatch = {
   body?: string;
   status?: string;
   mentions?: CommentMention[];
+  // Moves a point comment to a new spot.
+  anchor?: Anchor & { point: AnchorPoint };
 };
 
 const COMMENT_MENTIONS_MEDIA_TYPE = "application/vnd.slashdocs.comment-mentions+json";
@@ -247,11 +262,21 @@ export type DocumentPresence = {
   picture_url?: string;
 };
 // A place in a rendered document: the element at a path of child indexes
-// under the body, and fractions of the width and height of that element.
-export type CursorSpot = { path: string; x: number; y: number };
-// A pointer position at time t, in milliseconds on the sender's clock. A
-// hidden point means that the pointer left the document.
-export type CursorPoint = CursorSpot & { t: number; hidden?: boolean };
+// under the body, and fractions of the width and height of that element. z is
+// how much larger the element shows than its layout size, in a document that
+// zooms itself. It is absent when the element is not zoomed.
+export type CursorPlace = { path: string; x: number; y: number; z?: number };
+// Where a viewer's pointer is, in v the place at the center of their view,
+// which those who follow them show, and in m their cursor chat message. A
+// hidden spot means that the pointer left the document; it may still carry
+// the view.
+export type CursorSpot = CursorPlace & {
+  v?: CursorPlace;
+  m?: string;
+  hidden?: boolean;
+};
+// A pointer position at time t, in milliseconds on the sender's clock.
+export type CursorPoint = CursorSpot & { t: number };
 // A batch of pointer positions from one viewer session.
 export type DocumentCursor = {
   session: string;
@@ -542,6 +567,7 @@ export const api = {
           dom_path: anchor?.dom_path ?? "body",
           start_offset: anchor?.start_offset ?? 0,
           end_offset: anchor?.end_offset ?? quote.length,
+          ...(anchor?.point && { point: anchor.point }),
         },
       }),
     }),

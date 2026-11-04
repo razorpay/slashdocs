@@ -1,10 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import type { Comment, Principal } from "@/api";
-import { Comments } from "./doc-comments";
+import { CommentsList } from "./doc-comments";
 import { DocProvider, type DocContextValue } from "./doc-context";
 
 const author: Principal & { type: "user" } = {
@@ -13,8 +13,9 @@ const author: Principal & { type: "user" } = {
   name: "Reviewer",
   email: "reviewer@example.com",
 };
+const reader: Principal = { type: "user", id: "u2", name: "Reader" };
 
-function thread(id: string, status: string): Comment {
+function thread(id: string, status: string, over: Partial<Comment> = {}): Comment {
   return {
     id,
     body: `Thread ${id}`,
@@ -23,147 +24,93 @@ function thread(id: string, status: string): Comment {
     author,
     created_on_version_id: "v1",
     anchor: { quote: "quoted text" },
-  };
-}
-
-function contextValue(over: Partial<DocContextValue> = {}): DocContextValue {
-  return {
-    docId: "doc-1",
-    version: "v1",
-    comments: [],
-    commentFilter: "open",
-    setCommentFilter: vi.fn(),
-    commentsLoading: false,
-    commentsError: false,
-    notifications: false,
-    principal: author,
-    drafts: [],
-    startDraft: vi.fn(),
-    saveDraft: vi.fn(),
-    discardDraft: vi.fn(),
-    activeComment: undefined,
-    setActiveComment: vi.fn(),
-    unanchoredComments: new Set<string>(),
-    setUnanchoredComments: vi.fn(),
-    commentPositions: new Map(),
-    setCommentPositions: vi.fn(),
-    commentViewport: { scrollTop: 0, scrollHeight: 1 },
-    setCommentViewport: vi.fn(),
-    registerDocumentPrinter: vi.fn(),
-    printDocument: vi.fn(),
-    registerDocumentScroller: vi.fn(),
-    scrollDocumentTo: vi.fn(),
-    registerCommentRailSync: vi.fn(),
-    syncCommentRail: vi.fn(),
-    handleDocCommentClick: vi.fn(),
-    handleRenderedDocumentClick: vi.fn(),
-    subscribeDocumentKV: () => () => {},
-    reportViewport: vi.fn(),
-    moveCursor: vi.fn(),
-    subscribeCursors: () => () => {},
-    editable: false,
-    saveState: "idle",
-    setSaveState: vi.fn(),
-    stayOnVersion: vi.fn(),
-    showLatest: vi.fn(),
     ...over,
   };
 }
 
-function renderComments(ctx: DocContextValue) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
+const comments = [
+  thread("open", "open"),
+  thread("resolved", "resolved"),
+  thread("pin", "open", {
+    selected_text: "",
+    anchor: { quote: "", point: { label: "Revenue chart", x: 0.5, y: 0.5 } },
+    replies: [
+      thread("reply", "open", {
+        mentions: [{ principal: { type: "user", id: "u2" }, offset: 0, length: 7 }],
+      }),
+    ],
+  }),
+];
+
+function renderList(over: Partial<DocContextValue> = {}) {
+  const ctx = {
+    docId: "doc-1",
+    comments,
+    commentsLoading: false,
+    commentsError: false,
+    notifications: false,
+    principal: reader,
+    unanchoredComments: new Set<string>(),
+    ...over,
+  } as DocContextValue;
+  const props = { onPick: vi.fn(), onPlacePin: vi.fn(), onClose: vi.fn() };
   render(
-    <QueryClientProvider client={client}>
+    <QueryClientProvider client={new QueryClient()}>
       <MemoryRouter>
         <DocProvider value={ctx}>
-          <Comments />
+          <CommentsList {...props} />
         </DocProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return props;
 }
 
-// jsdom has no layout. Give each rail card a height, and put the cards below
-// the rail, so that a reveal of a card scrolls the document.
-beforeEach(() => {
-  vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(100);
-  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
-    this: HTMLElement,
-  ) {
-    const top = this.tagName === "ARTICLE" ? 400 : 0;
-    return new DOMRect(0, top, 300, 300);
-  });
-});
+const listed = () =>
+  screen
+    .getAllByRole("listitem")
+    .map((item) => within(item).getByText(/^Thread /).textContent);
 
-afterEach(() => {
-  cleanup();
-  vi.restoreAllMocks();
-});
+afterEach(cleanup);
 
-it("switching filters activates the first thread of the new filter", async () => {
-  const setCommentFilter = vi.fn();
-  const setActiveComment = vi.fn();
-  renderComments(
-    contextValue({
-      comments: [thread("c1", "open"), thread("c2", "resolved")],
-      setCommentFilter,
-      setActiveComment,
-    }),
-  );
+it("lists every thread, open and resolved, and filters them", async () => {
+  renderList();
+  expect(listed()).toEqual(["Thread open", "Thread resolved", "Thread pin"]);
+
+  await userEvent.click(screen.getByRole("button", { name: "open" }));
+  expect(listed()).toEqual(["Thread open", "Thread pin"]);
 
   await userEvent.click(screen.getByRole("button", { name: "resolved" }));
+  expect(listed()).toEqual(["Thread resolved"]);
 
-  expect(setCommentFilter).toHaveBeenCalledWith("resolved");
-  expect(setActiveComment).toHaveBeenCalledWith("c2");
+  // A thread mentions the reader in a reply.
+  await userEvent.click(screen.getByRole("button", { name: "for you" }));
+  expect(listed()).toEqual(["Thread pin"]);
 });
 
-it("switching to an empty filter leaves the document in place", async () => {
-  const setActiveComment = vi.fn();
-  const scrollDocumentTo = vi.fn();
-  renderComments(
-    contextValue({
-      comments: [thread("c1", "open")],
-      setActiveComment,
-      scrollDocumentTo,
-    }),
-  );
+it("names what a thread is on: its quote, or the element of its pin", () => {
+  renderList();
+  expect(screen.getAllByText("quoted text")).toHaveLength(2);
+  expect(screen.getByText("Revenue chart")).toBeInTheDocument();
+});
 
+it("marks a thread whose text or pin is gone", () => {
+  renderList({ unanchoredComments: new Set(["resolved"]) });
+  const item = screen.getByText("Thread resolved").closest("li")!;
+  expect(within(item).getByText("Not found in this version")).toBeInTheDocument();
+});
+
+it("opens a picked thread, and starts placing a pin", async () => {
+  const props = renderList();
+  await userEvent.click(screen.getByText("Thread resolved"));
+  expect(props.onPick).toHaveBeenCalledWith("resolved");
+
+  await userEvent.click(screen.getByRole("button", { name: "Comment on a spot" }));
+  expect(props.onPlacePin).toHaveBeenCalled();
+});
+
+it("says when a filter has no threads", async () => {
+  renderList({ comments: [thread("open", "open")] });
   await userEvent.click(screen.getByRole("button", { name: "resolved" }));
-
-  expect(setActiveComment).toHaveBeenCalledWith(undefined);
-  expect(scrollDocumentTo).not.toHaveBeenCalled();
-});
-
-// After a filter switch, the bridge has not yet painted the threads of the new
-// filter. The rail took such a thread for unanchored and scrolled the document
-// to the top of the rail to reveal it.
-it("the rail waits for the bridge to place the active thread", () => {
-  const scrollDocumentTo = vi.fn();
-  renderComments(
-    contextValue({
-      comments: [thread("c2", "resolved")],
-      commentFilter: "resolved",
-      activeComment: "c2",
-      scrollDocumentTo,
-    }),
-  );
-
-  expect(scrollDocumentTo).not.toHaveBeenCalled();
-});
-
-it("the rail reveals an active thread that the bridge could not anchor", () => {
-  const scrollDocumentTo = vi.fn();
-  renderComments(
-    contextValue({
-      comments: [thread("c2", "resolved")],
-      commentFilter: "resolved",
-      activeComment: "c2",
-      unanchoredComments: new Set(["c2"]),
-      scrollDocumentTo,
-    }),
-  );
-
-  expect(scrollDocumentTo).toHaveBeenCalled();
+  expect(screen.getByText("No resolved comments yet")).toBeInTheDocument();
 });
