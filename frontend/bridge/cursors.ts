@@ -1,4 +1,5 @@
 import type { CursorPlace, CursorPoint, CursorSpot } from "../src/api.ts";
+import { isEditableTarget } from "./dom.ts";
 
 // Live cursors of other viewers. A cursor names the element under the pointer
 // and a place in that element's box, so it lands on the same content in every
@@ -8,7 +9,7 @@ import type { CursorPlace, CursorPoint, CursorSpot } from "../src/api.ts";
 // Elements the bridge adds to a document. Viewers do not all have the same
 // ones, so cursor paths skip them.
 const BRIDGE_ELEMENTS =
-  "mark.slashdocs-mark,.slashdocs-selection-action,.slashdocs-text-flash";
+  "mark.slashdocs-mark,.slashdocs-svg-mark-rect,.slashdocs-selection-action,.slashdocs-text-flash";
 const MAX_PATH_DEPTH = 64;
 
 // The playback delay follows how late batches arrive, within these limits.
@@ -41,7 +42,7 @@ const FOLLOW_REST = 400;
 const FOLLOW_STILL_PX = 2;
 const FOLLOW_STILL_ZOOM = 1.01;
 
-function sharedChildren(el: Element): Element[] {
+export function sharedChildren(el: Element): Element[] {
   return Array.from(el.children).filter((child) => !child.matches(BRIDGE_ELEMENTS));
 }
 
@@ -91,9 +92,15 @@ function zoomOf(el: Element): number {
 // elementAt gives the document element under a point in the viewport that
 // every viewer has, at most MAX_PATH_DEPTH deep, or the body.
 export function elementAt(d: Document, x: number, y: number): Element | null {
+  return sharedElement(d, d.elementFromPoint(x, y));
+}
+
+// sharedElement gives the element that every viewer has for el: el, or the
+// element that a bridge element sits in, at most MAX_PATH_DEPTH deep. It is
+// the body for anything outside the body.
+export function sharedElement(d: Document, el: Element | null): Element | null {
   const body = d.body;
   if (!body) return null;
-  let el = d.elementFromPoint(x, y);
   for (
     let added = el?.closest(BRIDGE_ELEMENTS);
     added;
@@ -247,14 +254,6 @@ export function trackPointer(
   };
 }
 
-function isTextEditing(target: EventTarget | null): boolean {
-  const el = target as HTMLElement | null;
-  return (
-    !!el?.closest?.('input,textarea,select,[contenteditable="true"]') ||
-    !!el?.isContentEditable
-  );
-}
-
 // createCursorChat lets a viewer type a short message at their cursor, as in
 // Figma: "/" opens a field by the pointer, and others see the text live at
 // this viewer's cursor. Enter keeps it a few seconds; Esc clears it. The field
@@ -318,7 +317,7 @@ export function createCursorChat(
   d.defaultView?.addEventListener("keydown", (e) => {
     if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented)
       return;
-    if (isTextEditing(e.target)) return;
+    if (isEditableTarget(d, e.target)) return;
     if (open()) e.preventDefault();
   });
   d.addEventListener("pointermove", () => !box.hidden && place(), {
@@ -809,8 +808,10 @@ export function createCursorLayer(
     d.addEventListener(
       "keydown",
       (e) => {
-        // "/" opens cursor chat, which a follower may use while following.
-        if (!["Shift", "Control", "Alt", "Meta", "/"].includes(e.key)) stop();
+        if (["Shift", "Control", "Alt", "Meta"].includes(e.key)) return;
+        // "/" opens cursor chat, which a follower may use while following,
+        // unless it types into the document.
+        if (e.key !== "/" || isEditableTarget(d, e.target)) stop();
       },
       true,
     );

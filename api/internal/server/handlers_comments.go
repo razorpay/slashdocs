@@ -81,14 +81,15 @@ var pointTargetPattern = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,128}$`)
 const maxPointLabel = 128
 
 // validCommentAnchor checks the anchor of a new thread: a text anchor needs a
-// quote, and a point needs a valid element and a spot inside its box. It
-// rounds the fractions of a point to four decimals in place.
+// quote, and a point needs an element, by target or path, and a spot inside
+// its box. A point never names the body, whose box moves when its text
+// reflows. It rounds the fractions of a point to four decimals in place.
 func validCommentAnchor(a *repo.Anchor) bool {
 	p := a.Point
 	if p == nil {
 		return a.Quote != ""
 	}
-	if (p.Target != "" && !pointTargetPattern.MatchString(p.Target)) || !cursorPathPattern.MatchString(p.Path) ||
+	if (p.Target == "" && p.Path == "") || (p.Target != "" && !pointTargetPattern.MatchString(p.Target)) || !cursorPathPattern.MatchString(p.Path) ||
 		!plainText(p.Label, maxPointLabel) || !unitFraction(p.X) || !unitFraction(p.Y) {
 		return false
 	}
@@ -110,7 +111,7 @@ func blankCommentBody(body string) bool {
 // CreateComment godoc
 // @Summary Create comment
 // @Description Requests with non-empty mentions must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed instead of dropping metadata.
-// @Description The anchor is a text anchor with a non-empty quote, or a point: anchor.point names an element by target (its data-slashdocs-target value or id) and path (its child-index path under the body), and x and y are fractions of its box from 0 to 1. The text fields of a point hold the start of the element's text, which finds the element again after the document changes.
+// @Description The anchor is a text anchor with a non-empty quote, or a point: anchor.point names an element by target (its data-slashdocs-target value or id), path (its child-index path under the body), or both, and x and y are fractions of its box from 0 to 1. The text fields of a point hold the start of the element's text, which finds the element again after the document changes.
 // @Tags comments
 // @Security bearerAuth
 // @Security cookieAuth

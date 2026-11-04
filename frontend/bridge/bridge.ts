@@ -15,6 +15,7 @@ import {
 } from "./highlight.ts";
 import { createCursorChat, createCursorLayer, trackPointer } from "./cursors.ts";
 import { createPinLayer, parsePins, type PinRect } from "./pins.ts";
+import { caretRange, isEditableTarget } from "./dom.ts";
 import { startTextEditing, type TextEditor } from "./text-editing.ts";
 import { CHORD_KEYS } from "../src/lib/esc-chord.ts";
 import {
@@ -886,15 +887,6 @@ type Theme = "dark" | "light";
     return null;
   }
 
-  function caretRange(d: Document, x: number, y: number): Range | null {
-    if (!d.caretPositionFromPoint) return d.caretRangeFromPoint(x, y);
-    const position = d.caretPositionFromPoint(x, y);
-    if (!position) return null;
-    const range = d.createRange();
-    range.setStart(position.offsetNode, position.offset);
-    return range;
-  }
-
   function postCommentPositions(): void {
     const d = doc();
     if (!d || !lastPaint) return;
@@ -1456,7 +1448,7 @@ type Theme = "dark" | "light";
     // Text selected in the document editor is still document text to
     // comment on; text in the document's own inputs is not.
     const inEditor = !!textEditor && d.activeElement === d.body;
-    if (!range || (isTextEditingTarget(d.activeElement) && !inEditor)) {
+    if (!range || (isEditableTarget(d, d.activeElement) && !inEditor)) {
       dismissSelectionAction();
       actionRange = null;
       return;
@@ -1568,37 +1560,8 @@ type Theme = "dark" | "light";
     );
   }
 
-  function isTextEditingTarget(target: EventTarget | null): boolean {
-    const d = doc();
-    if (d && String(d.designMode || "").toLowerCase() === "on") return true;
-    const keyTarget = target || (d && d.activeElement);
-    const el =
-      keyTarget && (keyTarget as Node).nodeType === 1
-        ? (keyTarget as Element)
-        : keyTarget && (keyTarget as Node).parentElement
-          ? (keyTarget as Node).parentElement
-          : null;
-    if (!el || !el.closest) return false;
-    const editable = el.closest("input,textarea,[contenteditable],[role='textbox']");
-    if (!editable) return false;
-    if (editable.matches && editable.matches("[contenteditable]")) {
-      return (
-        String(editable.getAttribute("contenteditable") || "").toLowerCase() !== "false"
-      );
-    }
-    const role = String(editable.getAttribute("role") || "").toLowerCase();
-    if (role === "textbox") return true;
-    const tag = String(editable.tagName || "").toLowerCase();
-    if (tag === "textarea") return true;
-    if (tag !== "input") return false;
-    const type = String(editable.getAttribute("type") || "text").toLowerCase();
-    return !/^(button|checkbox|radio|submit|reset|file|image|color|range|hidden)$/.test(
-      type,
-    );
-  }
-
-  function handleKVUndoRedoShortcut(ev: KeyboardEvent): void {
-    if (ev.defaultPrevented || isTextEditingTarget(ev.target)) return;
+  function handleKVUndoRedoShortcut(d: Document, ev: KeyboardEvent): void {
+    if (ev.defaultPrevented || isEditableTarget(d, ev.target)) return;
     if (!(ev.ctrlKey || ev.metaKey) || ev.altKey) return;
     const key = String(ev.key || "").toLowerCase();
     const wantsRedo = key === "y" || (key === "z" && ev.shiftKey);
@@ -1956,28 +1919,13 @@ type Theme = "dark" | "light";
         pins.setPlacing(false);
         return;
       }
-      // C comments on the selected text, as in Figma, and with nothing
-      // selected it places a comment pin. Esc then C still opens the
-      // comments. Where C types, as in the document editor, Ctrl or Cmd
-      // with Alt and M comments on the selection, as in Google Docs.
-      const inChord = chordArmedAt > 0 && Date.now() - chordArmedAt <= 800;
-      const plainC =
-        ev.key === "c" &&
-        !modified &&
-        !inChord &&
-        !ev.defaultPrevented &&
-        !isTextEditingTarget(ev.target);
-      if (plainC || ((ev.metaKey || ev.ctrlKey) && ev.altKey && ev.code === "KeyM")) {
+      // Where C types, as in the document editor, Ctrl or Cmd with Alt and
+      // M comments on the selection, as in Google Docs.
+      if ((ev.metaKey || ev.ctrlKey) && ev.altKey && ev.code === "KeyM") {
         const range = selectedRange(d.getSelection());
         if (range) {
           ev.preventDefault();
           commitSelection(range);
-          return;
-        }
-        if (plainC) {
-          ev.preventDefault();
-          chordArmedAt = 0;
-          pins.setPlacing(!pins.isPlacing());
           return;
         }
       }
@@ -1993,7 +1941,7 @@ type Theme = "dark" | "light";
         chordArmedAt = 0;
         vimGArmed = false;
         clearTimeout(vimGTimer);
-        handleKVUndoRedoShortcut(ev);
+        handleKVUndoRedoShortcut(d, ev);
         return;
       }
 
@@ -2008,7 +1956,9 @@ type Theme = "dark" | "light";
         chordArmedAt = 0;
         const key = ev.key.toLowerCase();
         if (withinWindow && !modified && chordKeys.includes(key)) {
-          if (editorChord) ev.preventDefault();
+          // The chord takes the key: it types nothing, and C after Esc
+          // opens the comments instead of placing a pin.
+          ev.preventDefault();
           parent.postMessage({ type: "slashdocs:keydown", key }, targetOrigin());
         }
       }
@@ -2037,10 +1987,25 @@ type Theme = "dark" | "light";
         ev.preventDefault();
         runVimScroll(vim.action, ev.repeat);
       }
-      handleKVUndoRedoShortcut(ev);
+      handleKVUndoRedoShortcut(d, ev);
+    };
+    // C comments on the selected text, as in Figma, and with nothing
+    // selected it places a comment pin. It runs after the document's own
+    // handlers, on its window, so a document that takes C keeps it.
+    const onCommentKey = (ev: KeyboardEvent) => {
+      if (ev.key !== "c" || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+      if (ev.defaultPrevented || isEditableTarget(d, ev.target)) return;
+      ev.preventDefault();
+      const range = selectedRange(d.getSelection());
+      if (range) commitSelection(range);
+      else pins.setPlacing(!pins.isPlacing());
     };
     d.addEventListener("keydown", onKey);
-    documentKeys = onKey;
+    d.defaultView?.addEventListener("keydown", onCommentKey);
+    documentKeys = (ev) => {
+      onKey(ev);
+      onCommentKey(ev);
+    };
     // Forward trackpad pinch-to-zoom (wheel + ctrlKey) to parent so the
     // app can scale only the document iframe instead of browser-zooming. A
     // document that zooms itself takes the wheel first, and keeps it.

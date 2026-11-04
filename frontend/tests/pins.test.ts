@@ -6,6 +6,8 @@ import {
   pinElement,
   pointAt,
 } from "../bridge/pins.ts";
+import { elementAtPath, pathOf } from "../bridge/cursors.ts";
+import { highlightRange } from "../bridge/highlight.ts";
 
 afterEach(() => {
   document.body.innerHTML = "";
@@ -103,4 +105,58 @@ test("a pin finds its element by target, else by path, else by its text", () => 
   assert.strictEqual(at({ path: "0.1" }, "First")?.textContent, "First");
   assert.strictEqual(at({ target: "gone" }), null);
   assert.strictEqual(at({ path: "0.1" }, "Nowhere in it"), null);
+});
+
+test("a spot over the body's margin takes the nearest element, never the body", () => {
+  document.body.innerHTML = '<main id="page"><p>Wide margins</p></main>';
+  document.elementFromPoint = (() => document.body) as typeof document.elementFromPoint;
+  Element.prototype.getBoundingClientRect = function (this: Element) {
+    return this.id === "page"
+      ? new DOMRect(300, 0, 600, 400)
+      : new DOMRect(0, 0, 1200, 400);
+  };
+  const spot = pointAt(document, 50, 100);
+  assert.deepEqual(spot?.point, { target: "page", path: "0", x: 0, y: 0.25 });
+
+  // Nothing takes a pin outside the viewport, or in a body without elements.
+  document.elementFromPoint = (() => null) as typeof document.elementFromPoint;
+  assert.strictEqual(pointAt(document, 50, -100), null);
+  document.elementFromPoint = (() => document.body) as typeof document.elementFromPoint;
+  document.body.innerHTML = "";
+  assert.strictEqual(pointAt(document, 50, 100), null);
+});
+
+test("a pin on an element without text is not moved to another element", () => {
+  document.body.innerHTML = '<main><img alt="Logo"><canvas></canvas><svg></svg></main>';
+  layout();
+  document.elementFromPoint = (() =>
+    document.querySelector("canvas")) as typeof document.elementFromPoint;
+  const spot = pointAt(document, 200, 250)!;
+  assert.deepEqual(spot.point, { path: "0.1", label: "canvas", x: 0.25, y: 0.5 });
+  assert.strictEqual(pinElement(document, spot)?.localName, "canvas");
+  // The image before it is gone: the svg now holds the path.
+  document.querySelector("img")!.remove();
+  assert.strictEqual(pinElement(document, spot), null);
+});
+
+test("a highlight painted in an svg does not change the paths in it", () => {
+  document.body.innerHTML =
+    '<svg><text id="a">Revenue</text><circle></circle><text>Cost</text></svg>';
+  const proto = SVGElement.prototype as unknown as { getBBox?: () => DOMRect };
+  proto.getBBox = () => new DOMRect(0, 0, 40, 10);
+  try {
+    const circle = document.querySelector("circle")!;
+    const before = pathOf(circle);
+    const range = document.createRange();
+    range.selectNodeContents(document.getElementById("a")!);
+    assert.ok(highlightRange(range, false, "c1", false) > 0);
+    assert.ok(
+      document.querySelector(".slashdocs-svg-mark-rect"),
+      "a highlight is painted",
+    );
+    assert.strictEqual(pathOf(circle), before);
+    assert.strictEqual(elementAtPath(document, before), circle);
+  } finally {
+    delete proto.getBBox;
+  }
 });

@@ -4,7 +4,14 @@ import {
   type CommentAnchor,
 } from "./anchoring/index.ts";
 import { TextRange } from "./anchoring/text-range.ts";
-import { elementAt, elementAtPath, pathOf, scrollerOf } from "./cursors.ts";
+import {
+  elementAtPath,
+  pathOf,
+  scrollerOf,
+  sharedChildren,
+  sharedElement,
+} from "./cursors.ts";
+import { caretRange } from "./dom.ts";
 
 // Comment pins: point comments drawn over the document, in the bridge window,
 // as live cursors are. A pin names an element and a spot in its box. On each
@@ -130,30 +137,65 @@ export function clusterPins<T extends { id: string; x: number; y: number }>(
 // by its target and path, fractions of its box, a label, and the start of
 // its text. It is null where nothing takes a pin.
 export function pointAt(d: Document, x: number, y: number): PinAnchor | null {
-  const el = elementAt(d, x, y);
+  const el = spotElement(d, x, y);
   const box = el?.getBoundingClientRect();
   if (!el || !d.body || !box || !(box.width > 0 && box.height > 0)) return null;
   const clamp = (n: number) => Math.round(Math.min(1, Math.max(0, n)) * 1e4) / 1e4;
   const named = el.getAttribute("data-slashdocs-target") || el.id;
   const quote = elementQuote(d.body, el) ?? { quote: "" };
-  // An element without text, such as an image, goes by its name or its tag.
-  const label =
-    el.getAttribute("aria-label") ||
-    el.getAttribute("alt") ||
-    el.getAttribute("title") ||
-    (quote.quote ? "" : el.localName);
+  const label = labelOf(el, !!quote.quote);
   return {
     ...quote,
     point: {
       ...(TARGET.test(named) && { target: named }),
       path: pathOf(el),
-      ...(label && {
-        label: normalize(label.replace(CONTROL, " ")).slice(0, MAX_LABEL),
-      }),
+      ...(label && { label }),
       x: clamp((x - box.left) / box.width),
       y: clamp((y - box.top) / box.height),
     },
   };
+}
+
+// spotElement gives the element that takes a pin at a point in the viewport:
+// the one under it, or, over the body's own margin, the one at the nearest
+// text, or else the nearest child of the body. It is never the body, whose
+// box moves when its text reflows. A spot outside the element's box goes to
+// its edge.
+function spotElement(d: Document, x: number, y: number): Element | null {
+  const body = d.body;
+  const hit = d.elementFromPoint(x, y);
+  if (!body || !hit) return null;
+  const under = sharedElement(d, hit);
+  if (under !== body) return under;
+  const caret = caretRange(d, x, y)?.startContainer;
+  const atText = sharedElement(
+    d,
+    caret?.nodeType === 1 ? (caret as Element) : (caret?.parentElement ?? null),
+  );
+  if (atText !== body) return atText;
+  let nearest: Element | null = null;
+  let distance = Infinity;
+  for (const child of sharedChildren(body)) {
+    const r = child.getBoundingClientRect();
+    if (!(r.width > 0 && r.height > 0)) continue;
+    const away = Math.hypot(
+      Math.max(r.left - x, 0, x - r.right),
+      Math.max(r.top - y, 0, y - r.bottom),
+    );
+    if (away < distance) [nearest, distance] = [child, away];
+  }
+  return nearest;
+}
+
+// labelOf names an element for a reader: by its accessible name, or, for an
+// element without text, such as an image, by its tag.
+function labelOf(el: Element, hasText: boolean): string {
+  const label =
+    el.getAttribute("aria-label") ||
+    el.getAttribute("alt") ||
+    el.getAttribute("title") ||
+    (hasText ? "" : el.localName);
+  return normalize(label.replace(CONTROL, " ")).slice(0, MAX_LABEL);
 }
 
 // elementQuote describes the start of an element's text as a text anchor.
@@ -174,9 +216,10 @@ function elementQuote(body: HTMLElement, el: Element): CommentAnchor | null {
 }
 
 // pinElement finds a pin's element: by its target, else by its path while
-// the element there still starts with the quote, else by the quote. Among the
-// elements that start with a found quote, it takes the one as deep as the
-// path, else the innermost.
+// the element there still starts with the quote, or, for an element without
+// text, still has its label, else by the quote. Among the elements that
+// start with a found quote, it takes the one as deep as the path, else the
+// innermost.
 export function pinElement(d: Document, a: PinAnchor): Element | null {
   const { target, path = "" } = a.point;
   if (target)
@@ -189,7 +232,9 @@ export function pinElement(d: Document, a: PinAnchor): Element | null {
   const startsWithQuote = (el: Element) =>
     normalize(el.textContent ?? "").startsWith(quote);
   const atPath = path || !target ? elementAtPath(d, path) : undefined;
-  if (atPath && startsWithQuote(atPath)) return atPath;
+  const same = (el: Element) =>
+    quote ? startsWithQuote(el) : labelOf(el, false) === (a.point.label ?? "");
+  if (atPath && same(atPath)) return atPath;
   const body = d.body;
   const range = quote && body ? resolveAnchor(body, a) : null;
   if (!body || !range) return null;
@@ -197,7 +242,7 @@ export function pinElement(d: Document, a: PinAnchor): Element | null {
   const node = range.startContainer;
   const candidates: Element[] = [];
   for (
-    let el = node instanceof Element ? node : node.parentElement;
+    let el = node.nodeType === 1 ? (node as Element) : node.parentElement;
     el && el !== body;
     el = el.parentElement
   )

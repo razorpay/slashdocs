@@ -2,7 +2,10 @@
 
 A comment is on selected text, or on a spot in the document: press C with
 nothing selected, or use **Comment on a spot** in the comments list, and click
-the spot. A thread opens in a popover next to its highlight or its pin. On a
+the spot. A pin always stays on an element: a click in a margin pins to the
+edge of the nearest element. If the document uses C itself, or the caret is in
+text that you can edit, C types and places no pin. A thread opens in a
+popover next to its highlight or its pin. On a
 narrow screen, the popover is a sheet at the bottom of the screen.
 
 Open threads always show their highlight or pin. Pins that are near each other

@@ -9,7 +9,6 @@ import {
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
-import { toast } from "sonner";
 import { api, type CommentMention, type Principal } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { useCommentDrafts } from "@/lib/comment-drafts";
@@ -35,6 +34,7 @@ import { CommentsList } from "./doc-comments";
 import { CommentMap } from "./comment-map";
 import { Keycast } from "./doc-keycast";
 import { ShortcutsDialog } from "./doc-shortcuts";
+import { useCommentLink } from "./use-comment-link";
 
 const THEME_LABELS = { light: "Light", dark: "Dark", system: "System" } as const;
 
@@ -94,6 +94,7 @@ export function DocWorkspace({
   editable = false,
   stayOnVersion = noop,
   showLatest = noop,
+  showsLatest = true,
   bar,
   banner,
 }: {
@@ -117,6 +118,8 @@ export function DocWorkspace({
   editable?: boolean;
   stayOnVersion?: (version?: string) => void;
   showLatest?: () => void;
+  // The version on screen is the document's latest one.
+  showsLatest?: boolean;
   bar: (controls: DocBarControls) => ReactNode;
   // Shown under the bar, or floating over the document in full screen.
   banner?: (floating: boolean) => ReactNode;
@@ -184,24 +187,7 @@ export function DocWorkspace({
     setPlacingPin(false);
   }, [docId]);
 
-  const linkedComment = searchParams.get("comment");
-  const handledCommentLink = useRef("");
-  useEffect(() => {
-    if (!linkedComment) {
-      handledCommentLink.current = "";
-      return;
-    }
-    if (!comments.data?.items) return;
-    const key = `${docId}:${linkedComment}`;
-    if (handledCommentLink.current === key) return;
-    handledCommentLink.current = key;
-    const root = comments.data.items.find(
-      (c) => c.id === linkedComment || c.replies?.some((r) => r.id === linkedComment),
-    );
-    // A link to a deleted thread says so instead of doing nothing.
-    if (root) setActiveComment(root.id);
-    else toast("That comment was deleted or is no longer available.");
-  }, [docId, linkedComment, comments.data]);
+  useCommentLink(docId, comments, setActiveComment);
 
   const handleRenderedDocumentClick = useCallback(() => {
     onDocumentClick?.();
@@ -549,6 +535,7 @@ export function DocWorkspace({
                   )}
                 >
                   <CommentsList
+                    showsLatest={showsLatest}
                     onPick={pickComment}
                     onPlacePin={placePin}
                     onClose={() => setListOpen(false)}

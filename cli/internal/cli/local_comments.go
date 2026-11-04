@@ -62,12 +62,13 @@ type localPoint struct {
 }
 
 // valid reports whether a is a text anchor with a quote, or a point inside
-// its element's box.
+// the box of an element that its target or path names.
 func (a *localAnchor) valid() bool {
 	if a == nil || a.Point == nil {
 		return a != nil && a.Quote != ""
 	}
-	return a.Point.X >= 0 && a.Point.X <= 1 && a.Point.Y >= 0 && a.Point.Y <= 1
+	p := a.Point
+	return (p.Target != "" || p.Path != "") && p.X >= 0 && p.X <= 1 && p.Y >= 0 && p.Y <= 1
 }
 
 // move puts a point thread on a new spot; a nil anchor moves nothing. Text

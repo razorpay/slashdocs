@@ -1,25 +1,7 @@
-import { type Browser, type Page } from "@playwright/test";
-import {
-  APP_ORIGIN,
-  continueWithDex,
-  expect,
-  installAppStorage,
-  test,
-  uniqueName,
-} from "./fixtures";
+import { continueWithDex, expect, signedOutPage, test, uniqueName } from "./fixtures";
 
 // A public deployment lets a signed-out reader read a document that is shared
 // with anyone. Commenting or editing sends the reader to sign in first.
-
-async function signedOutPage(browser: Browser): Promise<Page> {
-  const context = await browser.newContext({
-    baseURL: APP_ORIGIN,
-    storageState: { cookies: [], origins: [] },
-  });
-  const page = await context.newPage();
-  await installAppStorage(page);
-  return page;
-}
 
 function documentHTML(title: string) {
   return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head>
