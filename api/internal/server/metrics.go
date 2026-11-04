@@ -64,6 +64,10 @@ var (
 		Name: "slashdocs_render_events_total",
 		Help: "Render token and document render events.",
 	}, []string{"event", "outcome"})
+	bookEventsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "slashdocs_book_events_total",
+		Help: "Book lifecycle events.",
+	}, []string{"event"})
 	htmlBytes = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "slashdocs_html_bytes",
 		Help:    "Uploaded or downloaded HTML payload sizes.",
@@ -121,6 +125,7 @@ func init() {
 		authAttemptsTotal,
 		documentEventsTotal,
 		versionEventsTotal,
+		bookEventsTotal,
 		commentEventsTotal,
 		grantEventsTotal,
 		serviceAccountEventsTotal,
@@ -184,6 +189,7 @@ func incDocument(event, actor string) {
 	documentEventsTotal.WithLabelValues(event, actor).Inc()
 }
 func incVersion(event, actor string) { versionEventsTotal.WithLabelValues(event, actor).Inc() }
+func incBook(event string)           { bookEventsTotal.WithLabelValues(event).Inc() }
 func incComment(event, status, actor string) {
 	commentEventsTotal.WithLabelValues(event, status, actor).Inc()
 }

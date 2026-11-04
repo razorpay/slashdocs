@@ -293,6 +293,10 @@ func newApplicationServer(ctx context.Context, store *pgrepo.Store, blobs blob.S
 	if err != nil {
 		return nil, err
 	}
+	booksEnabled, err := boolEnv("SLASHDOCS_BOOKS_ENABLED", false)
+	if err != nil {
+		return nil, err
+	}
 	oidcProvider, providerName, err := loadOIDC(ctx, origins.appOrigin)
 	if err != nil {
 		return nil, err
@@ -331,6 +335,7 @@ func newApplicationServer(ctx context.Context, store *pgrepo.Store, blobs blob.S
 		GoogleGroupsEnabled:       googleGroups.enabled,
 		GoogleGroupsMembershipTTL: googleGroups.membershipTTL,
 		DisableLabels:             !labelsEnabled,
+		BooksEnabled:              booksEnabled,
 	}, options...), nil
 }
 

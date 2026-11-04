@@ -342,6 +342,192 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/books/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Removes the book and its outline history. The folder and its documents stay.",
+                "tags": [
+                    "books"
+                ],
+                "summary": "Delete a book",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Book ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
+        "/v1/books/{id}/outline": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "tags": [
+                    "books"
+                ],
+                "summary": "Get a book's outline",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Book ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server.outlineResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Saves a new outline version. base_version_id must be the current version.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "books"
+                ],
+                "summary": "Save a book's outline",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Book ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Outline",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/server.putOutlineRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server.putOutlineResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "outline_conflict",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "invalid_outline",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/books/{id}/outline/versions": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "tags": [
+                    "books"
+                ],
+                "summary": "List a book's outline versions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Book ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server.listResponse-server_outlineVersionResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/books/{id}/status": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "tags": [
+                    "books"
+                ],
+                "summary": "Get a book's chapter status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Book ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server.bookStatusResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/config": {
             "get": {
                 "produces": [
@@ -1416,6 +1602,83 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/folders/{id}/book": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "tags": [
+                    "books"
+                ],
+                "summary": "Get a folder's book",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Folder ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server.folderBookResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Seeds the outline from the folder's numbered document titles.",
+                "tags": [
+                    "books"
+                ],
+                "summary": "Make a folder a book",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Folder ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/server.createBookResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "book_exists",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/folders/{id}/grants": {
             "post": {
                 "security": [
@@ -1947,6 +2210,60 @@ const docTemplate = `{
                 "PrincipalAnonymous"
             ]
         },
+        "books.Entry": {
+            "type": "object",
+            "properties": {
+                "doc": {
+                    "type": "string"
+                },
+                "planned": {
+                    "type": "string"
+                }
+            }
+        },
+        "books.Outline": {
+            "type": "object",
+            "properties": {
+                "back": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/books.Entry"
+                    }
+                },
+                "front": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/books.Entry"
+                    }
+                },
+                "parts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/books.Part"
+                    }
+                },
+                "subtitle": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "books.Part": {
+            "type": "object",
+            "properties": {
+                "chapters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/books.Entry"
+                    }
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
         "repo.Anchor": {
             "type": "object",
             "properties": {
@@ -2156,6 +2473,63 @@ const docTemplate = `{
                 }
             }
         },
+        "server.bookDoc": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "server.bookStatusEntry": {
+            "type": "object",
+            "properties": {
+                "current_version_id": {
+                    "type": "string"
+                },
+                "document_id": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "number": {
+                    "type": "integer"
+                },
+                "planned": {
+                    "type": "boolean"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "server.bookStatusResponse": {
+            "type": "object",
+            "properties": {
+                "entries": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/server.bookStatusEntry"
+                    }
+                },
+                "not_in_outline": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/server.bookDoc"
+                    }
+                },
+                "removed": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "server.cliExchangePrincipal": {
             "type": "object",
             "properties": {
@@ -2319,6 +2693,9 @@ const docTemplate = `{
                 "current_placement": {
                     "$ref": "#/definitions/server.commentPlacementResponse"
                 },
+                "edited": {
+                    "type": "boolean"
+                },
                 "id": {
                     "type": "string"
                 },
@@ -2357,6 +2734,9 @@ const docTemplate = `{
         "server.configResponse": {
             "type": "object",
             "properties": {
+                "books_enabled": {
+                    "type": "boolean"
+                },
                 "default_doc_permission": {
                     "type": "string"
                 },
@@ -2377,6 +2757,29 @@ const docTemplate = `{
                 },
                 "provider_name": {
                     "type": "string"
+                }
+            }
+        },
+        "server.createBookResponse": {
+            "type": "object",
+            "properties": {
+                "book_id": {
+                    "type": "string"
+                },
+                "not_in_outline": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/server.bookDoc"
+                    }
+                },
+                "outline_version_id": {
+                    "type": "string"
+                },
+                "placed": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -2564,6 +2967,14 @@ const docTemplate = `{
             "properties": {
                 "error": {
                     "$ref": "#/definitions/server.errorBody"
+                }
+            }
+        },
+        "server.folderBookResponse": {
+            "type": "object",
+            "properties": {
+                "book_id": {
+                    "type": "string"
                 }
             }
         },
@@ -2786,6 +3197,17 @@ const docTemplate = `{
                 }
             }
         },
+        "server.listResponse-server_outlineVersionResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/server.outlineVersionResponse"
+                    }
+                }
+            }
+        },
         "server.meResponse": {
             "type": "object",
             "properties": {
@@ -2839,6 +3261,52 @@ const docTemplate = `{
                 }
             }
         },
+        "server.outlineResponse": {
+            "type": "object",
+            "properties": {
+                "not_in_outline": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/server.bookDoc"
+                    }
+                },
+                "number": {
+                    "type": "integer"
+                },
+                "outline": {
+                    "$ref": "#/definitions/books.Outline"
+                },
+                "removed": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "version_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "server.outlineVersionResponse": {
+            "type": "object",
+            "properties": {
+                "change_note": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by": {
+                    "$ref": "#/definitions/auth.Principal"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "number": {
+                    "type": "integer"
+                }
+            }
+        },
         "server.patchCommentRequest": {
             "type": "object",
             "properties": {
@@ -2884,6 +3352,31 @@ const docTemplate = `{
                 },
                 "type": {
                     "$ref": "#/definitions/auth.PrincipalType"
+                }
+            }
+        },
+        "server.putOutlineRequest": {
+            "type": "object",
+            "properties": {
+                "base_version_id": {
+                    "type": "string"
+                },
+                "note": {
+                    "type": "string"
+                },
+                "outline": {
+                    "$ref": "#/definitions/books.Outline"
+                }
+            }
+        },
+        "server.putOutlineResponse": {
+            "type": "object",
+            "properties": {
+                "number": {
+                    "type": "integer"
+                },
+                "version_id": {
+                    "type": "string"
                 }
             }
         },
