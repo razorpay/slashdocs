@@ -5,7 +5,7 @@ import { useTitle } from "@/lib/use-title";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { GitBranch, LogOut, Monitor, Moon, Sun } from "lucide-react";
-import { Avatar, Center, Skeleton } from "@/components/ui/misc";
+import { Avatar, Center, RetryButton, Skeleton } from "@/components/ui/misc";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -32,6 +32,8 @@ export function ProfilePage() {
     queryKey: ["github-connection"],
     queryFn: api.githubStatus,
     retry: false,
+    // The card shows the failure, with Retry.
+    meta: { suppressGlobalError: true },
   });
   const disconnectGitHub = useMutation({
     mutationFn: api.githubDisconnect,
@@ -132,13 +134,17 @@ export function ProfilePage() {
             <div className="min-w-0 text-sm">
               {github.isLoading
                 ? "Checking connection…"
-                : github.data?.connected
-                  ? `Connected as ${github.data.login}`
-                  : github.data?.configured === false
-                    ? "Not configured for this deployment"
-                    : "Not connected"}
+                : github.error
+                  ? `Could not check the connection. ${errorMessage(github.error)}`
+                  : github.data?.connected
+                    ? `Connected as ${github.data.login}`
+                    : github.data?.configured === false
+                      ? "Not configured for this deployment"
+                      : "Not connected"}
             </div>
-            {github.data?.connected ? (
+            {github.error ? (
+              <RetryButton query={github} variant="outline" />
+            ) : github.data?.connected ? (
               <Button
                 variant="outline"
                 onClick={() => disconnectGitHub.mutate()}
@@ -150,11 +156,7 @@ export function ProfilePage() {
               <Button
                 variant="outline"
                 onClick={() => window.location.assign(api.githubConnectURL())}
-                disabled={
-                  github.isLoading ||
-                  !!github.error ||
-                  github.data?.configured === false
-                }
+                disabled={github.isLoading || github.data?.configured === false}
               >
                 Connect GitHub
               </Button>
