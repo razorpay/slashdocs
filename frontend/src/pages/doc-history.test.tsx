@@ -99,6 +99,16 @@ describe("HistoryDialog", () => {
     expect(within(dialog).queryByText("Removed “x”")).toBeNull();
   });
 
+  it("gives each earlier edit its own time, small and muted", async () => {
+    const dialog = renderHistory("ver_2");
+    fireEvent.click(
+      await within(dialog).findByRole("button", { name: "Show 1 earlier edit" }),
+    );
+    const entry = within(dialog).getByText("Created").closest("button")!;
+    const time = entry.querySelector(`time[datetime="${versions[0].created_at}"]`);
+    expect(time?.parentElement).toHaveClass("text-xs", "text-[var(--color-fg-muted)]");
+  });
+
   it("shows that the history loads", () => {
     const dialog = renderHistory(
       "ver_2",

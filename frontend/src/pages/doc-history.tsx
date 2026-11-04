@@ -120,7 +120,8 @@ function HistorySessionRow({
   onSelect: (versionID: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  // The row shows the newest entry. The list under it shows the rest.
+  // The row shows the newest entry. The list under it shows the rest, each
+  // with its own time below what it changed.
   const [newest, ...earlier] = session.entries;
   const oldest = session.entries[session.entries.length - 1];
   const viewing = current !== latest && session.entries.some((v) => v.id === current);
@@ -173,11 +174,11 @@ function HistorySessionRow({
                     aria-current={v.id === current ? "true" : undefined}
                     className="flex w-full flex-col gap-0.5 rounded-lg px-2 py-1.5 text-left hover:bg-[var(--color-surface-muted)]/60 focus-visible:-outline-offset-2"
                   >
-                    <span className="flex flex-wrap items-center gap-2 text-sm">
+                    <ChangeSummary version={v} />
+                    <span className="flex flex-wrap items-center gap-2 text-xs text-[var(--color-fg-muted)]">
                       <RelativeTime iso={v.created_at} />
                       <EntryBadges version={v} current={current} latest={latest} />
                     </span>
-                    <ChangeSummary version={v} />
                   </button>
                 </li>
               ))}
