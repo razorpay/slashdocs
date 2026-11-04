@@ -20,8 +20,7 @@ const SECTIONS: { title: string; rows: [keys: string[], label: string][] }[] = [
     ]),
   },
   {
-    // In a document the reader edits, these letters type.
-    title: "Reading, outside the text you edit",
+    title: "Reading",
     rows: [
       [["J"], "Scroll down"],
       [["K"], "Scroll up"],
@@ -58,7 +57,10 @@ export function ShortcutsDialog({
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>Keyboard shortcuts</DialogTitle>
-          <DialogDescription>Your mouse can take the day off.</DialogDescription>
+          <DialogDescription>
+            In text that you can edit, the keys type. Press Esc to leave the text, then
+            use these keys.
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-5">
           {SECTIONS.map((section) => (

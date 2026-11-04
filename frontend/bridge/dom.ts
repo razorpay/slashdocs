@@ -1,9 +1,10 @@
 // Small DOM helpers that several bridge modules share.
 
 // isEditableTarget tells whether a key at target, or else at the focused
-// element, types into document d: a text field, editable content, or a
-// document in design mode, as in the document editor. The bridge's own
-// shortcuts leave such keys alone.
+// element, types into document d: a text field, focused editable content, or
+// a document in design mode. The bridge's own shortcuts leave such keys
+// alone. The document editor's body types only while it has the caret, as in
+// Google Docs: after Esc blurs it, the shortcuts work again.
 export function isEditableTarget(d: Document, target: EventTarget | null): boolean {
   if (d.designMode.toLowerCase() === "on") return true;
   const node = (target ?? d.activeElement) as Node | null;
@@ -13,7 +14,10 @@ export function isEditableTarget(d: Document, target: EventTarget | null): boole
   );
   if (!editable) return false;
   if (editable.hasAttribute("contenteditable"))
-    return editable.getAttribute("contenteditable")?.toLowerCase() !== "false";
+    return (
+      editable.getAttribute("contenteditable")?.toLowerCase() !== "false" &&
+      editable.matches(":focus-within")
+    );
   if (editable.localName !== "input") return true;
   const type = (editable.getAttribute("type") || "text").toLowerCase();
   return !/^(button|checkbox|radio|submit|reset|file|image|color|range|hidden)$/.test(

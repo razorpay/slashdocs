@@ -1929,15 +1929,11 @@ type Theme = "dark" | "light";
           return;
         }
       }
-      const target = ev.target as Element | null;
-      const editable = target?.closest?.(
-        'input,textarea,select,[contenteditable="true"]',
-      );
-      // In the document editor every key types, except Esc chords: Escape
-      // types nothing, so it and the key after it still work there.
-      const editorChord =
-        !!editable && editable === d.body && (ev.key === "Escape" || !!chordArmedAt);
-      if (ev.defaultPrevented || (editable && !editorChord)) {
+      // In the document editor every key types while the text has the
+      // caret, as in Google Docs. Esc leaves the text, so it and the keys
+      // after it work as shortcuts.
+      if (ev.key === "Escape" && ev.target === d.body) d.body.blur();
+      if (ev.defaultPrevented || isEditableTarget(d, ev.target)) {
         chordArmedAt = 0;
         vimGArmed = false;
         clearTimeout(vimGTimer);
@@ -1962,7 +1958,6 @@ type Theme = "dark" | "light";
           parent.postMessage({ type: "slashdocs:keydown", key }, targetOrigin());
         }
       }
-      if (editorChord) return;
       if (ev.key === "?" && !modified) {
         parent.postMessage({ type: "slashdocs:keydown", key: "?" }, targetOrigin());
       }
