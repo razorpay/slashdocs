@@ -375,6 +375,12 @@
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
                     },
+                    "429": {
+                        "description": "rate_limited",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
                     "503": {
                         "description": "group_membership_unavailable",
                         "schema": {
@@ -484,6 +490,12 @@
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
                     },
+                    "429": {
+                        "description": "rate_limited",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
                     "503": {
                         "description": "group_membership_unavailable",
                         "schema": {
@@ -558,6 +570,12 @@
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
                     },
+                    "429": {
+                        "description": "rate_limited",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
                     "503": {
                         "description": "group_membership_unavailable",
                         "schema": {
@@ -627,6 +645,12 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "429": {
+                        "description": "rate_limited",
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
@@ -784,6 +808,12 @@
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
                     },
+                    "429": {
+                        "description": "rate_limited",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
                     "503": {
                         "description": "group_membership_unavailable",
                         "schema": {
@@ -829,6 +859,12 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "429": {
+                        "description": "rate_limited",
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
@@ -1180,6 +1216,12 @@
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
                     },
+                    "429": {
+                        "description": "rate_limited",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
                     "503": {
                         "description": "group_membership_unavailable",
                         "schema": {
@@ -1225,6 +1267,12 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "429": {
+                        "description": "rate_limited",
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
@@ -1280,6 +1328,12 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "429": {
+                        "description": "rate_limited",
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }

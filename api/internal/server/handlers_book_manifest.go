@@ -232,6 +232,7 @@ func (v bookView) manifest() manifestResponse {
 // @Param id path string true "Book ID"
 // @Success 200 {object} manifestResponse
 // @Failure 404 {object} errorEnvelope
+// @Failure 429 {object} errorEnvelope "rate_limited"
 // @Failure 503 {object} errorEnvelope "group_membership_unavailable"
 // @Router /v1/books/{id} [get]
 func (h handlers) getManifest(c *gin.Context) {
@@ -256,6 +257,7 @@ func (h handlers) getManifest(c *gin.Context) {
 // @Param id path string true "Book ID"
 // @Success 200 {string} string
 // @Failure 404 {object} errorEnvelope
+// @Failure 429 {object} errorEnvelope "rate_limited"
 // @Failure 503 {object} errorEnvelope "group_membership_unavailable"
 // @Router /v1/books/{id}/llms.txt [get]
 func (h handlers) getBookLLMs(c *gin.Context) {

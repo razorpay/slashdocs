@@ -309,6 +309,7 @@ func chapterState(r repo.ChapterRead, opened bool) string {
 // @Success 200 {object} readingStateResponse
 // @Failure 403 {object} errorEnvelope "reading_state_users_only"
 // @Failure 404 {object} errorEnvelope
+// @Failure 429 {object} errorEnvelope "rate_limited"
 // @Failure 503 {object} errorEnvelope "group_membership_unavailable"
 // @Router /v1/books/{id}/state [get]
 func (h handlers) getReadingState(c *gin.Context) {
@@ -474,6 +475,7 @@ func invalidPosition(c *gin.Context) {
 // @Failure 400 {object} errorEnvelope "invalid_request"
 // @Failure 403 {object} errorEnvelope "reading_state_users_only"
 // @Failure 404 {object} errorEnvelope
+// @Failure 429 {object} errorEnvelope "rate_limited"
 // @Failure 503 {object} errorEnvelope "group_membership_unavailable"
 // @Router /v1/books/{id}/chapters/{doc_id}/open [post]
 func (h handlers) openChapter(c *gin.Context) {
@@ -568,6 +570,7 @@ func (h handlers) chapterProgress(c *gin.Context) {
 // @Failure 400 {object} errorEnvelope "invalid_request"
 // @Failure 403 {object} errorEnvelope "reading_state_users_only"
 // @Failure 404 {object} errorEnvelope
+// @Failure 429 {object} errorEnvelope "rate_limited"
 // @Failure 503 {object} errorEnvelope "group_membership_unavailable"
 // @Router /v1/books/{id}/chapters/{doc_id}/done [put]
 func (h handlers) setChapterDone(c *gin.Context) {
@@ -607,6 +610,7 @@ func (h handlers) setChapterDone(c *gin.Context) {
 // @Failure 400 {object} errorEnvelope "invalid_request"
 // @Failure 403 {object} errorEnvelope "reading_state_users_only"
 // @Failure 404 {object} errorEnvelope
+// @Failure 429 {object} errorEnvelope "rate_limited"
 // @Failure 503 {object} errorEnvelope "group_membership_unavailable"
 // @Router /v1/books/{id}/chapters/{doc_id}/seen [post]
 func (h handlers) markChapterSeen(c *gin.Context) {
@@ -644,6 +648,7 @@ func (h handlers) markChapterSeen(c *gin.Context) {
 // @Success 204
 // @Failure 403 {object} errorEnvelope "reading_state_users_only"
 // @Failure 404 {object} errorEnvelope
+// @Failure 429 {object} errorEnvelope "rate_limited"
 // @Failure 503 {object} errorEnvelope "group_membership_unavailable"
 // @Router /v1/books/{id}/seen [post]
 func (h handlers) markBookSeen(c *gin.Context) {
@@ -686,6 +691,7 @@ func (h handlers) markBookSeen(c *gin.Context) {
 // @Success 200 {object} chapterChangesResponse
 // @Failure 403 {object} errorEnvelope "reading_state_users_only"
 // @Failure 404 {object} errorEnvelope
+// @Failure 429 {object} errorEnvelope "rate_limited"
 // @Failure 503 {object} errorEnvelope "group_membership_unavailable"
 // @Router /v1/books/{id}/chapters/{doc_id}/changes [get]
 func (h handlers) chapterChanges(c *gin.Context) {
@@ -755,6 +761,7 @@ func sectionHashes(secs []repo.SectionInfo) []books.SectionHash {
 // @Success 200 {object} listResponse[repo.Document]
 // @Failure 400 {object} errorEnvelope
 // @Failure 404 {object} errorEnvelope
+// @Failure 429 {object} errorEnvelope "rate_limited"
 // @Failure 503 {object} errorEnvelope "group_membership_unavailable"
 // @Router /v1/books/{id}/search [get]
 func (h handlers) searchBook(c *gin.Context) {

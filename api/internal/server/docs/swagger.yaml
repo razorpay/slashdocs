@@ -1319,6 +1319,10 @@ paths:
           description: Not Found
           schema:
             $ref: '#/definitions/server.errorEnvelope'
+        "429":
+          description: rate_limited
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
         "503":
           description: group_membership_unavailable
           schema:
@@ -1358,6 +1362,10 @@ paths:
             $ref: '#/definitions/server.errorEnvelope'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "429":
+          description: rate_limited
           schema:
             $ref: '#/definitions/server.errorEnvelope'
         "503":
@@ -1408,6 +1416,10 @@ paths:
           description: Not Found
           schema:
             $ref: '#/definitions/server.errorEnvelope'
+        "429":
+          description: rate_limited
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
         "503":
           description: group_membership_unavailable
           schema:
@@ -1454,6 +1466,10 @@ paths:
             $ref: '#/definitions/server.errorEnvelope'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "429":
+          description: rate_limited
           schema:
             $ref: '#/definitions/server.errorEnvelope'
         "503":
@@ -1556,6 +1572,10 @@ paths:
           description: Not Found
           schema:
             $ref: '#/definitions/server.errorEnvelope'
+        "429":
+          description: rate_limited
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
         "503":
           description: group_membership_unavailable
           schema:
@@ -1584,6 +1604,10 @@ paths:
             type: string
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "429":
+          description: rate_limited
           schema:
             $ref: '#/definitions/server.errorEnvelope'
         "503":
@@ -1809,6 +1833,10 @@ paths:
           description: Not Found
           schema:
             $ref: '#/definitions/server.errorEnvelope'
+        "429":
+          description: rate_limited
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
         "503":
           description: group_membership_unavailable
           schema:
@@ -1838,6 +1866,10 @@ paths:
             $ref: '#/definitions/server.errorEnvelope'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "429":
+          description: rate_limited
           schema:
             $ref: '#/definitions/server.errorEnvelope'
         "503":
@@ -1874,6 +1906,10 @@ paths:
             $ref: '#/definitions/server.errorEnvelope'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "429":
+          description: rate_limited
           schema:
             $ref: '#/definitions/server.errorEnvelope'
         "503":

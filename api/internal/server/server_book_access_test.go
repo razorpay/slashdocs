@@ -122,3 +122,55 @@ func TestBookRoutesAnswer503WhenGroupsAreUnavailable(t *testing.T) {
 	rr := do(t, h, http.MethodPost, "/v1/books/"+f.bookID+"/chapters/"+f.ch1+"/open", `{"version_id":"`+f.ch1v1+`"}`, bkHeaders(f.viewer))
 	assertStatus(t, rr, http.StatusNoContent)
 }
+
+// Each group of book routes has its own per-user budget per minute. Spending
+// it answers 429 on every route of the group and leaves the others alone.
+func TestBookRoutesAreRateLimited(t *testing.T) {
+	f := newReadingFixture(t)
+	ch := "/chapters/" + f.ch1
+	type route struct{ method, path, body string }
+	groups := []struct {
+		name   string
+		budget int
+		routes []route
+	}{
+		{"reads", 120, []route{
+			{http.MethodGet, "", ""},
+			{http.MethodGet, "/llms.txt", ""},
+			{http.MethodGet, "/state", ""},
+			{http.MethodGet, "/search?q=costs", ""},
+			{http.MethodGet, ch + "/changes", ""},
+		}},
+		{"positions", 120, []route{
+			{http.MethodPut, "/position", positionBody(t, position(f.ch1, f.ch1v1, "", time.Now()))},
+			{http.MethodPost, ch + "/progress", `{"progression":0.5}`},
+		}},
+		{"state writes", 60, []route{
+			{http.MethodPost, ch + "/open", `{"version_id":"` + f.ch1v1 + `"}`},
+			{http.MethodPut, ch + "/done", `{"done":false}`},
+			{http.MethodPost, ch + "/seen", ""},
+			{http.MethodPost, "/seen", ""},
+		}},
+	}
+	for _, g := range groups {
+		for i := 0; i < g.budget; i++ {
+			r := g.routes[i%len(g.routes)]
+			if rr := f.do(t, r.method, r.path, r.body, f.viewer); rr.StatusCode >= 300 {
+				t.Fatalf("%s: request %d %s %s: status %d", g.name, i, r.method, r.path, rr.StatusCode)
+			}
+		}
+		for _, r := range g.routes {
+			body := f.expect(t, r.method, r.path, r.body, f.viewer, http.StatusTooManyRequests)
+			if got := errorCode(t, body); got != "rate_limited" {
+				t.Fatalf("%s %s: error.code = %q, want rate_limited", r.method, r.path, got)
+			}
+		}
+	}
+	// A caller with no access pays from the same budget: the 404 loop is
+	// limited too.
+	stranger := principalHeader(fixtureStranger)
+	for i := 0; i < 120; i++ {
+		f.expect(t, http.MethodGet, "", "", stranger, http.StatusNotFound)
+	}
+	f.expect(t, http.MethodGet, "/llms.txt", "", stranger, http.StatusTooManyRequests)
+}

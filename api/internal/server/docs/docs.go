@@ -382,6 +382,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
                     },
+                    "429": {
+                        "description": "rate_limited",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
                     "503": {
                         "description": "group_membership_unavailable",
                         "schema": {
@@ -491,6 +497,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
                     },
+                    "429": {
+                        "description": "rate_limited",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
                     "503": {
                         "description": "group_membership_unavailable",
                         "schema": {
@@ -565,6 +577,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
                     },
+                    "429": {
+                        "description": "rate_limited",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
                     "503": {
                         "description": "group_membership_unavailable",
                         "schema": {
@@ -634,6 +652,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "429": {
+                        "description": "rate_limited",
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
@@ -791,6 +815,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
                     },
+                    "429": {
+                        "description": "rate_limited",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
                     "503": {
                         "description": "group_membership_unavailable",
                         "schema": {
@@ -836,6 +866,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "429": {
+                        "description": "rate_limited",
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
@@ -1187,6 +1223,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
                     },
+                    "429": {
+                        "description": "rate_limited",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
                     "503": {
                         "description": "group_membership_unavailable",
                         "schema": {
@@ -1232,6 +1274,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "429": {
+                        "description": "rate_limited",
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
@@ -1287,6 +1335,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "429": {
+                        "description": "rate_limited",
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
