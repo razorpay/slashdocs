@@ -17,6 +17,7 @@ type FetchOptions = {
   groupSearchFails?: boolean;
   groupSearchDelayMs?: number;
   groupItems?: Array<{ id: string; email: string; name: string }>;
+  userItems?: Array<{ id: string; email: string; name: string }>;
   accessFails?: boolean;
   owner?: { id: string; email?: string; name?: string };
   requesters?: Array<{ type: string; id: string; email?: string; name?: string }>;
@@ -59,7 +60,9 @@ function installFetch(options: FetchOptions = {}) {
           ],
         });
       }
-      if (url.startsWith("/v1/users")) return jsonResponse({ items: [] });
+      if (url.startsWith("/v1/users")) {
+        return jsonResponse({ items: options.userItems ?? [] });
+      }
       if (url === "/v1/documents/doc_1/access-requests") {
         return jsonResponse({
           items: (options.requesters ?? []).map((requester) => ({
@@ -263,7 +266,9 @@ describe("Google Group sharing", () => {
     expect(screen.getAllByText("Owner").length).toBeGreaterThan(0);
     // No grant gives the folder owner editor, so no grant can change it.
     const folderOwner = screen.getByText("Owner of Parent folder").closest("div.flex");
-    expect(within(folderOwner as HTMLElement).getByRole("combobox")).toBeDisabled();
+    expect(
+      within(folderOwner as HTMLElement).getByRole("button", { name: /^Access role/ }),
+    ).toBeDisabled();
   });
 
   it("lists requests for access and puts a requester in the share form", async () => {
@@ -289,5 +294,52 @@ describe("Google Group sharing", () => {
     renderShare();
     expect((await screen.findAllByText("Owner")).length).toBeGreaterThan(0);
     expect(screen.queryByText("usr_google_123456789")).toBeNull();
+  });
+
+  it("changes a role and removes access from the role menu", async () => {
+    const calls = installFetch();
+    renderShare();
+    const user = userEvent.setup();
+    const row = (await screen.findByText("Editors")).closest(
+      "div.flex.justify-between",
+    );
+    const role = within(row as HTMLElement).getByRole("button", {
+      name: "Access role: Editor",
+    });
+    await user.click(role);
+    await user.click(screen.getByRole("menuitem", { name: "Viewer" }));
+    await waitFor(() => {
+      const request = calls.find(
+        (call) =>
+          call.url.endsWith("/grants/gr_editors") && call.init?.method === "PATCH",
+      );
+      expect(JSON.parse(String(request?.init?.body))).toEqual({ role: "viewer" });
+    });
+    await user.click(role);
+    await user.click(screen.getByRole("menuitem", { name: "Remove access" }));
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (call) =>
+            call.url.endsWith("/grants/gr_editors") && call.init?.method === "DELETE",
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("floats user suggestions and hides them once one is picked", async () => {
+    installFetch({
+      groupsEnabled: false,
+      userItems: [{ id: "usr_ana", email: "ana@example.com", name: "Ana" }],
+    });
+    renderShare();
+    const user = userEvent.setup();
+    const input = await screen.findByPlaceholderText(/user@org.example/);
+    await user.type(input, "an");
+    await user.click(await screen.findByRole("button", { name: /Ana/ }));
+    expect(input).toHaveValue("ana@example.com");
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /Ana/ })).toBeNull(),
+    );
   });
 });
