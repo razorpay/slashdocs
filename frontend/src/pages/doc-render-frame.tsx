@@ -752,6 +752,10 @@ const REFUSALS = new Map([
     "The selection includes content that a script makes. Select less text.",
   ],
   ["drop", "Dragging content into the document does not work. Copy and paste it."],
+  ["format", "Only bold, italic, links and lists can change here."],
+  ["list", "Only paragraphs can become a list."],
+  ["link", "A link must start with http, https, mailto or #."],
+  ["plain-text", "Text from a script takes plain words only."],
 ]);
 
 // parseTextEditResult reads a text-changes message. The frame hosts untrusted
