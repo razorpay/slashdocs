@@ -16,6 +16,7 @@ import { signInPath } from "@/lib/auth-state";
 import { useCommentDrafts } from "@/lib/comment-drafts";
 import { Button } from "@/components/ui/button";
 import { Center } from "@/components/ui/misc";
+import { SheetHandle } from "@/components/ui/sheet";
 import { useIsMobile } from "@/lib/use-media-query";
 import { useTheme } from "@/lib/theme";
 import { useEscChord } from "@/lib/use-esc-chord";
@@ -573,6 +574,7 @@ export function DocWorkspace({
                       : "right-4 top-3 max-h-[calc(100%-1.5rem)] w-[360px] rounded-xl",
                   )}
                 >
+                  {isMobile && <SheetHandle />}
                   <CommentsList
                     showsLatest={showsLatest}
                     onPick={pickComment}
