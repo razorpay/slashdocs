@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState, type ComponentPropsWithoutRef } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useState,
+  type ComponentPropsWithoutRef,
+} from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { errorMessage } from "@/lib/errors";
@@ -37,6 +43,9 @@ import {
   BOT_DOMAIN_SUFFIX,
   BOT_ADDRESS_EXAMPLE,
 } from "@/lib/constants";
+
+// An email or a bot address. The server makes the full check.
+const ADDRESS_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const GENERAL_ACCESS_OPTIONS = [
   { value: GENERAL_ACCESS_NONE, label: "No access" },
@@ -93,11 +102,18 @@ export function ShareSheet({
   const [selectedGroup, setSelectedGroup] = useState<GoogleGroup | null>(null);
   const [role, setRole] = useState(DEFAULT_ROLE);
   const [pendingChange, setPendingChange] = useState<PendingChange | null>(null);
+  const [copied, setCopied] = useState(false);
   const shareURL = `${publicURL()}/app/${isFolder ? "folders" : "d"}/${id}`;
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedAddress(address.trim()), 250);
     return () => window.clearTimeout(t);
   }, [address]);
+  // "Copied" shows on the button for a moment after a copy.
+  useEffect(() => {
+    if (!copied) return;
+    const t = window.setTimeout(() => setCopied(false), 1500);
+    return () => window.clearTimeout(t);
+  }, [copied]);
   const userSearch = useQuery({
     queryKey: queryKeys.userSearch(debouncedAddress),
     queryFn: () => api.searchUsers(debouncedAddress),
@@ -332,28 +348,52 @@ export function ShareSheet({
   };
 
   // The people or groups that match the field. A user whose email is
-  // already in the field was picked, so it shows no more.
-  const suggestions =
+  // already in the field was picked, so it shows no more. One who already
+  // has access shows, but cannot be picked.
+  const grantees = new Set(namedItems.map((i) => i.principal.email));
+  const suggestions = (
     shareMode === "groups"
       ? selectedGroup
         ? []
         : groupSuggestions.map((g) => ({
             key: g.id,
             name: g.name || g.email,
-            email: g.email,
-            pick: () => {
-              setSelectedGroup(g);
-              setAddress(g.email);
-            },
+            detail: g.email,
+            address: g.email,
+            group: g,
           }))
       : userSuggestions
           .filter((u) => u.email !== address.trim())
           .map((u) => ({
             key: u.id || u.email,
             name: u.name || u.email,
-            email: u.name ? u.email : undefined,
-            pick: () => setAddress(u.email || ""),
-          }));
+            detail: u.name ? u.email : undefined,
+            address: u.email || "",
+            group: null,
+          }))
+  ).map((s) => ({ ...s, granted: grantees.has(s.address) }));
+  type Suggestion = (typeof suggestions)[number];
+
+  // The field is a combobox: the arrow keys move through the suggestions that
+  // can be picked, Enter picks one, and Escape closes the list.
+  const listId = useId();
+  const [listOpen, setListOpen] = useState(false);
+  const [activeKey, setActiveKey] = useState<string>();
+  const showList = listOpen && suggestions.length > 0;
+  const pickable = suggestions.filter((s) => !s.granted);
+  const active = showList ? pickable.find((s) => s.key === activeKey) : undefined;
+  const optionId = (s: Suggestion) => `${listId}-${suggestions.indexOf(s)}`;
+  const pick = (s: Suggestion) => {
+    setSelectedGroup(s.group);
+    setAddress(s.address);
+    setListOpen(false);
+  };
+  const move = (step: number) => {
+    const i = active ? pickable.indexOf(active) : -1;
+    const next = pickable[Math.min(Math.max(i + step, 0), pickable.length - 1)];
+    setListOpen(true);
+    setActiveKey(next?.key);
+  };
 
   const everyoneLabel = config.data?.everyone_label || "Everyone on this server";
   const isPublic = config.data?.deployment === "public";
@@ -363,6 +403,12 @@ export function ShareSheet({
   return (
     <SheetContent
       aria-describedby={undefined}
+      // Escape closes the open suggestions first, and the sheet only after.
+      onEscapeKeyDown={(e) => {
+        if (!showList) return;
+        e.preventDefault();
+        setListOpen(false);
+      }}
       onOpenAutoFocus={onOpenAutoFocus}
       onInteractOutside={onInteractOutside}
     >
@@ -473,6 +519,14 @@ export function ShareSheet({
                   {/* The suggestions float under the field, over the form. */}
                   <div className="relative">
                     <Input
+                      role="combobox"
+                      aria-label={
+                        shareMode === "groups" ? "Google Group" : "Person or bot"
+                      }
+                      aria-autocomplete="list"
+                      aria-expanded={showList}
+                      aria-controls={listId}
+                      aria-activedescendant={active ? optionId(active) : undefined}
                       placeholder={
                         shareMode === "groups"
                           ? "Search group name or email"
@@ -481,38 +535,65 @@ export function ShareSheet({
                       value={address}
                       onChange={(e) => {
                         setAddress(e.target.value);
+                        setListOpen(true);
+                        setActiveKey(undefined);
                         if (shareMode === "groups") setSelectedGroup(null);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                          e.preventDefault();
+                          move(e.key === "ArrowDown" ? 1 : -1);
+                        } else if (e.key === "Enter" && active) {
+                          e.preventDefault();
+                          pick(active);
+                        }
                       }}
                       autoCapitalize="off"
                       autoCorrect="off"
                       spellCheck={false}
                     />
-                    {suggestions.length > 0 ? (
-                      <div className="absolute inset-x-0 top-full z-10 mt-1 max-h-64 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-[var(--shadow-pop)]">
-                        {suggestions.map((suggestion) => (
-                          <button
-                            key={suggestion.key}
-                            type="button"
-                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-[var(--color-surface-muted)]"
-                            onClick={suggestion.pick}
-                          >
-                            {shareMode === "groups" ? (
-                              <UsersRound className="h-4 w-4 shrink-0" />
-                            ) : null}
-                            <span className="min-w-0">
-                              <span className="block truncate font-medium">
-                                {suggestion.name}
-                              </span>
-                              {suggestion.email ? (
-                                <span className="block truncate text-xs text-[var(--color-fg-muted)]">
-                                  {suggestion.email}
-                                </span>
-                              ) : null}
+                    <ul
+                      id={listId}
+                      role="listbox"
+                      hidden={!showList}
+                      className="absolute inset-x-0 top-full z-10 mt-1 max-h-64 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-[var(--shadow-pop)]"
+                    >
+                      {suggestions.map((suggestion) => (
+                        <li
+                          key={suggestion.key}
+                          id={optionId(suggestion)}
+                          role="option"
+                          aria-selected={suggestion === active}
+                          aria-disabled={suggestion.granted || undefined}
+                          // The field keeps the focus.
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => !suggestion.granted && pick(suggestion)}
+                          className={cn(
+                            "flex items-center gap-2 px-3 py-2 text-sm",
+                            suggestion.granted
+                              ? "cursor-default text-[var(--color-fg-muted)]"
+                              : "cursor-pointer hover:bg-[var(--color-surface-muted)] aria-selected:bg-[var(--color-surface-muted)]",
+                          )}
+                        >
+                          {shareMode === "groups" ? (
+                            <UsersRound className="h-4 w-4 shrink-0" />
+                          ) : null}
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate font-medium">
+                              {suggestion.name}
                             </span>
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
+                            {suggestion.detail ? (
+                              <span className="block truncate text-xs text-[var(--color-fg-muted)]">
+                                {suggestion.detail}
+                              </span>
+                            ) : null}
+                          </span>
+                          {suggestion.granted ? (
+                            <span className="shrink-0 text-xs">Has access</span>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
                   </div>
                   <p className="mt-1.5 text-[11px] text-[var(--color-fg-muted)]">
                     {shareMode === "groups"
@@ -570,8 +651,9 @@ export function ShareSheet({
                   type="submit"
                   disabled={
                     !canManageAccess ||
-                    !address.trim() ||
-                    (shareMode === "groups" && !selectedGroup) ||
+                    (shareMode === "groups"
+                      ? !selectedGroup
+                      : !ADDRESS_PATTERN.test(address.trim())) ||
                     m.isPending
                   }
                 >
@@ -740,7 +822,7 @@ export function ShareSheet({
                 />
               </div>
             </div>
-            <div className="mt-6 rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-surface-muted)]/45 p-3">
+            <div className="mt-6 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-muted)]/45 p-3">
               <div className="flex items-center justify-between gap-3">
                 <div className="text-sm font-medium">
                   {isFolder ? "Folder" : "Document"} link
@@ -752,10 +834,18 @@ export function ShareSheet({
                   className="shrink-0"
                   onClick={async () => {
                     await navigator.clipboard.writeText(shareURL);
-                    toast.success("Share link copied.");
+                    setCopied(true);
                   }}
                 >
-                  <Copy className="h-4 w-4" /> Copy link
+                  {copied ? (
+                    <>
+                      <Check className="h-4 w-4" /> Copied
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-4 w-4" /> Copy link
+                    </>
+                  )}
                 </Button>
               </div>
             </div>

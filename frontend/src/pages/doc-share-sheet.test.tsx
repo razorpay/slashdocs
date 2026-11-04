@@ -334,12 +334,57 @@ describe("Google Group sharing", () => {
     });
     renderShare();
     const user = userEvent.setup();
-    const input = await screen.findByPlaceholderText(/user@org.example/);
+    const input = await screen.findByRole("combobox", { name: "Person or bot" });
     await user.type(input, "an");
-    await user.click(await screen.findByRole("button", { name: /Ana/ }));
+    expect(screen.getByRole("button", { name: "Share" })).toBeDisabled();
+    await user.click(await screen.findByRole("option", { name: /Ana/ }));
     expect(input).toHaveValue("ana@example.com");
+    expect(screen.getByRole("button", { name: "Share" })).toBeEnabled();
     await waitFor(() =>
-      expect(screen.queryByRole("button", { name: /Ana/ })).toBeNull(),
+      expect(screen.queryByRole("option", { name: /Ana/ })).toBeNull(),
+    );
+  });
+
+  it("moves through the suggestions with the keyboard and skips grantees", async () => {
+    installFetch({
+      groupsEnabled: false,
+      userItems: [
+        { id: "owner", email: "owner@example.com", name: "Owner" },
+        { id: "usr_ana", email: "ana@example.com", name: "Ana" },
+      ],
+    });
+    renderShare();
+    const user = userEvent.setup();
+    const input = await screen.findByRole("combobox", { name: "Person or bot" });
+    await user.type(input, "ex");
+    const owner = await screen.findByRole("option", { name: /Owner.*Has access/ });
+    expect(owner).toHaveAttribute("aria-disabled", "true");
+    await user.click(owner);
+    expect(input).toHaveValue("ex");
+
+    await user.keyboard("{ArrowDown}");
+    const ana = screen.getByRole("option", { name: /Ana/ });
+    expect(ana).toHaveAttribute("aria-selected", "true");
+    expect(input).toHaveAttribute("aria-activedescendant", ana.id);
+    await user.keyboard("{Escape}");
+    expect(input).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("dialog")).toBeVisible();
+
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(input).toHaveValue("ana@example.com");
+  });
+
+  it("shows Copied on the link button for a moment", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    installFetch();
+    renderShare();
+    await userEvent.click(await screen.findByRole("button", { name: "Copy link" }));
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining("/app/d/doc_1"));
+    expect(screen.getByRole("button", { name: "Copied" })).toBeVisible();
+    await waitFor(
+      () => expect(screen.getByRole("button", { name: "Copy link" })).toBeVisible(),
+      { timeout: 2500 },
     );
   });
 });
