@@ -15,7 +15,13 @@ import {
 } from "./highlight.ts";
 import { createCursorChat, createCursorLayer, trackPointer } from "./cursors.ts";
 import { createPinLayer, parsePins, type PinRect } from "./pins.ts";
-import { caretRange, isEditableTarget, reducedMotion, scrollBehavior } from "./dom.ts";
+import {
+  blockOf,
+  caretRange,
+  isEditableTarget,
+  reducedMotion,
+  scrollBehavior,
+} from "./dom.ts";
 import { startTextEditing, type TextEditor } from "./text-editing.ts";
 import { CHORD_KEYS } from "../src/lib/esc-chord.ts";
 import {
@@ -1199,17 +1205,27 @@ type Theme = "dark" | "light";
     const id = watched;
     if (!id) return;
     const rect = pins.rect(id) ?? marksRect(id);
-    const key = JSON.stringify(rect);
+    // The blocks that hold a highlight. The rest of their lines is part of
+    // what the comment is on, so the app keeps the popover off them.
+    const block = marksRect(id, blockOf);
+    const key = JSON.stringify([rect, block]);
     if (key !== watchedRect) {
       watchedRect = key;
-      parent.postMessage({ type: "slashdocs:anchor-rect", id, rect }, targetOrigin());
+      parent.postMessage(
+        { type: "slashdocs:anchor-rect", id, rect, block },
+        targetOrigin(),
+      );
     }
     watchFrame = requestAnimationFrame(postWatched);
   }
 
-  // marksRect gives the box around a text comment's highlight, or null when
-  // it has none.
-  function marksRect(id: string): PinRect | null {
+  // marksRect gives the box around a text comment's highlight, or around the
+  // element that `of` gives for each of its marks. It is null when the
+  // comment has no highlight.
+  function marksRect(
+    id: string,
+    of: (mark: Element) => Element | null = (mark) => mark,
+  ): PinRect | null {
     const d = doc();
     if (!d) return null;
     const cid = CSS.escape(id);
@@ -1217,8 +1233,8 @@ type Theme = "dark" | "light";
     for (const mark of d.querySelectorAll(
       `mark.slashdocs-mark[data-cid="${cid}"],.slashdocs-svg-mark-rect[data-cid="${cid}"]`,
     )) {
-      const r = mark.getBoundingClientRect();
-      if (!r.width && !r.height) continue;
+      const r = of(mark)?.getBoundingClientRect();
+      if (!r || (!r.width && !r.height)) continue;
       box = box
         ? new DOMRect(
             Math.min(box.left, r.left),

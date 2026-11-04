@@ -47,12 +47,15 @@ function parseRect(value: unknown): Rect | null {
 // which leaves the document above it.
 function Popover({
   anchor,
+  block,
   bounds,
   label,
   onClose,
   children,
 }: {
   anchor: Rect | null;
+  // The blocks that hold a highlight, whose lines the popover keeps off.
+  block?: Rect | null;
   bounds: RefObject<HTMLElement | null>;
   label: string;
   onClose: () => void;
@@ -71,9 +74,10 @@ function Popover({
         anchor ?? { left: box.right - EDGE, top: box.top, width: 0, height: 0 },
         size,
         box,
+        block ?? undefined,
       ),
     );
-  }, [anchor, bounds, mobile, children]);
+  }, [anchor, block, bounds, mobile, children]);
   // It takes the focus that a post or a pick in a list left behind, so Esc
   // and Tab reach it. Focus in the document stays there.
   useEffect(() => {
@@ -143,7 +147,11 @@ export function CommentPopovers({
 }) {
   const { activeComment, setActiveComment, comments, drafts, unanchoredComments } =
     useDoc();
-  const [anchor, setAnchor] = useState<{ id: string; rect: Rect | null }>();
+  const [anchor, setAnchor] = useState<{
+    id: string;
+    rect: Rect | null;
+    block: Rect | null;
+  }>();
   const [cluster, setCluster] = useState<{ ids: string[]; rect: Rect }>();
   useEffect(() => {
     if (ready) postToFrame({ type: "slashdocs:watch", id: activeComment ?? null });
@@ -152,8 +160,12 @@ export function CommentPopovers({
     const iframe = frame.current;
     if (!iframe) return;
     if (data.type === "slashdocs:anchor-rect" && typeof data.id === "string") {
-      const rect = parseRect(data.rect);
-      setAnchor({ id: data.id, rect: rect && toApp(iframe, rect) });
+      const [rect, block] = [parseRect(data.rect), parseRect(data.block)];
+      setAnchor({
+        id: data.id,
+        rect: rect && toApp(iframe, rect),
+        block: block && toApp(iframe, block),
+      });
     }
     if (data.type === "slashdocs:pin-cluster" && Array.isArray(data.ids)) {
       const rect = parseRect(data.rect);
@@ -177,6 +189,7 @@ export function CommentPopovers({
         <Popover
           key={activeComment}
           anchor={rect}
+          block={placedAnchor?.block}
           bounds={bounds}
           label={draft ? "New comment" : "Comment thread"}
           onClose={close}
