@@ -16,6 +16,8 @@ export type ManifestLink = {
     documentId?: string;
     kind: ChapterKind;
     number?: number;
+    // The index of the chapter's part in this reader's toc, or -1 for front
+    // and back matter. Never an index into Outline.parts.
     part: number;
     versionId?: string;
     wordCount?: number;
@@ -28,8 +30,11 @@ export type Manifest = {
     identifier: string;
     title: string;
     subtitle?: string;
+    // The chapters this reader can open, plus placeholders. Progress copy
+    // uses BookState.progress.of.
     numberOfChapters: number;
-    folderId: string;
+    // Sent only to readers who can view the folder.
+    folderId?: string;
     outlineVersionId: string;
     canEdit: boolean;
   };
@@ -51,6 +56,7 @@ export type ReadingPosition = {
 };
 
 export type BookState = {
+  // The newest positions, at most one per device and at most 20 devices.
   positions: ReadingPosition[];
   chapters: Record<
     string,

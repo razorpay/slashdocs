@@ -131,20 +131,33 @@ describe("booksApi", () => {
     };
   }
 
+  // The fixture is the Go handler's answer to a reader who holds grants on
+  // the front matter and chapter 3 only: chapter 1 and its part are hidden,
+  // chapter 2 is a placeholder.
   it("parses the manifest the server sends, byte for byte", async () => {
     stubFetch(serverManifest);
     const m = await booksApi.manifest("book_x");
     expect(m.metadata.identifier).toBe(serverManifest.metadata.identifier);
-    expect(m.metadata.canEdit).toBe(true);
-    const first = m.readingOrder[0]!;
-    expect(first.href).toContain("/c/doc_");
-    expect(first.properties?.documentId).toMatch(/^doc_/);
-    expect(first.properties?.versionId).toMatch(/^ver_/);
-    expect(first.properties?.kind).toBe("chapter");
+    expect(m.metadata.canEdit).toBe(false);
+    // A reader who cannot view the folder is not told its id.
+    expect(m.metadata.folderId).toBeUndefined();
+    // Visible chapters plus placeholders.
+    expect(m.metadata.numberOfChapters).toBe(2);
+    const [front, chapter] = m.readingOrder;
+    expect(front!.properties).toMatchObject({ kind: "front", part: -1 });
+    expect(chapter!.href).toContain("/c/doc_");
+    expect(chapter!.properties?.documentId).toMatch(/^doc_/);
+    expect(chapter!.properties?.versionId).toMatch(/^ver_/);
+    expect(chapter!.properties).toMatchObject({ kind: "chapter", number: 3 });
+    // part indexes this reader's toc, which leaves out the hidden part.
+    expect(m.toc[chapter!.properties!.part]!.title).toBe("Two");
+    const planned = m.toc[0]!.children[0]!;
+    expect(planned.href).toBeUndefined();
+    expect(planned.properties).toMatchObject({ kind: "planned", number: 2 });
     // The client helpers work on the real server hrefs.
-    expect(chapterByNumber(m, 2)?.href).toBe(m.readingOrder[1]!.href);
-    expect(neighbours(m, m.readingOrder[1]!.href!).prev?.href).toBe(first.href);
-    expect(m.toc[0]!.children).toHaveLength(m.readingOrder.length);
+    expect(chapterByNumber(m, 3)?.href).toBe(chapter!.href);
+    expect(chapterByNumber(m, 1)).toBeUndefined();
+    expect(neighbours(m, chapter!.href!).prev?.href).toBe(front!.href);
   });
 
   it("sends the version being read with progress and seen", async () => {
