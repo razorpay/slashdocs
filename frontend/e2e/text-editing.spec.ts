@@ -216,7 +216,9 @@ test("text from a script offers to ask an agent", async ({ page, slashdocs }) =>
 
   await openEditable(page, document.id);
   await renderedDocument(page).locator("#status").click();
-  const hint = renderedDocument(page).getByText("A script on the page writes this text.");
+  const hint = renderedDocument(page).getByText(
+    "A script on the page writes this text.",
+  );
   await expect(hint).toBeVisible();
   await renderedDocument(page)
     .getByRole("button", { name: "Ask an agent to change this" })
@@ -255,7 +257,9 @@ test("text from one script string changes in every place it shows", async ({
   await placeCaret(page, "#labels button", "step");
   await page.keyboard.type("check");
   expect((await saved).status()).toBe(201);
-  await expect(page.getByText("Changed in 3 places")).toBeVisible();
+  await expect(
+    page.getByText("Changed “Run step” to “Run check” in 3 places"),
+  ).toBeVisible();
   expect(await latestSource(page, document.id)).toBe(
     html.replace('"Run step"', '"Run check"'),
   );
@@ -437,7 +441,10 @@ test.describe("formatting", () => {
     await expect(field).toHaveCount(0);
     expect((await saved).status()).toBe(201);
 
-    expect(await latestSource(page, document.id)).toBe(html);
+    // The text around the link joins into one, which spells é as it shows.
+    expect(await latestSource(page, document.id)).toBe(
+      html.replace("Caf&eacute;", "Café"),
+    );
   });
 
   test("a numbered list that Enter splits keeps its numbers", async ({
@@ -465,5 +472,267 @@ test.describe("formatting", () => {
       "start",
       "3",
     );
+  });
+});
+
+test.describe("saving", () => {
+  // A status and a script that show text from one string each.
+  const scriptHTML = () =>
+    documentHTML().replace(
+      "</body>",
+      `<p>State: <span class="badge">Pending</span></p>
+      <p>Build health: <b id="health"></b></p>
+      <p id="incidents"></p>
+      <script>
+        const HEALTH = "Green";
+        document.getElementById("health").textContent = HEALTH;
+        document.getElementById("incidents").textContent = "Open incidents: 3";
+      </script>
+    </body>`,
+    );
+
+  test("deleting all the text of a badge and typing keeps the badge", async ({
+    page,
+    slashdocs,
+  }) => {
+    const html = scriptHTML();
+    const document = await slashdocs.createDocument(uniqueName("Badge"), html);
+
+    await openEditable(page, document.id);
+    const saved = nextSave(page, document.id);
+    await placeCaret(page, ".badge", "Pending", { collapse: true });
+    for (let i = 0; i < "Pending".length; i++) await page.keyboard.press("Backspace");
+    await page.keyboard.type("Done");
+    expect((await saved).status()).toBe(201);
+
+    await expect
+      .poll(() => latestSource(page, document.id))
+      .toBe(html.replace(">Pending<", ">Done<"));
+  });
+
+  test("deleting all of a script text and typing keeps the element and the script", async ({
+    page,
+    slashdocs,
+  }) => {
+    const html = scriptHTML();
+    const document = await slashdocs.createDocument(uniqueName("Health"), html);
+
+    await openEditable(page, document.id);
+    const health = renderedDocument(page).locator("#health");
+    await health.click();
+    await expect(health).toHaveAttribute("contenteditable", "true");
+    const saved = nextSave(page, document.id);
+    await placeCaret(page, "#health", "Green", { collapse: true });
+    for (let i = 0; i < "Green".length; i++) await page.keyboard.press("Backspace");
+    await page.keyboard.type("Amber");
+    expect((await saved).status()).toBe(201);
+
+    expect(await latestSource(page, document.id)).toBe(
+      html.replace('"Green"', '"Amber"'),
+    );
+    await page.reload();
+    await expect(renderedDocument(page).locator("#health")).toHaveText("Amber");
+    await expect(renderedDocument(page).locator("#incidents")).toHaveText(
+      "Open incidents: 3",
+    );
+  });
+
+  test("a refused script edit stays on screen as not saved", async ({
+    page,
+    slashdocs,
+  }) => {
+    const html = documentHTML().replace(
+      "</body>",
+      `<p id="state"></p>
+      <script>
+        const STATE = "Ready";
+        document.getElementById("state").textContent =
+          STATE.length === 5 ? STATE : STATE.toUpperCase();
+      </script>
+    </body>`,
+    );
+    // The script shows a string of another length in capitals.
+    const document = await slashdocs.createDocument(uniqueName("Refused"), html);
+
+    await openEditable(page, document.id);
+    const state = renderedDocument(page).locator("#state");
+    await state.click();
+    await expect(state).toHaveAttribute("contenteditable", "true");
+    await placeCaret(page, "#state", "Ready");
+    await page.keyboard.type("Done");
+    await expect(page.getByText("Not saved", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Discard my change" })).toBeVisible();
+    const unchanged = await slashdocs.getDocument(document.id);
+    expect(unchanged.current_version_id).toBe(document.current_version_id);
+  });
+
+  test("browser Back before the pause keeps the edit", async ({ page, slashdocs }) => {
+    const html = documentHTML();
+    const title = uniqueName("Back");
+    const document = await slashdocs.createDocument(title, html);
+
+    // The document opens from the list, so that Back is a move in the app.
+    await page.goto("/app/documents");
+    await page.getByRole("link", { name: title }).first().click();
+    await expect(renderedDocument(page).locator("body")).toHaveAttribute(
+      "contenteditable",
+      "true",
+    );
+    const saved = nextSave(page, document.id);
+    await placeCaret(page, "#tail", "twice");
+    await page.keyboard.type("thrice");
+    await page.waitForTimeout(300);
+    await page.goBack();
+    expect((await saved).status()).toBe(201);
+
+    expect(await latestSource(page, document.id)).toBe(html.replace("twice", "thrice"));
+  });
+
+  test("a line break at the end of a paragraph stays after a reload", async ({
+    page,
+    slashdocs,
+  }) => {
+    const html = documentHTML();
+    const document = await slashdocs.createDocument(uniqueName("Break"), html);
+
+    await openEditable(page, document.id);
+    const saved = nextSave(page, document.id);
+    await placeCaret(page, "#tail", "giving up.", { collapse: true });
+    await page.keyboard.press("Shift+Enter");
+    expect((await saved).status()).toBe(201);
+
+    expect(await latestSource(page, document.id)).toBe(
+      html.replace("giving up.</p>", "giving up.<br><br></p>"),
+    );
+  });
+
+  test("edits far apart in a stale tab land with no conflict", async ({
+    page,
+    slashdocs,
+  }) => {
+    const html = documentHTML();
+    const document = await slashdocs.createDocument(uniqueName("Far apart"), html);
+    const other = await page.context().newPage();
+    await openEditable(page, document.id);
+    await openEditable(other, document.id);
+
+    const first = nextSave(page, document.id);
+    await placeCaret(page, ".card strong", "Try it.", { nth: 1 });
+    await page.keyboard.type("Read it.");
+    expect((await first).status()).toBe(201);
+
+    // The stale tab changes text above and below that edit.
+    const second = nextSave(other, document.id);
+    await placeCaret(other, "#intro", "keep it");
+    await other.keyboard.type("share it");
+    await placeCaret(other, "#tail", "twice");
+    await other.keyboard.type("thrice");
+    expect((await second).status()).toBe(201);
+
+    await expect
+      .poll(() => latestSource(page, document.id))
+      .toBe(
+        html
+          .replace("keep it", "share it")
+          .replace("twice", "thrice")
+          .replace(/Try it\.(?=<\/strong> Open the second)/, "Read it."),
+      );
+  });
+
+  test("after a conflict, Copy my text copies the latest words, and Show their version clears the state", async ({
+    page,
+    slashdocs,
+  }) => {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    const html = documentHTML();
+    const document = await slashdocs.createDocument(uniqueName("Conflict"), html);
+    const other = await page.context().newPage();
+    await openEditable(page, document.id);
+    await openEditable(other, document.id);
+
+    const first = nextSave(other, document.id);
+    await placeCaret(other, "#tail", "twice");
+    await other.keyboard.type("thrice");
+    expect((await first).status()).toBe(201);
+
+    const second = nextSave(page, document.id);
+    await placeCaret(page, "#tail", "twice");
+    await page.keyboard.type("four times");
+    expect((await second).status()).toBe(409);
+    await expect(page.getByText("Not saved", { exact: true })).toBeVisible();
+    await placeCaret(page, "#tail", "giving up.", { collapse: true });
+    await page.keyboard.type(" Later words.");
+    await page.getByRole("button", { name: "Copy my text" }).click();
+    await expect(page.getByText("Your text is copied.")).toBeVisible();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(
+      "four times before giving up. Later words.",
+    );
+
+    await page.getByRole("button", { name: "Show their version" }).click();
+    await expect(renderedDocument(page).locator("#tail")).toContainText("thrice");
+    await expect(page.getByText("Not saved", { exact: true })).toBeHidden();
+  });
+
+  test("a script string in several places warns first, and its save keeps the place", async ({
+    page,
+    slashdocs,
+  }) => {
+    const html = documentHTML().replace(
+      "</body>",
+      `<div style="height:2000px"></div>
+      <div id="chips"></div>
+      <script>
+        const LABEL = "Needs review";
+        for (const n of [1, 2, 3]) {
+          const chip = document.createElement("b");
+          chip.textContent = LABEL;
+          document.getElementById("chips").appendChild(chip);
+        }
+      </script>
+    </body>`,
+    );
+    const document = await slashdocs.createDocument(uniqueName("Places"), html);
+
+    await openEditable(page, document.id);
+    const chips = renderedDocument(page).locator("#chips b");
+    await chips.nth(1).click();
+    await expect(
+      renderedDocument(page).getByText(
+        "This text shows in 3 places. Your change goes to all of them.",
+      ),
+    ).toBeVisible();
+    const top = await chips.nth(1).evaluate(() => window.scrollY);
+    expect(top).toBeGreaterThan(0);
+    const saved = nextSave(page, document.id);
+    await placeCaret(page, "#chips b", "review", { nth: 1 });
+    await page.keyboard.type("a look");
+    expect((await saved).status()).toBe(201);
+
+    await expect(chips).toHaveText(["Needs a look", "Needs a look", "Needs a look"]);
+    // The frame did not load again: the scroll and the caret stay.
+    expect(await chips.nth(1).evaluate(() => window.scrollY)).toBe(top);
+    expect(
+      await chips
+        .nth(1)
+        .evaluate((chip) =>
+          chip.contains(chip.ownerDocument.getSelection()!.anchorNode),
+        ),
+    ).toBe(true);
+  });
+
+  test("Esc twice in the text leaves it and keeps the page", async ({
+    page,
+    slashdocs,
+  }) => {
+    const document = await slashdocs.createDocument(uniqueName("Esc"), documentHTML());
+
+    await openEditable(page, document.id);
+    for (let i = 0; i < 3; i++) {
+      await renderedDocument(page).locator("#tail").click();
+      await page.keyboard.press("Escape");
+      await page.keyboard.press("Escape");
+    }
+    await expect(page).toHaveURL(new RegExp(`/app/d/${document.id}`));
+    await expect(renderedDocument(page).locator("#tail")).toBeVisible();
   });
 });

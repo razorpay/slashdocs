@@ -17,6 +17,7 @@ import { errorMessage } from "@/lib/errors";
 import { CHORD_KEYS } from "@/lib/esc-chord";
 import { cursorsShownStore, parseCursorSpot } from "@/lib/live-cursors";
 import { createPersistentStore } from "@/lib/persistent-store";
+import { agentRequestBody } from "@/lib/agent-request";
 import { principalColor } from "@/lib/principals";
 import { useDocumentExport } from "./use-document-export";
 import { useDoc } from "./doc-context";
@@ -551,7 +552,7 @@ export function RenderFrame() {
           startDraft({
             quote: anchor.quote,
             anchor,
-            body: `Please change “${anchor.quote}” to: `,
+            body: agentRequestBody(anchor.quote),
           });
       }
       if (e.data?.type === "slashdocs:text-focus") {
