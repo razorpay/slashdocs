@@ -7,6 +7,8 @@
 // Only the blocks that the editor's own input reached count: the document's
 // scripts may change other text, such as a clock, while the editor types.
 
+import { blockOf } from "./dom.ts";
+
 export type TextChange = { before: string; after: string };
 export type TextChanges = { changes: TextChange[]; unsupported: boolean };
 
@@ -355,16 +357,4 @@ function sameRange(a: Range, b: Range): boolean {
     a.endContainer === b.endContainer &&
     a.endOffset === b.endOffset
   );
-}
-
-// The nearest ancestor laid out as a block, such as a paragraph or list item.
-function blockOf(node: Node): Element | null {
-  let element =
-    node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
-  const view = node.ownerDocument?.defaultView;
-  while (element && view) {
-    if (!view.getComputedStyle(element).display.startsWith("inline")) return element;
-    element = element.parentElement;
-  }
-  return element;
 }

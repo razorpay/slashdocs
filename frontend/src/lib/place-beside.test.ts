@@ -19,6 +19,14 @@ it("goes under a highlight as wide as the page, or over it near the bottom", () 
   expect(placeBeside({ ...wide, top: 700 }, size, bounds)).toEqual({ x: 20, y: 492 });
 });
 
+it("keeps off the lines of the block that holds a highlight", () => {
+  const quote = { left: 300, top: 300, width: 100, height: 20 };
+  const block = { left: 150, top: 280, width: 500, height: 80 };
+  expect(placeBeside(quote, size, bounds, block)).toEqual({ x: 658, y: 300 });
+  const wide = { ...block, left: 20, width: 960 };
+  expect(placeBeside(quote, size, bounds, wide)).toEqual({ x: 300, y: 328 });
+});
+
 it("stays inside its bounds when the anchor scrolled out of them", () => {
   expect(placeBeside(pin(100, -500), size, bounds)).toEqual({ x: 136, y: 12 });
   expect(placeBeside(pin(100, 5000), size, bounds)).toEqual({ x: 136, y: 588 });

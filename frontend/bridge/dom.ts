@@ -46,3 +46,16 @@ export function reducedMotion(d: Document | null | undefined): boolean {
 export function scrollBehavior(d: Document | null | undefined): ScrollBehavior {
   return reducedMotion(d) ? "instant" : "smooth";
 }
+
+// blockOf gives the nearest ancestor laid out as a block, such as a paragraph
+// or list item.
+export function blockOf(node: Node): Element | null {
+  let element =
+    node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+  const view = node.ownerDocument?.defaultView;
+  while (element && view) {
+    if (!view.getComputedStyle(element).display.startsWith("inline")) return element;
+    element = element.parentElement;
+  }
+  return element;
+}
