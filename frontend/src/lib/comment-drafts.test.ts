@@ -1,8 +1,10 @@
 import { act, renderHook } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearCommentDrafts,
   useCommentDrafts,
+  useDraftText,
+  useReplyDraft,
   type CommentDraft,
 } from "./comment-drafts";
 
@@ -46,5 +48,49 @@ describe("useCommentDrafts", () => {
     act(() => result.current[1](() => [draft("draft:1")]));
     act(() => clearCommentDrafts());
     expect(result.current[0]).toEqual([]);
+  });
+});
+
+describe("useReplyDraft", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("keeps a reply per document and thread, and drops it when emptied", () => {
+    const a = renderHook(() => useReplyDraft("doc_a", "cmt_1"));
+    const b = renderHook(() => useReplyDraft("doc_a", "cmt_2"));
+    act(() => a.result.current[1]({ body: "Agreed", mentions: [] }));
+    expect(a.result.current[0]).toMatchObject({ body: "Agreed" });
+    expect(b.result.current[0]).toBeUndefined();
+
+    act(() => a.result.current[1]({ body: "  ", mentions: [] }));
+    expect(a.result.current[0]).toBeUndefined();
+    expect(localStorage.getItem("slashdocs.reply-drafts")).toBe("{}");
+  });
+
+  it("forgets every reply on clear", () => {
+    const { result } = renderHook(() => useReplyDraft("doc_a", "cmt_1"));
+    act(() => result.current[1]({ body: "Agreed", mentions: [] }));
+    act(() => clearCommentDrafts());
+    expect(result.current[0]).toBeUndefined();
+  });
+});
+
+describe("useDraftText", () => {
+  it("saves after a pause, and at once when the field closes", () => {
+    vi.useFakeTimers();
+    const save = vi.fn();
+    const { result, unmount } = renderHook(() =>
+      useDraftText({ body: "", mentions: [] }, save),
+    );
+    act(() => result.current[1]({ body: "a", mentions: [] }));
+    act(() => result.current[1]({ body: "ab", mentions: [] }));
+    expect(result.current[0].body).toBe("ab");
+    expect(save).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(300));
+    expect(save).toHaveBeenCalledExactlyOnceWith({ body: "ab", mentions: [] });
+
+    act(() => result.current[1]({ body: "abc", mentions: [] }));
+    unmount();
+    expect(save).toHaveBeenLastCalledWith({ body: "abc", mentions: [] });
+    vi.useRealTimers();
   });
 });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -19,8 +19,7 @@ import { errorMessage } from "@/lib/errors";
 import { principalLabel, samePrincipal } from "@/lib/principals";
 import { queryKeys } from "@/lib/queryKeys";
 import { anchorLabel } from "@/lib/comment-pins";
-import type { CommentDraft } from "@/lib/comment-drafts";
-import type { MentionDraft } from "@/lib/comment-mentions";
+import { useDraftText, type CommentDraft } from "@/lib/comment-drafts";
 import { COMMENT_FILTERS, COMMENT_STATUS, matchesCommentFilter } from "@/lib/constants";
 import { useSelf } from "@/lib/hooks";
 import { useDoc } from "./doc-context";
@@ -64,10 +63,6 @@ function CloseButton({ label, onClick }: { label: string; onClick: () => void })
   );
 }
 
-// Typing stays in local state and reaches storage after a short pause, so a
-// keystroke does not re-render the whole page.
-const DRAFT_SAVE_DELAY = 300;
-
 // CommentComposer writes a new thread: who writes it, what it is on, and the
 // same field and send button as a reply.
 export function CommentComposer({ draft }: { draft: CommentDraft }) {
@@ -80,24 +75,10 @@ export function CommentComposer({ draft }: { draft: CommentDraft }) {
     principal,
   } = useDoc();
   const q = useQueryClient();
-  const [text, setText] = useState<MentionDraft>(() => ({
-    body: draft.body,
-    mentions: draft.mentions,
-  }));
-  const unsaved = useRef<MentionDraft | null>(null);
-  const saveTimer = useRef<number | undefined>(undefined);
-  const save = useCallback(() => {
-    window.clearTimeout(saveTimer.current);
-    if (unsaved.current) saveDraft(draft.id, unsaved.current);
-    unsaved.current = null;
-  }, [draft.id, saveDraft]);
-  const edit = (next: MentionDraft) => {
-    setText(next);
-    unsaved.current = next;
-    window.clearTimeout(saveTimer.current);
-    saveTimer.current = window.setTimeout(save, DRAFT_SAVE_DELAY);
-  };
-  useEffect(() => save, [save]);
+  const [text, edit] = useDraftText(
+    { body: draft.body, mentions: draft.mentions },
+    (next) => saveDraft(draft.id, next),
+  );
 
   const create = useMutation({
     mutationFn: () =>
@@ -110,7 +91,6 @@ export function CommentComposer({ draft }: { draft: CommentDraft }) {
         text.mentions,
       ),
     onSuccess: (created) => {
-      unsaved.current = null;
       discardDraft(draft.id);
       // The new thread opens where the draft was.
       setActiveComment(created.id);
@@ -125,10 +105,7 @@ export function CommentComposer({ draft }: { draft: CommentDraft }) {
 
   // Only this button deletes what was typed. Esc and a click outside close
   // the popover and keep the draft, and an empty one goes as it closes.
-  const discard = () => {
-    unsaved.current = null;
-    discardDraft(draft.id);
-  };
+  const discard = () => discardDraft(draft.id);
 
   const self = useSelf(principal);
   return (
@@ -219,6 +196,9 @@ export function CommentThread({ c, onClose }: { c: Comment; onClose: () => void 
 }
 
 const LIST_FILTERS = [...COMMENT_FILTERS, "for you"] as const;
+const LIST_ROW =
+  "w-full rounded-lg px-2 py-2 text-left transition-colors hover:bg-[var(--color-surface-muted)] focus-visible:-outline-offset-2 aria-[current]:bg-[var(--color-accent-muted)]";
+const countLabel = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 type ListFilter = (typeof LIST_FILTERS)[number];
 
 // mentions tells whether a thread mentions the reader, in its first comment
@@ -257,7 +237,10 @@ export function CommentsList({
     signIn,
     unanchoredComments,
     activeComment,
+    drafts,
+    discardDraft,
   } = useDoc();
+  const self = useSelf(principal);
   const [filter, setFilter] = useState<ListFilter>("all");
   // The open thread is marked in the list, and scrolls into view.
   const activeRow = useRef<HTMLButtonElement>(null);
@@ -275,6 +258,12 @@ export function CommentsList({
       ? mentions(c, principal)
       : matchesCommentFilter(c.status, filter),
   );
+  // Drafts are the reader's own open threads, not yet sent.
+  const unsent =
+    filter === "all" || filter === COMMENT_STATUS.open
+      ? drafts.filter((d) => d.body.trim())
+      : [];
+  const drafted = unsent.length ? countLabel(unsent.length, "draft") : "";
   return (
     <div className="flex max-h-full min-h-0 flex-col">
       <div className="shrink-0 border-b border-[var(--color-border)] px-4 pt-3">
@@ -283,9 +272,12 @@ export function CommentsList({
           {!commentsLoading && !commentsError && (
             <span
               className="text-xs text-[var(--color-fg-muted)] tabular-nums"
-              aria-label={`${items.length} comment threads (${filter})`}
+              aria-label={[`${items.length} comment threads (${filter})`, drafted]
+                .filter(Boolean)
+                .join(", ")}
             >
               {items.length}
+              {drafted && ` · ${drafted}`}
             </span>
           )}
           <span className="ml-auto flex items-center gap-1">
@@ -334,6 +326,48 @@ export function CommentsList({
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2">
+        {unsent.length ? (
+          <ul aria-label="Drafts" className="mb-1 space-y-1">
+            {unsent.map((d) => (
+              <li key={d.id} className="relative">
+                <button
+                  ref={d.id === activeComment ? activeRow : undefined}
+                  type="button"
+                  onClick={() => onPick(d.id)}
+                  aria-current={d.id === activeComment ? "true" : undefined}
+                  className={LIST_ROW}
+                >
+                  <span className="flex items-center gap-2">
+                    {self ? <PersonAvatar who={self} /> : null}
+                    <span className="text-xs font-semibold text-[var(--color-accent)]">
+                      Draft
+                    </span>
+                    <span className="shrink-0 text-[11px] text-[var(--color-fg-muted)]">
+                      <RelativeTime iso={new Date(d.updatedAt).toISOString()} />
+                    </span>
+                  </span>
+                  <span className="ml-7 block">
+                    <Quote
+                      text={anchorLabel({ selected_text: d.quote, anchor: d.anchor })}
+                    />
+                    <span className="mt-1 block">
+                      <CommentBody text={d.body} mentions={d.mentions} preview />
+                    </span>
+                  </span>
+                </button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => discardDraft(d.id)}
+                  className="absolute right-1 top-1 h-7 px-2 text-xs text-[var(--color-fg-muted)]"
+                >
+                  Discard
+                </Button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
         {commentsLoading ? (
           <div className="space-y-2 p-2">
             <Skeleton className="h-16 w-full rounded-md" />
@@ -347,7 +381,9 @@ export function CommentsList({
             action={<RetryButton query={retry} variant="outline" size="sm" />}
           />
         ) : items.length === 0 ? (
-          <CommentsEmptyState filter={filter} signedOut={!!signIn} />
+          unsent.length ? null : (
+            <CommentsEmptyState filter={filter} signedOut={!!signIn} />
+          )
         ) : (
           <ul className="space-y-1">
             {items.map((c) => (
@@ -357,7 +393,7 @@ export function CommentsList({
                   type="button"
                   onClick={() => onPick(c.id)}
                   aria-current={c.id === activeComment ? "true" : undefined}
-                  className="w-full rounded-lg px-2 py-2 text-left transition-colors hover:bg-[var(--color-surface-muted)] focus-visible:-outline-offset-2 aria-[current]:bg-[var(--color-accent-muted)]"
+                  className={LIST_ROW}
                 >
                   <span className="flex items-center gap-2">
                     <PersonAvatar who={c.author} />

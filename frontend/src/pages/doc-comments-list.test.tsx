@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Comment, Principal } from "@/api";
+import type { CommentDraft } from "@/lib/comment-drafts";
 import { CommentsList } from "./doc-comments";
 import { DocProvider, type DocContextValue } from "./doc-context";
 
@@ -51,6 +52,8 @@ function renderList(over: Partial<DocContextValue> = {}, showsLatest = true) {
     notifications: false,
     principal: reader,
     unanchoredComments: new Set<string>(),
+    drafts: [],
+    discardDraft: vi.fn(),
     ...over,
   } as DocContextValue;
   const props = {
@@ -69,7 +72,7 @@ function renderList(over: Partial<DocContextValue> = {}, showsLatest = true) {
       </MemoryRouter>
     </QueryClientProvider>,
   );
-  return props;
+  return { ...props, ctx };
 }
 
 const listed = () =>
@@ -170,4 +173,41 @@ it("asks a reader who is signed out to sign in to comment", async () => {
   ).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Sign in to comment" }));
   expect(props.onPlacePin).toHaveBeenCalled();
+});
+
+const draft = (id: string, body: string): CommentDraft => ({
+  id,
+  version: "v1",
+  quote: "drafted text",
+  body,
+  mentions: [],
+  updatedAt: Date.now(),
+});
+
+it("lists the drafts with text first, counts them apart, and opens one", async () => {
+  const { onPick } = renderList({
+    comments: [],
+    drafts: [draft("draft:1", "Not sent yet"), draft("draft:2", " ")],
+  });
+  const drafts = within(screen.getByRole("list", { name: "Drafts" }));
+  expect(drafts.getAllByRole("listitem")).toHaveLength(1);
+  expect(drafts.getByText("Draft")).toBeInTheDocument();
+  expect(drafts.getByText("drafted text")).toBeInTheDocument();
+  expect(screen.getByLabelText("0 comment threads (all), 1 draft")).toHaveTextContent(
+    "0 · 1 draft",
+  );
+  expect(screen.queryByText("No comments yet")).not.toBeInTheDocument();
+
+  await userEvent.click(drafts.getByText("Not sent yet"));
+  expect(onPick).toHaveBeenCalledWith("draft:1");
+
+  // A draft is an open thread that is not sent.
+  await userEvent.click(screen.getByRole("button", { name: "resolved" }));
+  expect(screen.queryByRole("list", { name: "Drafts" })).not.toBeInTheDocument();
+});
+
+it("discards a draft from the list", async () => {
+  const { ctx } = renderList({ drafts: [draft("draft:1", "Not sent yet")] });
+  await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+  expect(ctx.discardDraft).toHaveBeenCalledWith("draft:1");
 });

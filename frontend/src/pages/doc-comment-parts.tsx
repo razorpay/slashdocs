@@ -43,6 +43,7 @@ import {
   AlertDialogFooter,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { useDraftText, useReplyDraft } from "@/lib/comment-drafts";
 import { useSelf } from "@/lib/hooks";
 import { useDoc } from "./doc-context";
 import { CommentBody, MentionTextarea } from "./doc-comment-text";
@@ -394,14 +395,17 @@ export function ReplyRow({
   const q = useQueryClient();
   const { principal, signIn } = useDoc();
   const self = useSelf(principal);
-  const [draft, setDraft] = useState<MentionDraft>(emptyMentionDraft);
+  // What is typed stays after the thread closes, the page reloads, or the
+  // reader goes away, until it is posted or deleted.
+  const [saved, save] = useReplyDraft(docId, c.id);
+  const [draft, edit] = useDraftText(saved ?? emptyMentionDraft(), save);
   const sent = useRef<MentionDraft | null>(null);
   const reply = useMutation({
     mutationFn: (d: MentionDraft) =>
       api.createCommentReply(docId, c.id, d.body, d.mentions),
     onSuccess: () => {
       // Keep anything typed after sending.
-      setDraft((current) => (current === sent.current ? emptyMentionDraft() : current));
+      if (draft === sent.current) edit(emptyMentionDraft());
       q.invalidateQueries({ queryKey: queryKeys.comments(docId) });
     },
     // The text stays in the field, and the toast sends it again.
@@ -429,7 +433,7 @@ export function ReplyRow({
       ) : null}
       <ComposeField
         value={draft}
-        onChange={setDraft}
+        onChange={edit}
         pending={reply.isPending}
         placeholder="Reply…"
         sendLabel="Post reply"

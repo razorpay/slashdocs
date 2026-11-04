@@ -1,4 +1,4 @@
-import type { Anchor, AnchorPoint, Comment } from "@/api";
+import type { Anchor, AnchorPoint } from "@/api";
 
 // Point comments ("pins"): comments on a spot in an element instead of on
 // selected text. See AnchorPoint.
@@ -51,9 +51,12 @@ export function parsePointAnchor(value: unknown): PointAnchor | null {
   };
 }
 
-// anchorLabel names what a thread is on, for lists: its quote, or else the
-// element of its pin.
-export function anchorLabel(c: Pick<Comment, "selected_text" | "anchor">): string {
+// anchorLabel names what a thread or draft is on, for lists: its quote, or
+// else the element of its pin.
+export function anchorLabel(c: {
+  selected_text?: string;
+  anchor?: Partial<Anchor>;
+}): string {
   const quote = (c.selected_text || c.anchor?.quote || "").trim();
   return quote || c.anchor?.point?.label || c.anchor?.point?.target || "";
 }
