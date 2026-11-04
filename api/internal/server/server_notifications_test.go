@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"testing"
 
 	"github.com/razorpay/slashdocs/api/internal/auth"
@@ -126,6 +127,57 @@ func TestAccessRequestDecline(t *testing.T) {
 	}
 	if len(got.Items) != 1 {
 		t.Fatalf("access requests after a new request = %+v, want one", got.Items)
+	}
+}
+
+// The list across documents names each document, and shows a request only to
+// the people who manage access, also through a folder.
+func TestManagedAccessRequestsFollowTheEditorRole(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	folder, err := e.store.CreateFolder(ctx, fixtureOwner, "Team", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inFolder, _, err := e.store.CreateDocument(ctx, fixtureOwner, "In folder", folder.ID, []byte("<h1>In folder</h1>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.CreateGrant(ctx, "folder", folder.ID, fixtureViewer, repo.RoleEditor, fixtureOwner); err != nil {
+		t.Fatal(err)
+	}
+	as := func(p auth.Principal) map[string]string {
+		return map[string]string{"X-Test-Principal": principalHeader(p), "Content-Type": "application/json"}
+	}
+	for _, id := range []string{e.doc.ID, inFolder.ID} {
+		assertStatus(t, do(t, e.h, http.MethodPost, "/v1/documents/"+id+"/access-requests", `{}`, as(fixtureStranger)), http.StatusAccepted)
+	}
+
+	for _, tc := range []struct {
+		principal auth.Principal
+		want      []string
+	}{
+		{fixtureOwner, []string{"In folder", e.doc.Title}},
+		{fixtureEditor, []string{e.doc.Title}},
+		{fixtureViewer, []string{"In folder"}},
+		{fixtureStranger, nil},
+	} {
+		rr := do(t, e.h, http.MethodGet, "/v1/access-requests", "", as(tc.principal))
+		assertStatus(t, rr, http.StatusOK)
+		var got struct{ Items []repo.DocumentAccessRequest }
+		if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		var titles []string
+		for _, item := range got.Items {
+			if item.Requester.ID != fixtureStranger.ID || item.DocumentID == "" || item.RequestedAt == "" {
+				t.Fatalf("%s: request = %+v, want the stranger's request with its document", tc.principal.ID, item)
+			}
+			titles = append(titles, item.DocumentTitle)
+		}
+		if !slices.Equal(titles, tc.want) {
+			t.Fatalf("%s: titles = %v, want %v", tc.principal.ID, titles, tc.want)
+		}
 	}
 }
 

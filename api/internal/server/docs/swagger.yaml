@@ -120,6 +120,17 @@ definitions:
       updated_at:
         type: string
     type: object
+  repo.DocumentAccessRequest:
+    properties:
+      document_id:
+        type: string
+      document_title:
+        type: string
+      requested_at:
+        type: string
+      requester:
+        $ref: '#/definitions/auth.Principal'
+    type: object
   repo.FolderBreadcrumb:
     properties:
       id:
@@ -717,6 +728,13 @@ definitions:
           $ref: '#/definitions/repo.CLICredential'
         type: array
     type: object
+  server.listResponse-repo_DocumentAccessRequest:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/repo.DocumentAccessRequest'
+        type: array
+    type: object
   server.listResponse-repo_OwnershipTransfer:
     properties:
       items:
@@ -955,6 +973,21 @@ paths:
       summary: Render version wrapper
       tags:
       - render
+  /v1/access-requests:
+    get:
+      description: The newest first, across every document on which the caller manages
+        access. Each request names its document.
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/server.listResponse-repo_DocumentAccessRequest'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: List requests for access to the documents that the caller manages
+      tags:
+      - documents
   /v1/auth/cli/credentials:
     get:
       produces:

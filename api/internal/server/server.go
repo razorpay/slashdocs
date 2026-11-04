@@ -358,6 +358,7 @@ func (s *Server) routes(deps dependencies) {
 	authed.POST("/service-accounts/transfers/:id/decline", h.declineOwnershipTransfer)
 	authed.POST("/documents", h.createDocument)
 	authed.GET("/documents", h.listDocuments)
+	authed.GET("/access-requests", h.listManagedAccessRequests)
 	authed.POST("/documents/:id/access-requests", activityLimit, h.requestDocumentAccess)
 	authed.GET("/documents/:id/access-requests", h.listDocumentAccessRequests)
 	authed.DELETE("/documents/:id/access-requests/:requester_type/:requester_id", h.declineDocumentAccessRequest)

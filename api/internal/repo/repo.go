@@ -267,6 +267,14 @@ type AccessRequest struct {
 	RequestedAt string         `json:"requested_at"`
 }
 
+// DocumentAccessRequest is an access request with the document that it asks
+// for, for a list across documents.
+type DocumentAccessRequest struct {
+	AccessRequest
+	DocumentID    string `json:"document_id"`
+	DocumentTitle string `json:"document_title"`
+}
+
 type ServiceAccount struct {
 	ID       string         `json:"id"`
 	Name     string         `json:"name"`
@@ -489,6 +497,9 @@ type Repository interface {
 	RequestDocumentAccess(ctx context.Context, principal auth.Principal, documentID string) error
 	ListAccessRequests(ctx context.Context, documentID string, requester *auth.Principal) ([]AccessRequest, error)
 	DeclineAccessRequest(ctx context.Context, documentID string, requester auth.Principal) error
+	// ListManagedAccessRequests returns the requests for every document on
+	// which the principal manages access, the newest first.
+	ListManagedAccessRequests(ctx context.Context, principal auth.Principal) ([]DocumentAccessRequest, error)
 	ResolveBearerToken(ctx context.Context, tokenHash string) (auth.Principal, error)
 	ResolveUser(ctx context.Context, id string) (auth.Principal, error)
 	// UpsertGoogleUser returns *EmailIdentityConflictError when the email

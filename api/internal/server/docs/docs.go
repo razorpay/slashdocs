@@ -95,6 +95,31 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/access-requests": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "The newest first, across every document on which the caller manages access. Each request names its document.",
+                "tags": [
+                    "documents"
+                ],
+                "summary": "List requests for access to the documents that the caller manages",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server.listResponse-repo_DocumentAccessRequest"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/auth/cli/credentials": {
             "get": {
                 "security": [
@@ -2520,6 +2545,23 @@ const docTemplate = `{
                 }
             }
         },
+        "repo.DocumentAccessRequest": {
+            "type": "object",
+            "properties": {
+                "document_id": {
+                    "type": "string"
+                },
+                "document_title": {
+                    "type": "string"
+                },
+                "requested_at": {
+                    "type": "string"
+                },
+                "requester": {
+                    "$ref": "#/definitions/auth.Principal"
+                }
+            }
+        },
         "repo.FolderBreadcrumb": {
             "type": "object",
             "properties": {
@@ -3413,6 +3455,17 @@ const docTemplate = `{
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/repo.CLICredential"
+                    }
+                }
+            }
+        },
+        "server.listResponse-repo_DocumentAccessRequest": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/repo.DocumentAccessRequest"
                     }
                 }
             }
