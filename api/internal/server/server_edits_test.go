@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/razorpay/slashdocs/api/internal/auth"
@@ -255,9 +254,8 @@ func TestRestoreVersionSavesItsContentAsTheNewest(t *testing.T) {
 		t.Fatalf("restore status = %d; body=%s", status, body)
 	}
 	restored := jsonField(t, body, "id")
-	// The summary names the restored version by its time, not its number.
-	if got := jsonField(t, body, "change_summary"); !strings.HasPrefix(got, "Restored the version from ") ||
-		!strings.HasSuffix(got, " UTC") {
+	// The summary names the restored entry as History shows it.
+	if got := jsonField(t, body, "change_summary"); got != "Restored “Created”" {
 		t.Fatalf("change_summary = %q", got)
 	}
 	if got := versionHTML(t, e, docID, restored); got != editFixtureHTML {
