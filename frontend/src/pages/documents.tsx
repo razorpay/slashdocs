@@ -307,7 +307,8 @@ export function DocumentsPage() {
         </DndContext>
       )}
 
-      {docs.hasNextPage ? (
+      {/* The pages of the last search show while a new search loads. */}
+      {docs.hasNextPage && !docs.isPlaceholderData ? (
         <div className="mt-6 flex justify-center">
           <Button
             variant="outline"
