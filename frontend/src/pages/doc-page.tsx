@@ -1,5 +1,5 @@
 import { useTitle } from "@/lib/use-title";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Navigate,
   useLocation,
@@ -17,8 +17,9 @@ import { useDocumentRole, useMe } from "@/lib/hooks";
 import { samePrincipal } from "@/lib/principals";
 import { useSignInPath } from "@/lib/auth-state";
 import { textLinkFragment } from "../../bridge/text-link";
-import { Center, Skeleton } from "@/components/ui/misc";
+import { Skeleton } from "@/components/ui/misc";
 import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/error-state";
 import { DocBar } from "./doc-bar";
 import { DocWorkspace } from "./doc-workspace";
 import type { FollowRequest } from "./doc-context";
@@ -26,81 +27,52 @@ import { PreviewBanner } from "./doc-preview-banner";
 import { cursorsShownStore } from "@/lib/live-cursors";
 import { useDocumentStream, type Viewer } from "./use-document-stream";
 
-function retryDocumentLoad(failureCount: number, error: Error) {
-  if (error instanceof APIError && [401, 403, 404].includes(error.status)) {
-    return false;
-  }
-  return failureCount < 3;
-}
-
-function DocumentErrorState({
-  title,
-  description,
-  children,
-}: {
-  title: string;
-  description: string;
-  children?: ReactNode;
-}) {
-  return (
-    <Center>
-      <div className="max-w-md text-center">
-        <h1 className="text-lg font-semibold text-[var(--color-fg)]">{title}</h1>
-        <p className="mt-2 text-sm text-[var(--color-fg-muted)]">{description}</p>
-        {children}
-      </div>
-    </Center>
-  );
-}
-
 function AccessDeniedState({ documentID }: { documentID: string }) {
   const requestAccess = useMutation({
     mutationFn: () => api.requestDocumentAccess(documentID),
   });
   const sent = requestAccess.isSuccess;
   return (
-    <DocumentErrorState
+    <ErrorState
       title="You don't have access to this document"
       description={
         sent
           ? "People who can share this document will see your request."
           : "Send the owner a request to grant you access."
       }
-    >
-      <div className="mt-5 flex flex-col items-center gap-2">
-        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--color-surface-muted)] text-[var(--color-fg-muted)]">
-          <KeyRound aria-hidden="true" className="h-5 w-5" />
+      icon={<KeyRound aria-hidden="true" className="h-5 w-5" />}
+      action={
+        <div className="flex flex-col items-center gap-2">
+          <Button
+            disabled={requestAccess.isPending || sent}
+            onClick={() => requestAccess.mutate()}
+          >
+            <AnimatePresence initial={false} mode="wait">
+              <motion.span
+                key={sent ? "sent" : requestAccess.isPending ? "sending" : "request"}
+                className="inline-flex items-center gap-2"
+                initial={{ opacity: 0, y: 3 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -3 }}
+                transition={{ type: "spring", duration: 0.3, bounce: 0 }}
+              >
+                {sent ? <Check className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+                {sent
+                  ? "Request sent"
+                  : requestAccess.isPending
+                    ? "Sending…"
+                    : "Request access"}
+              </motion.span>
+            </AnimatePresence>
+          </Button>
+          {requestAccess.isError ? (
+            <p className="text-sm text-[var(--color-danger)]" role="alert">
+              Could not send the request. Please try again.
+            </p>
+          ) : null}
         </div>
-        <Button
-          className="mt-1"
-          disabled={requestAccess.isPending || sent}
-          onClick={() => requestAccess.mutate()}
-        >
-          <AnimatePresence initial={false} mode="wait">
-            <motion.span
-              key={sent ? "sent" : requestAccess.isPending ? "sending" : "request"}
-              className="inline-flex items-center gap-2"
-              initial={{ opacity: 0, y: 3 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -3 }}
-              transition={{ type: "spring", duration: 0.3, bounce: 0 }}
-            >
-              {sent ? <Check className="h-4 w-4" /> : <Send className="h-4 w-4" />}
-              {sent
-                ? "Request sent"
-                : requestAccess.isPending
-                  ? "Sending…"
-                  : "Request access"}
-            </motion.span>
-          </AnimatePresence>
-        </Button>
-        {requestAccess.isError ? (
-          <p className="text-sm text-[var(--color-danger)]" role="alert">
-            Could not send the request. Please try again.
-          </p>
-        ) : null}
-      </div>
-    </DocumentErrorState>
+      }
+    />
   );
 }
 
@@ -111,7 +83,6 @@ export function DocumentPage() {
   const doc = useQuery({
     queryKey: queryKeys.document(id),
     queryFn: () => api.getDocument(id),
-    retry: retryDocumentLoad,
     meta: { suppressGlobalError: true },
   });
   const me = useMe();
@@ -275,7 +246,7 @@ export function DocumentPage() {
       }
       if (doc.error.status === 404) {
         return (
-          <DocumentErrorState
+          <ErrorState
             title="Document not found"
             description="This document may have been deleted, or the link may be incorrect."
           />
@@ -283,7 +254,7 @@ export function DocumentPage() {
       }
       if (doc.error.code === "group_membership_unavailable") {
         return (
-          <DocumentErrorState
+          <ErrorState
             title="Group access is temporarily unavailable"
             description="Google Group membership could not be refreshed. Try again shortly; stale group access has not been used."
           />
@@ -291,7 +262,7 @@ export function DocumentPage() {
       }
     }
     return (
-      <DocumentErrorState
+      <ErrorState
         title="Could not load document"
         description="Something went wrong while loading this document. Please try again."
       />
