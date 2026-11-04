@@ -47,13 +47,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetTrigger } from "@/components/ui/sheet";
 import { DeleteDocumentDialog } from "@/components/delete-document-dialog";
-import {
-  api,
-  type Principal,
-  type Version,
-  type ApprovalStatus,
-  type ApprovalSummary,
-} from "@/api";
+import { api, type Principal, type ApprovalStatus, type ApprovalSummary } from "@/api";
 import { canManageSharing } from "@/lib/constants";
 import { useDocumentRole } from "@/lib/hooks";
 import { queryKeys } from "@/lib/queryKeys";
@@ -81,7 +75,6 @@ export function DocBar({
   latest,
   previewing,
   canChangeContent,
-  versions,
   labels,
   onSelectVersion,
   onShowLatest,
@@ -111,7 +104,6 @@ export function DocBar({
   // The reader may change the content: an editor who is not an assigned
   // approver.
   canChangeContent: boolean;
-  versions: Version[];
   labels: string[];
   onSelectVersion: (versionID: string) => void;
   onShowLatest: () => void;
@@ -202,9 +194,9 @@ export function DocBar({
       <HistoryDialog
         open={historyOpen}
         onOpenChange={setHistoryOpen}
+        docId={docId}
         current={current}
         latest={latest}
-        versions={versions}
         onSelectVersion={onSelectVersion}
       />
       {config.data?.labels_enabled === true ? (

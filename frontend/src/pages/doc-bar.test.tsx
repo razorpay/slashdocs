@@ -68,6 +68,27 @@ function renderDocBar(labelsEnabled = true, viewers: Viewer[] = []) {
           { headers: { "Content-Type": "application/json" } },
         );
       }
+      if (url === "/v1/documents/doc_1/versions") {
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                id: "v_1",
+                number: 1,
+                created_at: "2026-01-01T00:00:00Z",
+                change_summary: "Initial commit",
+              },
+              {
+                id: "v_2",
+                number: 2,
+                created_at: "2026-01-02T00:00:00Z",
+                change_summary: "Second version",
+              },
+            ],
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
       return new Response(JSON.stringify({ items: [] }), {
         headers: { "Content-Type": "application/json" },
       });
@@ -92,20 +113,6 @@ function renderDocBar(labelsEnabled = true, viewers: Viewer[] = []) {
             latest="v_2"
             previewing={false}
             canChangeContent
-            versions={[
-              {
-                id: "v_1",
-                number: 1,
-                created_at: "2026-01-01T00:00:00Z",
-                change_summary: "Initial commit",
-              },
-              {
-                id: "v_2",
-                number: 2,
-                created_at: "2026-01-02T00:00:00Z",
-                change_summary: "Second version",
-              },
-            ]}
             labels={["payments", "runbook"]}
             onSelectVersion={onSelectVersion}
             onShowLatest={vi.fn()}
@@ -151,7 +158,7 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     });
     expect(dialogTitle).toBeInTheDocument();
 
-    expect(screen.getByText("Second version")).toBeInTheDocument();
+    expect(await screen.findByText("Second version")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /Second version/ }));
     expect(onSelectVersion).toHaveBeenCalledWith("v_2");

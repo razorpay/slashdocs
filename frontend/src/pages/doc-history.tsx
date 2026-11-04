@@ -5,7 +5,7 @@ import { Check, ChevronDown, History, RotateCcw } from "lucide-react";
 import { api, type Version } from "@/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Collapse } from "@/components/ui/misc";
+import { Collapse, EmptyState, Skeleton } from "@/components/ui/misc";
 import { RelativeTime } from "@/components/ui/relative-time";
 import {
   Dialog,
@@ -22,25 +22,30 @@ import { historySessions, type HistorySession } from "@/lib/history";
 import { principalLabel } from "@/lib/principals";
 import { queryKeys } from "@/lib/queryKeys";
 import { useShowSaved } from "./use-show-saved";
+import { useVersions } from "./use-versions";
 
 // HistoryDialog lists every saved state of the document, in sessions of one
 // person's edits. Opening an entry previews the document as it was then.
 export function HistoryDialog({
   open,
   onOpenChange,
+  docId,
   current,
   latest,
-  versions,
   onSelectVersion,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  docId: string;
   current: string;
   latest: string;
-  versions: Version[];
   onSelectVersion: (versionID: string) => void;
 }) {
-  const sessions = useMemo(() => historySessions(versions), [versions]);
+  const versions = useVersions(docId);
+  const sessions = useMemo(
+    () => historySessions(versions.data?.items ?? []),
+    [versions.data],
+  );
   const select = (versionID: string) => {
     if (versionID !== current) onSelectVersion(versionID);
     onOpenChange(false);
@@ -67,17 +72,35 @@ export function HistoryDialog({
             it to bring it back.
           </DialogDescription>
         </DialogHeader>
-        <div className="max-h-[60vh] space-y-2 overflow-auto pr-1">
-          {sessions.map((session) => (
-            <HistorySessionRow
-              key={session.entries[0].id}
-              session={session}
-              current={current}
-              latest={latest}
-              onSelect={select}
-            />
-          ))}
-        </div>
+        {versions.isPending ? (
+          <div className="space-y-2" aria-label="Loading the history">
+            <Skeleton className="h-24 rounded-xl" />
+            <Skeleton className="h-24 rounded-xl" />
+          </div>
+        ) : versions.error ? (
+          <EmptyState
+            className="enter"
+            title="Could not load the history"
+            description={errorMessage(versions.error)}
+            action={
+              <Button disabled={versions.isFetching} onClick={() => versions.refetch()}>
+                {versions.isFetching ? "Retrying…" : "Retry"}
+              </Button>
+            }
+          />
+        ) : (
+          <div className="enter max-h-[60vh] space-y-2 overflow-auto pr-1">
+            {sessions.map((session) => (
+              <HistorySessionRow
+                key={session.entries[0].id}
+                session={session}
+                current={current}
+                latest={latest}
+                onSelect={select}
+              />
+            ))}
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );
@@ -205,7 +228,7 @@ function ChangeSummary({ version }: { version: Version }) {
 }
 
 // RestoreButton brings back the version on screen as the newest one. History
-// keeps everything, so a restore can itself be undone by restoring again.
+// keeps everything, so Undo restores the entry that was the newest before.
 export function RestoreButton({
   docId,
   version,
@@ -215,20 +238,32 @@ export function RestoreButton({
 }) {
   const q = useQueryClient();
   const showSaved = useShowSaved();
+  const newest = useVersions(docId).data?.items.at(-1);
+  const restoreTo = async (v: Version) => {
+    const restored = await api.restoreVersion(docId, v.id);
+    for (const queryKey of [
+      queryKeys.document(docId),
+      queryKeys.versions(docId),
+      queryKeys.approvalsAll(docId),
+      queryKeys.documents(),
+    ]) {
+      q.invalidateQueries({ queryKey });
+    }
+    showSaved(restored);
+  };
+  const undo = (previous: Version) =>
+    toast.promise(restoreTo(previous), {
+      loading: "Undoing the restore…",
+      success: "Restore undone.",
+      error: (e) => errorMessage(e, "Could not undo the restore."),
+    });
   const restore = useMutation({
-    mutationFn: (v: Version) => api.restoreVersion(docId, v.id),
-    onSuccess: (restored) => {
-      for (const queryKey of [
-        queryKeys.document(docId),
-        queryKeys.versions(docId),
-        queryKeys.approvalsAll(docId),
-        queryKeys.documents(),
-      ]) {
-        q.invalidateQueries({ queryKey });
-      }
-      showSaved(restored);
-      toast.success("Restored.");
-    },
+    mutationFn: ({ to }: { to: Version; previous?: Version }) => restoreTo(to),
+    onSuccess: (_, { previous }) =>
+      toast.success(
+        "Restored.",
+        previous && { action: { label: "Undo", onClick: () => undo(previous) } },
+      ),
     onError: (e) => toast.error(errorMessage(e, "Could not restore this entry.")),
   });
   if (!version) return null;
@@ -237,7 +272,7 @@ export function RestoreButton({
       size="sm"
       className="shrink-0"
       disabled={restore.isPending}
-      onClick={() => restore.mutate(version)}
+      onClick={() => restore.mutate({ to: version, previous: newest })}
     >
       <RotateCcw className="h-4 w-4" />
       {restore.isPending ? "Restoring…" : "Restore"}
