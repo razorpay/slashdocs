@@ -40,9 +40,7 @@ test("chats at the cursor, and follows a viewer until the reader scrolls", async
   const path = `/app/d/${document.id}`;
   await page.goto(path);
   const reviewer = await reviewerOn(browser, path);
-  const avatar = page.getByRole("button", {
-    name: /Go to where reviewer.* is viewing/,
-  });
+  const avatar = page.getByRole("button", { name: /^reviewer/ });
   await expect(avatar).toBeVisible();
 
   // "/" opens the chat at the reviewer's cursor; the admin sees it live.
@@ -55,8 +53,8 @@ test("chats at the cursor, and follows a viewer until the reader scrolls", async
   await field.press("Enter");
   await expect(field).toBeHidden();
 
-  // The context menu of an avatar follows; a click goes there only once.
-  await avatar.click({ button: "right" });
+  // The menu of an avatar follows the viewer, or goes there only once.
+  await avatar.click();
   await page.getByRole("menuitem", { name: /Follow reviewer/ }).click();
   const stop = bridge(page).getByRole("button", { name: /Stop following reviewer/ });
   await expect(stop).toBeVisible();

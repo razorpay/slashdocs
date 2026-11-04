@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DocBar } from "./doc-bar";
 import { DocProvider, type DocContextValue } from "./doc-context";
+import type { Viewer } from "./use-document-stream";
 
 const mockDocContext: DocContextValue = {
   docId: "doc_1",
@@ -44,7 +45,7 @@ const mockDocContext: DocContextValue = {
   showLatest: vi.fn(),
 };
 
-function renderDocBar(labelsEnabled = true) {
+function renderDocBar(labelsEnabled = true, viewers: Viewer[] = []) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
@@ -78,6 +79,7 @@ function renderDocBar(labelsEnabled = true) {
   });
 
   const onSelectVersion = vi.fn();
+  const onFollowViewer = vi.fn();
 
   render(
     <QueryClientProvider client={queryClient}>
@@ -107,8 +109,8 @@ function renderDocBar(labelsEnabled = true) {
             labels={["payments", "runbook"]}
             onSelectVersion={onSelectVersion}
             onShowLatest={vi.fn()}
-            viewers={[]}
-            onFollowViewer={vi.fn()}
+            viewers={viewers}
+            onFollowViewer={onFollowViewer}
             commentsOpen={false}
             onToggleComments={vi.fn()}
             onShowShortcuts={vi.fn()}
@@ -120,7 +122,7 @@ function renderDocBar(labelsEnabled = true) {
     </QueryClientProvider>,
   );
 
-  return { onSelectVersion };
+  return { onSelectVersion, onFollowViewer };
 }
 
 describe("DocBar More menu and small-screen reachable dialogs", () => {
@@ -201,5 +203,25 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     expect(
       screen.queryByRole("menuitem", { name: /Document labels/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("opens a viewer's menu to jump to or follow them", async () => {
+    const user = userEvent.setup();
+    const viewer: Viewer = {
+      session: "s_1",
+      principal: { type: "user", id: "u_2", name: "Reviewer" },
+      seenAt: 0,
+    };
+    const { onFollowViewer } = renderDocBar(true, [viewer]);
+
+    await user.click(screen.getByRole("button", { name: "Reviewer" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Jump to Reviewer" }));
+    expect(onFollowViewer).toHaveBeenLastCalledWith(viewer);
+
+    // The keyboard opens the menu too.
+    screen.getByRole("button", { name: "Reviewer" }).focus();
+    await user.keyboard("{Enter}");
+    await user.click(await screen.findByRole("menuitem", { name: "Follow Reviewer" }));
+    expect(onFollowViewer).toHaveBeenLastCalledWith(viewer, true);
   });
 });
