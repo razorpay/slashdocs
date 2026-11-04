@@ -93,7 +93,8 @@ function HistorySessionRow({
   onSelect: (versionID: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [newest] = session.entries;
+  // The row shows the newest entry. The list under it shows the rest.
+  const [newest, ...earlier] = session.entries;
   const oldest = session.entries[session.entries.length - 1];
   const viewing = session.entries.some((v) => v.id === current);
   const edits = session.entries.length;
@@ -123,7 +124,7 @@ function HistorySessionRow({
         </span>
         <ChangeSummary version={newest} />
       </button>
-      {edits > 1 ? (
+      {earlier.length ? (
         <>
           <button
             type="button"
@@ -132,30 +133,41 @@ function HistorySessionRow({
             className="flex w-full items-center gap-1 border-t border-[var(--color-border)] px-4 py-2 text-xs text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]"
           >
             <ChevronDown
-              className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-180" : ""}`}
+              className={`h-3.5 w-3.5 transition-transform duration-200 ease-out motion-reduce:transition-none ${expanded ? "rotate-180" : ""}`}
             />
-            {expanded ? "Hide the edits" : `Show all ${edits} edits`}
+            {expanded
+              ? "Hide the earlier edits"
+              : `Show ${earlier.length} earlier ${earlier.length === 1 ? "edit" : "edits"}`}
           </button>
-          {expanded ? (
-            <ol className="space-y-1 px-2 pb-2">
-              {session.entries.map((v) => (
-                <li key={v.id}>
-                  <button
-                    type="button"
-                    onClick={() => onSelect(v.id)}
-                    aria-current={v.id === current ? "true" : undefined}
-                    className="flex w-full flex-col gap-0.5 rounded-lg px-2 py-1.5 text-left hover:bg-[var(--color-surface-muted)]/60"
-                  >
-                    <span className="flex flex-wrap items-center gap-2 text-sm">
-                      <RelativeTime iso={v.created_at} />
-                      <EntryBadges version={v} current={current} latest={latest} />
-                    </span>
-                    <ChangeSummary version={v} />
-                  </button>
-                </li>
-              ))}
-            </ol>
-          ) : null}
+          {/* The earlier edits open to their height. Closed, they take no
+              focus. */}
+          <div
+            inert={!expanded}
+            className={`grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none ${
+              expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+            }`}
+          >
+            <div className="min-h-0 overflow-hidden">
+              <ol className="space-y-1 px-2 pb-2">
+                {earlier.map((v) => (
+                  <li key={v.id}>
+                    <button
+                      type="button"
+                      onClick={() => onSelect(v.id)}
+                      aria-current={v.id === current ? "true" : undefined}
+                      className="flex w-full flex-col gap-0.5 rounded-lg px-2 py-1.5 text-left hover:bg-[var(--color-surface-muted)]/60"
+                    >
+                      <span className="flex flex-wrap items-center gap-2 text-sm">
+                        <RelativeTime iso={v.created_at} />
+                        <EntryBadges version={v} current={current} latest={latest} />
+                      </span>
+                      <ChangeSummary version={v} />
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </div>
         </>
       ) : null}
     </div>
