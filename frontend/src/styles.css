@@ -631,47 +631,48 @@
   }
 }
 
+/* A theme change repaints every color at once, so no part fades on its own. */
+.theme-switching *,
+.theme-switching *::before,
+.theme-switching *::after {
+  transition: none !important;
+}
+
 /* Respect reduced-motion preferences everywhere */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
 }
 
-/* A short, anchored entrance; Radix keeps the menu mounted for its softer exit. */
-@keyframes reaction-picker-in {
+/* Menus grow from their trigger. Radix keeps a menu mounted until its
+   faster, softer exit ends. */
+@keyframes pop-in {
   from {
     opacity: 0;
-    transform: translateY(3px) scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: scale(0.97);
   }
 }
-@keyframes reaction-picker-out {
-  from {
-    opacity: 1;
-    transform: translateY(0);
-  }
+@keyframes pop-out {
   to {
     opacity: 0;
-    transform: translateY(2px);
+    transform: scale(0.98);
   }
 }
-.comment-reaction-picker {
+.pop {
   transform-origin: var(--radix-dropdown-menu-content-transform-origin);
 }
-.comment-reaction-picker[data-state="open"] {
-  animation: reaction-picker-in 140ms ease-out;
+.pop[data-state="open"] {
+  animation: pop-in 150ms ease-out;
 }
-.comment-reaction-picker[data-state="closed"] {
-  animation: reaction-picker-out 90ms ease-in;
+.pop[data-state="closed"] {
+  animation: pop-out 100ms ease-in forwards;
 }
 
 /* Tooltips wait for deliberate hover, then settle gently beside their trigger. */
