@@ -56,7 +56,7 @@ func (h handlers) githubOAuthStart(c *gin.Context) {
 		c.JSON(http.StatusForbidden, errorResponse("forbidden", "GitHub can only be connected by a user", nil))
 		return
 	}
-	redirect := c.DefaultQuery("redirect", "/app/profile")
+	redirect := c.DefaultQuery("redirect", "/app/settings/profile")
 	if !safeWebRedirect(redirect) {
 		badRequest(c, "invalid redirect")
 		return
