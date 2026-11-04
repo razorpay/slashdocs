@@ -7,6 +7,15 @@ function renderedDocument(page: Page): FrameLocator {
     .frameLocator("iframe#slashdocs-doc");
 }
 
+// listedThread finds a thread in the comments list, which the bar opens.
+async function listedThread(page: Page, body: string) {
+  await page.getByRole("button", { name: "Comments", exact: true }).click();
+  return page
+    .getByRole("dialog", { name: "Comments" })
+    .getByRole("listitem")
+    .filter({ hasText: body });
+}
+
 function documentHTML(heading: string, body: string) {
   return `<!doctype html>
 <html>
@@ -164,13 +173,9 @@ test("re-anchors a comment on content rendered by script after load", async ({
     .filter({ hasText: "Late content appears after load." });
   await expect(mark.first()).toBeVisible({ timeout: 20_000 });
 
-  const card = page
-    .getByRole("button")
-    .filter({ hasText: "Anchor survives late rendering." });
-  await expect(card).toBeVisible();
-  await expect(
-    card.getByText("Highlight not currently visible", { exact: true }),
-  ).not.toBeVisible();
+  const item = await listedThread(page, "Anchor survives late rendering.");
+  await expect(item).toBeVisible();
+  await expect(item.getByText("Not found in this version")).toHaveCount(0);
 });
 
 test("flags a comment whose text vanished from the new version", async ({
@@ -206,16 +211,18 @@ test("flags a comment whose text vanished from the new version", async ({
 
   await expect(renderedDocument(page).locator("#replacement")).toBeVisible();
 
-  const card = page
-    .getByRole("button")
-    .filter({ hasText: "This anchor is about to be orphaned." });
-  await expect(card).toBeVisible();
-  await expect(
-    card.getByText("Highlight not currently visible", { exact: true }),
-  ).toBeVisible({
+  const item = await listedThread(page, "This anchor is about to be orphaned.");
+  await expect(item.getByText("Not found in this version")).toBeVisible({
     timeout: 20_000,
   });
   await expect(renderedDocument(page).locator("mark.slashdocs-mark")).toHaveCount(0);
+  // Its thread still opens, at the top right of the document.
+  await item.click();
+  await expect(
+    page
+      .getByRole("dialog", { name: "Comment thread" })
+      .getByText("This anchor is about to be orphaned."),
+  ).toBeVisible();
 });
 
 test("text links wait for a custom panel to be revealed", async ({
@@ -317,20 +324,28 @@ test("holding j scrolls faster than tapping it and stops on release", async ({
   expect(await scrollY()).toBe(held);
 });
 
-test("a comment started with the comments hidden hides them again when it posts", async ({
+test("a posted comment opens beside its text, and Esc closes it", async ({
   page,
   slashdocs,
 }) => {
-  const title = uniqueName("Peek");
+  const title = uniqueName("Popover");
   const document = await slashdocs.createDocument(
     title,
-    documentHTML(title, "<p>Comment on me while the rail is hidden.</p>"),
+    documentHTML(title, "<p>Comment on me in a popover.</p>"),
   );
   await page.goto(`/app/d/${document.id}`);
-  await page.getByRole("button", { name: "Hide comments" }).click();
-  await renderedDocument(page).locator("p").selectText();
-  await postComment(page, document.id, "Posted while hidden");
-  await expect(page.getByRole("button", { name: "Show comments" })).toBeVisible();
-  await page.reload();
-  await expect(page.getByRole("button", { name: "Show comments" })).toBeVisible();
+  const doc = renderedDocument(page);
+  await doc.locator("p").selectText();
+  await postComment(page, document.id, "Posted in a popover");
+  const thread = page.getByRole("dialog", { name: "Comment thread" });
+  await expect(thread.getByText("Posted in a popover")).toBeVisible();
+  // There is no side panel: the thread floats next to its highlight.
+  const mark = await doc.locator("mark.slashdocs-mark").first().boundingBox();
+  const box = await thread.boundingBox();
+  expect(box && mark && Math.abs(box.y - mark.y)).toBeLessThan(40);
+
+  await thread.press("Escape");
+  await expect(thread).toBeHidden();
+  await doc.locator("mark.slashdocs-mark").first().click();
+  await expect(thread.getByText("Posted in a popover")).toBeVisible();
 });

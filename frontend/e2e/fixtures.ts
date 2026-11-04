@@ -51,12 +51,13 @@ export async function loginThroughDex(page: Page) {
   await expect(page.getByRole("heading", { name: "Documents" })).toBeVisible();
 }
 
-// continueWithDex signs in as the Dex dev user from the slashdocs login page.
-export async function continueWithDex(page: Page) {
+// continueWithDex signs in as a Dex dev user from the slashdocs login page:
+// the admin, or another user of dev/dex-config.yaml.
+export async function continueWithDex(page: Page, email = "admin@example.com") {
   await page.getByRole("link", { name: "Continue with Dex" }).click();
   await expect.poll(() => new URL(page.url()).origin).toBe(new URL(DEX_ORIGIN).origin);
 
-  await page.locator('input[name="login"]').fill("admin@example.com");
+  await page.locator('input[name="login"]').fill(email);
   await page.locator('input[name="password"]').fill("password");
   await page.getByRole("button", { name: /login/i }).click();
 }
@@ -180,6 +181,24 @@ export class SlashdocsAPI {
         data: { principal: { type: "anyone" }, role },
       }),
       `share ${id} with anyone`,
+    );
+  }
+
+  async createComment(
+    id: string,
+    body: string,
+    anchor: { quote?: string; point?: Record<string, unknown> },
+  ): Promise<{ id: string }> {
+    return responseJSON(
+      await this.request.post(`/v1/documents/${id}/comments`, {
+        headers: this.writeHeaders(),
+        data: {
+          version_id: (await this.getDocument(id)).current_version_id,
+          body,
+          anchor: { quote: "", ...anchor },
+        },
+      }),
+      `comment on ${id}`,
     );
   }
 

@@ -74,6 +74,17 @@ the current HTML; add surrounding text to make it unique, or pass `--all`
 term. If one does not match, nothing is saved. Push the whole file
 only for restructuring or large rewrites.
 
+### Comments
+
+A comment is on exact text (`docs comments create --quote`, MCP:
+`create_comment`) or on a spot in an element, such as a chart, a diagram or an
+image (`docs comments create --target --x --y`, MCP: `create_point_comment`).
+The target is the element's id or `data-slashdocs-target` value, and x and y
+are fractions of its box from 0 to 1. To keep a point comment when the target
+changes, pass the start of the element's text as `--quote`, and a short
+`--label` for comment lists. `docs comments list` names the element of each
+point comment with `pin=`.
+
 ### Searching and labels
 
 Use the same Slack-style search language as the web application:

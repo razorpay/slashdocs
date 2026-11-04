@@ -174,6 +174,7 @@ slashdocs docs edit doc_123 --old "TTL of 10 minutes" --new "TTL of 5 minutes"
 
 slashdocs docs comments list doc_123
 slashdocs docs comments create doc_123 --quote "important text" --body "Please clarify this."
+slashdocs docs comments create doc_123 --target chart --x 0.5 --y 0.2 --body "Label this axis."
 slashdocs docs comments resolve doc_123 cmt_123
 ```
 

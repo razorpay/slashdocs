@@ -42,6 +42,7 @@ test("a signed-out reader reads a shared document and signs in to comment", asyn
     .frameLocator('iframe[title="Rendered document"]')
     .frameLocator("iframe#slashdocs-doc");
   await expect(rendered.getByRole("heading", { name: title })).toBeVisible();
+  await page.getByRole("button", { name: "Comments", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Comments", exact: true }),
   ).toBeVisible();
