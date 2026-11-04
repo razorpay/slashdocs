@@ -1,5 +1,5 @@
 import { describeAnchor, snapToWords } from "./anchoring/index.ts";
-import { reducedMotion } from "./dom.ts";
+import { placeClear, reducedMotion } from "./dom.ts";
 import type { SourceMap } from "./source-map.ts";
 import { SOURCE_ATTR, type Locator, type ScriptChange } from "./source-pieces.ts";
 
@@ -263,17 +263,18 @@ export function startScriptText(
 
   // The other places of a string are marked with a highlight, which does
   // not change the DOM. Browsers without highlights show the note only.
+  const view = d.defaultView as (Window & typeof globalThis) | null;
   function mark(texts: Text[]): void {
-    if (typeof CSS === "undefined" || !CSS.highlights) return;
+    if (!view?.CSS?.highlights) return;
     const ranges = texts.map((t) => {
       const range = d.createRange();
       range.selectNodeContents(t);
       return range;
     });
-    CSS.highlights.set(SAME_TEXT, new Highlight(...ranges));
+    view.CSS.highlights.set(SAME_TEXT, new view.Highlight(...ranges));
   }
   function unmark(): void {
-    if (typeof CSS !== "undefined") CSS.highlights?.delete(SAME_TEXT);
+    view?.CSS?.highlights?.delete(SAME_TEXT);
   }
 
   function injectStyle(): void {
@@ -281,7 +282,7 @@ export function startScriptText(
     const style = d.createElement("style");
     style.id = "slashdocs-script-hint-style";
     style.textContent = `
-      .slashdocs-script-hint{all:initial!important;position:fixed!important;z-index:2147483647!important;display:flex!important;align-items:center!important;gap:8px!important;max-width:min(360px,calc(100vw - 16px))!important;box-sizing:border-box!important;padding:6px 6px 6px 12px!important;border-radius:10px!important;background:#fff!important;color:#52525b!important;box-shadow:0 0 0 1px #0001,0 4px 16px #0002!important;font:13px/1.4 system-ui,sans-serif!important;transform-origin:var(--slashdocs-hint-origin,top left)!important;animation:slashdocs-hint-in .15s ease-out!important}
+      .slashdocs-script-hint{all:initial!important;position:fixed!important;z-index:2147483647!important;display:flex!important;align-items:center!important;gap:8px!important;max-width:min(360px,calc(100vw - 16px))!important;box-sizing:border-box!important;padding:6px 6px 6px 12px!important;border-radius:10px!important;background:#fff!important;color:#52525b!important;box-shadow:0 0 0 1px #0001,0 4px 16px #0002!important;font:13px/1.4 system-ui,sans-serif!important;transform-origin:top left!important;animation:slashdocs-hint-in .15s ease-out!important}
       @keyframes slashdocs-hint-in{from{opacity:0;transform:scale(.97)}}
       .slashdocs-script-hint span{all:initial!important;color:inherit!important;font:inherit!important}
       .slashdocs-script-hint button{all:initial!important;flex:none!important;padding:6px 10px!important;border-radius:8px!important;background:#f4f4f5!important;color:#18181b!important;font:500 13px/1 system-ui,sans-serif!important;cursor:pointer!important}
@@ -356,30 +357,18 @@ export function startScriptText(
     },
   };
 
-  // place puts the hint beside the text when there is room, else above it,
-  // else below it, so that it covers the text of the line least.
+  // place puts the hint where it covers no text: above the text, below
+  // it, or beside it.
   function place(box: HTMLElement, el: Element): void {
-    const rects = Array.from(el.getClientRects());
-    const first = rects[0] ?? el.getBoundingClientRect();
-    const last = rects.at(-1) ?? first;
-    const view = d.defaultView!;
-    const { offsetWidth: width, offsetHeight: height } = box;
-    let left = last.right + HINT_GAP;
-    let top = last.top + (last.height - height) / 2;
-    let origin = "left center";
-    if (left + width > view.innerWidth - 8) {
-      left = first.left;
-      top = first.top - HINT_GAP - height;
-      origin = "bottom left";
-      if (top < 8) {
-        top = last.bottom + HINT_GAP;
-        origin = "top left";
-      }
-    }
-    left = Math.min(left, view.innerWidth - width - 8);
-    box.style.setProperty("top", `${Math.max(8, top)}px`, "important");
-    box.style.setProperty("left", `${Math.max(8, left)}px`, "important");
-    box.style.setProperty("--slashdocs-hint-origin", origin);
+    const lines = Array.from(el.getClientRects());
+    const first = lines[0] ?? el.getBoundingClientRect();
+    const last = lines.at(-1) ?? first;
+    const { offsetHeight: height } = box;
+    placeClear(d, box, lines, [
+      [first.left, first.top - HINT_GAP - height],
+      [last.left, last.bottom + HINT_GAP],
+      [last.right + HINT_GAP, last.top + (last.height - height) / 2],
+    ]);
   }
 }
 

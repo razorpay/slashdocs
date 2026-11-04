@@ -20,6 +20,7 @@ import {
   caretRange,
   isEditableTarget,
   markSurface,
+  placeClear,
   reducedMotion,
   scrollBehavior,
 } from "./dom.ts";
@@ -1758,7 +1759,6 @@ type Theme = "dark" | "light";
     // The actions sit where they cover no text: centered above the
     // selection, else below it, else after its last line, else beside its
     // block. When each place covers text, they sit above the selection.
-    const view = d.defaultView!;
     const rect = range.getBoundingClientRect();
     const lines = Array.from(range.getClientRects()).filter((r) => r.width);
     const [first, last] = [lines[0] ?? rect, lines.at(-1) ?? rect];
@@ -1773,44 +1773,8 @@ type Theme = "dark" | "light";
       [last.right + gap, beside(last)],
       [block.right + gap, beside(first)],
       [block.left - gap - width, beside(first)],
-    ].map(([left, top]) =>
-      DOMRect.fromRect({
-        x: Math.max(8, Math.min(left, view.innerWidth - width - 8)),
-        y: Math.max(8, Math.min(top, view.innerHeight - height - 8)),
-        width,
-        height,
-      }),
-    );
-    // The actions must not hide themselves from the test for text.
-    selectionAction.style.setProperty("visibility", "hidden", "important");
-    const place =
-      places.find(
-        (box) => !lines.some((line) => overlap(box, line)) && !coversText(d, box),
-      ) ?? places[0];
-    selectionAction.style.removeProperty("visibility");
-    selectionAction.style.setProperty("left", `${place.left}px`, "important");
-    selectionAction.style.setProperty("top", `${place.top}px`, "important");
-  }
-
-  function overlap(a: DOMRect, b: DOMRect): boolean {
-    return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
-  }
-
-  // coversText tells whether box, in the viewport, covers text of document
-  // d. It tests points in three rows, 24px apart.
-  function coversText(d: Document, box: DOMRect): boolean {
-    const words = d.createRange();
-    for (const y of [box.top + 4, box.top + box.height / 2, box.bottom - 4]) {
-      for (let x = box.left + 4; x < box.right; x += 24) {
-        const node = caretRange(d, x, y)?.startContainer;
-        if (node?.nodeType !== Node.TEXT_NODE || !node.textContent!.trim()) continue;
-        words.selectNodeContents(node);
-        const at = DOMRect.fromRect({ x, y });
-        if (Array.from(words.getClientRects()).some((line) => overlap(at, line)))
-          return true;
-      }
-    }
-    return false;
+    ];
+    placeClear(d, selectionAction, lines, places);
   }
 
   function handleKVUndoRedoShortcut(d: Document, ev: KeyboardEvent): void {

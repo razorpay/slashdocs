@@ -76,3 +76,54 @@ export function markSurface(d: Document) {
   if (d.documentElement.getAttribute("data-slashdocs-surface") !== surface)
     d.documentElement.setAttribute("data-slashdocs-surface", surface);
 }
+
+// placeClear puts el, fixed in the viewport, at the first of places, as
+// [left, top], that covers none of lines and no text of d, or else at the
+// first place.
+export function placeClear(
+  d: Document,
+  el: HTMLElement,
+  lines: DOMRect[],
+  places: number[][],
+): void {
+  const view = d.defaultView!;
+  const { offsetWidth: width, offsetHeight: height } = el;
+  const boxes = places.map(([left, top]) =>
+    DOMRect.fromRect({
+      x: Math.max(8, Math.min(left, view.innerWidth - width - 8)),
+      y: Math.max(8, Math.min(top, view.innerHeight - height - 8)),
+      width,
+      height,
+    }),
+  );
+  // el must not hide text from the test for text.
+  el.style.setProperty("visibility", "hidden", "important");
+  const place =
+    boxes.find(
+      (box) => !lines.some((line) => overlap(box, line)) && !coversText(d, box),
+    ) ?? boxes[0];
+  el.style.removeProperty("visibility");
+  el.style.setProperty("left", `${place.left}px`, "important");
+  el.style.setProperty("top", `${place.top}px`, "important");
+}
+
+function overlap(a: DOMRect, b: DOMRect): boolean {
+  return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+}
+
+// coversText tells whether box, in the viewport, covers text of document d.
+// It tests points in three rows, 24px apart.
+function coversText(d: Document, box: DOMRect): boolean {
+  const words = d.createRange();
+  for (const y of [box.top + 4, box.top + box.height / 2, box.bottom - 4]) {
+    for (let x = box.left + 4; x < box.right; x += 24) {
+      const node = caretRange(d, x, y)?.startContainer;
+      if (node?.nodeType !== Node.TEXT_NODE || !node.textContent!.trim()) continue;
+      words.selectNodeContents(node);
+      const at = DOMRect.fromRect({ x, y });
+      if (Array.from(words.getClientRects()).some((line) => overlap(at, line)))
+        return true;
+    }
+  }
+  return false;
+}
