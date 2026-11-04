@@ -321,7 +321,7 @@ func normalizePatchCommentRequest(in *patchCommentRequest) string {
 		return "comment body cannot be empty"
 	case in.Status != "" && in.Status != commentStatusOpen && in.Status != commentStatusResolved:
 		return "invalid comment status"
-	case in.Body == nil && in.Status == "" && in.Mentions == nil && in.Anchor == nil:
+	case patchIsEmpty(in):
 		return "nothing to update"
 	default:
 		return ""
@@ -337,6 +337,11 @@ func normalizeCommentBodyInput(body string) (string, string) {
 		return "", fmt.Sprintf("comment is too long (at most %d characters)", maxCommentBodyRunes)
 	}
 	return normalized, ""
+}
+
+// patchIsEmpty tells that a comment patch changes nothing.
+func patchIsEmpty(in *patchCommentRequest) bool {
+	return in.Body == nil && in.Status == "" && in.Mentions == nil && in.Anchor == nil
 }
 
 // validCommentMove checks a new spot for a comment: only a point thread

@@ -38,6 +38,7 @@ func registerMCPDocumentTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 	registerMCPVersionTools(server, api)
 	registerMCPEditTool(server, api)
 	registerMCPCommentTools(server, api)
+	registerMCPPointCommentTool(server, api)
 	registerMCPCommentMutationTools(server, api)
 	registerMCPDocumentAccessTools(server, api)
 }
@@ -415,8 +416,23 @@ func registerMCPCommentTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 		return api.json(ctx, http.MethodPost, "/v1/documents/"+doc+"/comments", payload, mcpParams("id", doc), api.handlers.createComment)
 	})
 
-	// A tool of its own, so the schema of create_comment, which clients
-	// cache, stays the same.
+	server.AddTool(mcp.NewTool("reply_comment", mutationOptions(false, false,
+		mcp.WithDescription("Reply to an existing document comment thread."),
+		mcpDocumentID(), mcpCommentID(),
+		mcp.WithString("body", mcp.Required(), mcp.Description("Reply text.")),
+	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		doc, comment, body, invalid := mcpCommentArguments(request, true)
+		if invalid != nil {
+			return invalid, nil
+		}
+		return api.json(ctx, http.MethodPost, "/v1/documents/"+doc+"/comments/"+comment+"/replies", map[string]any{"body": body}, mcpParams("id", doc, "comment_id", comment), api.handlers.createCommentReply)
+	})
+
+}
+
+// registerMCPPointCommentTool adds create_point_comment as a tool of its own,
+// so the schema of create_comment, which clients cache, stays the same.
+func registerMCPPointCommentTool(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 	server.AddTool(mcp.NewTool("create_point_comment", mutationOptions(false, false,
 		mcp.WithDescription("Create a review comment pinned to a spot on an element, such as a chart, diagram or image, in a document version."),
 		mcpDocumentID(), mcpVersionID(true),
@@ -457,19 +473,6 @@ func registerMCPCommentTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 		}}
 		return api.json(ctx, http.MethodPost, "/v1/documents/"+doc+"/comments", payload, mcpParams("id", doc), api.handlers.createComment)
 	})
-
-	server.AddTool(mcp.NewTool("reply_comment", mutationOptions(false, false,
-		mcp.WithDescription("Reply to an existing document comment thread."),
-		mcpDocumentID(), mcpCommentID(),
-		mcp.WithString("body", mcp.Required(), mcp.Description("Reply text.")),
-	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		doc, comment, body, invalid := mcpCommentArguments(request, true)
-		if invalid != nil {
-			return invalid, nil
-		}
-		return api.json(ctx, http.MethodPost, "/v1/documents/"+doc+"/comments/"+comment+"/replies", map[string]any{"body": body}, mcpParams("id", doc, "comment_id", comment), api.handlers.createCommentReply)
-	})
-
 }
 
 func registerMCPCommentMutationTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
