@@ -43,6 +43,7 @@ const mockDocContext: DocContextValue = {
   editable: false,
   saveState: "idle",
   setSaveState: vi.fn(),
+  setText: vi.fn(),
   stayOnVersion: vi.fn(),
   showLatest: vi.fn(),
 };
@@ -327,5 +328,22 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     expect(status("saved")).toEqual(["Saved", "off"]);
     expect(status("failed")).toEqual(["Not saved", "polite"]);
     expect(status("refused")).toEqual(["Not saved", "polite"]);
+  });
+
+  it("offers Undo after the first save of a visit", async () => {
+    const text = { focused: true, undo: vi.fn(), leave: vi.fn() };
+    const value = { ...mockDocContext, editable: true, text };
+    const { rerender } = render(
+      <DocProvider value={value}>
+        <EditStatus />
+      </DocProvider>,
+    );
+    rerender(
+      <DocProvider value={{ ...value, saveState: "saved" }}>
+        <EditStatus />
+      </DocProvider>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(text.undo).toHaveBeenCalled();
   });
 });

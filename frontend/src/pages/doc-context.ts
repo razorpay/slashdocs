@@ -26,17 +26,13 @@ export type UnanchoredKind = "text" | "pins";
 // region and every script text that changed since it loaded.
 export type TextEditResult = { regions: Region[]; scripts: ScriptChange[] };
 
+export type TextControls = { focused: boolean; undo(): void; leave(): void };
+
 // Where the editor's typing is: none yet, waiting for a pause, being saved,
 // saved, failed and waiting to try again, paused because the document
 // changed elsewhere, or refused because a change cannot save.
 export type SaveState =
-  | "idle"
-  | "unsaved"
-  | "saving"
-  | "saved"
-  | "failed"
-  | "paused"
-  | "refused";
+  "idle" | "unsaved" | "saving" | "saved" | "failed" | "paused" | "refused";
 
 // A request to go to another viewer: once to their cursor, or continuously
 // to their view. Each request is a new object, so the same viewer can be
@@ -96,6 +92,10 @@ export type DocContextValue = {
   editable: boolean;
   saveState: SaveState;
   setSaveState: (state: SaveState) => void;
+  // The text of the frame: whether it has the caret, and how to undo the
+  // last edit and to leave the text. The frame sets them.
+  text?: TextControls;
+  setText: (text: TextControls | undefined) => void;
   // Keeps the reader on the version on screen when the document changes
   // under them, as when edits land on top of someone else's, or on a given
   // version that holds what is on screen.

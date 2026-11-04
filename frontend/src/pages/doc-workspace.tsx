@@ -36,6 +36,7 @@ import {
   type DocContextValue,
   type PendingSelection,
   type SaveState,
+  type TextControls,
   type UnanchoredKind,
 } from "./doc-context";
 import { RenderFrame } from "./doc-render-frame";
@@ -160,6 +161,7 @@ export function DocWorkspace({
     documentPrinterRef.current?.();
   }, []);
   const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [text, setText] = useState<TextControls>();
   useEffect(() => {
     setSaveState("idle");
   }, [docId]);
@@ -462,6 +464,8 @@ export function DocWorkspace({
       editable,
       saveState,
       setSaveState,
+      text,
+      setText,
       stayOnVersion,
       showLatest,
     }),
@@ -498,6 +502,7 @@ export function DocWorkspace({
       onUnfollowCursor,
       editable,
       saveState,
+      text,
       stayOnVersion,
       showLatest,
     ],

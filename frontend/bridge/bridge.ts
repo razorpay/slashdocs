@@ -2318,6 +2318,20 @@ type Theme = "dark" | "light";
       { passive: false },
     );
     d.addEventListener("pointerdown", noteCaretComment, true);
+    // The app shows Done on touch screens while the text has the caret. The
+    // focus settles first, as it moves from the body into script text.
+    const reportFocus = () =>
+      setTimeout(() =>
+        parent.postMessage(
+          {
+            type: "slashdocs:text-focus",
+            on: !!textEditor && isEditableTarget(d, d.activeElement),
+          },
+          targetOrigin(),
+        ),
+      );
+    d.addEventListener("focusin", reportFocus);
+    d.addEventListener("focusout", reportFocus);
     d.addEventListener("click", activate);
     d.addEventListener("click", handleLinkClick);
     d.addEventListener(
@@ -2401,6 +2415,15 @@ type Theme = "dark" | "light";
     }
     if (e.data.type === "slashdocs:text-editing") {
       setTextEditing(e.data.on === true);
+      return;
+    }
+    // The app's Undo after a save, and its Done on touch screens.
+    if (e.data.type === "slashdocs:text-undo") {
+      textEditor?.run("historyUndo");
+      return;
+    }
+    if (e.data.type === "slashdocs:leave-text") {
+      doc()?.body?.blur();
       return;
     }
     if (
