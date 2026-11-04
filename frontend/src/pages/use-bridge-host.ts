@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, APIError, type DocumentKVEvent } from "@/api";
 import { useResolvedTheme } from "@/lib/theme";
+import { useCoarsePointer } from "@/lib/use-media-query";
 import { errorMessage } from "@/lib/errors";
 
 // useBridgeHost is the app side of the render bridge that every embedded
-// document needs, wherever it is shown. It passes the theme, answers the
+// document needs, wherever it is shown. It passes the theme and the pointer
+// (a finger or a mouse, which a frame does not always know), answers the
 // document's KV and GitHub requests, and forwards KV changes to the frame.
 // Message origins are checked on both ends. A signed-out reader who writes
 // KV data goes to signIn instead.
@@ -21,10 +23,12 @@ export function useBridgeHost(
   const renderURLRef = useRef(renderURL);
   renderURLRef.current = renderURL;
   const theme = useResolvedTheme();
+  const pointer = useCoarsePointer() ? "coarse" : "fine";
   // Stable handlers read the latest theme and readiness from refs. Handlers
   // that re-register can miss a slashdocs:ready sent during the teardown.
-  const themeRef = useRef(theme);
-  themeRef.current = theme;
+  const themeMessage = { type: "slashdocs:theme", theme, pointer };
+  const themeMessageRef = useRef(themeMessage);
+  themeMessageRef.current = themeMessage;
   const readyRef = useRef(ready);
   readyRef.current = ready;
   // The newest KV revision the frame received, so no change goes twice.
@@ -46,7 +50,7 @@ export function useBridgeHost(
   const frameSrc = useMemo(() => {
     if (!renderURL) return undefined;
     const sep = renderURL.includes("?") ? "&" : "?";
-    return `${renderURL}${sep}slashdocs_theme=${themeRef.current}`;
+    return `${renderURL}${sep}slashdocs_theme=${themeMessageRef.current.theme}`;
   }, [renderURL]);
 
   useEffect(() => {
@@ -62,8 +66,8 @@ export function useBridgeHost(
   );
 
   useEffect(() => {
-    if (ready) postToFrame({ type: "slashdocs:theme", theme });
-  }, [theme, ready, postToFrame]);
+    if (ready) postToFrame(themeMessageRef.current);
+  }, [theme, pointer, ready, postToFrame]);
 
   // A frame that is not ready yet reads the current KV state when it
   // hydrates, so it misses no change.
@@ -94,7 +98,7 @@ export function useBridgeHost(
       const data = e.data as Record<string, unknown> | null;
       if (data?.type === "slashdocs:ready") {
         setReadyURL(renderURLRef.current);
-        reply({ type: "slashdocs:theme", theme: themeRef.current });
+        reply(themeMessageRef.current);
       }
       if (data?.type === "slashdocs:kv-request") {
         void answerKV(docId, data, reply, kvRevision, signInRef.current);

@@ -1433,6 +1433,9 @@ type Theme = "dark" | "light";
     });
   }
 
+  // The app's pointer, "coarse" for a finger. A frame does not always match
+  // the app's (pointer: coarse), as in touch emulation.
+  let hostPointer = "";
   let curTheme: Theme | null = null;
   // The theme last announced to the current document. A document that reloads
   // itself on a theme change (a common way to re-render a diagram) would
@@ -1461,6 +1464,7 @@ type Theme = "dark" | "light";
     for (const name of PUBLIC_NAMES) {
       d.documentElement.setAttribute(`data-${name}-theme`, t);
     }
+    d.documentElement.setAttribute("data-slashdocs-pointer", hostPointer);
     markSurface(d);
     if (d !== setupDoc || announcedTheme === t) return;
     announcedTheme = t;
@@ -1547,7 +1551,7 @@ type Theme = "dark" | "light";
       const style = d.createElement("style");
       style.id = "slashdocs-icon-tooltip-style";
       style.textContent = `
-        [data-slashdocs-tooltip]::after{all:initial!important;content:attr(data-slashdocs-tooltip)!important;position:absolute!important;z-index:2147483647!important;top:var(--slashdocs-tip-top,auto)!important;bottom:var(--slashdocs-tip-bottom,calc(100% + 6px))!important;left:var(--slashdocs-tip-left,50%)!important;transform:translate(var(--slashdocs-tip-shift,-50%),var(--slashdocs-tip-enter-y,3px))!important;width:max-content!important;max-width:min(220px,calc(100vw - 16px))!important;box-sizing:border-box!important;padding:6px 10px!important;border-radius:6px!important;background:#18181b!important;color:#fff!important;font:500 12px/1.4 system-ui,sans-serif!important;white-space:normal!important;text-align:center!important;box-shadow:0 2px 8px #0003!important;pointer-events:none!important;visibility:hidden!important;opacity:0!important;transition:opacity .1s ease-out,transform .14s ease-out,visibility 0s linear .1s!important}
+        [data-slashdocs-tooltip]::after{all:initial!important;content:attr(data-slashdocs-tooltip)!important;position:absolute!important;z-index:2147483647!important;top:var(--slashdocs-tip-top,auto)!important;bottom:var(--slashdocs-tip-bottom,calc(100% + 6px))!important;left:var(--slashdocs-tip-left,50%)!important;transform:translate(var(--slashdocs-tip-shift,-50%),var(--slashdocs-tip-enter-y,3px))!important;width:max-content!important;max-width:min(220px,calc(100vw - 16px))!important;box-sizing:border-box!important;padding:6px 10px!important;border-radius:6px!important;background:#18181b!important;color:#fff!important;font:500 12px/1.4 system-ui,sans-serif!important;white-space:normal!important;text-wrap:balance!important;text-align:center!important;box-shadow:0 2px 8px #0003!important;pointer-events:none!important;visibility:hidden!important;opacity:0!important;transition:opacity .1s ease-out,transform .14s ease-out,visibility 0s linear .1s!important}
         [data-slashdocs-tooltip]:hover::after,[data-slashdocs-tooltip]:focus-visible::after{visibility:visible!important;opacity:1!important;transform:translate(var(--slashdocs-tip-shift,-50%),0)!important;transition:opacity .14s ease-out .5s,transform .14s ease-out .5s,visibility 0s linear .5s!important}
         [data-slashdocs-tooltip]:focus-visible::after{transition-delay:0s!important}
         @media(prefers-reduced-motion:reduce){[data-slashdocs-tooltip]::after{transition-duration:0s!important;transform:translateX(var(--slashdocs-tip-shift,-50%))!important}}
@@ -1698,13 +1702,17 @@ type Theme = "dark" | "light";
           if (actionRange) commitSelection(actionRange);
         },
       );
-      // The main action says its name and its key, as a menu item does.
+      // The main action says its name and its key, as a menu item does. When
+      // they do not fit in one row, it is an icon with a tooltip.
       const name = d.createElement("span");
       name.textContent = "Comment";
+      comment.classList.add("slashdocs-comment");
+      labelIcon(comment, "Comment");
+      // A hash, as at headings, so that it differs from the Link action.
       comment.append(name, d.createElement("kbd"));
       const copy = addAction(
         "Copy link to selected text",
-        "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71",
+        "M4 9h16M4 15h16M10 3 8 21M16 3l-2 18",
         () => {
           if (!actionRange) return;
           const anchor = describeAnchor(d.body, snapToWords(actionRange));
@@ -1716,14 +1724,14 @@ type Theme = "dark" | "light";
         const style = d.createElement("style");
         style.id = "slashdocs-selection-style";
         style.textContent = `
-          .slashdocs-selection-action{all:initial!important;position:fixed!important;z-index:2147483647!important;display:flex!important;flex-wrap:wrap!important;max-width:calc(100vw - 16px)!important;padding:2px!important;border-radius:10px!important;background:#fff!important;color:#52525b!important;box-shadow:0 0 0 1px #0001,0 4px 16px #0002!important;animation:slashdocs-selection-in .15s ease-out!important}
+          .slashdocs-selection-action{all:initial!important;position:fixed!important;z-index:2147483647!important;display:flex!important;width:max-content!important;max-width:calc(100vw - 16px)!important;padding:2px!important;border-radius:10px!important;background:#fff!important;color:#52525b!important;box-shadow:0 0 0 1px #0001,0 4px 16px #0002!important;animation:slashdocs-selection-in .15s ease-out!important}
           @keyframes slashdocs-selection-in{from{opacity:0;transform:scale(.97)}}
           .slashdocs-selection-action button{all:initial!important;position:relative!important;box-sizing:border-box!important;display:flex!important;align-items:center!important;justify-content:center!important;gap:6px!important;min-width:40px!important;height:40px!important;padding:0 11px!important;border-radius:8px!important;color:inherit!important;cursor:pointer!important;transition:background-color .15s,transform .15s!important}
           .slashdocs-selection-action span{all:initial!important;color:inherit!important;font:500 13px/1 system-ui,sans-serif!important}
           .slashdocs-selection-action kbd{all:initial!important;padding:2px 5px!important;border-radius:4px!important;background:#f4f4f5!important;color:#71717a!important;font:500 11px/1.2 system-ui,sans-serif!important}
           .slashdocs-selection-action button:hover{background:#f4f4f5!important;color:#18181b!important}
           .slashdocs-selection-action button:active{transform:scale(.96)!important}
-          .slashdocs-selection-action button[hidden]{display:none!important}
+          .slashdocs-selection-action button[hidden],.slashdocs-selection-action[data-compact] .slashdocs-comment>:not(svg),.slashdocs-selection-action:not([data-compact]) .slashdocs-comment::after{display:none!important}
           .slashdocs-selection-action button[aria-pressed=true]{background:#eef2ff!important;color:#4338ca!important}
           .slashdocs-selection-action [data-slashdocs-format]:not([hidden])+button:not([data-slashdocs-format])::before{all:initial!important;content:""!important;position:absolute!important;left:-1px!important;top:10px!important;bottom:10px!important;width:1px!important;background:currentColor!important;opacity:.2!important}
           .slashdocs-selection-action button:focus-visible{outline:2px solid #6366f1!important;outline-offset:-2px!important}
@@ -1732,6 +1740,7 @@ type Theme = "dark" | "light";
           [data-slashdocs-surface=dark] .slashdocs-selection-action{background:#27272a!important;color:#d4d4d8!important;box-shadow:0 0 0 1px #fff2,0 4px 16px #0004!important}
           [data-slashdocs-surface=dark] .slashdocs-selection-action button:hover{background:#3f3f46!important;color:#fff!important}
           [data-slashdocs-surface=dark] .slashdocs-selection-action kbd{background:#3f3f46!important;color:#a1a1aa!important}
+          [data-slashdocs-pointer=coarse] .slashdocs-selection-action kbd{display:none!important}
           [data-slashdocs-surface=dark] .slashdocs-selection-action button[aria-pressed=true]{background:#312e81!important;color:#e0e7ff!important}
           @media(pointer:coarse){.slashdocs-selection-action kbd{display:none!important}}
           @media(prefers-reduced-motion:reduce){.slashdocs-selection-action,.slashdocs-selection-action button{animation:none!important;transition:none!important}}
@@ -1742,7 +1751,10 @@ type Theme = "dark" | "light";
     }
     // In text that the reader edits, C types, so the chip shows the chord.
     const typing = isEditableTarget(d, d.activeElement);
-    selectionAction.querySelector("kbd")!.textContent = typing ? COMMENT_CHORD : "C";
+    const key = typing ? COMMENT_CHORD : "C";
+    const comment = selectionAction.querySelector<HTMLElement>(".slashdocs-comment")!;
+    comment.querySelector("kbd")!.textContent = key;
+    comment.dataset.slashdocsTooltip = `Comment ${key}`;
     // The formatting actions show for editable text, and are pressed when
     // the whole selection has their format.
     const ends = [range.startContainer, range.endContainer];
@@ -1755,10 +1767,15 @@ type Theme = "dark" | "light";
           elementOf(n)?.closest(button.dataset.slashdocsFormat!),
         );
         button.setAttribute("aria-pressed", String(on));
+    selectionAction.removeAttribute("data-compact");
+    selectionAction.toggleAttribute(
+      "data-compact",
+      selectionAction.scrollWidth > selectionAction.clientWidth,
+    );
       });
     // The actions sit where they cover no text: centered above the
     // selection, else below it, else after its last line, else beside its
-    // block. When each place covers text, they sit above the selection.
+    // block, else where placeClear finds room.
     const rect = range.getBoundingClientRect();
     const lines = Array.from(range.getClientRects()).filter((r) => r.width);
     const [first, last] = [lines[0] ?? rect, lines.at(-1) ?? rect];
@@ -2452,8 +2469,10 @@ type Theme = "dark" | "light";
       return;
     }
     if (e.data.type === "slashdocs:paint") paint(e.data.comments, e.data.active);
-    else if (e.data.type === "slashdocs:theme") applyTheme(e.data.theme);
-    else if (e.data.type === "slashdocs:kv-response") {
+    else if (e.data.type === "slashdocs:theme") {
+      hostPointer = String(e.data.pointer ?? "");
+      applyTheme(e.data.theme);
+    } else if (e.data.type === "slashdocs:kv-response") {
       const requestId = String(e.data.requestId || "");
       const pending = kvPending[requestId];
       if (!pending) return;
