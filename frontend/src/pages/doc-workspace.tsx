@@ -483,7 +483,7 @@ export function DocWorkspace({
     <DocProvider value={ctx}>
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
       {fullscreen ? (
-        <div className="relative h-full bg-[var(--color-surface-muted)]">
+        <div className="relative h-full bg-[var(--color-surface-muted)] max-sm:pr-3">
           {showFullscreenHint ? (
             <div className="pointer-events-none absolute left-1/2 top-6 z-20 hidden -translate-x-1/2 rounded-full bg-[var(--color-surface)] px-6 py-3 text-base font-semibold text-[var(--color-fg)] shadow-xl ring-1 ring-[var(--color-border)] sm:block">
               Esc to exit · ? for all shortcuts
@@ -512,14 +512,13 @@ export function DocWorkspace({
           {banner?.(false)}
           <section className="relative min-w-0 flex-1 overflow-hidden bg-[var(--color-surface-muted)]">
             {/* A wide screen makes room for the list beside the document, as
-                Google Docs does. Under the sheet of a narrow one, the
-                document is out of reach. */}
+                Google Docs does. The room opens at once, so the text reflows
+                one time, and only the list slides in. Under the sheet of a
+                narrow one, the document is out of reach. A narrow screen
+                keeps a gutter for the tick strip, off the text. */}
             <div
               inert={listOpen && isMobile}
-              className={cn(
-                "relative h-full transition-[margin] duration-200 ease-out",
-                listOpen && "lg:mr-[392px]",
-              )}
+              className={cn("relative h-full max-sm:pr-3", listOpen && "lg:mr-[392px]")}
             >
               {frame}
             </div>
