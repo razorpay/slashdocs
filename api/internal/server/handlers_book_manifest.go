@@ -243,6 +243,7 @@ func (h handlers) getManifest(c *gin.Context) {
 	if !ok {
 		return
 	}
+	incBook("manifest_view")
 	c.Header("Cache-Control", "private, no-cache")
 	c.JSON(http.StatusOK, view.manifest())
 }

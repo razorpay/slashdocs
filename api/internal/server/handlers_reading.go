@@ -404,6 +404,12 @@ func (h handlers) putReadingPosition(c *gin.Context) {
 	if !h.booksOn(c) || !readingUser(c) {
 		return
 	}
+	defer func() {
+		switch c.Writer.Status() {
+		case http.StatusBadRequest, http.StatusRequestEntityTooLarge, http.StatusUnsupportedMediaType:
+			incBook("position_rejected")
+		}
+	}()
 	var in positionRequest
 	if !bindReadingJSON(c, &in, "invalid_position", false) {
 		return
@@ -450,7 +456,10 @@ func (h handlers) putReadingPosition(c *gin.Context) {
 		internalErr(c, err)
 		return
 	}
-	if !saved {
+	if saved {
+		incBook("position_saved")
+	} else {
+		incBook("position_stale")
 		c.Header("X-Position-Stale", "1")
 	}
 	c.Status(http.StatusNoContent)

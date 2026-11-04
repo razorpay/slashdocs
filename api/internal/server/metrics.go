@@ -66,7 +66,7 @@ var (
 	}, []string{"event", "outcome"})
 	bookEventsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "slashdocs_book_events_total",
-		Help: "Book lifecycle events.",
+		Help: "Book events: created, outline_pushed, outline_conflict, manifest_view, position_saved, position_stale, position_rejected.",
 	}, []string{"event"})
 	htmlBytes = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "slashdocs_html_bytes",

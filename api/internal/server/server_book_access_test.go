@@ -206,3 +206,32 @@ func TestBookSearchFindsChapterSharedWithAnyoneOnPublicDeployment(t *testing.T) 
 		}
 	}
 }
+
+// The spec's server-side counters: book page views, and position writes
+// including rejected and stale ones.
+func TestBookReadingCounters(t *testing.T) {
+	metric := func(event string) float64 {
+		return scrapeMetric(t, "slashdocs_book_events_total", map[string]string{"event": event})
+	}
+	views, saved, stale, rejected := metric("manifest_view"), metric("position_saved"), metric("position_stale"), metric("position_rejected")
+	f := newReadingFixture(t)
+	f.expect(t, http.MethodGet, "", "", f.viewer, http.StatusOK)
+	now := time.Now()
+	f.expect(t, http.MethodPut, "/position", positionBody(t, position(f.ch1, f.ch1v1, "", now)), f.viewer, http.StatusNoContent)
+	f.expect(t, http.MethodPut, "/position", positionBody(t, position(f.ch1, f.ch1v1, "", now.Add(-time.Minute))), f.viewer, http.StatusNoContent)
+	bad := position(f.ch1, f.ch1v1, "", now)
+	bad["device_id"] = "x"
+	f.expect(t, http.MethodPut, "/position", positionBody(t, bad), f.viewer, http.StatusBadRequest)
+	f.expect(t, http.MethodPut, "/position", positionBody(t, position(f.ch1, f.ch2v1, "", now)), f.viewer, http.StatusBadRequest)
+	f.expect(t, http.MethodPut, "/position", "{", f.viewer, http.StatusBadRequest)
+	// A hidden chapter is not found, not a rejected position.
+	f.expect(t, http.MethodPut, "/position", positionBody(t, position(f.ch3, f.ch3v1, "", now)), f.viewer, http.StatusNotFound)
+
+	for event, want := range map[string]float64{
+		"manifest_view": views + 1, "position_saved": saved + 1, "position_stale": stale + 1, "position_rejected": rejected + 3,
+	} {
+		if got := metric(event); got != want {
+			t.Fatalf("%s = %v, want %v", event, got, want)
+		}
+	}
+}
