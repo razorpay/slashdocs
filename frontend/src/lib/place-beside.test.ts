@@ -22,9 +22,22 @@ it("goes under a highlight as wide as the page, or over it near the bottom", () 
 it("keeps off the lines of the block that holds a highlight", () => {
   const quote = { left: 300, top: 300, width: 100, height: 20 };
   const block = { left: 150, top: 280, width: 500, height: 80 };
-  expect(placeBeside(quote, size, bounds, block)).toEqual({ x: 658, y: 300 });
+  expect(placeBeside(quote, size, bounds, [block])).toEqual({ x: 658, y: 300 });
   const wide = { ...block, left: 20, width: 960 };
-  expect(placeBeside(quote, size, bounds, wide)).toEqual({ x: 300, y: 328 });
+  expect(placeBeside(quote, size, bounds, [wide])).toEqual({ x: 300, y: 328 });
+});
+
+it("goes beside the text of the quoted lines when their block is as wide as the page", () => {
+  const quote = { left: 120, top: 300, width: 100, height: 20 };
+  const block = { left: 20, top: 300, width: 960, height: 60 };
+  const lines = { left: 20, top: 300, width: 600, height: 20 };
+  expect(placeBeside(quote, size, bounds, [block, lines])).toEqual({ x: 628, y: 300 });
+  // A narrower block still puts the box in the margin, past all of its lines.
+  const column = { ...block, width: 640 };
+  expect(placeBeside(quote, size, bounds, [column, lines])).toEqual({ x: 668, y: 300 });
+  // Lines too long for the box send it under them.
+  const long = { ...lines, width: 900 };
+  expect(placeBeside(quote, size, bounds, [block, long])).toEqual({ x: 120, y: 328 });
 });
 
 it("stays inside its bounds when the anchor scrolled out of them", () => {

@@ -185,9 +185,9 @@ export function CommentThread({ c, onClose }: { c: Comment; onClose: () => void 
       />
       <Replies c={c} docId={docId} />
       {/* The reply field sits at the replies' level: what you type there
-          becomes one of them. */}
+          becomes one of them. It stays in view while a long thread scrolls. */}
       {!signIn ? (
-        <div className="ml-7 mt-3">
+        <div className="sticky bottom-0 -mx-3 -mb-3 mt-1 bg-[var(--color-surface)] pb-3 pl-10 pr-3 pt-2">
           <ReplyRow c={c} docId={docId} className="border-0 p-0" />
         </div>
       ) : null}
