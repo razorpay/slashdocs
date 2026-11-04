@@ -357,6 +357,13 @@ describe("BookReader", () => {
     await waitFor(() => expect(done).toHaveBeenCalledWith("b1", "doc_2", true));
   });
 
+  it("offers the end strip for a chapter that fits on screen", async () => {
+    renderReader();
+    await screen.findByTestId("workspace");
+    act(() => reader().onViewport!({ section: "", progression: 0, fits: true }));
+    expect(screen.getByRole("region", { name: "End of chapter" })).toBeInTheDocument();
+  });
+
   it("marks changed headings in an updated chapter", async () => {
     renderReader("/app/b/b1/c/doc_2", bookState({ doc_2: { updated: true } }), {
       since_version_id: "ver_1",

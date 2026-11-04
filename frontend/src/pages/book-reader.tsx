@@ -169,7 +169,8 @@ function BookReader({
       saveViewport(v);
       lastView.current = v;
       setSection(v.section);
-      setAtEnd(v.progression >= END_PROGRESSION);
+      // A chapter that fits on screen is visible to its end.
+      setAtEnd(!!v.fits || v.progression >= END_PROGRESSION);
     },
     [saveViewport],
   );
