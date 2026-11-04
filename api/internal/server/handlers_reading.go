@@ -804,7 +804,11 @@ func (h handlers) searchBook(c *gin.Context) {
 	}
 	search.Folders = []string{book.FolderID}
 	search.IncludeLabels = h.deps.labelsEnabled
-	includeOrgWide := h.deps.deployment == DeploymentOrg
+	// DocumentIDs holds only chapters the caller can open, which counts
+	// "anyone" grants on every deployment. Excluding those grants here, as
+	// document search does on a public deployment, would hide chapters the
+	// manifest lists.
+	const includeOrgWide = true
 	items, err := h.deps.repository.SearchDocuments(c.Request.Context(), *current(c), search, includeOrgWide, bookSearchLimit)
 	if err != nil {
 		internalErr(c, err)

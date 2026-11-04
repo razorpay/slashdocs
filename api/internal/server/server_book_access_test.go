@@ -174,3 +174,35 @@ func TestBookRoutesAreRateLimited(t *testing.T) {
 	}
 	f.expect(t, http.MethodGet, "/llms.txt", "", stranger, http.StatusTooManyRequests)
 }
+
+// On a public deployment, document search leaves out documents shared with
+// "anyone". Book search is already limited to the chapters the reader can
+// open, and the reader can open one shared with anyone, so it finds it.
+func TestBookSearchFindsChapterSharedWithAnyoneOnPublicDeployment(t *testing.T) {
+	e := newConfiguredTestEnv(t, server.Config{Environment: "test", Deployment: server.DeploymentPublic, BooksEnabled: true})
+	owner := principalHeader(fixtureOwner)
+	folderID := createFolder(t, e, `{"title":"Fruit"}`, owner)
+	ch1, _ := e.createDocument("01 · Orchard", "<html><body><p>One kumquat grows here.</p></body></html>", fixtureOwner)
+	ch2, _ := e.createDocument("02 · Market", "<html><body><p>A kumquat is sold here.</p></body></html>", fixtureOwner)
+	bkMoveIn(t, e, folderID, ch1, owner)
+	bkMoveIn(t, e, folderID, ch2, owner)
+	rr := do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/book", `{}`, bkHeaders(owner))
+	assertStatus(t, rr, http.StatusCreated)
+	bookID := bkString(t, rr.Body.Bytes(), "book_id")
+	rr = do(t, e.h, http.MethodPost, "/v1/documents/"+ch1+"/grants", `{"principal":{"type":"anyone"},"role":"viewer"}`, bkHeaders(owner))
+	assertStatus(t, rr, http.StatusCreated)
+
+	stranger := bkHeaders(principalHeader(fixtureStranger))
+	rr = do(t, e.h, http.MethodGet, "/v1/books/"+bookID, "", stranger)
+	assertStatus(t, rr, http.StatusOK)
+	if n := bkLen(t, rr.Body.Bytes(), "readingOrder"); n != 1 {
+		t.Fatalf("readingOrder has %d chapters, want the one shared with anyone", n)
+	}
+	for _, q := range []string{"q=kumquat", "q=kumquat&document_id=" + ch1} {
+		rr = do(t, e.h, http.MethodGet, "/v1/books/"+bookID+"/search?"+q, "", stranger)
+		assertStatus(t, rr, http.StatusOK)
+		if n := bkLen(t, rr.Body.Bytes(), "items"); n != 1 || bkString(t, rr.Body.Bytes(), "items.0.id") != ch1 {
+			t.Fatalf("%s: search = %s, want only %s", q, rr.Body.String(), ch1)
+		}
+	}
+}
