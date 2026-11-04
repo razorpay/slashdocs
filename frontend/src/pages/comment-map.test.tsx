@@ -1,6 +1,6 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Comment } from "@/api";
 import { CommentMap } from "./comment-map";
 import { DocProvider, type DocContextValue } from "./doc-context";
@@ -21,6 +21,7 @@ const positions = new Map([
 // jsdom has no layout, so give the strip a viewport height to measure.
 const stripHeight = (px: number) =>
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(px);
+beforeEach(() => stripHeight(500));
 
 // The ticks are pointer-first (tabindex -1), so find them regardless of focusability.
 const ticks = () => screen.getAllByRole("button", { hidden: true });
@@ -87,7 +88,6 @@ it("activates a thread when its tick is clicked", async () => {
 });
 
 it("scrolls to a thread that is already active, since activating it again would not", async () => {
-  stripHeight(500);
   const doc = renderMap({ activeComment: "late" });
 
   await userEvent.click(tick(/closing remarks/));
@@ -98,8 +98,36 @@ it("scrolls to a thread that is already active, since activating it again would 
 });
 
 it("renders nothing when the document fits on one screen", () => {
-  stripHeight(500);
   renderMap({ documentHeight: 450 });
 
   expect(screen.queryByRole("button", { hidden: true })).not.toBeInTheDocument();
+});
+
+it("joins threads at one place into one tick that shows their count", () => {
+  renderMap(
+    {
+      commentPositions: new Map([...positions, ["near", { top: 205, bottom: 225 }]]),
+    },
+    [...comments, comment("near", "opening words")],
+  );
+
+  expect(ticks().map((t) => t.getAttribute("aria-label"))).toEqual([
+    "Comments 1 to 2 of 3",
+    "Comment 3 of 3: closing remarks",
+  ]);
+  expect(ticks()[0]).toHaveTextContent("2");
+});
+
+it("opens each thread of a joined tick in turn", async () => {
+  const doc = renderMap(
+    {
+      activeComment: "early",
+      commentPositions: new Map([...positions, ["near", { top: 205, bottom: 225 }]]),
+    },
+    [...comments, comment("near", "opening words")],
+  );
+
+  await userEvent.click(tick(/Comments 1 to 2/));
+
+  expect(doc.setActiveComment).toHaveBeenCalledWith("near");
 });
