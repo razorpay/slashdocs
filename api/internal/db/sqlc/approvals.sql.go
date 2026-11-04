@@ -12,27 +12,38 @@ import (
 )
 
 const createdVersionOf = `-- name: CreatedVersionOf :one
+WITH authored AS (
+  SELECT number, sha256, lag(sha256) OVER (ORDER BY number) AS before,
+    CASE created_by_type WHEN 'user' THEN created_by_id
+      ELSE (SELECT owner_user_id FROM service_accounts WHERE id = created_by_id) END AS author -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  FROM versions
+  WHERE document_id = $3
+), runs AS (
+  SELECT number, sha256, before, author, row_number() OVER (ORDER BY number) - row_number() OVER (PARTITION BY author ORDER BY number) AS run
+  FROM authored
+)
 SELECT EXISTS(
-  SELECT 1 FROM versions v
-  WHERE v.document_id = $1
-    AND CASE v.created_by_type WHEN 'user' THEN v.created_by_id
-          ELSE (SELECT owner_user_id FROM service_accounts WHERE id = v.created_by_id) END -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
-      = CASE $2::text WHEN 'user' THEN $3::text
-          ELSE (SELECT owner_user_id FROM service_accounts WHERE id = $3::text) END -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  SELECT 1 FROM runs
+  WHERE author = CASE $1::text WHEN 'user' THEN $2::text
+      ELSE (SELECT owner_user_id FROM service_accounts WHERE id = $2::text) END -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  GROUP BY run
+  HAVING (array_agg(before ORDER BY number))[1] IS DISTINCT FROM (array_agg(sha256 ORDER BY number DESC))[1]
 )
 `
 
 type CreatedVersionOfParams struct {
-	DocumentID    string
 	PrincipalType string
 	PrincipalID   string
+	DocumentID    string
 }
 
 // Anyone who created a version of a document wrote what is under review. A
 // service account works for its owner, so a bot and its owner are one author,
-// as in the GitHub author mapping.
+// as in the GitHub author mapping. A run of one author's versions, with no
+// version by anyone else between them, that ends on the content it started
+// from changed nothing: an edit and its undo do not make an author.
 func (q *Queries) CreatedVersionOf(ctx context.Context, arg CreatedVersionOfParams) (bool, error) {
-	row := q.db.QueryRow(ctx, createdVersionOf, arg.DocumentID, arg.PrincipalType, arg.PrincipalID)
+	row := q.db.QueryRow(ctx, createdVersionOf, arg.PrincipalType, arg.PrincipalID, arg.DocumentID)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
@@ -633,7 +644,8 @@ type RevokeAuthorApproversRow struct {
 }
 
 // Removes the approvers who are the same author as the creator of a new
-// version, by the rule of CreatedVersionOf.
+// version, by the bot owner rule of CreatedVersionOf. The caller first makes
+// sure that the creator is an author.
 func (q *Queries) RevokeAuthorApprovers(ctx context.Context, arg RevokeAuthorApproversParams) ([]RevokeAuthorApproversRow, error) {
 	rows, err := q.db.Query(ctx, revokeAuthorApprovers, arg.DocumentID, arg.AuthorType, arg.AuthorID)
 	if err != nil {

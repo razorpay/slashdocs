@@ -11,14 +11,25 @@ SELECT current_version_id FROM documents WHERE id = @document_id FOR NO KEY UPDA
 -- name: CreatedVersionOf :one
 -- Anyone who created a version of a document wrote what is under review. A
 -- service account works for its owner, so a bot and its owner are one author,
--- as in the GitHub author mapping.
+-- as in the GitHub author mapping. A run of one author's versions, with no
+-- version by anyone else between them, that ends on the content it started
+-- from changed nothing: an edit and its undo do not make an author.
+WITH authored AS (
+  SELECT number, sha256, lag(sha256) OVER (ORDER BY number) AS before,
+    CASE created_by_type WHEN 'user' THEN created_by_id
+      ELSE (SELECT owner_user_id FROM service_accounts WHERE id = created_by_id) END AS author -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  FROM versions
+  WHERE document_id = @document_id
+), runs AS (
+  SELECT *, row_number() OVER (ORDER BY number) - row_number() OVER (PARTITION BY author ORDER BY number) AS run
+  FROM authored
+)
 SELECT EXISTS(
-  SELECT 1 FROM versions v
-  WHERE v.document_id = @document_id
-    AND CASE v.created_by_type WHEN 'user' THEN v.created_by_id
-          ELSE (SELECT owner_user_id FROM service_accounts WHERE id = v.created_by_id) END -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
-      = CASE @principal_type::text WHEN 'user' THEN @principal_id::text
-          ELSE (SELECT owner_user_id FROM service_accounts WHERE id = @principal_id::text) END -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  SELECT 1 FROM runs
+  WHERE author = CASE @principal_type::text WHEN 'user' THEN @principal_id::text
+      ELSE (SELECT owner_user_id FROM service_accounts WHERE id = @principal_id::text) END -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  GROUP BY run
+  HAVING (array_agg(before ORDER BY number))[1] IS DISTINCT FROM (array_agg(sha256 ORDER BY number DESC))[1]
 );
 
 -- name: InsertApprovalRequest :exec
@@ -70,7 +81,8 @@ RETURNING approver_type, approver_id;
 
 -- name: RevokeAuthorApprovers :many
 -- Removes the approvers who are the same author as the creator of a new
--- version, by the rule of CreatedVersionOf.
+-- version, by the bot owner rule of CreatedVersionOf. The caller first makes
+-- sure that the creator is an author.
 UPDATE approval_requests r SET revoked_at = now()
 WHERE r.document_id = @document_id
   AND r.revoked_at IS NULL

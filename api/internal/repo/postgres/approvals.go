@@ -141,9 +141,14 @@ func (s *Store) dropApproverDecisions(ctx context.Context, q *dbsqlc.Queries, do
 
 // removeAuthorApprovers removes the approvers who are the same author as the
 // creator of a new version (the creator, or the owner of the creator's bot),
-// with their decisions: they now wrote part of what is under review. Runs
-// inside the CreateVersion transaction.
+// with their decisions: they now wrote part of what is under review. A
+// version that undoes the creator's own edits removes nobody. Runs inside the
+// CreateVersion transaction.
 func (s *Store) removeAuthorApprovers(ctx context.Context, q *dbsqlc.Queries, documentID string, author auth.Principal) error {
+	authored, err := q.CreatedVersionOf(ctx, dbsqlc.CreatedVersionOfParams{DocumentID: documentID, PrincipalType: string(author.Type), PrincipalID: author.ID})
+	if err != nil || !authored {
+		return err
+	}
 	removed, err := q.RevokeAuthorApprovers(ctx, dbsqlc.RevokeAuthorApproversParams{DocumentID: documentID, AuthorType: string(author.Type), AuthorID: author.ID})
 	if err != nil {
 		return err
