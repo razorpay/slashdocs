@@ -8,6 +8,7 @@ import {
   type RefObject,
 } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { SheetHandle } from "@/components/ui/sheet";
 import { cn } from "@/lib/cn";
 import { EDGE, placeBeside, type Rect } from "@/lib/place-beside";
 import { anchorLabel } from "@/lib/comment-pins";
@@ -124,6 +125,7 @@ function Popover({
           : "max-h-[min(70vh,560px)] rounded-xl",
       )}
     >
+      {mobile && <SheetHandle />}
       <div className="min-h-0 overflow-y-auto overscroll-contain">{children}</div>
     </motion.div>
   );
@@ -178,7 +180,8 @@ export function CommentPopovers({
   const close = () => setActiveComment(undefined);
   const draft = drafts.find((d) => d.id === activeComment);
   const thread = comments.find((c) => c.id === activeComment);
-  const rect = anchor && anchor.id === activeComment ? anchor.rect : null;
+  const placedAnchor = anchor?.id === activeComment ? anchor : undefined;
+  const rect = placedAnchor?.rect ?? null;
   // Until the bridge reports the anchor, a thread waits, so it does not
   // jump; one whose text or pin is gone floats at the top right.
   const placed = !!rect || (!!activeComment && unanchoredComments.has(activeComment));
