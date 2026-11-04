@@ -248,6 +248,31 @@ func TestLLMsTxtListsVisibleChapters(t *testing.T) {
 	}
 }
 
+// A title cannot add a link of its own to llms.txt, which agents read and
+// follow.
+func TestLLMsTxtEscapesTitles(t *testing.T) {
+	f := newManifestFixture(t)
+	rr := do(t, f.e.h, http.MethodPatch, "/v1/documents/"+f.c, `{"title":"03 · x](https://evil.example/steal) [y \\"}`, bkHeaders(f.owner))
+	assertStatus(t, rr, http.StatusOK)
+	rr = do(t, f.e.h, http.MethodGet, "/v1/books/"+f.bookID+"/outline", "", bkHeaders(f.owner))
+	base := bkString(t, rr.Body.Bytes(), "version_id")
+	outline := `{"title":"[Guide](https://evil.example/)","front":[],"parts":[{"title":"","chapters":[{"doc":"` + f.a + `"},{"doc":"` + f.b + `"},{"doc":"` + f.c + `"}]}],"back":[]}`
+	rr = do(t, f.e.h, http.MethodPut, "/v1/books/"+f.bookID+"/outline", `{"base_version_id":"`+base+`","outline":`+outline+`}`, bkHeaders(f.owner))
+	assertStatus(t, rr, http.StatusOK)
+
+	rr = do(t, f.e.h, http.MethodGet, "/v1/books/"+f.bookID+"/llms.txt", "", bkHeaders(f.owner))
+	assertStatus(t, rr, http.StatusOK)
+	text := rr.Body.String()
+	for _, want := range []string{
+		"# \\[Guide\\]\\(https://evil.example/\\)\n",
+		"- [3 · x\\]\\(https://evil.example/steal\\) \\[y \\\\](/app/b/" + f.bookID + "/c/" + f.c + ")\n",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("llms.txt missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestManifestJSONShape(t *testing.T) {
 	f := newManifestFixture(t)
 	rr := do(t, f.e.h, http.MethodGet, "/v1/books/"+f.bookID, "", bkHeaders(f.owner))

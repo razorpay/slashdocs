@@ -286,19 +286,25 @@ func (h handlers) getBookLLMs(c *gin.Context) {
 		return
 	}
 	var sb strings.Builder
-	sb.WriteString("# " + oneLine(view.Book.Outline.Title) + "\n\n")
+	sb.WriteString("# " + llmsText(view.Book.Outline.Title) + "\n\n")
 	for _, e := range view.Entries {
 		if e.Kind != books.KindChapter || !view.Visible[e.Doc] {
 			continue
 		}
 		l := view.link(e)
-		sb.WriteString(fmt.Sprintf("- [%d · %s](%s)\n", e.Number, oneLine(l.Title), l.Href))
+		sb.WriteString(fmt.Sprintf("- [%d · %s](%s)\n", e.Number, llmsText(l.Title), l.Href))
 	}
 	c.Header("Cache-Control", "private, no-cache")
 	c.Data(http.StatusOK, "text/plain; charset=utf-8", []byte(sb.String()))
 }
 
-// oneLine folds line breaks into spaces so a title cannot start a new line.
-func oneLine(s string) string {
-	return strings.Join(strings.Fields(s), " ")
+// llmsMarkdownEscaper escapes the characters that would let a title close
+// its link text or start a link of its own.
+var llmsMarkdownEscaper = strings.NewReplacer(`\`, `\\`, `[`, `\[`, `]`, `\]`, `(`, `\(`, `)`, `\)`)
+
+// llmsText makes a title safe for one line of llms.txt: line breaks fold
+// into spaces, so it cannot start a new line, and Markdown link syntax is
+// escaped, so it cannot add a link that agents would follow.
+func llmsText(s string) string {
+	return llmsMarkdownEscaper.Replace(strings.Join(strings.Fields(s), " "))
 }
