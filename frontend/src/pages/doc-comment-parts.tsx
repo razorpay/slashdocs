@@ -356,9 +356,13 @@ export function ComposeField({
   sendLabel: string;
 }) {
   const ready = !!value.body.trim() && !pending;
-  const submit = (e: FormEvent) => {
+  const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (ready) onSubmit();
+    if (!ready) return;
+    onSubmit();
+    // The send button turns off while it sends and would drop the focus, so
+    // the field keeps it for the next reply.
+    e.currentTarget.querySelector("textarea")?.focus();
   };
   // Enter sends; Shift+Enter (or Alt+Enter) starts a new line.
   const sendOnEnter = (event: KeyboardEvent<HTMLTextAreaElement>) => {

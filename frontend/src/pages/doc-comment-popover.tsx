@@ -74,6 +74,14 @@ function Popover({
       ),
     );
   }, [anchor, bounds, mobile, children]);
+  // It takes the focus that a post or a pick in a list left behind, so Esc
+  // and Tab reach it. Focus in the document stays there.
+  useEffect(() => {
+    const el = ref.current;
+    const focus = document.activeElement;
+    if (el && !el.contains(focus) && !(focus instanceof HTMLIFrameElement))
+      el.focus({ preventScroll: true });
+  }, []);
   const closeOnEscape = (e: KeyboardEvent) => {
     if (e.key !== "Escape") return;
     e.stopPropagation();
@@ -93,6 +101,7 @@ function Popover({
       animate={mobile || at ? enter.animate : enter.initial}
       role="dialog"
       aria-label={label}
+      tabIndex={-1}
       onKeyDown={closeOnEscape}
       style={
         mobile
@@ -105,7 +114,7 @@ function Popover({
             }
       }
       className={cn(
-        "fixed z-40 flex flex-col overflow-hidden bg-[var(--color-surface)] shadow-xl ring-1 ring-[var(--color-border)]",
+        "fixed z-40 flex flex-col overflow-hidden bg-[var(--color-surface)] shadow-xl ring-1 ring-[var(--color-border)] outline-none",
         mobile
           ? "inset-x-0 bottom-0 max-h-[70vh] rounded-t-2xl pb-[env(safe-area-inset-bottom)]"
           : "max-h-[min(70vh,560px)] rounded-xl",

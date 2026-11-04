@@ -81,7 +81,9 @@ export function CommentsToggle({
       size="icon"
       onClick={onToggle}
       aria-label="Comments"
-      tooltip={open ? false : "Comments (Esc C)"}
+      // One tooltip in both states keeps the same button, which the list
+      // gives the focus back to.
+      tooltip="Comments (Esc C)"
       aria-expanded={open}
       className="shrink-0"
     >
