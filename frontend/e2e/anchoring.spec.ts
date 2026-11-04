@@ -282,14 +282,14 @@ test("comments on a selection with C and lists every shortcut with ?", async ({
   await page.getByRole("button", { name: "Cancel comment" }).click();
   await expect(doc.locator("p")).toHaveText("Keys beat clicks, again.");
 
-  // Outside the text, ? lists every shortcut.
-  await page.evaluate(() =>
-    (window.document.activeElement as HTMLElement | null)?.blur(),
-  );
+  // Esc leaves the text, so ? lists every shortcut and types nothing.
+  await doc.locator("p").click();
+  await page.keyboard.press("Escape");
   await page.keyboard.press("?");
   const dialog = page.getByRole("dialog", { name: "Keyboard shortcuts" });
   await expect(dialog.getByText("Comment on the selected text")).toBeVisible();
   await expect(dialog.getByText("Full screen")).toBeVisible();
+  await expect(doc.locator("p")).toHaveText("Keys beat clicks, again.");
 });
 
 test("holding j scrolls faster than tapping it and stops on release", async ({
