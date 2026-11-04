@@ -202,7 +202,7 @@ export function ReactionBar({
                 if (!interactedOutside.current)
                   trigger.current?.focus({ preventScroll: true });
               }}
-              className="comment-reaction-picker z-50 w-[172px] rounded-2xl bg-[var(--color-surface)] p-2 text-[var(--color-fg)] shadow-[0_0_0_1px_var(--color-border),0_4px_8px_rgba(0,0,0,0.06),0_12px_32px_rgba(0,0,0,0.12)] outline-none"
+              className="pop z-50 w-[172px] rounded-2xl bg-[var(--color-surface)] p-2 text-[var(--color-fg)] shadow-[0_0_0_1px_var(--color-border),0_4px_8px_rgba(0,0,0,0.06),0_12px_32px_rgba(0,0,0,0.12)] outline-none"
               onKeyDownCapture={(event) => {
                 const step = {
                   ArrowRight: 1,
