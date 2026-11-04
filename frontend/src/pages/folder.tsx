@@ -88,10 +88,11 @@ export function FolderPage() {
   });
   const me = useQuery({ queryKey: queryKeys.me(), queryFn: api.me });
   const isOwner = samePrincipal(me.data?.principal, folder.data?.owner);
+  // As for a document, the grants are asked for once the folder loads.
   const access = useQuery({
     queryKey: queryKeys.folderAccess(id),
     queryFn: () => api.folderAccess(id),
-    enabled: !!id && !!me.data?.principal && !isOwner,
+    enabled: !!folder.data && !!me.data?.principal && !isOwner,
     staleTime: 30_000,
   });
   const currentAccessRole = access.data?.current_role;
@@ -298,12 +299,12 @@ export function FolderPage() {
               variant="outline"
               size="md"
               onClick={() => setNewFolderOpen(true)}
-              aria-label="New folder"
-              tooltip="New folder"
+              aria-label="New subfolder"
+              tooltip="New subfolder"
               className="shrink-0 px-3 sm:px-4"
             >
               <Plus className="h-3.5 w-3.5 sm:mr-1.5" />
-              <span className="hidden sm:inline">New folder</span>
+              <span className="hidden sm:inline">New subfolder</span>
             </Button>
             <Sheet>
               <SheetTrigger asChild>
@@ -326,7 +327,7 @@ export function FolderPage() {
             </Sheet>
             <Dropdown>
               <DropdownTrigger asChild>
-                <Button variant="ghost" size="icon" aria-label="More folder actions">
+                <Button variant="outline" size="icon" aria-label="More folder actions">
                   <MoreHorizontal className="h-4 w-4" />
                 </Button>
               </DropdownTrigger>
@@ -382,9 +383,10 @@ export function FolderPage() {
             title="Empty folder"
             description={
               <>
-                Publish into it with{" "}
-                <code className="break-all font-mono">
-                  slashdocs docs create file.html --folder-id {id}
+                Publish into it with {/* The command breaks only at its spaces. */}
+                <code className="font-mono">
+                  slashdocs docs create file.html{" "}
+                  <span className="whitespace-nowrap">--folder-id</span> {id}
                 </code>
                 , or drag documents onto this folder on the Documents page.
               </>

@@ -6,7 +6,7 @@ import { RelativeTime } from "@/components/ui/relative-time";
 import { DeleteDocumentDialog } from "@/components/delete-document-dialog";
 import { docID, docTitle, type FolderEntry, type Principal } from "@/api";
 import { cn } from "@/lib/cn";
-import { principalLabel, samePrincipal } from "@/lib/principals";
+import { principalColor, principalLabel, samePrincipal } from "@/lib/principals";
 import { DRAG_TYPE } from "./drag";
 import { ENTRY_ROW, EntryName, EntryTable, WIDE_ONLY } from "./entry-table";
 import { PinButton, PinnedMark } from "./pin-button";
@@ -29,6 +29,7 @@ export function UnifiedTable({
   return (
     <EntryTable
       columns={["Name", "Owner", "Updated", ""]}
+      widths={{ Owner: "w-64" }}
       wideOnly={["Owner", "Updated"]}
     >
       {entries.map((e) => {
@@ -187,11 +188,16 @@ function OwnerCell({ owner }: { owner?: Principal }) {
     owner?.email && owner.email !== label
       ? owner.email
       : owner?.type === "service_account"
-        ? "Service account"
+        ? "Bot"
         : "Owner";
   return (
     <div className="flex min-w-0 items-center gap-2">
-      <Avatar name={label} src={owner?.picture_url} size={28} />
+      <Avatar
+        name={label}
+        src={owner?.picture_url}
+        size={28}
+        color={owner && principalColor(owner)}
+      />
       <div className="min-w-0">
         <div className="truncate text-sm font-medium">{label}</div>
         <div className="truncate text-xs text-[var(--color-fg-muted)]">{detail}</div>
