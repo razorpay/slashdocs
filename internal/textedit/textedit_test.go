@@ -80,17 +80,44 @@ func TestApplyFailsWithoutChangingAnything(t *testing.T) {
 	}
 }
 
-func TestSummaryClipsLongText(t *testing.T) {
+func TestSummaryShowsTheChangedWords(t *testing.T) {
+	para := "6. The retry worker reads failed webhooks from the queue and add comments."
+	for _, c := range []struct {
+		name string
+		edit Edit
+		want string
+	}{
+		{"short", Edit{OldString: "TTL of 10 minutes", NewString: "TTL of 5 minutes"},
+			`Replaced "TTL of 10 minutes" with "TTL of 5 minutes"`},
+		{"insertion at the end", Edit{OldString: para, NewString: para + " R3"},
+			`Replaced "…and add comments." with "…and add comments. R3"`},
+		{"deletion at the start", Edit{OldString: para, NewString: strings.TrimPrefix(para, "6. ")},
+			`Replaced "6. The retry worker…" with "The retry worker…"`},
+		{"replacement in the middle", Edit{OldString: para, NewString: strings.Replace(para, "failed", "dead", 1)},
+			`Replaced "…retry worker reads failed webhooks from the…" with "…retry worker reads dead webhooks from the…"`},
+		{"part of a word", Edit{OldString: para, NewString: strings.Replace(para, "add", "adds", 1)},
+			`Replaced "…the queue and add comments." with "…the queue and adds comments."`},
+		{"replace all", Edit{OldString: "draft", NewString: "final", ReplaceAll: true},
+			`Replaced "draft" with "final" everywhere`},
+		{"unicode", Edit{OldString: "Le café est très bon ce matin", NewString: "Le café est très chaud ce matin"},
+			`Replaced "…café est très bon ce matin" with "…café est très chaud ce matin"`},
+	} {
+		if got := Summary([]Edit{c.edit}); got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestSummaryClipsLongChanges(t *testing.T) {
 	s := Summary([]Edit{
 		{OldString: "10 minutes", NewString: "5 minutes"},
-		{OldString: "draft", NewString: "final", ReplaceAll: true},
 		{OldString: strings.Repeat("word ", 30), NewString: "short\n\n  text"},
 	})
 	lines := strings.Split(s, "\n")
-	if len(lines) != 3 || lines[0] != `Replaced "10 minutes" with "5 minutes"` || lines[1] != `Replaced "draft" with "final" everywhere` {
+	if len(lines) != 2 || lines[0] != `Replaced "10 minutes" with "5 minutes"` {
 		t.Fatalf("got %q", s)
 	}
-	if !strings.Contains(lines[2], "…") || !strings.HasSuffix(lines[2], `with "short text"`) {
-		t.Fatalf("got %q", lines[2])
+	if !strings.Contains(lines[1], "…") || !strings.HasSuffix(lines[1], `with "short text"`) {
+		t.Fatalf("got %q", lines[1])
 	}
 }
