@@ -214,7 +214,7 @@ test("placing a pin shows a hint until it ends", () => {
   assert.strictEqual(document.querySelector(".sd-place-hint"), null);
 });
 
-test("the open pin stays in its cluster, and a pin that leaves one pops in", () => {
+test("a cluster keeps the open pin and wears its first pin's color, and a pin that leaves it pops in", () => {
   document.body.innerHTML = '<main><p id="spot">Pin here</p></main>';
   layout();
   // Opening a pin brings it into view.
@@ -226,15 +226,20 @@ test("the open pin stays in its cluster, and a pin that leaves one pops in", () 
     laidOut: () => {},
   });
   layer.start(document);
-  const pin = (id: string, x: number) => ({
+  const pin = (id: string, x: number, color = "#999") => ({
     id,
+    color,
     anchor: { quote: "", point: { target: "spot", x, y: 0.5 } },
   });
   const far = pin("far", 0);
-  layer.setPins(parsePins([pin("a", 0.5), pin("b", 0.5), pin("c", 0.5), far]), "b");
+  layer.setPins(
+    parsePins([pin("a", 0.5, "#111"), pin("b", 0.5), pin("c", 0.5), far]),
+    "b",
+  );
   const cluster = document.querySelector<HTMLElement>(".sd-cluster")!;
   assert.strictEqual(cluster.getAttribute("aria-label"), "3 comment threads");
   assert.ok("active" in cluster.dataset, "the cluster shows the open thread");
+  assert.strictEqual(cluster.style.getPropertyValue("--c"), "#111");
   assert.deepEqual(
     Array.from(document.querySelectorAll<HTMLElement>(".sd-pin"), (b) => b.dataset.id),
     ["far"],

@@ -256,10 +256,11 @@ export function pinElement(d: Document, a: PinAnchor): Element | null {
 }
 
 // One shape for pins and clusters: a 28px bubble with its tip at the bottom
-// left, a 2px white rim, a 24px face. Glyphs are centred on their cap height
-// (text-box), so initials, digits and "+" sit in the optical middle. Pins sit
-// on the document, not on the app, so they keep this light frame in both app
-// themes.
+// left, a 2px white rim, a 24px face. A cluster wears its first pin's color,
+// with a second rim behind it for the others. Glyphs are centred on their cap
+// height (text-box), so initials, digits and "+" sit in the optical middle.
+// Pins sit on the document, not on the app, so they keep this light frame in
+// both app themes.
 const SHADOW =
   "0 0 0 .5px rgba(0,0,0,.14),0 1px 2px rgba(0,0,0,.12),0 3px 8px rgba(0,0,0,.1)";
 const CSS = `
@@ -267,7 +268,7 @@ const CSS = `
 .sd-pin,.sd-cluster{all:unset;position:absolute;left:0;top:0;box-sizing:border-box;width:${PIN_SIZE}px;height:${PIN_SIZE}px;margin-top:-${PIN_SIZE}px;padding:2px;border-radius:${PIN_SIZE / 2}px ${PIN_SIZE / 2}px ${PIN_SIZE / 2}px 3px;background:#fff;box-shadow:${SHADOW};pointer-events:auto;cursor:pointer;will-change:translate;transform-origin:0 100%;transition:box-shadow 150ms ease,scale 150ms cubic-bezier(.23,1,.32,1),opacity 150ms ease}
 .sd-pin:focus-visible,.sd-cluster:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
 .sd-pin>b,.sd-cluster>b{display:grid;place-items:center;width:100%;height:100%;border-radius:50%;background:var(--c,#6366f1);color:#fff;font:600 11px/1 system-ui,-apple-system,sans-serif;font-variant-numeric:tabular-nums;text-box:trim-both cap alphabetic}
-.sd-cluster>b{background:#18181b}
+.sd-cluster{box-shadow:4px -4px 0 -1px #fff,4px -4px 0 0 rgba(0,0,0,.2),${SHADOW}}
 .sd-cluster[data-many]>b{font-size:9.5px;letter-spacing:-.02em}
 .sd-pin[data-active],.sd-cluster[data-active]{box-shadow:0 0 0 2px #fff,0 0 0 3.5px #2563eb,0 3px 10px rgba(37,99,235,.3)}
 .sd-pin[data-draft]>b{background:#fff;color:var(--c,#2563eb);box-shadow:inset 0 0 0 1.5px currentColor}
@@ -539,6 +540,7 @@ export function createPinLayer(host: PinHost) {
     b.dataset.id = id;
     if (members.some(({ pin }) => pin.id === active)) b.dataset.active = "";
     if (fresh) b.dataset.new = "";
+    if (members[0].pin.color) b.style.setProperty("--c", members[0].pin.color);
     const count = document.createElement("b");
     count.textContent = members.length > 99 ? "99+" : String(members.length);
     if (members.length > 99) b.dataset.many = "";
