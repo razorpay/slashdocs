@@ -950,6 +950,27 @@ func TestMCPBookToolsAndStaleOutlineConflict(t *testing.T) {
 		t.Fatalf("stale update_book_outline = %#v, want outline_conflict with current_version_id", stale)
 	}
 
+	var pulled struct {
+		VersionID string `json:"version_id"`
+		Number    int    `json:"number"`
+	}
+	if err := json.Unmarshal([]byte(outline.Text), &pulled); err != nil || pulled.VersionID == "" {
+		t.Fatalf("get_book_outline text = %s (%v)", outline.Text, err)
+	}
+	saved := callMCPToolHTTP(t, e, token, "update_book_outline", map[string]any{
+		"book_id":         bookID,
+		"base_version_id": pulled.VersionID,
+		"outline":         map[string]any{"title": "Guide", "front": []any{}, "parts": []any{map[string]any{"title": "I", "chapters": []any{map[string]any{"planned": "X"}}}}, "back": []any{}},
+		"note":            "add X",
+	})
+	var pushed struct {
+		VersionID string `json:"version_id"`
+		Number    int    `json:"number"`
+	}
+	if saved.IsError || json.Unmarshal([]byte(saved.Text), &pushed) != nil || pushed.Number != pulled.Number+1 || pushed.VersionID == pulled.VersionID {
+		t.Fatalf("update_book_outline = %#v, want version %d", saved, pulled.Number+1)
+	}
+
 	if got := callMCPToolHTTP(t, e, token, "delete_book", map[string]any{"book_id": bookID}); got.IsError {
 		t.Fatalf("delete_book = %#v", got)
 	}
