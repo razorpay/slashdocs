@@ -112,7 +112,7 @@ function DraggableEntryCard({
     >
       <Link
         to={isFolder ? `/app/folders/${id}` : `/app/d/${id}`}
-        className="flex h-40 cursor-default flex-col p-4"
+        className="flex min-h-40 cursor-default flex-col p-4"
         draggable={false}
       >
         <span className="flex items-center gap-2">
@@ -125,23 +125,22 @@ function DraggableEntryCard({
           </span>
           {pinned && <PinnedMark />}
         </span>
-        {snippet && (
-          <SearchSnippet text={snippet} className="mt-3 line-clamp-2 text-xs" />
-        )}
-        <span className="mt-auto min-w-0">
+        <div className="mt-auto min-w-0 pt-3">
           <span className="line-clamp-2 font-heading text-[15px] font-medium leading-snug">
             {title}
           </span>
+          {snippet && (
+            <SearchSnippet text={snippet} className="mt-1 line-clamp-2 text-xs" />
+          )}
           <span className="mt-1 block truncate text-xs text-[var(--color-fg-muted)]">
             {principalLabel(owner)}
           </span>
-          {/* A search snippet takes the room of the time. */}
-          {updated && !snippet && (
+          {updated && (
             <span className="block truncate text-xs text-[var(--color-fg-muted)]">
               <RelativeTime iso={updated} />
             </span>
           )}
-        </span>
+        </div>
       </Link>
       <GridCardActions
         resourceType={type}

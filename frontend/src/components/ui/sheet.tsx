@@ -67,3 +67,14 @@ export function SheetTitle({
 export function SheetBody({ className, ...p }: React.HTMLAttributes<HTMLDivElement>) {
   return <div className={cn("flex-1 overflow-y-auto p-6", className)} {...p} />;
 }
+
+// The grab handle at the top of a bottom sheet, which shows that the panel is
+// a sheet over the page.
+export function SheetHandle() {
+  return (
+    <div
+      aria-hidden
+      className="mx-auto mt-2 h-1 w-9 shrink-0 rounded-full bg-[var(--color-border-strong)]"
+    />
+  );
+}
