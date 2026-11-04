@@ -81,15 +81,44 @@ RETURNING approver_type, approver_id;
 
 -- name: RevokeAuthorApprovers :many
 -- Removes the approvers who are the same author as the creator of a new
--- version, by the bot owner rule of CreatedVersionOf. The caller first makes
--- sure that the creator is an author.
-UPDATE approval_requests r SET revoked_at = now()
+-- version, by the bot owner rule of CreatedVersionOf, and names the version
+-- that removed them. The caller first makes sure that the creator is an
+-- author.
+UPDATE approval_requests r SET revoked_at = now(), revoked_by_version_id = @version_id
 WHERE r.document_id = @document_id
   AND r.revoked_at IS NULL
   AND CASE r.approver_type WHEN 'user' THEN r.approver_id
         ELSE (SELECT owner_user_id FROM service_accounts WHERE id = r.approver_id) END -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
     = CASE @author_type::text WHEN 'user' THEN @author_id::text
         ELSE (SELECT owner_user_id FROM service_accounts WHERE id = @author_id::text) END -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+RETURNING r.approver_type, r.approver_id;
+
+-- name: RestoreAuthorApprovers :many
+-- Gives back the approvers that the versions of an author removed, with the
+-- decisions that each removal revoked, once a new version undoes that
+-- author's edits. While the author's edits stay, nobody can assign them
+-- again, so no newer assignment of theirs exists. The caller first makes sure
+-- that the creator is no longer an author.
+WITH undone AS (
+  SELECT r.id, r.approver_type, r.approver_id, r.revoked_by_version_id
+  FROM approval_requests r
+  WHERE r.document_id = @document_id
+    AND r.revoked_by_version_id IS NOT NULL
+    AND CASE r.approver_type WHEN 'user' THEN r.approver_id
+          ELSE (SELECT owner_user_id FROM service_accounts WHERE id = r.approver_id) END -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+      = CASE @author_type::text WHEN 'user' THEN @author_id::text
+          ELSE (SELECT owner_user_id FROM service_accounts WHERE id = @author_id::text) END -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+), decisions AS (
+  UPDATE approvals a SET revoked_at = NULL, revoked_by_version_id = NULL
+  FROM undone u
+  WHERE a.document_id = @document_id
+    AND a.approver_type = u.approver_type
+    AND a.approver_id = u.approver_id
+    AND a.revoked_by_version_id = u.revoked_by_version_id
+)
+UPDATE approval_requests r SET revoked_at = NULL, revoked_by_version_id = NULL
+FROM undone u
+WHERE r.id = u.id
 RETURNING r.approver_type, r.approver_id;
 
 -- name: LockApproversWithoutAccess :many
@@ -150,7 +179,9 @@ WHERE document_id = @document_id
   AND revoked_at IS NULL;
 
 -- name: RevokeApprovalsForApprover :exec
-UPDATE approvals SET revoked_at = now()
+-- Revokes the decisions of a removed approver. A removal by a version names
+-- that version, as RevokeAuthorApprovers does.
+UPDATE approvals SET revoked_at = now(), revoked_by_version_id = sqlc.narg(version_id)
 WHERE document_id = @document_id
   AND approver_type = @approver_type
   AND approver_id = @approver_id

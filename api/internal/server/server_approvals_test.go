@@ -891,6 +891,29 @@ func TestEditThatItsAuthorUndoesDoesNotMakeAnAuthor(t *testing.T) {
 	}
 }
 
+// An approver's stray edit removes them, with their decisions. Its undo
+// gives both back, so that the stray edit costs no approval.
+func TestUndoOfAnApproversEditRestoresTheirApproval(t *testing.T) {
+	e := newTestEnv(t)
+	html, err := e.store.GetVersionHTML(context.Background(), e.ver.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustAssignApprover(t, e, e.doc.ID, "editor@example.com", fixtureOwner)
+	assertStatus(t, submitApproval(t, e, e.doc.ID, e.ver.ID, "approved", fixtureEditor), http.StatusCreated)
+
+	typed := pushApprovalTestVersion(t, e, e.doc.ID, e.ver.ID, fixtureEditor)
+	if list := listApprovals(t, e, e.doc.ID, "", fixtureOwner); len(list.Items) != 0 {
+		t.Fatalf("items = %+v, want the editor removed by their edit", list.Items)
+	}
+	undone := pushApprovalTestVersionHTML(t, e, e.doc.ID, typed, string(html), fixtureEditor)
+
+	list := listApprovals(t, e, e.doc.ID, "", fixtureOwner)
+	if list.VersionID != undone || list.Status != "approved" || len(list.Items) != 1 || list.Items[0].VersionID != e.ver.ID {
+		t.Fatalf("list = %+v, want the editor's version 1 approval back on %s", list, undone)
+	}
+}
+
 // A service account works for its owner, so a version that a person's bot
 // pushes is that person's work too.
 func TestApproverWhoseBotCreatesAVersionIsRemoved(t *testing.T) {
