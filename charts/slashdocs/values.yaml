@@ -82,9 +82,11 @@ deployment:
   featured: ""
 
 # Feature rollout switches. Labels are temporarily disabled by default; set
-# labels to true to re-enable them.
+# labels to true to re-enable them. Book mode is off by default; set books to
+# true to turn it on.
 features:
   labels: false
+  books: false
 
 # Kubernetes Deployment rollout strategy. Keep RollingUpdate normally. The
 # structured-mentions upgrade documented in docs/self-hosting.md requires one
