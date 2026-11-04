@@ -26,6 +26,17 @@ func registerMCPBookTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 		return api.json(ctx, http.MethodPost, "/v1/folders/"+folder+"/book", map[string]any{}, mcpParams("id", folder), api.handlers.createBook)
 	})
 
+	server.AddTool(mcp.NewTool("get_folder_book", readOnlyOptions(
+		mcp.WithDescription("Find the book made from a folder. Returns its book_id; not_found when the folder is not a book. Requires viewer access to the folder."),
+		mcpFolderID(),
+	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		folder, invalid := mcpRequired(request, "folder_id")
+		if invalid != nil {
+			return invalid, nil
+		}
+		return api.get(ctx, "/v1/folders/"+folder+"/book", mcpParams("id", folder), api.handlers.folderBook)
+	})
+
 	server.AddTool(mcp.NewTool("get_book", readOnlyOptions(
 		mcp.WithDescription("Get a book's manifest: metadata, reading order and table of contents."), mcpBookID(),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

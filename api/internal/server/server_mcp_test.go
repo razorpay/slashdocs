@@ -38,6 +38,7 @@ var expectedMCPTools = []string{
 	"get_document_html",
 	"get_document_version",
 	"get_folder",
+	"get_folder_book",
 	"get_server_config",
 	"list_comments",
 	"list_document_access",
@@ -820,6 +821,17 @@ func TestMCPBookToolsAndStaleOutlineConflict(t *testing.T) {
 		t.Fatalf("create_book = %#v", created)
 	}
 	bookID := b.BookID
+
+	// An agent that knows only the folder can find its book.
+	found := callMCPToolHTTP(t, e, token, "get_folder_book", map[string]any{"folder_id": f.ID})
+	if found.IsError || !strings.Contains(found.Text, bookID) {
+		t.Fatalf("get_folder_book = %#v, want %s", found, bookID)
+	}
+	// Creating it again names the existing book.
+	again := callMCPToolHTTP(t, e, token, "create_book", map[string]any{"folder_id": f.ID})
+	if !again.IsError || !strings.Contains(again.Text, "book_exists") || !strings.Contains(again.Text, bookID) {
+		t.Fatalf("second create_book = %#v, want book_exists naming %s", again, bookID)
+	}
 
 	outline := callMCPToolHTTP(t, e, token, "get_book_outline", map[string]any{"book_id": bookID})
 	if outline.IsError || !strings.Contains(outline.Text, "version_id") {
