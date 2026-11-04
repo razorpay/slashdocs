@@ -28,6 +28,7 @@ import {
   type ScrollBox,
   type RestoreMethod,
 } from "./reading.ts";
+import { createPositionRestore } from "./position-restore.ts";
 import { CHORD_KEYS } from "../src/lib/esc-chord.ts";
 import {
   reduceVimScroll,
@@ -1114,6 +1115,7 @@ type Theme = "dark" | "light";
       prepareHeadings(d);
       // A document that re-renders a changed heading gets its dot back.
       if (markedIds.length) refreshChangeDots();
+      positionRestore.mutated();
       scheduleTextNavigation();
       scheduleMutationScan();
       scheduleCommentPositions();
@@ -1573,6 +1575,11 @@ type Theme = "dark" | "light";
   let setupDoc: Document | null = null;
 
   let pendingHeading = "";
+  // A saved reading position waiting for late content (navigatePosition).
+  const positionRestore = createPositionRestore({
+    resolve: resolvePosition,
+    finish: finishPosition,
+  });
   let headingFlash: Animation | undefined;
   function prepareHeadings(d: Document): void {
     const used = new Set(Array.from(d.querySelectorAll("[id]")).map((el) => el.id));
@@ -1630,6 +1637,9 @@ type Theme = "dark" | "light";
     pendingText = null;
     textVisibilityObserver?.disconnect();
     clearTimeout(textNoticeTimer);
+    // An empty id only cancels an earlier link navigation; the document
+    // page sends one on every ready, which must not cancel a restore.
+    if (id) positionRestore.cancel();
     pendingHeading = id;
     const d = doc();
     if (!d || !id) return;
@@ -1669,6 +1679,7 @@ type Theme = "dark" | "light";
   function navigateText(value: unknown): void {
     pendingHeading = "";
     pendingText = textLinkAnchor(value);
+    if (pendingText) positionRestore.cancel();
     textVisibilityObserver?.disconnect();
     clearTimeout(textNoticeTimer);
     doc()
@@ -1752,61 +1763,100 @@ type Theme = "dark" | "light";
       });
   }
 
-  // Restore a saved reading position: the fuzzy-matched quote, else its
-  // section heading, else the scroll share. navigate-text stays exact-match
-  // for deep links; a reading position may point at text that has changed.
-  function navigatePosition(data: {
-    anchor?: unknown;
-    section?: unknown;
-    progression?: unknown;
-  }): void {
+  // navigate-text stays exact-match for deep links; a reading position may
+  // point at text that has changed, so its quote is fuzzy-matched.
+  type PositionTarget = { anchor?: unknown; section?: unknown; progression?: unknown };
+  type PositionPlan = {
+    method: RestoreMethod;
+    range: Range | null;
+    section: string;
+    share: number | null;
+    waitForContent: boolean;
+  };
+  function firstLine(range: Range): DOMRect | undefined {
+    return Array.from(range.getClientRects()).find((r) => r.width && r.height);
+  }
+
+  // Where a saved position is in the document as it is now. Opening the
+  // <details> around its heading is the only change this makes.
+  function resolvePosition(data: PositionTarget): PositionPlan {
+    const section =
+      typeof data.section === "string" && data.section.length <= 1024
+        ? data.section
+        : "";
+    const share =
+      typeof data.progression === "number" && Number.isFinite(data.progression)
+        ? data.progression
+        : null;
+    const d = doc();
+    if (!d?.body) {
+      return { method: "none", range: null, section, share, waitForContent: true };
+    }
+    const root = d.scrollingElement || d.documentElement;
+    const anchor = textLinkAnchor(data.anchor);
+    const range = anchor ? resolveAnchor(d.body, anchor) : null;
+    const line = range ? firstLine(range) : undefined;
+    // A heading still hidden after opening its <details> cannot be
+    // scrolled to, so the restore falls through to progression.
+    const heading = !line && section ? d.getElementById(section) : null;
+    const method = restoreMethod({
+      quoteResolved: !!line,
+      sectionExists: !!heading && revealHeading(heading),
+      progression: share,
+    });
+    return {
+      method,
+      range: line ? range : null,
+      section,
+      share,
+      waitForContent: root.scrollHeight <= root.clientHeight,
+    };
+  }
+
+  function finishPosition(plan: PositionPlan): void {
     const d = doc();
     const view = d?.defaultView;
-    let method: RestoreMethod = "none";
-    if (d?.body && view) {
-      const anchor = textLinkAnchor(data.anchor);
-      const range = anchor ? resolveAnchor(d.body, anchor) : null;
-      const line = range
-        ? Array.from(range.getClientRects()).find((r) => r.width && r.height)
-        : undefined;
-      const section =
-        typeof data.section === "string" && data.section.length <= 1024
-          ? data.section
-          : "";
-      const share =
-        typeof data.progression === "number" && Number.isFinite(data.progression)
-          ? data.progression
-          : null;
-      // A heading still hidden after opening its <details> cannot be
-      // scrolled to, so the restore falls through to progression.
-      const heading = !line && section ? d.getElementById(section) : null;
-      method = restoreMethod({
-        quoteResolved: !!line,
-        sectionExists: !!heading && revealHeading(heading),
-        progression: share,
-      });
-      if (method === "section") {
-        navigateHeading(section);
-      } else {
-        pendingHeading = "";
-        pendingText = null;
-        textVisibilityObserver?.disconnect();
-        clearTimeout(textNoticeTimer);
-        if (method === "quote") {
+    if (d && view) {
+      if (plan.method === "section") {
+        navigateHeading(plan.section);
+      } else if (plan.method === "quote" && plan.range) {
+        // Into view first, which also scrolls a nested container, then
+        // centre the first line exactly.
+        const start = plan.range.startContainer;
+        const el = start.nodeType === 1 ? (start as Element) : start.parentElement;
+        el?.scrollIntoView({ block: "center", behavior: "instant" });
+        const line = firstLine(plan.range);
+        if (line) {
           view.scrollBy({
-            top: line!.top + line!.height / 2 - view.innerHeight / 2,
-            behavior: "instant",
-          });
-        } else if (method === "progression") {
-          const root = d.scrollingElement || d.documentElement;
-          view.scrollTo({
-            top: share! * Math.max(0, root.scrollHeight - root.clientHeight),
+            top: line.top + line.height / 2 - view.innerHeight / 2,
             behavior: "instant",
           });
         }
+      } else if (plan.method === "progression") {
+        const root = d.scrollingElement || d.documentElement;
+        view.scrollTo({
+          top: plan.share! * Math.max(0, root.scrollHeight - root.clientHeight),
+          behavior: "instant",
+        });
       }
     }
-    parent.postMessage({ type: "slashdocs:position-restored", method }, targetOrigin());
+    parent.postMessage(
+      { type: "slashdocs:position-restored", method: plan.method },
+      targetOrigin(),
+    );
+  }
+
+  // Restore a saved reading position: the fuzzy-matched quote, else its
+  // section heading, else the scroll share. A chapter that renders its body
+  // with script may not have the quote yet, so the restore waits briefly
+  // while the document changes (position-restore.ts). It replaces any
+  // earlier pending link navigation; a later link navigation cancels it.
+  function navigatePosition(data: PositionTarget): void {
+    pendingHeading = "";
+    pendingText = null;
+    textVisibilityObserver?.disconnect();
+    clearTimeout(textNoticeTimer);
+    positionRestore.start(data);
   }
 
   function setupFrame(): void {
@@ -1814,6 +1864,7 @@ type Theme = "dark" | "light";
     if (!d || !d.documentElement || !d.body || setupDoc === d) return;
     setupDoc = d;
     nestedScroller = null;
+    positionRestore.cancel();
     pendingText = null;
     textVisibilityObserver?.disconnect();
     clearTimeout(textRetryTimer);
