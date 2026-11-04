@@ -70,6 +70,21 @@ func (a *localAnchor) valid() bool {
 	return a.Point.X >= 0 && a.Point.X <= 1 && a.Point.Y >= 0 && a.Point.Y <= 1
 }
 
+// move puts a point thread on a new spot; a nil anchor moves nothing. Text
+// threads keep their anchor.
+func (c *localComment) move(a *localAnchor) error {
+	switch {
+	case a == nil:
+		return nil
+	case a.Point == nil || !a.valid():
+		return localError{http.StatusBadRequest, "invalid comment anchor"}
+	case c.Anchor == nil || c.Anchor.Point == nil:
+		return localError{http.StatusBadRequest, "only a point comment can move"}
+	}
+	c.Anchor = a
+	return nil
+}
+
 // localReaction keeps who reacted. Count and Reacted change with the viewer,
 // so the sidecar file does not keep them.
 type localReaction struct {
@@ -268,9 +283,6 @@ func (s *localDocs) patch(r *http.Request, doc string) (any, error) {
 	if in.Body != nil && strings.TrimSpace(*in.Body) == "" {
 		return nil, errLocalEmptyBody
 	}
-	if in.Anchor != nil && (in.Anchor.Point == nil || !in.Anchor.valid()) {
-		return nil, localError{http.StatusBadRequest, "invalid comment anchor"}
-	}
 	var c *localComment
 	err := s.update(doc, func(t *localState) error {
 		if c, _ = t.find(r.PathValue("comment")); c == nil {
@@ -279,12 +291,8 @@ func (s *localDocs) patch(r *http.Request, doc string) (any, error) {
 		if in.Body != nil && c.Body != *in.Body {
 			c.Body, c.Edited = *in.Body, true
 		}
-		if in.Anchor != nil {
-			// Only a point thread moves.
-			if c.Anchor == nil || c.Anchor.Point == nil {
-				return localError{http.StatusBadRequest, "only a point comment can move"}
-			}
-			c.Anchor = in.Anchor
+		if err := c.move(in.Anchor); err != nil {
+			return err
 		}
 		switch {
 		case in.Status == "":

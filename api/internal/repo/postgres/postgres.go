@@ -1272,16 +1272,10 @@ func (s *Store) GetComment(ctx context.Context, id string) (repo.Comment, error)
 		return repo.Comment{}, err
 	}
 	comment := commentFromGet(r)
-	mentions, err := commentMentionsByID(ctx, q, []string{id})
+	comment, err = withMentionsAndReactions(ctx, q, comment)
 	if err != nil {
 		return repo.Comment{}, err
 	}
-	comment.Mentions = mentions[id]
-	reactions, err := commentReactionsByID(ctx, q, []string{id})
-	if err != nil {
-		return repo.Comment{}, err
-	}
-	comment.Reactions = reactions[id]
 	if err := tx.Commit(ctx); err != nil {
 		return repo.Comment{}, err
 	}
@@ -1365,19 +1359,28 @@ func (s *Store) UpdateComment(ctx context.Context, id string, update repo.Commen
 		}
 		comment = commentFromGet(updated)
 	}
-	mentions, err := commentMentionsByID(ctx, q, []string{id})
+	comment, err = withMentionsAndReactions(ctx, q, comment)
 	if err != nil {
 		return repo.Comment{}, err
 	}
-	comment.Mentions = mentions[id]
-	reactions, err := commentReactionsByID(ctx, q, []string{id})
-	if err != nil {
-		return repo.Comment{}, err
-	}
-	comment.Reactions = reactions[id]
 	if err := tx.Commit(ctx); err != nil {
 		return repo.Comment{}, err
 	}
+	return comment, nil
+}
+
+// withMentionsAndReactions fills in the mentions and reactions of a comment.
+func withMentionsAndReactions(ctx context.Context, q *dbsqlc.Queries, comment repo.Comment) (repo.Comment, error) {
+	mentions, err := commentMentionsByID(ctx, q, []string{comment.ID})
+	if err != nil {
+		return repo.Comment{}, err
+	}
+	comment.Mentions = mentions[comment.ID]
+	reactions, err := commentReactionsByID(ctx, q, []string{comment.ID})
+	if err != nil {
+		return repo.Comment{}, err
+	}
+	comment.Reactions = reactions[comment.ID]
 	return comment, nil
 }
 
