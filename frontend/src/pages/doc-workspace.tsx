@@ -6,12 +6,13 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Minimize2 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type CommentMention, type Principal } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
+import { signInPath } from "@/lib/auth-state";
 import { useCommentDrafts } from "@/lib/comment-drafts";
 import { Button } from "@/components/ui/button";
 import { Center } from "@/components/ui/misc";
@@ -51,6 +52,9 @@ const NO_STREAM = {
 };
 
 const noop = () => {};
+
+// The intent in the sign-in path of a reader who asked to comment on a spot.
+const PIN_INTENT = "pin";
 
 export type DocBarControls = {
   // The comments list is open.
@@ -197,11 +201,26 @@ export function DocWorkspace({
     setListOpen(false);
     setActiveComment(id);
   }, []);
+  // A reader who is signed out signs in first, and comes back to place it.
+  const location = useLocation();
   const placePin = useCallback(() => {
     setListOpen(false);
-    if (signIn) signIn();
+    if (signIn) nav(signInPath(location, PIN_INTENT));
     else setPlacingPin(true);
-  }, [signIn]);
+  }, [signIn, nav, location]);
+  const intent = searchParams.get("intent");
+  useEffect(() => {
+    if (intent !== PIN_INTENT || !principal) return;
+    setPlacingPin(true);
+    setSearchParams(
+      (params) => {
+        const next = new URLSearchParams(params);
+        next.delete("intent");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [intent, principal, setSearchParams]);
 
   const [drafts, updateDrafts] = useCommentDrafts(docId);
   // Drafts left empty on an earlier visit hold nothing worth keeping.
@@ -558,6 +577,7 @@ export function DocWorkspace({
                     showsLatest={showsLatest}
                     onPick={pickComment}
                     onPlacePin={placePin}
+                    onRetry={comments.refetch}
                     onClose={() => setListOpen(false)}
                   />
                 </motion.div>

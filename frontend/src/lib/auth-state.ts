@@ -6,10 +6,21 @@ import { clearCommentDrafts } from "./comment-drafts";
 // Sign-out once only set this flag and kept the session cookie.
 const LEGACY_SIGNED_OUT_KEY = "slashdocs.frontend_signed_out";
 
+// The sign-in page, which returns the reader to a page after sign-in. An
+// intent, such as "pin", asks that page to start it once the reader is back.
+export function signInPath(
+  { pathname, search }: { pathname: string; search: string },
+  intent?: string,
+) {
+  const back = new URLSearchParams(search);
+  if (intent) back.set("intent", intent);
+  const query = back.toString();
+  return `/login?next=${encodeURIComponent(query ? `${pathname}?${query}` : pathname)}`;
+}
+
 // The sign-in page, which returns the reader to this page after sign-in.
 export function useSignInPath() {
-  const { pathname, search } = useLocation();
-  return `/login?next=${encodeURIComponent(pathname + search)}`;
+  return signInPath(useLocation());
 }
 
 // Ends the browser session and forgets everything cached for the user.
