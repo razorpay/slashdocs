@@ -41,7 +41,9 @@ type manifestMetadata struct {
 	Title            string `json:"title"`
 	Subtitle         string `json:"subtitle,omitempty"`
 	NumberOfChapters int    `json:"numberOfChapters"`
-	FolderID         string `json:"folderId"`
+	// FolderID is sent only to callers who can view the folder, as the
+	// document API shows a parent folder only to them.
+	FolderID         string `json:"folderId,omitempty"`
 	OutlineVersionID string `json:"outlineVersionId"`
 	CanEdit          bool   `json:"canEdit"`
 }
@@ -184,13 +186,15 @@ func (v bookView) manifest() manifestResponse {
 			Identifier:       v.Book.ID,
 			Title:            v.Book.Outline.Title,
 			Subtitle:         v.Book.Outline.Subtitle,
-			FolderID:         v.Book.FolderID,
 			OutlineVersionID: v.Book.OutlineVersionID,
 			CanEdit:          atLeast(v.FolderRole, repo.RoleEditor),
 		},
 		Links:        []manifestLink{{Href: "/v1/books/" + v.Book.ID, Type: "application/json", Title: "Manifest", Rel: "self"}},
 		ReadingOrder: []manifestLink{},
 		TOC:          []manifestTOC{},
+	}
+	if atLeast(v.FolderRole, repo.RoleViewer) {
+		out.Metadata.FolderID = v.Book.FolderID
 	}
 	toc := make([]manifestTOC, len(v.Book.Outline.Parts))
 	for i, p := range v.Book.Outline.Parts {

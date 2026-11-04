@@ -200,6 +200,27 @@ func TestManifestCountsAndPartsFollowTheReadersView(t *testing.T) {
 	}
 }
 
+// A reader with chapter grants only is not told the folder, as the
+// document API does not show them its parent folder. A folder viewer is.
+func TestManifestNamesTheFolderOnlyToFolderViewers(t *testing.T) {
+	f := newManifestFixture(t)
+	f.grantDoc(t, f.a, fixtureViewer.Email)
+	rr := do(t, f.e.h, http.MethodGet, "/v1/books/"+f.bookID, "", bkHeaders(principalHeader(fixtureViewer)))
+	assertStatus(t, rr, http.StatusOK)
+	if got := bkPath(t, rr.Body.Bytes(), "metadata.folderId"); got != nil || strings.Contains(rr.Body.String(), f.folderID) {
+		t.Fatalf("manifest names the folder to a chapter-only reader: %s", rr.Body.String())
+	}
+
+	rr = do(t, f.e.h, http.MethodPost, "/v1/folders/"+f.folderID+"/grants",
+		`{"address":"`+fixtureStranger.Email+`","role":"viewer"}`, bkHeaders(f.owner))
+	assertStatus(t, rr, http.StatusCreated)
+	rr = do(t, f.e.h, http.MethodGet, "/v1/books/"+f.bookID, "", bkHeaders(principalHeader(fixtureStranger)))
+	assertStatus(t, rr, http.StatusOK)
+	if got := bkString(t, rr.Body.Bytes(), "metadata.folderId"); got != f.folderID {
+		t.Fatalf("folderId = %q for a folder viewer, want %q", got, f.folderID)
+	}
+}
+
 func TestLLMsTxtListsVisibleChapters(t *testing.T) {
 	f := newManifestFixture(t)
 	f.grantDoc(t, f.a, fixtureViewer.Email)

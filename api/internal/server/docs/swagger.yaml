@@ -812,6 +812,9 @@ definitions:
       canEdit:
         type: boolean
       folderId:
+        description: |-
+          FolderID is sent only to callers who can view the folder, as the
+          document API shows a parent folder only to them.
         type: string
       identifier:
         type: string

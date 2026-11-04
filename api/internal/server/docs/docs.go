@@ -4278,6 +4278,7 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "folderId": {
+                    "description": "FolderID is sent only to callers who can view the folder, as the\ndocument API shows a parent folder only to them.",
                     "type": "string"
                 },
                 "identifier": {
