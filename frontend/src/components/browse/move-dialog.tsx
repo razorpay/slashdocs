@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Folder as FolderIcon, Home } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/misc";
+import { RetryButton, Skeleton } from "@/components/ui/misc";
 import {
   Dialog,
   DialogContent,
@@ -45,7 +45,7 @@ export function MoveDialog({
   });
   const { move, warning, clearWarning } = useMoveResource();
   const destinations = [
-    ...(search ? [] : [{ id: null, title: "Documents" }]),
+    ...(search ? [] : [{ id: null, title: "Documents", ancestors: [] }]),
     ...(folders.data?.items || []).flatMap((e) =>
       e.type === "folder" && e.folder && e.folder.id !== id ? [e.folder] : [],
     ),
@@ -58,7 +58,7 @@ export function MoveDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={close}>
-        <DialogContent>
+        <DialogContent anchor="top">
           <DialogHeader>
             <DialogTitle>Move “{title}”</DialogTitle>
             <DialogDescription>Choose the folder to move it to.</DialogDescription>
@@ -76,26 +76,44 @@ export function MoveDialog({
               <li className="space-y-1">
                 <Skeleton className="h-10 w-full" />
                 <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-10 w-full" />
+              </li>
+            ) : folders.error ? (
+              <li className="flex items-center gap-3 px-3 py-2 text-sm">
+                <span className="flex-1">Could not load folders.</span>
+                <RetryButton query={folders} variant="outline" size="sm" />
               </li>
             ) : (
               destinations.map((d) => {
                 const current = (d.id ?? undefined) === parentId;
                 const Icon = d.id ? FolderIcon : Home;
+                // The path tells apart folders with the same title.
+                const path = d.ancestors?.map((a) => a.title).join(" / ");
                 return (
                   <li key={d.id ?? "top"}>
                     <button
                       type="button"
+                      aria-label={[d.title, path && `in ${path}`, current && "current"]
+                        .filter(Boolean)
+                        .join(", ")}
                       disabled={current || move.isPending}
                       onClick={() =>
                         move.mutate(
-                          { type, id, from: parentId, to: d.id },
+                          { type, id, from: parentId, to: d.id, toTitle: d.title },
                           { onSuccess: () => close(false) },
                         )
                       }
-                      className="wash-link flex min-h-10 w-full items-center gap-3 rounded-sm px-3 text-left text-sm disabled:pointer-events-none disabled:opacity-50"
+                      className="wash-link flex min-h-10 w-full items-center gap-3 rounded-sm px-3 py-1.5 text-left text-sm disabled:pointer-events-none disabled:opacity-50"
                     >
                       <Icon className="h-4 w-4 shrink-0 text-[var(--color-accent)]" />
-                      <span className="min-w-0 flex-1 truncate">{d.title}</span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate">{d.title}</span>
+                        {path ? (
+                          <span className="block truncate text-xs text-[var(--color-fg-muted)]">
+                            {path}
+                          </span>
+                        ) : null}
+                      </span>
                       {current && (
                         <span className="text-xs text-[var(--color-fg-muted)]">
                           Current
@@ -106,11 +124,7 @@ export function MoveDialog({
                 );
               })
             )}
-            {folders.error ? (
-              <li className="px-3 py-2 text-sm text-[var(--color-danger)]">
-                Could not load folders.
-              </li>
-            ) : search && !folders.isLoading && destinations.length === 0 ? (
+            {search && folders.isSuccess && destinations.length === 0 ? (
               <li className="px-3 py-2 text-sm text-[var(--color-fg-muted)]">
                 No folders match “{search}”.
               </li>
