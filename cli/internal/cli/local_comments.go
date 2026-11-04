@@ -54,21 +54,42 @@ type localAnchor struct {
 }
 
 type localPoint struct {
-	Target string  `json:"target,omitzero"`
-	Path   string  `json:"path,omitzero"`
-	Label  string  `json:"label,omitzero"`
-	X      float64 `json:"x"`
-	Y      float64 `json:"y"`
+	Target    string   `json:"target,omitzero"`
+	Path      string   `json:"path,omitzero"`
+	Label     string   `json:"label,omitzero"`
+	X         float64  `json:"x"`
+	Y         float64  `json:"y"`
+	PageX     *float64 `json:"page_x,omitzero"`
+	PageY     *float64 `json:"page_y,omitzero"`
+	ViewportW *float64 `json:"viewport_w,omitzero"`
 }
 
-// valid reports whether a is a text anchor with a quote, or a point inside
-// the box of an element that its target or path names.
+// A point's spot may lie outside its element, up to this many times its
+// size, and its page spot this many pixels into the page, as on the server.
+const (
+	maxPointFraction = 1000
+	maxPagePixels    = 10_000_000
+)
+
+// valid reports whether a is a text anchor with a quote, or a point on an
+// element that its target or path names, or on the body by its page spot.
 func (a *localAnchor) valid() bool {
 	if a == nil || a.Point == nil {
 		return a != nil && a.Quote != ""
 	}
 	p := a.Point
-	return (p.Target != "" || p.Path != "") && p.X >= 0 && p.X <= 1 && p.Y >= 0 && p.Y <= 1
+	fraction := func(v float64) bool { return v >= -maxPointFraction && v <= maxPointFraction }
+	return (p.Target != "" || p.Path != "" || p.ViewportW != nil) && fraction(p.X) && fraction(p.Y) && p.validPage()
+}
+
+// validPage accepts a point with no page spot, or with all of page_x, page_y
+// and viewport_w, inside the page.
+func (p *localPoint) validPage() bool {
+	if p.PageX == nil && p.PageY == nil && p.ViewportW == nil {
+		return true
+	}
+	within := func(v *float64) bool { return v != nil && *v >= 0 && *v <= maxPagePixels }
+	return within(p.PageX) && within(p.PageY) && within(p.ViewportW) && *p.ViewportW > 0
 }
 
 // move puts a point thread on a new spot; a nil anchor moves nothing. Text
