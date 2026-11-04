@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -211,26 +212,25 @@ func booksOutlineCmd(g *globals, out io.Writer) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		var x any
-		if err := json.Unmarshal(b, &x); err != nil {
+		// The pulled file is always JSON, whatever --json says.
+		var pretty bytes.Buffer
+		if err := json.Indent(&pretty, b, "", "  "); err != nil {
 			return err
 		}
-		pretty, err := json.MarshalIndent(x, "", "  ")
-		if err != nil {
-			return err
-		}
-		pretty = append(pretty, '\n')
+		pretty.WriteByte('\n')
 		if len(args) < 2 || args[1] == "-" {
-			_, err = out.Write(pretty)
+			_, err = out.Write(pretty.Bytes())
 			return err
 		}
-		if err := os.WriteFile(args[1], pretty, 0o600); err != nil {
+		if err := os.WriteFile(args[1], pretty.Bytes(), 0o600); err != nil {
 			return err
 		}
-		if !g.quiet {
-			_, err = fmt.Fprintf(out, "Wrote outline to %s.\n", args[1])
+		var pulled struct {
+			VersionID string `json:"version_id"`
+			Number    int    `json:"number"`
 		}
-		return err
+		_ = json.Unmarshal(b, &pulled)
+		return confirm(out, g, fmt.Sprintf("Pulled outline version %d (%s) of %s to %s.", pulled.Number, pulled.VersionID, args[0], args[1]))
 	}}
 
 	var baseVersion, note string
@@ -286,9 +286,13 @@ func booksOutlineCmd(g *globals, out io.Writer) *cobra.Command {
 // parseOutlineFile accepts a pulled outline ({"version_id", …, "outline"}) or
 // a bare outline, and returns the outline plus any version ID it carried.
 func parseOutlineFile(raw []byte) (outline json.RawMessage, versionID string, err error) {
+	if !json.Valid(raw) {
+		var x any
+		return nil, "", fmt.Errorf("the outline file is not valid JSON: %w", json.Unmarshal(raw, &x))
+	}
 	var top map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &top); err != nil {
-		return nil, "", fmt.Errorf("the outline file is not valid JSON: %w", err)
+	if json.Unmarshal(raw, &top) != nil || top == nil {
+		return nil, "", errors.New("the outline file must be a JSON object: the output of `books outline pull`, or an outline")
 	}
 	inner, pulled := top["outline"]
 	if !pulled {

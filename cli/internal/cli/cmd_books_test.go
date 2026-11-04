@@ -152,7 +152,7 @@ func TestBooksOutlinePullWritesFileOrStdout(t *testing.T) {
 		if r.Method != "GET" || r.URL.Path != "/v1/books/book_1/outline" {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		writeTestJSON(t, w, map[string]any{"version_id": "bov_1", "outline": map[string]any{"title": "B"}})
+		writeTestJSON(t, w, map[string]any{"version_id": "bov_1", "number": 1, "outline": map[string]any{"title": "B"}, "not_in_outline": []any{}, "removed": []any{}})
 	}))
 	defer srv.Close()
 	booksEnv(t, srv)
@@ -161,8 +161,15 @@ func TestBooksOutlinePullWritesFileOrStdout(t *testing.T) {
 		t.Fatalf("stdout pull = %q, %v", out, err)
 	}
 	dest := filepath.Join(t.TempDir(), "o.json")
-	if _, err := Execute([]string{"books", "outline", "pull", "book_1", dest}); err != nil {
+	out, err = Execute([]string{"books", "outline", "pull", "book_1", dest})
+	if err != nil {
 		t.Fatal(err)
+	}
+	if want := "\u2713 Pulled outline version 1 (bov_1) of book_1 to " + dest + "."; strings.TrimSpace(out) != want {
+		t.Fatalf("file pull output = %q, want %q", out, want)
+	}
+	if out, err := Execute([]string{"books", "outline", "pull", "book_1", dest, "--quiet"}); err != nil || out != "" {
+		t.Fatalf("quiet pull = %q, %v", out, err)
 	}
 	b, err := os.ReadFile(dest)
 	if err != nil || !strings.Contains(string(b), `"outline"`) {
@@ -364,5 +371,34 @@ func TestBooksShowNeedsABookOrAFolder(t *testing.T) {
 		if _, err := Execute(args); ExitCode(err) != 2 {
 			t.Errorf("%v: err = %v, exit %d, want usage error", args, err, ExitCode(err))
 		}
+	}
+}
+
+func TestBooksOutlinePushRejectsBadFiles(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+	}))
+	defer srv.Close()
+	booksEnv(t, srv)
+	for name, tc := range map[string]struct {
+		contents string
+		exit     int
+		want     string
+	}{
+		"not JSON":     {"{", 2, "not valid JSON"},
+		"array":        {"[]", 2, "must be a JSON object"},
+		"null":         {"null", 2, "must be a JSON object"},
+		"no such file": {"", 1, "no such file"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := filepath.Join(t.TempDir(), "missing.json")
+			if tc.contents != "" {
+				f = bookFile(t, "outline.json", tc.contents)
+			}
+			_, err := Execute([]string{"books", "outline", "push", "book_1", f, "--base-version", "bov_1"})
+			if ExitCode(err) != tc.exit || err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "Go value") {
+				t.Fatalf("err = %v, exit %d, want exit %d and %q", err, ExitCode(err), tc.exit, tc.want)
+			}
+		})
 	}
 }
