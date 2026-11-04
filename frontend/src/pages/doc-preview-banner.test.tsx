@@ -30,7 +30,7 @@ it("says when the previewed entry is from and goes back to the current document"
     "This is the document as it was",
   );
   expect(screen.queryByRole("button", { name: /Restore/ })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Back to the current document" }));
+  fireEvent.click(screen.getByRole("button", { name: "Current document" }));
   expect(doc.showLatest).toHaveBeenCalledOnce();
 });
 

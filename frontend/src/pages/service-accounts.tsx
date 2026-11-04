@@ -34,7 +34,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import { BOT_DOMAIN_SUFFIX } from "@/lib/constants";
 
 export function ServiceAccountsPage() {
-  useTitle("Service accounts");
+  useTitle("Bots");
   const q = useQueryClient();
   const sas = useQuery({
     queryKey: queryKeys.serviceAccounts(),
@@ -46,10 +46,10 @@ export function ServiceAccountsPage() {
   const selected = items.find((s) => s.id === selectedId) || items[0] || null;
 
   return (
-    <Page>
+    <Page lane="focus">
       <PageHeader
         title="Bots"
-        description="Bots are their own identities — share docs with them just like you would with a person. Use them for n8n workflows, scheduled jobs, or anything that runs without you."
+        description="Bots (service accounts in the API) are their own identities — share docs with them just like you would with a person. Use them for n8n workflows, scheduled jobs, or anything that runs without you."
         actions={
           <Button onClick={() => setCreating(true)}>
             <Plus className="h-4 w-4" /> New bot
@@ -65,8 +65,9 @@ export function ServiceAccountsPage() {
         }}
       />
 
-      <div className="grid gap-6 md:grid-cols-[280px_1fr]">
-        <div className="space-y-2">
+      {/* minmax(0, 1fr) keeps long IDs and code from widening the columns. */}
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-6 md:grid-cols-[220px_minmax(0,1fr)]">
+        <div className="min-w-0 space-y-2">
           {sas.isLoading ? (
             <>
               <Skeleton className="h-12 w-full" />
@@ -108,7 +109,7 @@ export function ServiceAccountsPage() {
           )}
         </div>
 
-        <div>
+        <div className="min-w-0">
           {selected ? (
             <ServiceAccountDetail sa={selected} />
           ) : (
@@ -166,12 +167,12 @@ function ServiceAccountDetail({ sa }: { sa: ServiceAccount }) {
   return (
     <div className="space-y-4">
       <Card>
-        <CardHeader className="flex flex-row items-start justify-between">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <Bot className="h-4 w-4" /> {name}
+        <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <CardTitle className="flex items-center gap-2 break-all">
+              <Bot className="h-4 w-4 shrink-0" /> {name}
             </CardTitle>
-            <div className="mt-1 font-mono text-xs text-[var(--color-fg-muted)]">
+            <div className="mt-1 break-all font-mono text-xs text-[var(--color-fg-muted)]">
               {id}
             </div>
           </div>
@@ -189,7 +190,7 @@ function ServiceAccountDetail({ sa }: { sa: ServiceAccount }) {
               <AlertDialogDescription>
                 {disabled
                   ? "Agents using active keys will be able to authenticate again."
-                  : "All agents using this service account will immediately lose access. Keys and grants are retained."}
+                  : "All agents using this bot will immediately lose access. Keys and grants are retained."}
               </AlertDialogDescription>
               <AlertDialogFooter>
                 <AlertDialogCancel>Cancel</AlertDialogCancel>
@@ -210,7 +211,7 @@ function ServiceAccountDetail({ sa }: { sa: ServiceAccount }) {
         </CardHeader>
         <CardContent className="space-y-3">
           <form
-            className="flex gap-2"
+            className="flex flex-wrap gap-2"
             onSubmit={(e) => {
               e.preventDefault();
               createKey.mutate();
@@ -220,6 +221,7 @@ function ServiceAccountDetail({ sa }: { sa: ServiceAccount }) {
               value={keyName}
               onChange={(e) => setKeyName(e.target.value)}
               placeholder="Key name"
+              className="min-w-0 flex-1 basis-40"
             />
             <Button type="submit" disabled={!keyName || createKey.isPending}>
               <Plus className="h-4 w-4" /> New key
@@ -241,9 +243,9 @@ function ServiceAccountDetail({ sa }: { sa: ServiceAccount }) {
                   key={k.id}
                   className="flex items-center gap-3 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm"
                 >
-                  <KeyRound className="h-3.5 w-3.5 text-[var(--color-fg-muted)]" />
-                  <span className="font-medium">{k.name}</span>
-                  <span className="flex-1 truncate font-mono text-xs text-[var(--color-fg-muted)]">
+                  <KeyRound className="h-3.5 w-3.5 shrink-0 text-[var(--color-fg-muted)]" />
+                  <span className="min-w-0 truncate font-medium">{k.name}</span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-[var(--color-fg-muted)]">
                     {k.id}
                   </span>
                   <AlertDialog>
