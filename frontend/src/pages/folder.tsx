@@ -16,7 +16,8 @@ import {
 import { Page } from "@/components/layout/page";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Center, Skeleton, EmptyState } from "@/components/ui/misc";
+import { Skeleton, EmptyState } from "@/components/ui/misc";
+import { ErrorState } from "@/components/error-state";
 import {
   Dropdown,
   DropdownContent,
@@ -73,11 +74,13 @@ export function FolderPage() {
     queryKey: queryKeys.folder(id),
     queryFn: () => api.getFolder(id),
     enabled: !!id,
+    meta: { suppressGlobalError: true },
   });
   const contents = useQuery({
     queryKey: queryKeys.folders(id),
     queryFn: () => api.listFolders(id),
     enabled: !!id,
+    meta: { suppressGlobalError: true },
   });
   const pins = useQuery({
     queryKey: queryKeys.pins(),
@@ -184,17 +187,28 @@ export function FolderPage() {
       </Page>
     );
   }
-  if (folder.error || contents.error) {
-    const dependencyError = [folder.error, contents.error].some(
-      (error) =>
-        error instanceof APIError && error.code === "group_membership_unavailable",
-    );
+  const error = folder.error || contents.error;
+  if (error) {
+    const apiError = error instanceof APIError ? error : undefined;
     return (
-      <Center>
-        {dependencyError
-          ? "Google Group access is temporarily unavailable. Try again shortly; stale group content has not been shown."
-          : "Could not load folder."}
-      </Center>
+      <Page backdrop={false}>
+        {apiError?.status === 404 ? (
+          <ErrorState
+            title="Folder not found"
+            description="This folder may have been deleted, or the link may be incorrect."
+          />
+        ) : apiError?.code === "group_membership_unavailable" ? (
+          <ErrorState
+            title="Group access is temporarily unavailable"
+            description="Google Group membership could not be refreshed. Try again shortly; stale group content has not been shown."
+          />
+        ) : (
+          <ErrorState
+            title="Could not load folder"
+            description="Something went wrong while loading this folder. Please try again."
+          />
+        )}
+      </Page>
     );
   }
 
@@ -240,7 +254,8 @@ export function FolderPage() {
     >
       <Page>
         {/* Breadcrumbs */}
-        <nav className="mb-4 flex min-w-0 items-center gap-1 overflow-x-auto whitespace-nowrap text-sm text-[var(--color-fg-muted)]">
+        {/* The negative margin lines up the first crumb's text with the title. */}
+        <nav className="-ml-1.5 mb-4 flex min-w-0 items-center gap-1 overflow-x-auto whitespace-nowrap text-sm text-[var(--color-fg-muted)]">
           <DroppableBreadcrumb
             dropId="drop:__root__"
             to="/app/documents"
@@ -363,8 +378,22 @@ export function FolderPage() {
         {/* Contents */}
         {visibleItems.length === 0 && !readme ? (
           <EmptyState
+            icon={<FolderIcon className="h-5 w-5" />}
             title="Empty folder"
-            description="Add documents or create subfolders."
+            description={
+              <>
+                Publish into it with{" "}
+                <code className="break-all font-mono">
+                  slashdocs docs create file.html --folder-id {id}
+                </code>
+                , or drag documents onto this folder on the Documents page.
+              </>
+            }
+            action={
+              <Button variant="outline" onClick={() => setNewFolderOpen(true)}>
+                <Plus className="h-4 w-4" /> New subfolder
+              </Button>
+            }
           />
         ) : (
           <FolderContents items={visibleItems} pinnedIds={pinnedIds} />
