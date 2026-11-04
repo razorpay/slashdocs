@@ -516,12 +516,11 @@ export function Approvals({ onClose }: { onClose?: () => void }) {
         {approvals.isLoading ? (
           <p className="px-1 text-xs text-[var(--color-fg-muted)]">Loading…</p>
         ) : items.length === 0 ? (
-          <p className="px-1 text-xs text-[var(--color-fg-muted)]">
-            No approvers yet.
-            {isOwner
-              ? " Add someone who has not worked on this document to request a review."
-              : ""}
-          </p>
+          isOwner ? (
+            <p className="px-1 text-xs text-[var(--color-fg-muted)]">
+              Add someone who has not worked on this document to request a review.
+            </p>
+          ) : null
         ) : (
           items.map((item) => (
             <ApproverRow

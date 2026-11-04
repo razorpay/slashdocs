@@ -642,17 +642,17 @@ export function ShareSheet({
                               {item.principal.email}
                             </div>
                           ) : null}
-                          <div className="truncate text-[11px] text-[var(--color-fg-muted)]">
-                            {isOwner
-                              ? "Owner"
-                              : inherited && src
+                          {isOwner ? null : (
+                            <div className="truncate text-[11px] text-[var(--color-fg-muted)]">
+                              {inherited && src
                                 ? `Inherited from ${src.resource_title}`
                                 : folder
                                   ? `Owner of ${folder.resource_title}`
                                   : isGroup
                                     ? "Google Group · direct access"
                                     : "Direct access"}
-                          </div>
+                            </div>
+                          )}
                         </div>
                         {isOwner ? (
                           <span className="text-xs font-medium text-[var(--color-fg-muted)]">

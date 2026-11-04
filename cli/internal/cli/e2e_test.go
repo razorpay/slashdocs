@@ -256,7 +256,7 @@ func TestCommandOutputsAreConversational(t *testing.T) {
 	}{
 		{[]string{"auth", "whoami"}, []string{"me@example.com", "server=" + srv.URL}},
 		{[]string{"docs", "create", html}, []string{"Created document", "doc_new", "Gave org-wide read-only access by default", "shared org-wide by default", "grants revoke doc_new gr_new"}},
-		{[]string{"docs", "create", html, "--folder-id", "fld_1"}, []string{"Created document", "Warning: This folder has active grants."}},
+		{[]string{"docs", "create", html, "--folder-id", "fld_1"}, []string{"Created document", "\nWarning: This folder has active grants."}},
 		{[]string{"docs", "update", "doc_1", "--title", "New"}, []string{"Renamed document", "doc_1"}},
 		{[]string{"docs", "labels", "set", "doc_1", "API,review"}, []string{"Set labels", "api, review"}},
 		{[]string{"docs", "labels", "clear", "doc_1"}, []string{"Cleared labels", "doc_1"}},
