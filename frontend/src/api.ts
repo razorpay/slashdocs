@@ -34,6 +34,7 @@ export type ServerConfig = {
   provider_name: string;
   google_groups_enabled: boolean;
   labels_enabled: boolean;
+  books_enabled: boolean;
 };
 export type GoogleGroup = { id: string; email: string; name: string };
 export type Version = {
@@ -238,7 +239,7 @@ export class APIError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
     credentials: "include",
     ...init,

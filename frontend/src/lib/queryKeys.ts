@@ -22,6 +22,11 @@ export const queryKeys = {
   pins: () => ["pins"] as const,
   featured: () => ["featured"] as const,
   // Prefix key matching every people search. Grants change who is a contact.
+  book: (id: string) => ["book", id] as const,
+  bookState: (id: string) => ["book", id, "state"] as const,
+  bookChanges: (id: string, doc: string) => ["book", id, "changes", doc] as const,
+  bookOutline: (id: string) => ["book", id, "outline"] as const,
+  folderBook: (folderId: string) => ["folder-book", folderId] as const,
   userSearchAll: () => ["users", "search"] as const,
   userSearch: (query: string) => ["users", "search", query] as const,
 };

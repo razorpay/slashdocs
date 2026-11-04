@@ -1,0 +1,106 @@
+{
+  "@context": "https://readium.org/webpub-manifest/context.jsonld",
+  "metadata": {
+    "identifier": "book_mc4lllht2lealf6u",
+    "title": "Guide",
+    "numberOfChapters": 3,
+    "folderId": "fld_2u6spt4py74jqagc",
+    "outlineVersionId": "bov_lj4xnlnwve4v2sl4",
+    "canEdit": true
+  },
+  "links": [
+    {
+      "href": "/v1/books/book_mc4lllht2lealf6u",
+      "type": "application/json",
+      "title": "Manifest",
+      "rel": "self"
+    }
+  ],
+  "readingOrder": [
+    {
+      "href": "/app/b/book_mc4lllht2lealf6u/c/doc_bivolwzdmkfl2rwk",
+      "type": "text/html",
+      "title": "A",
+      "properties": {
+        "documentId": "doc_bivolwzdmkfl2rwk",
+        "kind": "chapter",
+        "number": 1,
+        "part": 0,
+        "versionId": "ver_knqgwpse66anp3f3",
+        "wordCount": 3
+      }
+    },
+    {
+      "href": "/app/b/book_mc4lllht2lealf6u/c/doc_zaa6ranskt5dbi5l",
+      "type": "text/html",
+      "title": "Zebra",
+      "properties": {
+        "documentId": "doc_zaa6ranskt5dbi5l",
+        "kind": "chapter",
+        "number": 2,
+        "part": 0,
+        "versionId": "ver_f5dsqk36l7bl6ca7",
+        "wordCount": 3
+      }
+    },
+    {
+      "href": "/app/b/book_mc4lllht2lealf6u/c/doc_hwkdzcgpu6c4usen",
+      "type": "text/html",
+      "title": "C",
+      "properties": {
+        "documentId": "doc_hwkdzcgpu6c4usen",
+        "kind": "chapter",
+        "number": 3,
+        "part": 0,
+        "versionId": "ver_464qtxxhudafohjk",
+        "wordCount": 3
+      }
+    }
+  ],
+  "toc": [
+    {
+      "title": "",
+      "children": [
+        {
+          "href": "/app/b/book_mc4lllht2lealf6u/c/doc_bivolwzdmkfl2rwk",
+          "type": "text/html",
+          "title": "A",
+          "properties": {
+            "documentId": "doc_bivolwzdmkfl2rwk",
+            "kind": "chapter",
+            "number": 1,
+            "part": 0,
+            "versionId": "ver_knqgwpse66anp3f3",
+            "wordCount": 3
+          }
+        },
+        {
+          "href": "/app/b/book_mc4lllht2lealf6u/c/doc_zaa6ranskt5dbi5l",
+          "type": "text/html",
+          "title": "Zebra",
+          "properties": {
+            "documentId": "doc_zaa6ranskt5dbi5l",
+            "kind": "chapter",
+            "number": 2,
+            "part": 0,
+            "versionId": "ver_f5dsqk36l7bl6ca7",
+            "wordCount": 3
+          }
+        },
+        {
+          "href": "/app/b/book_mc4lllht2lealf6u/c/doc_hwkdzcgpu6c4usen",
+          "type": "text/html",
+          "title": "C",
+          "properties": {
+            "documentId": "doc_hwkdzcgpu6c4usen",
+            "kind": "chapter",
+            "number": 3,
+            "part": 0,
+            "versionId": "ver_464qtxxhudafohjk",
+            "wordCount": 3
+          }
+        }
+      ]
+    }
+  ]
+}
