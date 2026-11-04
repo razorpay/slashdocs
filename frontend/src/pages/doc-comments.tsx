@@ -19,11 +19,13 @@ import { errorMessage } from "@/lib/errors";
 import { principalLabel, samePrincipal } from "@/lib/principals";
 import { queryKeys } from "@/lib/queryKeys";
 import { anchorLabel } from "@/lib/comment-pins";
+import { isAgentRequest } from "@/lib/agent-request";
 import { useDraftText, type CommentDraft } from "@/lib/comment-drafts";
 import { COMMENT_FILTERS, COMMENT_STATUS, matchesCommentFilter } from "@/lib/constants";
 import { useSelf } from "@/lib/hooks";
 import { useDoc } from "./doc-context";
 import {
+  AgentRequestBadge,
   ComposeField,
   Message,
   MoreMenu,
@@ -124,6 +126,11 @@ export function CommentComposer({ draft }: { draft: CommentDraft }) {
           </Badge>
         )}
         <Quote text={draft.quote} />
+        {isAgentRequest(text.body) ? (
+          <p className="mt-1 text-xs text-[var(--color-fg-muted)]">
+            Agents with access to this document read comments.
+          </p>
+        ) : null}
       </div>
       <div className="pt-2">
         <ComposeField
@@ -405,6 +412,7 @@ export function CommentsList({
                         <RelativeTime iso={c.created_at} />
                       </span>
                     ) : null}
+                    <AgentRequestBadge body={c.body} />
                     {c.status === COMMENT_STATUS.resolved ? (
                       <span className="ml-auto shrink-0 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
                         Resolved
