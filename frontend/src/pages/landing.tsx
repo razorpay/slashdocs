@@ -139,7 +139,7 @@ export function LandingPage() {
             </p>
             <div className="mx-auto mt-10 flex max-w-xl flex-col gap-3 sm:flex-row sm:items-center">
               {/* A narrow screen scrolls the command without a scrollbar. */}
-              <CodeBlock className="min-w-0 flex-1 bg-[var(--color-surface)] text-left [&_pre]:[scrollbar-width:none]">{`curl -fsSL ${publicURL()}/install.sh | sh`}</CodeBlock>
+              <CodeBlock className="min-w-0 flex-1 bg-[var(--color-surface)] text-left">{`curl -fsSL ${publicURL()}/install.sh | sh`}</CodeBlock>
               <Button asChild size="lg">
                 <Link to="/login">Sign in</Link>
               </Button>
@@ -332,7 +332,7 @@ function Connect() {
             role="tab"
             aria-selected={i === active}
             onClick={() => setActive(i)}
-            className="rounded-[6px] px-3 py-1.5 text-sm text-[var(--color-fg-muted)] transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] aria-selected:bg-[var(--color-surface)] aria-selected:text-[var(--color-fg)] aria-selected:shadow-[var(--shadow-border)]"
+            className="rounded-[6px] px-3 py-1.5 text-sm text-[var(--color-fg-muted)] transition-colors duration-200 aria-selected:bg-[var(--color-surface)] aria-selected:text-[var(--color-fg)] aria-selected:shadow-[var(--shadow-border)]"
           >
             {t.title}
           </button>

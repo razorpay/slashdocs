@@ -311,7 +311,7 @@ export function CommentsList({
               aria-pressed={filter === f}
               onClick={() => setFilter(f)}
               className={cn(
-                "min-h-10 min-w-10 border-b-2 px-1 capitalize transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]",
+                "min-h-10 min-w-10 border-b-2 px-1 capitalize transition-colors",
                 filter === f
                   ? "border-[var(--color-accent)] font-medium text-[var(--color-accent)]"
                   : "border-transparent text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]",
@@ -343,7 +343,7 @@ export function CommentsList({
                   type="button"
                   onClick={() => onPick(c.id)}
                   aria-current={c.id === activeComment ? "true" : undefined}
-                  className="w-full rounded-lg px-2 py-2 text-left transition-colors hover:bg-[var(--color-surface-muted)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] aria-[current]:bg-[var(--color-accent-muted)]"
+                  className="w-full rounded-lg px-2 py-2 text-left transition-colors hover:bg-[var(--color-surface-muted)] focus-visible:-outline-offset-2 aria-[current]:bg-[var(--color-accent-muted)]"
                 >
                   <span className="flex items-center gap-2">
                     <PersonAvatar who={c.author} />

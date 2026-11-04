@@ -163,7 +163,7 @@ export function ApprovalsDialog({
         <button
           type="button"
           aria-label={`${badgeAria(shownStatus, shownApproved, shownTotal)}. Open approvals`}
-          className="relative shrink-0 rounded-full transition-transform duration-150 ease-out active:scale-[0.97] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)] after:absolute after:inset-x-0 after:-inset-y-2"
+          className="relative shrink-0 rounded-full transition-transform duration-150 ease-out active:scale-[0.97] after:absolute after:inset-x-0 after:-inset-y-2"
         >
           <ApprovalStatusBadge
             status={shownStatus}
@@ -444,7 +444,7 @@ function RejectDialog({
                     <button
                       type="button"
                       onClick={() => onJump(c.id)}
-                      className="w-full rounded-md px-1.5 py-1.5 text-left hover:bg-[var(--color-surface-muted)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
+                      className="w-full rounded-md px-1.5 py-1.5 text-left hover:bg-[var(--color-surface-muted)] focus-visible:-outline-offset-2"
                     >
                       <span className="block truncate text-xs font-medium">
                         {c.selected_text || "Comment"}

@@ -56,29 +56,13 @@ import { ReactionBar } from "./doc-comment-reactions";
 // PersonAvatar is a person's photo, or their initials on their principalColor,
 // the same color as their live cursor.
 export function PersonAvatar({ who, size = 20 }: { who: Principal; size?: number }) {
-  const name = principalLabel(who);
-  if (who.picture_url) return <Avatar size={size} name={name} src={who.picture_url} />;
-  const initials =
-    name
-      .split(/\s+/)
-      .map((part) => part[0])
-      .filter(Boolean)
-      .join("")
-      .slice(0, 2)
-      .toUpperCase() || "?";
   return (
-    <span
-      aria-hidden
-      style={{
-        width: size,
-        height: size,
-        fontSize: Math.max(9, Math.round(size * 0.45)),
-        background: principalColor(who),
-      }}
-      className="grid shrink-0 place-items-center rounded-full font-semibold text-white [text-box:trim-both_cap_alphabetic]"
-    >
-      {initials}
-    </span>
+    <Avatar
+      size={size}
+      name={principalLabel(who)}
+      src={who.picture_url}
+      color={principalColor(who)}
+    />
   );
 }
 
