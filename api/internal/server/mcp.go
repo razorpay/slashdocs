@@ -357,5 +357,6 @@ func registerMCPTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 	registerMCPGeneralTools(server, api)
 	registerMCPDocumentTools(server, api)
 	registerMCPFolderTools(server, api)
+	registerMCPBookTools(server, api)
 	registerMCPServiceAccountTools(server, api)
 }

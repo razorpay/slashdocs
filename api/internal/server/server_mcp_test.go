@@ -20,15 +20,20 @@ import (
 
 var expectedMCPTools = []string{
 	"accept_service_account_transfer",
+	"create_book",
 	"create_comment",
 	"create_document",
 	"create_folder",
 	"create_service_account_transfer",
 	"decline_service_account_transfer",
+	"delete_book",
 	"delete_comment",
 	"delete_document",
 	"delete_folder",
 	"get_authoring_guidelines",
+	"get_book",
+	"get_book_outline",
+	"get_book_status",
 	"get_document",
 	"get_document_html",
 	"get_document_version",
@@ -62,6 +67,7 @@ var expectedMCPTools = []string{
 	"share_document",
 	"share_folder",
 	"unreact_comment",
+	"update_book_outline",
 	"update_comment",
 	"update_document",
 	"update_document_grant",
@@ -138,6 +144,7 @@ func TestMCPStreamableHTTPInitializeListAndCall(t *testing.T) {
 	destructiveTools := map[string]bool{
 		"accept_service_account_transfer":  true,
 		"decline_service_account_transfer": true,
+		"delete_book":                      true,
 		"delete_comment":                   true,
 		"delete_document":                  true,
 		"delete_folder":                    true,
@@ -791,4 +798,51 @@ func TestMCPGuidelinesProgressiveDisclosure(t *testing.T) {
 	assertMCPToolError(t, callMCPToolHTTP(t, e, token, "get_authoring_guidelines", map[string]any{
 		"section": "no such section",
 	}), "unknown guidelines section")
+}
+
+func TestMCPBookToolsAndStaleOutlineConflict(t *testing.T) {
+	e := newMCPOAuthTestEnvConfig(t, func(cfg *server.Config) { cfg.BooksEnabled = true })
+	token := auth.NewMCPAccessToken(fixtureUser.ID, e.resource, oauthTestSigningMaterial, time.Minute)
+
+	folder := callMCPToolHTTP(t, e, token, "create_folder", map[string]any{"title": "Guide"})
+	var f struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(folder.Text), &f); err != nil || f.ID == "" {
+		t.Fatalf("create_folder = %#v (%v)", folder, err)
+	}
+
+	created := callMCPToolHTTP(t, e, token, "create_book", map[string]any{"folder_id": f.ID})
+	var b struct {
+		BookID string `json:"book_id"`
+	}
+	if created.IsError || json.Unmarshal([]byte(created.Text), &b) != nil || b.BookID == "" {
+		t.Fatalf("create_book = %#v", created)
+	}
+	bookID := b.BookID
+
+	outline := callMCPToolHTTP(t, e, token, "get_book_outline", map[string]any{"book_id": bookID})
+	if outline.IsError || !strings.Contains(outline.Text, "version_id") {
+		t.Fatalf("get_book_outline = %#v", outline)
+	}
+	if got := callMCPToolHTTP(t, e, token, "get_book_status", map[string]any{"book_id": bookID}); got.IsError {
+		t.Fatalf("get_book_status = %#v", got)
+	}
+	if got := callMCPToolHTTP(t, e, token, "get_book", map[string]any{"book_id": bookID}); got.IsError {
+		t.Fatalf("get_book = %#v", got)
+	}
+
+	stale := callMCPToolHTTP(t, e, token, "update_book_outline", map[string]any{
+		"book_id":         bookID,
+		"base_version_id": "bov_stale",
+		"outline":         map[string]any{"title": "Guide", "front": []any{}, "parts": []any{map[string]any{"title": "I", "chapters": []any{map[string]any{"planned": "X"}}}}, "back": []any{}},
+		"note":            "try",
+	})
+	if !stale.IsError || !strings.Contains(stale.Text, "outline_conflict") || !strings.Contains(stale.Text, "current_version_id") {
+		t.Fatalf("stale update_book_outline = %#v, want outline_conflict with current_version_id", stale)
+	}
+
+	if got := callMCPToolHTTP(t, e, token, "delete_book", map[string]any{"book_id": bookID}); got.IsError {
+		t.Fatalf("delete_book = %#v", got)
+	}
 }
