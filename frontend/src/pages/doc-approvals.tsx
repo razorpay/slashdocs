@@ -715,7 +715,8 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
       </div>
       <p className="mt-1.5 text-xs text-[var(--color-fg-muted)]">
         Approvers need access to this document. Anyone who edited it, in the browser, by
-        upload, or by an agent, can&apos;t approve it. This includes you.
+        upload, or by an agent, can&apos;t approve it. This includes you. An edit that
+        its author undid does not count.
       </p>
     </form>
   );

@@ -21,6 +21,7 @@ const json = (body: unknown, status = 200) =>
 function renderHistory(
   current: string,
   fetch = vi.fn(async () => json({ items: versions })),
+  latest = "ver_2",
 ) {
   vi.stubGlobal("fetch", fetch);
   render(
@@ -32,7 +33,7 @@ function renderHistory(
         onOpenChange={() => {}}
         docId="doc_1"
         current={current}
-        latest="ver_2"
+        latest={latest}
         canRestore
         onSelectVersion={() => {}}
       />
@@ -63,6 +64,39 @@ describe("HistoryDialog", () => {
     expect(
       await within(dialog).findByText("Viewing", { exact: false }),
     ).toBeInTheDocument();
+  });
+
+  it("leaves out an edit that its author undid", async () => {
+    const undone: Version[] = [
+      { ...versions[0], sha256: "a" },
+      { ...versions[1], sha256: "b", change_summary: "Added “x”" },
+      {
+        id: "ver_3",
+        number: 3,
+        created_by: ana,
+        sha256: "a",
+        change_summary: "Removed “x”",
+      },
+      {
+        id: "ver_4",
+        number: 4,
+        created_by: ana,
+        sha256: "c",
+        change_summary: "Added “y”",
+      },
+    ];
+    const dialog = renderHistory(
+      "ver_4",
+      vi.fn(async () => json({ items: undone })),
+      "ver_4",
+    );
+    expect(await within(dialog).findByText("Added “y”")).toBeVisible();
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Show 1 earlier edit" }),
+    );
+    expect(within(dialog).getByText("Created")).toBeInTheDocument();
+    expect(within(dialog).queryByText("Added “x”")).toBeNull();
+    expect(within(dialog).queryByText("Removed “x”")).toBeNull();
   });
 
   it("shows that the history loads", () => {
