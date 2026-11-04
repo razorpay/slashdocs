@@ -30,11 +30,31 @@ function Field({
   );
 }
 
-it("marks a comment that asks an agent to change words", () => {
-  render(<AgentRequestBadge body="Please change “3 open” to: 4 open" />);
+it("marks a comment that asks an agent to change words, and the bot that saw it", () => {
+  const request: Comment = {
+    id: "cmt_1",
+    body: "Please change “3 open” to: 4 open",
+    status: "open",
+    author: { type: "user", id: "usr_ana" },
+    created_on_version_id: "ver_1",
+  };
+  render(<AgentRequestBadge c={request} />);
   expect(screen.getByText("Agent request")).toBeVisible();
   cleanup();
-  const { container } = render(<AgentRequestBadge body="Looks good" />);
+  const bot = { type: "service_account" as const, id: "sa_1", name: "Docs bot" };
+  render(
+    <AgentRequestBadge
+      c={{
+        ...request,
+        reactions: [{ emoji: "eyes", count: 1, reacted: false, reactors: [bot] }],
+      }}
+    />,
+  );
+  expect(screen.getByText("Agent request · Seen by Docs bot")).toBeVisible();
+  cleanup();
+  const { container } = render(
+    <AgentRequestBadge c={{ ...request, body: "Looks good" }} />,
+  );
   expect(container).toBeEmptyDOMElement();
 });
 
