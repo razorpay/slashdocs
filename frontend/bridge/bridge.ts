@@ -20,8 +20,10 @@ import {
   READER_KEYS,
   readerSettingsCSS,
   restoreMethod,
+  scrollProgression,
   sectionAt,
   type ReaderSettings,
+  type ScrollBox,
   type RestoreMethod,
 } from "./reading.ts";
 import { CHORD_KEYS } from "../src/lib/esc-chord.ts";
@@ -819,16 +821,57 @@ type Theme = "dark" | "light";
     const d = doc();
     const view = d?.defaultView;
     if (!d?.body || !view) return;
-    const root = d.scrollingElement || d.documentElement;
+    const p = readingProgression(d, view);
     parent.postMessage(
       {
         type: "slashdocs:viewport",
         anchor: viewportAnchor(d, view),
         section: viewportSection(d, view),
-        progression: progression(view.scrollY, root.scrollHeight, root.clientHeight),
+        // fits: nothing scrolls, so progression says nothing about reading.
+        progression: p ?? 0,
+        fits: p === null,
       },
       targetOrigin(),
     );
+  }
+
+  // The element the reader last scrolled other than the page itself.
+  let nestedScroller: Element | null = null;
+  function noteScroll(ev: Event): void {
+    const target = ev.target as Node | null;
+    if (target?.nodeType === 1 && target !== doc()?.scrollingElement) {
+      nestedScroller = target as Element;
+    }
+    scheduleViewport();
+  }
+
+  // How far through the chapter the reader is: the page's scroll, else that
+  // of the nested scroller last scrolled or the one under the middle of the
+  // viewport. Null when nothing scrolls.
+  function readingProgression(d: Document, view: Window): number | null {
+    const root = d.scrollingElement || d.documentElement;
+    const box = (el: Element | null): ScrollBox | null =>
+      el
+        ? { top: el.scrollTop, height: el.scrollHeight, client: el.clientHeight }
+        : null;
+    const page = progression(view.scrollY, root.scrollHeight, root.clientHeight);
+    if (page !== null) return page;
+    let centre: Element | null = null;
+    for (
+      let el = d.elementFromPoint(view.innerWidth / 2, view.innerHeight / 2);
+      el && el !== root;
+      el = el.parentElement
+    ) {
+      if (
+        el.scrollHeight > el.clientHeight &&
+        /(auto|scroll|overlay)/.test(view.getComputedStyle(el).overflowY)
+      ) {
+        centre = el;
+        break;
+      }
+    }
+    const last = nestedScroller?.isConnected ? nestedScroller : null;
+    return scrollProgression([box(last), box(centre)]);
   }
 
   // The section being read: the last heading above a line 20% down the
@@ -1758,6 +1801,7 @@ type Theme = "dark" | "light";
     const d = doc();
     if (!d || !d.documentElement || !d.body || setupDoc === d) return;
     setupDoc = d;
+    nestedScroller = null;
     pendingText = null;
     textVisibilityObserver?.disconnect();
     clearTimeout(textRetryTimer);
@@ -2018,7 +2062,7 @@ type Theme = "dark" | "light";
     });
     d.defaultView?.addEventListener("resize", scheduleCommentPositions);
     // Capture scrolls of nested containers too, not only the window.
-    d.addEventListener("scroll", scheduleViewport, { capture: true, passive: true });
+    d.addEventListener("scroll", noteScroll, { capture: true, passive: true });
     d.addEventListener("scroll", cursors.refresh, { capture: true, passive: true });
     d.defaultView?.addEventListener("resize", cursors.refresh);
     trackPointer(d, (spot) =>

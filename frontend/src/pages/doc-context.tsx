@@ -28,6 +28,9 @@ export type ReaderViewport = {
   anchor?: Partial<Anchor>;
   section: string;
   progression: number;
+  // True when nothing in the chapter scrolls (it fits on screen), so
+  // progression says nothing about how far the reader got.
+  fits?: boolean;
 };
 
 // A saved reading position to scroll back to. The bridge tries the quote,

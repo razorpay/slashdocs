@@ -56,17 +56,31 @@ export function sectionAt(
 }
 
 // How far through the page the reader is, from 0 to 1. A page that does not
-// scroll is fully read.
+// scroll gives null: being on it says nothing about having read to its end.
 export function progression(
   scrollTop: number,
   scrollHeight: number,
   clientHeight: number,
-): number {
+): number | null {
   const scrollable = scrollHeight - clientHeight;
-  if (!(scrollable > 0)) return 1;
+  if (!(scrollable > 0)) return null;
   const share = scrollTop / scrollable;
   if (!Number.isFinite(share)) return 0;
   return Math.min(1, Math.max(0, share));
+}
+
+export type ScrollBox = { top: number; height: number; client: number };
+
+// Progression in the first box that scrolls: the page, then any nested
+// scroller (app-style chapters scroll an inner container, never the page).
+// Null when nothing scrolls, so the chapter fits on screen.
+export function scrollProgression(boxes: (ScrollBox | null)[]): number | null {
+  for (const box of boxes) {
+    if (!box) continue;
+    const p = progression(box.top, box.height, box.client);
+    if (p !== null) return p;
+  }
+  return null;
 }
 
 export function readerSettingsCSS(s: ReaderSettings): string {

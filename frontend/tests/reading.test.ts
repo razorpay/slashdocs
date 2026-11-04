@@ -5,6 +5,7 @@ import {
   documentTheme,
   progression,
   READER_KEYS,
+  scrollProgression,
   READER_SIZES,
   READER_WIDTHS,
   readerSettingsCSS,
@@ -31,11 +32,34 @@ describe("progression", () => {
     expect(progression(-5, 1000, 500)).toBe(0);
     expect(progression(800, 1000, 500)).toBe(1);
   });
-  it("is 1 when the page does not scroll", () =>
-    expect(progression(0, 400, 500)).toBe(1));
+  // A page that does not scroll says nothing about how far the reader got.
+  it("is unknown when the page does not scroll", () => {
+    expect(progression(0, 400, 500)).toBeNull();
+    expect(progression(0, 500, 500)).toBeNull();
+  });
   it("is a share of scrollable height", () =>
     expect(progression(250, 1000, 500)).toBe(0.5));
   it("is 0 for non-finite input", () => expect(progression(NaN, 1000, 500)).toBe(0));
+});
+
+describe("scrollProgression", () => {
+  const fits = { top: 0, height: 500, client: 500 };
+  it("measures the page when it scrolls", () =>
+    expect(
+      scrollProgression([
+        { top: 100, height: 600, client: 500 },
+        { top: 0, height: 900, client: 300 },
+      ]),
+    ).toBe(1));
+  // App-style chapters scroll an inner container and never the page.
+  it("falls back to a nested scroller", () =>
+    expect(
+      scrollProgression([fits, null, { top: 300, height: 900, client: 300 }]),
+    ).toBe(0.5));
+  it("is unknown when nothing scrolls", () => {
+    expect(scrollProgression([fits, { top: 0, height: 10, client: 20 }])).toBeNull();
+    expect(scrollProgression([])).toBeNull();
+  });
 });
 
 describe("readerSettingsCSS", () => {

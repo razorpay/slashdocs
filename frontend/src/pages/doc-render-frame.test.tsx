@@ -135,7 +135,17 @@ describe("RenderFrame in book mode", () => {
       anchor: undefined,
       section: "intro",
       progression: 1,
+      fits: false,
     });
+    // Only a literal true says the chapter fits on screen.
+    send({ type: "slashdocs:viewport", section: "", progression: 0, fits: true });
+    expect(reader.onViewport).toHaveBeenLastCalledWith(
+      expect.objectContaining({ fits: true }),
+    );
+    send({ type: "slashdocs:viewport", section: "", progression: 0, fits: "yes" });
+    expect(reader.onViewport).toHaveBeenLastCalledWith(
+      expect.objectContaining({ fits: false }),
+    );
     send({ type: "slashdocs:keydown", key: "ArrowRight", reader: true });
     send({ type: "slashdocs:keydown", key: "x", reader: true });
     expect(reader.onKey).toHaveBeenCalledTimes(1);
