@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/razorpay/slashdocs/api/internal/auth"
 	"github.com/razorpay/slashdocs/api/internal/blob"
@@ -246,5 +247,84 @@ func TestBackfillSkipsFailingVersions(t *testing.T) {
 	}
 	if !versionIndexed(t, s, versions["good"]) || versionIndexed(t, s, versions["badinsert"]) || versionIndexed(t, s, versions["badblob"]) {
 		t.Fatal("want only the good version indexed")
+	}
+}
+
+// barrierBlobs holds every Get, once armed, until want Gets are in flight at
+// once, and fails a Get that waits longer than a second. A caller that reads
+// blobs one at a time never gets past it.
+type barrierBlobs struct {
+	blob.Store
+	mu       sync.Mutex
+	armed    bool
+	want     int
+	inFlight int
+	release  chan struct{}
+}
+
+func (b *barrierBlobs) arm(want int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.armed, b.want, b.release = true, want, make(chan struct{})
+}
+
+func (b *barrierBlobs) Get(ctx context.Context, key string) ([]byte, string, error) {
+	b.mu.Lock()
+	if !b.armed {
+		b.mu.Unlock()
+		return b.Store.Get(ctx, key)
+	}
+	b.inFlight++
+	if b.inFlight == b.want {
+		close(b.release)
+	}
+	release := b.release
+	b.mu.Unlock()
+	select {
+	case <-release:
+		return b.Store.Get(ctx, key)
+	case <-time.After(time.Second):
+		return nil, "", errors.New("blob reads were not concurrent")
+	}
+}
+
+// CreateBook reads the blobs of the chapters it places concurrently, so a
+// large "Make this a book" does not pay one blob read per chapter in series.
+func TestCreateBookIndexesChaptersConcurrently(t *testing.T) {
+	ctx := context.Background()
+	bb := &barrierBlobs{Store: blob.NewMemory()}
+	s, err := ConnectWithBlob(ctx, testdb.New(t), bb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	owner, err := s.EnsureUserByEmail(ctx, "concurrent-index@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := s.CreateFolder(ctx, owner, "Book", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entries []books.Entry
+	var versions []string
+	for _, title := range []string{"01 · A", "02 · B", "03 · C"} {
+		d, v, err := s.CreateDocument(ctx, owner, title, []byte(`<h2>H</h2><p>words</p>`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.MoveDocumentToFolder(ctx, owner, f.ID, d.ID); err != nil {
+			t.Fatal(err)
+		}
+		entries, versions = append(entries, books.Entry{Doc: d.ID}), append(versions, v.ID)
+	}
+	bb.arm(len(versions))
+	if _, err := s.CreateBook(ctx, f.ID, books.Outline{Title: "Book", Parts: []books.Part{{Chapters: entries}}}, owner); err != nil {
+		t.Fatalf("CreateBook: %v", err)
+	}
+	for _, v := range versions {
+		if !versionIndexed(t, s, v) {
+			t.Errorf("version %s not indexed: CreateBook read its chapters' blobs one at a time", v)
+		}
 	}
 }

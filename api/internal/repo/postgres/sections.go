@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/razorpay/slashdocs/api/internal/blob"
 	dbsqlc "github.com/razorpay/slashdocs/api/internal/db/sqlc"
@@ -92,21 +93,32 @@ func (s *Store) trySections(ctx context.Context, tx pgx.Tx, versionID string, ht
 	return true, sp.Commit(ctx)
 }
 
+// indexAfterCommitLimit bounds the blob reads indexAfterCommit runs at once.
+const indexAfterCommitLimit = 8
+
 // indexAfterCommit indexes versions best-effort once the caller's
 // transaction has committed, outside the folder-tree lock, so that a blob
-// read never runs under that lock and a failure never fails the caller. A
-// version that fails stays unindexed for EnsureVersionSections and the
-// backfill; one deleted meanwhile is skipped.
+// read never runs under that lock and a failure never fails the caller. It
+// indexes up to indexAfterCommitLimit versions at once, so a large book does
+// not pay one blob read per chapter in series. A version that fails stays
+// unindexed for EnsureVersionSections and the backfill; one deleted meanwhile
+// is skipped.
 func (s *Store) indexAfterCommit(ctx context.Context, versionIDs ...string) {
+	var g errgroup.Group
+	g.SetLimit(indexAfterCommitLimit)
 	for _, id := range versionIDs {
 		if ctx.Err() != nil {
-			return
+			break
 		}
-		if err := s.EnsureVersionSections(ctx, id); err != nil && !errors.Is(err, repo.ErrNotFound) {
-			slog.WarnContext(ctx, "version sections not indexed",
-				slog.String("version_id", id), slog.Any("error", err))
-		}
+		g.Go(func() error {
+			if err := s.EnsureVersionSections(ctx, id); err != nil && !errors.Is(err, repo.ErrNotFound) && ctx.Err() == nil {
+				slog.WarnContext(ctx, "version sections not indexed",
+					slog.String("version_id", id), slog.Any("error", err))
+			}
+			return nil
+		})
 	}
+	_ = g.Wait() // every task returns nil; failures are logged above
 }
 
 // pgText makes heading text safe to store: PostgreSQL text must be valid

@@ -64,14 +64,21 @@ func (s *Store) CreateBook(ctx context.Context, folderID string, outline books.O
 		return repo.Book{}, err
 	}
 	// A12: the chapters a book places are indexed, best-effort and after
-	// commit; everything else is indexed on demand.
+	// commit; everything else is indexed on demand. One folder listing gives
+	// every chapter's current version. A placed id that is gone or elsewhere
+	// is skipped: the handler validates the outline, and a read-time prune
+	// drops what it missed.
+	listed, err := q.ListFolderDocuments(ctx, folderID)
+	if err != nil {
+		return repo.Book{}, fmt.Errorf("list chapters of folder %s: %w", folderID, err)
+	}
+	current := make(map[string]string, len(listed))
+	for _, d := range listed {
+		current[d.ID] = d.CurrentVersionID
+	}
 	var toIndex []string
 	for _, docID := range books.DocIDs(outline) {
-		v, err := chapterVersion(ctx, q, folderID, docID)
-		if err != nil {
-			return repo.Book{}, err
-		}
-		if v != "" {
+		if v := current[docID]; v != "" {
 			toIndex = append(toIndex, v)
 		}
 	}
@@ -84,23 +91,6 @@ func (s *Store) CreateBook(ctx context.Context, folderID string, outline books.O
 	}
 	s.indexAfterCommit(ctx, toIndex...)
 	return b, nil
-}
-
-// chapterVersion returns the current version of a document in folderID, or
-// "" for a document that is gone or elsewhere: the handler validates the
-// outline, and a read-time prune drops what it missed.
-func chapterVersion(ctx context.Context, q *dbsqlc.Queries, folderID, docID string) (string, error) {
-	d, err := q.GetDocument(ctx, docID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("load chapter %s: %w", docID, err)
-	}
-	if d.ParentFolderID != folderID || !d.CurrentVersionID.Valid {
-		return "", nil
-	}
-	return d.CurrentVersionID.String, nil
 }
 
 func (s *Store) GetBook(ctx context.Context, id string) (repo.Book, error) {
