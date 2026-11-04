@@ -1458,6 +1458,7 @@ type Theme = "dark" | "light";
     }
   }
 
+  const SELECTION_ACTION_GAP = 6;
   let selectionAction: HTMLDivElement | null = null;
   let actionRange: Range | null = null;
   let selectionDismissed = false;
@@ -1524,16 +1525,10 @@ type Theme = "dark" | "light";
       selectionAction.setAttribute("aria-label", "Selected text actions");
       selectionAction.addEventListener("mousedown", (e) => e.preventDefault());
       selectionAction.addEventListener("click", (e) => e.stopPropagation());
-      const addAction = (
-        label: string,
-        title: string,
-        path: string,
-        click: () => void,
-      ) => {
+      const addAction = (label: string, path: string, click: () => void) => {
         const button = d.createElement("button");
         button.type = "button";
         button.setAttribute("aria-label", label);
-        labelIcon(button, title);
         const svg = d.createElementNS("http://www.w3.org/2000/svg", "svg");
         svg.setAttribute("viewBox", "0 0 24 24");
         svg.setAttribute("aria-hidden", "true");
@@ -1545,17 +1540,21 @@ type Theme = "dark" | "light";
         selectionAction!.appendChild(button);
         return button;
       };
-      addAction(
+      const comment = addAction(
         "Comment on selected text",
-        "Comment (C)",
         "M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9H13a8.48 8.48 0 0 1 8 8v.5Z",
         () => {
           if (actionRange) commitSelection(actionRange);
         },
       );
-      addAction(
+      // The main action says its name and its key, as a menu item does.
+      const name = d.createElement("span");
+      name.textContent = "Comment";
+      const key = d.createElement("kbd");
+      key.textContent = "C";
+      comment.append(name, key);
+      const copy = addAction(
         "Copy link to selected text",
-        "Copy link to text",
         "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71",
         () => {
           if (!actionRange) return;
@@ -1563,12 +1562,16 @@ type Theme = "dark" | "light";
           parent.postMessage({ type: "slashdocs:copy-text", anchor }, targetOrigin());
         },
       );
+      labelIcon(copy, "Copy link to text");
       if (!d.getElementById("slashdocs-selection-style")) {
         const style = d.createElement("style");
         style.id = "slashdocs-selection-style";
         style.textContent = `
-          .slashdocs-selection-action{all:initial!important;position:fixed!important;z-index:2147483647!important;display:flex!important;padding:2px!important;border-radius:10px!important;background:#fff!important;color:#52525b!important;box-shadow:0 0 0 1px #0001,0 4px 16px #0002!important}
-          .slashdocs-selection-action button{all:initial!important;position:relative!important;box-sizing:border-box!important;display:flex!important;align-items:center!important;justify-content:center!important;width:40px!important;height:40px!important;border-radius:8px!important;color:inherit!important;cursor:pointer!important;transition:background-color .15s,transform .15s!important}
+          .slashdocs-selection-action{all:initial!important;position:fixed!important;z-index:2147483647!important;display:flex!important;padding:2px!important;border-radius:10px!important;background:#fff!important;color:#52525b!important;box-shadow:0 0 0 1px #0001,0 4px 16px #0002!important;animation:slashdocs-selection-in .15s ease-out!important}
+          @keyframes slashdocs-selection-in{from{opacity:0;transform:scale(.97)}}
+          .slashdocs-selection-action button{all:initial!important;position:relative!important;box-sizing:border-box!important;display:flex!important;align-items:center!important;justify-content:center!important;gap:6px!important;min-width:40px!important;height:40px!important;padding:0 11px!important;border-radius:8px!important;color:inherit!important;cursor:pointer!important;transition:background-color .15s,transform .15s!important}
+          .slashdocs-selection-action span{all:initial!important;color:inherit!important;font:500 13px/1 system-ui,sans-serif!important}
+          .slashdocs-selection-action kbd{all:initial!important;padding:2px 5px!important;border-radius:4px!important;background:#f4f4f5!important;color:#71717a!important;font:500 11px/1.2 system-ui,sans-serif!important}
           .slashdocs-selection-action button:hover{background:#f4f4f5!important;color:#18181b!important}
           .slashdocs-selection-action button:active{transform:scale(.96)!important}
           .slashdocs-selection-action button:focus-visible{outline:2px solid #6366f1!important;outline-offset:-2px!important}
@@ -1576,22 +1579,29 @@ type Theme = "dark" | "light";
           .slashdocs-selection-action path{fill:none!important;stroke:inherit!important;stroke-width:inherit!important}
           [data-slashdocs-theme=dark] .slashdocs-selection-action{background:#27272a!important;color:#d4d4d8!important;box-shadow:0 0 0 1px #fff2,0 4px 16px #0004!important}
           [data-slashdocs-theme=dark] .slashdocs-selection-action button:hover{background:#3f3f46!important;color:#fff!important}
-          @media(prefers-reduced-motion:reduce){.slashdocs-selection-action button{transition:none!important}}
+          [data-slashdocs-theme=dark] .slashdocs-selection-action kbd{background:#3f3f46!important;color:#a1a1aa!important}
+          @media(prefers-reduced-motion:reduce){.slashdocs-selection-action,.slashdocs-selection-action button{animation:none!important;transition:none!important}}
           @media print{.slashdocs-selection-action,.slashdocs-text-flash{display:none!important}}`;
         d.head.appendChild(style);
       }
       d.body.appendChild(selectionAction);
     }
+    // The actions sit centered above the selection, clear of its first line,
+    // or below its last line when there is no room above.
     const rect = range.getBoundingClientRect();
     const view = d.defaultView!;
+    const { offsetWidth: width, offsetHeight: height } = selectionAction;
+    const above = rect.top - SELECTION_ACTION_GAP - height;
+    const top = above >= 8 ? above : rect.bottom + SELECTION_ACTION_GAP;
+    const left = rect.left + (rect.width - width) / 2;
     selectionAction.style.setProperty(
       "left",
-      `${Math.max(8, Math.min(rect.right - 84, view.innerWidth - 92))}px`,
+      `${Math.max(8, Math.min(left, view.innerWidth - width - 8))}px`,
       "important",
     );
     selectionAction.style.setProperty(
       "top",
-      `${Math.max(8, rect.bottom + 8 + 44 < view.innerHeight ? rect.bottom + 8 : rect.top - 52)}px`,
+      `${Math.max(8, Math.min(top, view.innerHeight - height - 8))}px`,
       "important",
     );
   }
