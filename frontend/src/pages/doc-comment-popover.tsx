@@ -48,15 +48,15 @@ function parseRect(value: unknown): Rect | null {
 // which leaves the document above it.
 function Popover({
   anchor,
-  block,
+  beside,
   bounds,
   label,
   onClose,
   children,
 }: {
   anchor: Rect | null;
-  // The blocks that hold a highlight, whose lines the popover keeps off.
-  block?: Rect | null;
+  // The boxes that the popover keeps off, as placeBeside takes them.
+  beside?: Rect[];
   bounds: RefObject<HTMLElement | null>;
   label: string;
   onClose: () => void;
@@ -75,10 +75,10 @@ function Popover({
         anchor ?? { left: box.right - EDGE, top: box.top, width: 0, height: 0 },
         size,
         box,
-        block ?? undefined,
+        beside?.length ? beside : undefined,
       ),
     );
-  }, [anchor, block, bounds, mobile, children]);
+  }, [anchor, beside, bounds, mobile, children]);
   // It takes the focus that a post or a pick in a list left behind, so Esc
   // and Tab reach it. Focus in the document stays there.
   useEffect(() => {
@@ -122,7 +122,7 @@ function Popover({
         "fixed z-40 flex flex-col overflow-hidden bg-[var(--color-surface)] shadow-xl ring-1 ring-[var(--color-border)] outline-none",
         mobile
           ? "inset-x-0 bottom-0 max-h-[70vh] rounded-t-2xl pb-[env(safe-area-inset-bottom)]"
-          : "max-h-[min(70vh,560px)] rounded-xl",
+          : "max-h-[min(60vh,480px)] rounded-xl",
       )}
     >
       {mobile && <SheetHandle />}
@@ -152,7 +152,7 @@ export function CommentPopovers({
   const [anchor, setAnchor] = useState<{
     id: string;
     rect: Rect | null;
-    block: Rect | null;
+    beside: Rect[];
   }>();
   const [cluster, setCluster] = useState<{ ids: string[]; rect: Rect }>();
   useEffect(() => {
@@ -162,11 +162,12 @@ export function CommentPopovers({
     const iframe = frame.current;
     if (!iframe) return;
     if (data.type === "slashdocs:anchor-rect" && typeof data.id === "string") {
-      const [rect, block] = [parseRect(data.rect), parseRect(data.block)];
+      // The blocks that hold a highlight, then the text of its lines.
+      const [rect, ...beside] = [data.rect, data.block, data.lines].map(parseRect);
       setAnchor({
         id: data.id,
         rect: rect && toApp(iframe, rect),
-        block: block && toApp(iframe, block),
+        beside: beside.flatMap((box) => (box ? [toApp(iframe, box)] : [])),
       });
     }
     if (data.type === "slashdocs:pin-cluster" && Array.isArray(data.ids)) {
@@ -192,7 +193,7 @@ export function CommentPopovers({
         <Popover
           key={activeComment}
           anchor={rect}
-          block={placedAnchor?.block}
+          beside={placedAnchor?.beside}
           bounds={bounds}
           label={draft ? "New comment" : "Comment thread"}
           onClose={close}
