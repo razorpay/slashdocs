@@ -477,7 +477,7 @@ test("existing user and service-account sharing remains available", async ({
   await page.getByRole("button", { name: "Share" }).click();
 
   const shareSheet = page.getByRole("dialog", { name: "Share document" });
-  const input = shareSheet.getByPlaceholder(/user@org\.example/);
+  const input = shareSheet.getByRole("combobox", { name: "Person or bot" });
   await input.fill("alice");
   await shareSheet.getByRole("option", { name: /Alice/ }).click();
   await shareSheet.getByRole("button", { name: "Share", exact: true }).click();

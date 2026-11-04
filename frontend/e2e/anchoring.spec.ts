@@ -126,7 +126,7 @@ test("copies a text link without opening a comment and reveals the selected occu
   await expect(copy).toBeVisible();
   await expect(
     doc.getByRole("button", { name: "Comment on selected text" }),
-  ).toHaveText("");
+  ).toContainText("Comment");
   await expect(page.getByPlaceholder("Add a comment…")).toBeHidden();
   await copy.click();
   await expect(page.getByText("Link to text copied.", { exact: true })).toBeVisible();
