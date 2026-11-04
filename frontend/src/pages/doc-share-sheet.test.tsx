@@ -22,6 +22,7 @@ type FetchOptions = {
   owner?: { id: string; email?: string; name?: string };
   requesters?: Array<{ type: string; id: string; email?: string; name?: string }>;
   grantError?: string;
+  deployment?: "org" | "public";
 };
 
 function installFetch(options: FetchOptions = {}) {
@@ -33,7 +34,7 @@ function installFetch(options: FetchOptions = {}) {
       calls.push({ url, init });
       if (url === "/v1/config") {
         return jsonResponse({
-          deployment: "org",
+          deployment: options.deployment ?? "org",
           org_name: "Acme",
           everyone_label: "Anyone in Acme",
           google_groups_enabled: options.groupsEnabled ?? true,
@@ -292,6 +293,7 @@ describe("Google Group sharing", () => {
     const user = userEvent.setup();
     expect(await screen.findByText("Requests for access")).toBeVisible();
     expect(screen.getByText("report-bot@brave.otter.bot (bot)")).toBeVisible();
+    expect(screen.getAllByText(/^Asked /)).toHaveLength(2);
 
     await user.click(
       screen.getByRole("button", { name: "Role for reader@example.com: Commenter" }),
@@ -340,6 +342,31 @@ describe("Google Group sharing", () => {
     expect(input).toHaveAttribute("aria-invalid", "true");
     await user.type(input, "m");
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("offers the invite link for an address with no account on a public server", async () => {
+    installFetch({
+      deployment: "public",
+      groupsEnabled: false,
+      userItems: [],
+      grantError: "No slashdocs user exists for that email.",
+    });
+    renderShare();
+    const user = userEvent.setup();
+    const input = await screen.findByRole("combobox", { name: "Person or bot" });
+    await user.type(input, "nobody@example.com");
+    expect(await screen.findByText(/None of your contacts match/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Share" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "No slashdocs user exists",
+    );
+    // The error replaces the hint, so the two do not say the same thing.
+    expect(screen.queryByText(/None of your contacts match/)).toBeNull();
+    // userEvent.setup puts in its own clipboard, so the stub comes after it.
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    await user.click(screen.getByRole("button", { name: "Copy invite link" }));
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining("/app/d/doc_1"));
   });
 
   it("does not offer Share for an address that has no account", async () => {
@@ -435,6 +462,16 @@ describe("Google Group sharing", () => {
 
     await user.keyboard("{ArrowDown}{Enter}");
     expect(input).toHaveValue("ana@example.com");
+  });
+
+  it("says when Copy fails, and selects the link", async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    installFetch();
+    renderShare();
+    await userEvent.click(await screen.findByRole("button", { name: "Copy link" }));
+    expect(await screen.findByRole("button", { name: "Could not copy" })).toBeVisible();
+    expect(window.getSelection()?.toString()).toContain("/app/d/doc_1");
   });
 
   it("shows Copied on the link button for a moment", async () => {
