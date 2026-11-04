@@ -27,6 +27,15 @@ definitions:
     - PrincipalGoogleGroup
     - PrincipalAnyone
     - PrincipalAnonymous
+  books.ChangedSection:
+    properties:
+      id:
+        type: string
+      removed:
+        type: boolean
+      title:
+        type: string
+    type: object
   books.Entry:
     properties:
       doc:
@@ -222,6 +231,18 @@ definitions:
       title:
         type: string
     type: object
+  server.bookProgress:
+    properties:
+      chapter:
+        description: |-
+          Chapter is the place, among the chapters the caller can open, of the
+          chapter at the newest position. 0 when there is none.
+        type: integer
+      of:
+        type: integer
+      share:
+        type: number
+    type: object
   server.bookStatusEntry:
     properties:
       current_version_id:
@@ -252,6 +273,35 @@ definitions:
           type: string
         type: array
     type: object
+  server.chapterChangesResponse:
+    properties:
+      changed_sections:
+        items:
+          $ref: '#/definitions/books.ChangedSection'
+        type: array
+      since_version_id:
+        type: string
+      versions:
+        items:
+          $ref: '#/definitions/server.chapterVersionNote'
+        type: array
+    type: object
+  server.chapterDoneRequest:
+    properties:
+      done:
+        type: boolean
+    type: object
+  server.chapterProgressRequest:
+    properties:
+      progression:
+        type: number
+      reached_end:
+        type: boolean
+      version_id:
+        description: VersionID is the version read; reaching its end marks it seen
+          (A7).
+        type: string
+    type: object
   server.chapterProps:
     properties:
       documentId:
@@ -266,6 +316,40 @@ definitions:
         type: string
       wordCount:
         type: integer
+    type: object
+  server.chapterStateResponse:
+    properties:
+      furthest_progression:
+        type: number
+      seen_version_id:
+        type: string
+      state:
+        enum:
+        - not_started
+        - reading
+        - read
+        - done
+        type: string
+      updated:
+        description: Updated is true when the chapter changed since the caller last
+          saw it.
+        type: boolean
+    type: object
+  server.chapterVersionNote:
+    properties:
+      change_summary:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      number:
+        type: integer
+    type: object
+  server.chapterVersionRequest:
+    properties:
+      version_id:
+        type: string
     type: object
   server.cliExchangePrincipal:
     properties:
@@ -839,6 +923,53 @@ definitions:
       status:
         type: string
     type: object
+  server.positionAnchor:
+    properties:
+      end_offset:
+        type: integer
+      prefix:
+        type: string
+      quote:
+        type: string
+      start_offset:
+        type: integer
+      suffix:
+        type: string
+    type: object
+  server.positionRequest:
+    properties:
+      anchor:
+        $ref: '#/definitions/server.positionAnchor'
+      client_ts:
+        type: string
+      device_id:
+        type: string
+      document_id:
+        type: string
+      progression:
+        type: number
+      section_id:
+        type: string
+      version_id:
+        type: string
+    type: object
+  server.positionResponse:
+    properties:
+      anchor:
+        $ref: '#/definitions/server.positionAnchor'
+      client_ts:
+        type: string
+      device_id:
+        type: string
+      document_id:
+        type: string
+      progression:
+        type: number
+      section_id:
+        type: string
+      version_id:
+        type: string
+    type: object
   server.principalRef:
     properties:
       id:
@@ -874,6 +1005,19 @@ definitions:
         type: integer
       version_id:
         type: string
+    type: object
+  server.readingStateResponse:
+    properties:
+      chapters:
+        additionalProperties:
+          $ref: '#/definitions/server.chapterStateResponse'
+        type: object
+      positions:
+        items:
+          $ref: '#/definitions/server.positionResponse'
+        type: array
+      progress:
+        $ref: '#/definitions/server.bookProgress'
     type: object
   server.renderTokenResponse:
     properties:
@@ -1168,6 +1312,223 @@ paths:
       summary: Get a book's manifest
       tags:
       - books
+  /v1/books/{id}/chapters/{doc_id}/changes:
+    get:
+      description: Every version note since your seen version, and the sections whose
+        text changed between it and the current version (R19, R20). Empty when you
+        have seen the current version or never opened the chapter. Users only.
+      parameters:
+      - description: Book ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Chapter document ID
+        in: path
+        name: doc_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/server.chapterChangesResponse'
+        "403":
+          description: reading_state_users_only
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: List what changed in a chapter since you saw it
+      tags:
+      - books
+  /v1/books/{id}/chapters/{doc_id}/done:
+    put:
+      consumes:
+      - application/json
+      description: 'Done is reversible: clearing it returns the chapter to read or
+        reading. Does nothing for a chapter never opened. Users only.'
+      parameters:
+      - description: Book ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Chapter document ID
+        in: path
+        name: doc_id
+        required: true
+        type: string
+      - description: Done
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/server.chapterDoneRequest'
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: invalid_request
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "403":
+          description: reading_state_users_only
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Mark a chapter done, or not
+      tags:
+      - books
+  /v1/books/{id}/chapters/{doc_id}/open:
+    post:
+      consumes:
+      - application/json
+      description: The first open marks the version seen and last read. Later opens
+        move only the last read version, so an update stays flagged until it is seen
+        (R18). Users only.
+      parameters:
+      - description: Book ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Chapter document ID
+        in: path
+        name: doc_id
+        required: true
+        type: string
+      - description: Version on screen; defaults to the current version
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/server.chapterVersionRequest'
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: invalid_request
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "403":
+          description: reading_state_users_only
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Record that you opened a chapter
+      tags:
+      - books
+  /v1/books/{id}/chapters/{doc_id}/progress:
+    post:
+      consumes:
+      - application/json
+      description: Raises the furthest progression. reached_end marks the chapter
+        read and the given version (default current) seen; seen never moves backwards
+        (A7). Does nothing for a chapter never opened. Users only.
+      parameters:
+      - description: Book ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Chapter document ID
+        in: path
+        name: doc_id
+        required: true
+        type: string
+      - description: Progress
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/server.chapterProgressRequest'
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: invalid_request
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "403":
+          description: reading_state_users_only
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "429":
+          description: rate_limited
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Record how far you read a chapter
+      tags:
+      - books
+  /v1/books/{id}/chapters/{doc_id}/seen:
+    post:
+      consumes:
+      - application/json
+      description: Moves the seen version forward to the given version, or the current
+        version when none is given. Seen never moves backwards (A7). Users only.
+      parameters:
+      - description: Book ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Chapter document ID
+        in: path
+        name: doc_id
+        required: true
+        type: string
+      - description: Version seen; defaults to the current version
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/server.chapterVersionRequest'
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: invalid_request
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "403":
+          description: reading_state_users_only
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Mark a chapter's update seen
+      tags:
+      - books
   /v1/books/{id}/llms.txt:
     get:
       description: A plain-text index of the chapters this caller can open.
@@ -1266,6 +1627,158 @@ paths:
       - bearerAuth: []
       - cookieAuth: []
       summary: List a book's outline versions
+      tags:
+      - books
+  /v1/books/{id}/position:
+    put:
+      consumes:
+      - application/json
+      description: 'Saves this device''s place in the book. A position older than
+        the stored one is ignored and answered with X-Position-Stale: 1. An unknown
+        section_id is stored as "". Users only.'
+      parameters:
+      - description: Book ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Position
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/server.positionRequest'
+      responses:
+        "204":
+          description: No Content
+          headers:
+            X-Position-Stale:
+              description: 1 when the position was older than the stored one
+              type: string
+        "400":
+          description: invalid_position
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "403":
+          description: reading_state_users_only
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "429":
+          description: rate_limited
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Save your reading position
+      tags:
+      - books
+  /v1/books/{id}/search:
+    get:
+      description: 'Full-text search of the chapters you can open, in the same query
+        language as document search. The book''s folder replaces any in: filter. document_id
+        narrows the search to one chapter. At most 50 results.'
+      parameters:
+      - description: Book ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Search query
+        in: query
+        name: q
+        required: true
+        type: string
+      - description: Search only this chapter
+        in: query
+        name: document_id
+        type: string
+      - description: IANA time zone for date modifiers; defaults to UTC
+        in: query
+        name: tz
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/server.listResponse-repo_Document'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Search a book
+      tags:
+      - books
+  /v1/books/{id}/seen:
+    post:
+      description: Every chapter you can open and have opened gets its current version
+        marked seen. Users only.
+      parameters:
+      - description: Book ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "403":
+          description: reading_state_users_only
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Mark every update in a book seen
+      tags:
+      - books
+  /v1/books/{id}/state:
+    get:
+      description: Your positions on every device (newest first), the state of each
+        chapter you can open, and your progress. Reading state is never returned to
+        anyone but its owner. Users only.
+      parameters:
+      - description: Book ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/server.readingStateResponse'
+        "403":
+          description: reading_state_users_only
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Get your reading state in a book
       tags:
       - books
   /v1/books/{id}/status:

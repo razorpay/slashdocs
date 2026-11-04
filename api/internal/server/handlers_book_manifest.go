@@ -134,24 +134,13 @@ func (h handlers) bookReaderView(c *gin.Context) (view bookView, ok bool) {
 		notFound(c)
 		return bookView{}, false
 	}
-	log := requestLogger(c)
 	if len(versions) == 0 {
 		return view, true
 	}
-	stale, err := r.UnindexedVersions(ctx, versions)
-	if err != nil {
-		// Fall back to asking Ensure about every version.
-		log.WarnContext(ctx, "check indexed chapters failed", slog.Any("error", err))
-		stale = versions
-	}
-	for _, v := range stale {
-		if err := r.EnsureVersionSections(ctx, v); err != nil {
-			log.WarnContext(ctx, "index chapter sections failed", slog.String("version_id", v), slog.Any("error", err))
-		}
-	}
+	h.ensureIndexed(c, versions)
 	words, err := r.VersionWords(ctx, versions)
 	if err != nil {
-		log.WarnContext(ctx, "chapter word counts failed", slog.Any("error", err))
+		requestLogger(c).WarnContext(ctx, "chapter word counts failed", slog.Any("error", err))
 	} else {
 		view.Words = words
 	}

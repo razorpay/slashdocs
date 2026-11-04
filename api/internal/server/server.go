@@ -291,6 +291,9 @@ func (s *Server) routes(deps dependencies) {
 	// other activity. A moving cursor reports about 12 times a second.
 	presenceLimit := activityRateLimit(60)
 	cursorLimit := activityRateLimit(1200)
+	// Readers report their position while scrolling (debounced) and on
+	// every page hide.
+	readingLimit := activityRateLimit(120)
 	authed.GET("/me", h.me)
 	authed.GET("/users", h.searchUsers)
 	authed.GET("/google-groups", h.searchGoogleGroups)
@@ -355,6 +358,15 @@ func (s *Server) routes(deps dependencies) {
 	authed.PUT("/books/:id/outline", h.putOutline)
 	authed.GET("/books/:id/outline/versions", h.listOutlineVersions)
 	authed.GET("/books/:id/status", h.bookStatus)
+	authed.GET("/books/:id/state", h.getReadingState)
+	authed.PUT("/books/:id/position", readingLimit, h.putReadingPosition)
+	authed.POST("/books/:id/seen", h.markBookSeen)
+	authed.GET("/books/:id/search", h.searchBook)
+	authed.POST("/books/:id/chapters/:doc_id/open", h.openChapter)
+	authed.POST("/books/:id/chapters/:doc_id/progress", readingLimit, h.chapterProgress)
+	authed.PUT("/books/:id/chapters/:doc_id/done", h.setChapterDone)
+	authed.POST("/books/:id/chapters/:doc_id/seen", h.markChapterSeen)
+	authed.GET("/books/:id/chapters/:doc_id/changes", h.chapterChanges)
 	authed.GET("/pins", h.listPins)
 	authed.PUT("/pins/:resource_type/:resource_id", h.putPin)
 	authed.DELETE("/pins/:resource_type/:resource_id", h.deletePin)

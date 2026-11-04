@@ -829,6 +829,7 @@ func (s *Store) SearchDocuments(ctx context.Context, p auth.Principal, search re
 		Owners:         search.Owners,
 		Folders:        search.Folders,
 		Labels:         search.Labels,
+		DocumentIds:    search.DocumentIDs,
 		UpdatedSince:   pgtype.Timestamptz{Time: search.UpdatedSince, Valid: !search.UpdatedSince.IsZero()},
 		UpdatedBefore:  pgtype.Timestamptz{Time: search.UpdatedBefore, Valid: !search.UpdatedBefore.IsZero()},
 		OwnerID:        p.ID,

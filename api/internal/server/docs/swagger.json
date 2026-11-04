@@ -407,6 +407,338 @@
                 }
             }
         },
+        "/v1/books/{id}/chapters/{doc_id}/changes": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Every version note since your seen version, and the sections whose text changed between it and the current version (R19, R20). Empty when you have seen the current version or never opened the chapter. Users only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "books"
+                ],
+                "summary": "List what changed in a chapter since you saw it",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Book ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Chapter document ID",
+                        "name": "doc_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server.chapterChangesResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "reading_state_users_only",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/books/{id}/chapters/{doc_id}/done": {
+            "put": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Done is reversible: clearing it returns the chapter to read or reading. Does nothing for a chapter never opened. Users only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "books"
+                ],
+                "summary": "Mark a chapter done, or not",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Book ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Chapter document ID",
+                        "name": "doc_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Done",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/server.chapterDoneRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "invalid_request",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "403": {
+                        "description": "reading_state_users_only",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/books/{id}/chapters/{doc_id}/open": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "The first open marks the version seen and last read. Later opens move only the last read version, so an update stays flagged until it is seen (R18). Users only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "books"
+                ],
+                "summary": "Record that you opened a chapter",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Book ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Chapter document ID",
+                        "name": "doc_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Version on screen; defaults to the current version",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/server.chapterVersionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "invalid_request",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "403": {
+                        "description": "reading_state_users_only",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/books/{id}/chapters/{doc_id}/progress": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Raises the furthest progression. reached_end marks the chapter read and the given version (default current) seen; seen never moves backwards (A7). Does nothing for a chapter never opened. Users only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "books"
+                ],
+                "summary": "Record how far you read a chapter",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Book ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Chapter document ID",
+                        "name": "doc_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Progress",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/server.chapterProgressRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "invalid_request",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "403": {
+                        "description": "reading_state_users_only",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "429": {
+                        "description": "rate_limited",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/books/{id}/chapters/{doc_id}/seen": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Moves the seen version forward to the given version, or the current version when none is given. Seen never moves backwards (A7). Users only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "books"
+                ],
+                "summary": "Mark a chapter's update seen",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Book ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Chapter document ID",
+                        "name": "doc_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Version seen; defaults to the current version",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/server.chapterVersionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "invalid_request",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "403": {
+                        "description": "reading_state_users_only",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/books/{id}/llms.txt": {
             "get": {
                 "security": [
@@ -567,6 +899,239 @@
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/server.listResponse-server_outlineVersionResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/books/{id}/position": {
+            "put": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Saves this device's place in the book. A position older than the stored one is ignored and answered with X-Position-Stale: 1. An unknown section_id is stored as \"\". Users only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "books"
+                ],
+                "summary": "Save your reading position",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Book ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Position",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/server.positionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content",
+                        "headers": {
+                            "X-Position-Stale": {
+                                "type": "string",
+                                "description": "1 when the position was older than the stored one"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "invalid_position",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "403": {
+                        "description": "reading_state_users_only",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "429": {
+                        "description": "rate_limited",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/books/{id}/search": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Full-text search of the chapters you can open, in the same query language as document search. The book's folder replaces any in: filter. document_id narrows the search to one chapter. At most 50 results.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "books"
+                ],
+                "summary": "Search a book",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Book ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Search query",
+                        "name": "q",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Search only this chapter",
+                        "name": "document_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "IANA time zone for date modifiers; defaults to UTC",
+                        "name": "tz",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server.listResponse-repo_Document"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/books/{id}/seen": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Every chapter you can open and have opened gets its current version marked seen. Users only.",
+                "tags": [
+                    "books"
+                ],
+                "summary": "Mark every update in a book seen",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Book ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "403": {
+                        "description": "reading_state_users_only",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/books/{id}/state": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Your positions on every device (newest first), the state of each chapter you can open, and your progress. Reading state is never returned to anyone but its owner. Users only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "books"
+                ],
+                "summary": "Get your reading state in a book",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Book ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server.readingStateResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "reading_state_users_only",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
                         }
                     }
                 }
@@ -2287,6 +2852,20 @@
                 "PrincipalAnonymous"
             ]
         },
+        "books.ChangedSection": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "removed": {
+                    "type": "boolean"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
         "books.Entry": {
             "type": "object",
             "properties": {
@@ -2576,6 +3155,21 @@
                 }
             }
         },
+        "server.bookProgress": {
+            "type": "object",
+            "properties": {
+                "chapter": {
+                    "description": "Chapter is the place, among the chapters the caller can open, of the\nchapter at the newest position. 0 when there is none.",
+                    "type": "integer"
+                },
+                "of": {
+                    "type": "integer"
+                },
+                "share": {
+                    "type": "number"
+                }
+            }
+        },
         "server.bookStatusEntry": {
             "type": "object",
             "properties": {
@@ -2622,6 +3216,49 @@
                 }
             }
         },
+        "server.chapterChangesResponse": {
+            "type": "object",
+            "properties": {
+                "changed_sections": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/books.ChangedSection"
+                    }
+                },
+                "since_version_id": {
+                    "type": "string"
+                },
+                "versions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/server.chapterVersionNote"
+                    }
+                }
+            }
+        },
+        "server.chapterDoneRequest": {
+            "type": "object",
+            "properties": {
+                "done": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "server.chapterProgressRequest": {
+            "type": "object",
+            "properties": {
+                "progression": {
+                    "type": "number"
+                },
+                "reached_end": {
+                    "type": "boolean"
+                },
+                "version_id": {
+                    "description": "VersionID is the version read; reaching its end marks it seen (A7).",
+                    "type": "string"
+                }
+            }
+        },
         "server.chapterProps": {
             "type": "object",
             "properties": {
@@ -2642,6 +3279,55 @@
                 },
                 "wordCount": {
                     "type": "integer"
+                }
+            }
+        },
+        "server.chapterStateResponse": {
+            "type": "object",
+            "properties": {
+                "furthest_progression": {
+                    "type": "number"
+                },
+                "seen_version_id": {
+                    "type": "string"
+                },
+                "state": {
+                    "type": "string",
+                    "enum": [
+                        "not_started",
+                        "reading",
+                        "read",
+                        "done"
+                    ]
+                },
+                "updated": {
+                    "description": "Updated is true when the chapter changed since the caller last saw it.",
+                    "type": "boolean"
+                }
+            }
+        },
+        "server.chapterVersionNote": {
+            "type": "object",
+            "properties": {
+                "change_summary": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "number": {
+                    "type": "integer"
+                }
+            }
+        },
+        "server.chapterVersionRequest": {
+            "type": "object",
+            "properties": {
+                "version_id": {
+                    "type": "string"
                 }
             }
         },
@@ -3528,6 +4214,78 @@
                 }
             }
         },
+        "server.positionAnchor": {
+            "type": "object",
+            "properties": {
+                "end_offset": {
+                    "type": "integer"
+                },
+                "prefix": {
+                    "type": "string"
+                },
+                "quote": {
+                    "type": "string"
+                },
+                "start_offset": {
+                    "type": "integer"
+                },
+                "suffix": {
+                    "type": "string"
+                }
+            }
+        },
+        "server.positionRequest": {
+            "type": "object",
+            "properties": {
+                "anchor": {
+                    "$ref": "#/definitions/server.positionAnchor"
+                },
+                "client_ts": {
+                    "type": "string"
+                },
+                "device_id": {
+                    "type": "string"
+                },
+                "document_id": {
+                    "type": "string"
+                },
+                "progression": {
+                    "type": "number"
+                },
+                "section_id": {
+                    "type": "string"
+                },
+                "version_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "server.positionResponse": {
+            "type": "object",
+            "properties": {
+                "anchor": {
+                    "$ref": "#/definitions/server.positionAnchor"
+                },
+                "client_ts": {
+                    "type": "string"
+                },
+                "device_id": {
+                    "type": "string"
+                },
+                "document_id": {
+                    "type": "string"
+                },
+                "progression": {
+                    "type": "number"
+                },
+                "section_id": {
+                    "type": "string"
+                },
+                "version_id": {
+                    "type": "string"
+                }
+            }
+        },
         "server.principalRef": {
             "type": "object",
             "properties": {
@@ -3581,6 +4339,26 @@
                 },
                 "version_id": {
                     "type": "string"
+                }
+            }
+        },
+        "server.readingStateResponse": {
+            "type": "object",
+            "properties": {
+                "chapters": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/server.chapterStateResponse"
+                    }
+                },
+                "positions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/server.positionResponse"
+                    }
+                },
+                "progress": {
+                    "$ref": "#/definitions/server.bookProgress"
                 }
             }
         },

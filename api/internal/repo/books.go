@@ -1,6 +1,8 @@
 package repo
 
 import (
+	"time"
+
 	"github.com/razorpay/slashdocs/api/internal/auth"
 	"github.com/razorpay/slashdocs/api/internal/books"
 )
@@ -41,4 +43,22 @@ type VersionNote struct {
 	Number        int
 	ChangeSummary string
 	CreatedAt     string
+}
+
+// ChapterRead is one reader's state in one chapter. A row exists once the
+// reader opens the chapter.
+type ChapterRead struct {
+	DocumentID, SeenVersionID, LastReadVersionID string
+	FurthestProgression                          float64
+	ReachedEnd, Done                             bool
+	LastOpenedAt                                 string
+}
+
+// ReadingPosition is one reader's place in a book on one device.
+type ReadingPosition struct {
+	DeviceID, DocumentID, VersionID, SectionID string
+	Anchor                                     Anchor
+	Progression                                float64
+	ClientTS                                   time.Time
+	UpdatedAt                                  string
 }

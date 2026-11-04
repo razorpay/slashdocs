@@ -400,15 +400,16 @@ matches AS (
         AND (search_folder.id = ANY($8::text[]) OR lower(search_folder.title) = ANY($8::text[]))
     )
   )
+  AND (COALESCE(cardinality($9::text[]), 0) = 0 OR d.id = ANY($9::text[]))
   AND NOT EXISTS (
-    SELECT 1 FROM unnest($9::text[]) AS requested_label
+    SELECT 1 FROM unnest($10::text[]) AS requested_label
     WHERE NOT EXISTS (
       SELECT 1 FROM document_labels dl
       WHERE dl.document_id=d.id AND dl.label = requested_label
     )
   )
-  AND ($10::timestamptz IS NULL OR d.updated_at >= $10)
-  AND ($11::timestamptz IS NULL OR d.updated_at < $11)
+  AND ($11::timestamptz IS NULL OR d.updated_at >= $11)
+  AND ($12::timestamptz IS NULL OR d.updated_at < $12)
   AND (
     (d.owner_type= $1 AND d.owner_id= $2)
     OR EXISTS (
@@ -423,7 +424,7 @@ matches AS (
     OR d.id IN (SELECT doc_id FROM docs_via_folder)
   )
   ORDER BY rank DESC, d.updated_at DESC, d.title
-  LIMIT $12
+  LIMIT $13
 )
 SELECT m.id, m.title, m.current_version_id, m.owner_type, m.owner_id,
        m.owner_email, m.owner_name, m.parent_folder_id, m.parent_folder_title, m.updated_at,
@@ -445,6 +446,7 @@ type SearchDocumentsParams struct {
 	ExcludeQuery   string
 	Owners         []string
 	Folders        []string
+	DocumentIds    []string
 	Labels         []string
 	UpdatedSince   pgtype.Timestamptz
 	UpdatedBefore  pgtype.Timestamptz
@@ -481,6 +483,7 @@ func (q *Queries) SearchDocuments(ctx context.Context, arg SearchDocumentsParams
 		arg.ExcludeQuery,
 		arg.Owners,
 		arg.Folders,
+		arg.DocumentIds,
 		arg.Labels,
 		arg.UpdatedSince,
 		arg.UpdatedBefore,

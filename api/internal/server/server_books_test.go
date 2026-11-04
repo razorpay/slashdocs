@@ -121,6 +121,15 @@ func TestEveryBookRouteHonoursTheFlag(t *testing.T) {
 		{http.MethodGet, "/v1/books/book_x/status", ""},
 		{http.MethodGet, "/v1/books/book_x", ""},
 		{http.MethodGet, "/v1/books/book_x/llms.txt", ""},
+		{http.MethodGet, "/v1/books/book_x/state", ""},
+		{http.MethodPut, "/v1/books/book_x/position", `{}`},
+		{http.MethodPost, "/v1/books/book_x/seen", ""},
+		{http.MethodGet, "/v1/books/book_x/search?q=x", ""},
+		{http.MethodPost, "/v1/books/book_x/chapters/doc_x/open", `{}`},
+		{http.MethodPost, "/v1/books/book_x/chapters/doc_x/progress", `{}`},
+		{http.MethodPut, "/v1/books/book_x/chapters/doc_x/done", `{"done":true}`},
+		{http.MethodPost, "/v1/books/book_x/chapters/doc_x/seen", ""},
+		{http.MethodGet, "/v1/books/book_x/chapters/doc_x/changes", ""},
 	}
 	for _, r := range routes {
 		t.Run(r.method+" "+r.path, func(t *testing.T) {

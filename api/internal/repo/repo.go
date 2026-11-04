@@ -132,6 +132,7 @@ type DocumentSearch struct {
 	Owners        []string // The owner's ID, email, or email name is one of these.
 	Folders       []string // A folder that holds the document has one of these titles or IDs.
 	Labels        []string // The document has every label.
+	DocumentIDs   []string // The document is one of these. Unlike the other fields, IDs keep their case.
 	UpdatedSince  time.Time
 	UpdatedBefore time.Time
 	// IncludeLabels controls response hydration only; Labels still filter
@@ -484,4 +485,31 @@ type Repository interface {
 	// IndexVersionSections indexes the sections of versions of documents in
 	// book folders that are not indexed yet. It returns how many it indexed.
 	IndexVersionSections(ctx context.Context) (int, error)
+
+	// Reading state belongs to user principals only (D5); userID is a users
+	// row.
+	//
+	// GetChapterReads returns the reader's rows for those of docIDs that they
+	// have opened, keyed by document id.
+	GetChapterReads(ctx context.Context, userID string, docIDs []string) (map[string]ChapterRead, error)
+	// OpenChapter records that the reader opened the chapter at versionID.
+	// The first open also marks that version seen; later opens never change
+	// the seen version (R18).
+	OpenChapter(ctx context.Context, userID, documentID, versionID string) error
+	// UpdateChapterProgress raises the furthest progression and records that
+	// the end was reached. It does nothing for a chapter never opened.
+	UpdateChapterProgress(ctx context.Context, userID, documentID string, progression float64, reachedEnd bool) error
+	// SetChapterDone sets or clears Done. It does nothing for a chapter never
+	// opened.
+	SetChapterDone(ctx context.Context, userID, documentID string, done bool) error
+	// MarkChapterSeen moves the seen version forward to versionID, never
+	// backwards (A7). Callers check that versionID belongs to documentID.
+	MarkChapterSeen(ctx context.Context, userID, documentID, versionID string) error
+	// SaveReadingPosition stores the device's position in the book. It
+	// returns false, and changes nothing, when a position with the same or a
+	// later client timestamp is stored already.
+	SaveReadingPosition(ctx context.Context, userID, bookID string, p ReadingPosition) (bool, error)
+	// ListReadingPositions lists the reader's positions in the book on every
+	// device, newest client timestamp first.
+	ListReadingPositions(ctx context.Context, userID, bookID string) ([]ReadingPosition, error)
 }
