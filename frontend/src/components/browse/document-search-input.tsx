@@ -9,6 +9,7 @@ import {
   X,
 } from "lucide-react";
 import { api } from "@/api";
+import { useDebounced } from "@/lib/hooks";
 import { Button } from "@/components/ui/button";
 import { Avatar } from "@/components/ui/misc";
 import { principalColor } from "@/lib/principals";
@@ -156,7 +157,7 @@ export function DocumentSearchInput({
             choose(activeIndex);
           }
         }}
-        placeholder="Search every word, even the footnotes…"
+        placeholder="Search every word…"
         className="h-14 w-full rounded-[18px] bg-[var(--color-surface)] pl-14 pr-14 text-base text-transparent caret-[var(--color-fg)] shadow-[0_12px_40px_rgb(20_30_48/0.1)] outline-none placeholder:text-[var(--color-fg-muted)] dark:shadow-[0_14px_36px_rgb(0_0_0/0.42)]"
         role="combobox"
         aria-label="Search documents"
@@ -386,13 +387,4 @@ function dateValues(typed: string): { value: string; detail: string }[] {
 function dayLabel(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${pad(date.getDate())}-${pad(date.getMonth() + 1)}-${pad(date.getFullYear() % 100)}`;
-}
-
-function useDebounced(value: string, delay: number): string {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const timeout = window.setTimeout(() => setDebounced(value), delay);
-    return () => window.clearTimeout(timeout);
-  }, [value, delay]);
-  return debounced;
 }

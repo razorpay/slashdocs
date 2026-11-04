@@ -1,0 +1,90 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import {
+  MemoryRouter,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { api, type Document } from "@/api";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { DocumentsPage } from "./documents";
+
+const plan: Document = { id: "doc_plan", title: "Q3 plan" };
+
+function Search() {
+  return <div data-testid="search">{useLocation().search}</div>;
+}
+
+// A stand-in for the document page, with the Back of the browser.
+function DocumentStub() {
+  const nav = useNavigate();
+  return <button onClick={() => nav(-1)}>Back</button>;
+}
+
+function renderDocuments(entry: string) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <TooltipProvider>
+        <MemoryRouter initialEntries={[entry]}>
+          <Routes>
+            <Route
+              path="/app/documents"
+              element={
+                <>
+                  <DocumentsPage />
+                  <Search />
+                </>
+              }
+            />
+            <Route path="/app/d/:id" element={<DocumentStub />} />
+          </Routes>
+        </MemoryRouter>
+      </TooltipProvider>
+    </QueryClientProvider>,
+  );
+}
+
+describe("DocumentsPage search", () => {
+  beforeEach(() => {
+    // jsdom has no media queries.
+    window.matchMedia = () =>
+      ({
+        matches: false,
+        addEventListener() {},
+        removeEventListener() {},
+      }) as unknown as MediaQueryList;
+    vi.spyOn(api, "me").mockResolvedValue({} as Awaited<ReturnType<typeof api.me>>);
+    vi.spyOn(api, "listPins").mockResolvedValue({ items: [] });
+    vi.spyOn(api, "listFeatured").mockResolvedValue({ items: [] });
+    vi.spyOn(api, "listFolders").mockResolvedValue({ items: [], has_more: false });
+    vi.spyOn(api, "listDocuments").mockImplementation(async (q) => ({
+      items: q ? [{ ...plan, snippet: "the \u0002plan\u0003" }] : [plan],
+      has_more: false,
+    }));
+  });
+  afterEach(cleanup);
+
+  it("keeps the query in the URL, so Back from a result shows the results", async () => {
+    const user = userEvent.setup();
+    renderDocuments("/app/documents");
+    const input = await screen.findByRole("combobox", { name: "Search documents" });
+    await user.type(input, "plan");
+    await waitFor(() =>
+      expect(screen.getByTestId("search")).toHaveTextContent("?q=plan"),
+    );
+    await waitFor(() => expect(api.listDocuments).toHaveBeenLastCalledWith("plan", 0));
+
+    await user.click(await screen.findByRole("link", { name: /Q3 plan/ }));
+    await user.click(screen.getByRole("button", { name: "Back" }));
+
+    expect(
+      await screen.findByRole("combobox", { name: "Search documents" }),
+    ).toHaveValue("plan");
+    expect(screen.getByRole("heading", { name: "Results" })).toBeInTheDocument();
+  });
+});
