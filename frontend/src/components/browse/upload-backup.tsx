@@ -26,7 +26,7 @@ import { queryKeys } from "@/lib/queryKeys";
 export function UploadBackupMenuItem({ onSelect }: { onSelect: () => void }) {
   return (
     <DropdownItem onSelect={onSelect}>
-      <Upload className="h-4 w-4" /> Upload HTML (backup)
+      <Upload className="h-4 w-4" /> Upload an HTML file
     </DropdownItem>
   );
 }
@@ -67,11 +67,17 @@ export function UploadBackupDialog({
     },
     onError: (e) => toast.error(errorMessage(e, "Upload failed")),
   });
+  // A file fills an empty title with the title that the file gives itself.
+  const pick = (next: File | null) => {
+    setFile(next);
+    if (next && !title.trim())
+      void htmlTitle(next).then((found) => setTitle((typed) => typed || found));
+  };
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Upload HTML (backup)</DialogTitle>
+          <DialogTitle>Upload an HTML file</DialogTitle>
           <DialogDescription>
             Agents normally publish via the CLI. Use this only as a manual fallback.
           </DialogDescription>
@@ -83,12 +89,17 @@ export function UploadBackupDialog({
             if (file) m.mutate();
           }}
         >
-          <Input
-            placeholder="Title"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-          />
-          <HtmlFileInput file={file} onFile={setFile} />
+          <label className="block space-y-1">
+            <span className="block text-xs font-medium text-[var(--color-fg-muted)]">
+              Title
+            </span>
+            <Input
+              placeholder={file?.name || "Untitled"}
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+            />
+          </label>
+          <HtmlFileInput file={file} onFile={pick} />
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               Cancel
@@ -101,4 +112,11 @@ export function UploadBackupDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+// The title of an HTML file: its <title>, or else its first <h1>.
+async function htmlTitle(file: File) {
+  const doc = new DOMParser().parseFromString(await file.text(), "text/html");
+  const h1 = doc.querySelector("h1")?.textContent?.replace(/\s+/g, " ");
+  return (doc.title || h1 || "").trim();
 }

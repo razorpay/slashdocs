@@ -107,14 +107,16 @@ describe("dialogs launched from a dropdown menu", () => {
       />,
     );
 
-    const dialog = await openFromMenuAndBlurWindow(user, "Upload HTML (backup)");
+    const dialog = await openFromMenuAndBlurWindow(user, "Upload an HTML file");
     const upload = screen.getByRole("button", { name: "Upload" });
     expect(upload).toBeDisabled();
     await chooseFile(user, dialog);
     expect(upload).toBeEnabled();
+    // The empty title takes the file's first heading.
+    await waitFor(() => expect(screen.getByLabelText("Title")).toHaveValue("hi"));
     await user.click(upload);
 
-    await waitFor(() => expect(create).toHaveBeenCalledWith("report.html", HTML));
+    await waitFor(() => expect(create).toHaveBeenCalledWith("hi", HTML));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
