@@ -229,15 +229,19 @@ func (s *Store) RequestDocumentAccess(ctx context.Context, requester auth.Princi
 }
 
 // ListAccessRequests returns the requests for access to a document, the
-// newest first.
-func (s *Store) ListAccessRequests(ctx context.Context, documentID string) ([]repo.AccessRequest, error) {
+// newest first. With a requester, it returns only theirs.
+func (s *Store) ListAccessRequests(ctx context.Context, documentID string, requester *auth.Principal) ([]repo.AccessRequest, error) {
+	var only auth.Principal
+	if requester != nil {
+		only = *requester
+	}
 	rows, err := s.db.Query(ctx, `SELECT r.requester_type, r.requester_id,
 		COALESCE(u.email,''), COALESCE(u.name,sa.name,''), r.requested_at
 	FROM document_access_requests r
 	LEFT JOIN users u ON r.requester_type='user' AND u.id=r.requester_id
 	LEFT JOIN service_accounts sa ON r.requester_type='service_account' AND sa.id=r.requester_id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
-	WHERE r.document_id=$1
-	ORDER BY r.requested_at DESC`, documentID)
+	WHERE r.document_id=$1 AND ($2='' OR (r.requester_type=$2 AND r.requester_id=$3))
+	ORDER BY r.requested_at DESC`, documentID, only.Type, only.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -253,6 +257,18 @@ func (s *Store) ListAccessRequests(ctx context.Context, documentID string) ([]re
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// DeclineAccessRequest removes a request for access to a document, and its
+// notification if that has not gone out yet.
+func (s *Store) DeclineAccessRequest(ctx context.Context, documentID string, requester auth.Principal) error {
+	_, err := s.db.Exec(ctx, `WITH outbox AS (
+		DELETE FROM document_access_request_notification_outbox
+		WHERE document_id=$1 AND requester_type=$2 AND requester_id=$3
+	)
+	DELETE FROM document_access_requests WHERE document_id=$1 AND requester_type=$2 AND requester_id=$3`,
+		documentID, requester.Type, requester.ID)
+	return err
 }
 
 func (s *Store) NotificationPreferences(ctx context.Context, p auth.Principal, documentID string) (repo.NotificationPreferences, error) {

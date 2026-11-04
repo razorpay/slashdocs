@@ -360,6 +360,7 @@ func (s *Server) routes(deps dependencies) {
 	authed.GET("/documents", h.listDocuments)
 	authed.POST("/documents/:id/access-requests", activityLimit, h.requestDocumentAccess)
 	authed.GET("/documents/:id/access-requests", h.listDocumentAccessRequests)
+	authed.DELETE("/documents/:id/access-requests/:requester_type/:requester_id", h.declineDocumentAccessRequest)
 	authed.GET("/documents/:id/access", h.documentAccess)
 	authed.PATCH("/documents/:id", h.patchDocument)
 	authed.DELETE("/documents/:id", h.deleteDocument)

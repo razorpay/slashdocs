@@ -591,7 +591,7 @@ func registerMCPDocumentAccessTools(server *mcpserver.MCPServer, api mcpAPIAdapt
 	})
 
 	server.AddTool(mcp.NewTool("list_document_access_requests", readOnlyOptions(
-		mcp.WithDescription("List requests for access to a document, the newest first. Needs the editor role. Share the document with a requester to grant access and remove the request."), mcpDocumentID(),
+		mcp.WithDescription("List requests for access to a document, the newest first. Without the editor role, it lists only your own request. Share the document with a requester to grant access and remove the request."), mcpDocumentID(),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		doc, invalid := mcpRequired(request, "document_id")
 		if invalid != nil {

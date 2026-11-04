@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/razorpay/slashdocs/api/internal/auth"
 	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
@@ -105,7 +106,7 @@ func (h handlers) requestDocumentAccess(c *gin.Context) {
 
 // listDocumentAccessRequests godoc
 // @Summary List requests for access to a document
-// @Description The newest first. A grant on the document to the requester removes the request.
+// @Description The newest first. People who manage access see every request. Other callers see only their own request, so that they know it waits. A grant on the document to the requester removes the request.
 // @Tags documents
 // @Security bearerAuth
 // @Security cookieAuth
@@ -113,13 +114,47 @@ func (h handlers) requestDocumentAccess(c *gin.Context) {
 // @Success 200 {object} listResponse[repo.AccessRequest]
 // @Router /v1/documents/{id}/access-requests [get]
 func (h handlers) listDocumentAccessRequests(c *gin.Context) {
-	if !h.needDocRole(c, c.Param("id"), repo.RoleEditor) {
+	ctx, p := c.Request.Context(), current(c)
+	role, err := h.deps.repository.RoleForDocument(ctx, *p, c.Param("id"))
+	if err != nil {
+		internalErr(c, err)
 		return
 	}
-	items, err := h.deps.repository.ListAccessRequests(c.Request.Context(), c.Param("id"))
+	var only *auth.Principal
+	if !atLeast(role, repo.RoleEditor) {
+		only = p
+	}
+	items, err := h.deps.repository.ListAccessRequests(ctx, c.Param("id"), only)
 	if err != nil {
 		internalErr(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, listResponse[repo.AccessRequest]{Items: items})
+}
+
+// declineDocumentAccessRequest godoc
+// @Summary Decline a request for access to a document
+// @Description Removes the request without a grant. The requester can ask again.
+// @Tags documents
+// @Security bearerAuth
+// @Security cookieAuth
+// @Param id path string true "Document ID"
+// @Param requester_type path string true "Requester type" Enums(user, service_account)
+// @Param requester_id path string true "Requester ID"
+// @Success 204
+// @Router /v1/documents/{id}/access-requests/{requester_type}/{requester_id} [delete]
+func (h handlers) declineDocumentAccessRequest(c *gin.Context) {
+	if !h.needDocRole(c, c.Param("id"), repo.RoleEditor) {
+		return
+	}
+	requester := auth.Principal{Type: auth.PrincipalType(c.Param("requester_type")), ID: c.Param("requester_id")}
+	if requester.Type != auth.PrincipalUser && requester.Type != auth.PrincipalServiceAccount {
+		badRequest(c, "requester_type must be user or service_account")
+		return
+	}
+	if err := h.deps.repository.DeclineAccessRequest(c.Request.Context(), c.Param("id"), requester); err != nil {
+		internalErr(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }

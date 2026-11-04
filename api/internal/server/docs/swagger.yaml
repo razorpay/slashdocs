@@ -1250,8 +1250,9 @@ paths:
       - documents
   /v1/documents/{id}/access-requests:
     get:
-      description: The newest first. A grant on the document to the requester removes
-        the request.
+      description: The newest first. People who manage access see every request. Other
+        callers see only their own request, so that they know it waits. A grant on
+        the document to the requester removes the request.
       parameters:
       - description: Document ID
         in: path
@@ -1290,6 +1291,37 @@ paths:
       - bearerAuth: []
       - cookieAuth: []
       summary: Request access to a document
+      tags:
+      - documents
+  /v1/documents/{id}/access-requests/{requester_type}/{requester_id}:
+    delete:
+      description: Removes the request without a grant. The requester can ask again.
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Requester type
+        enum:
+        - user
+        - service_account
+        in: path
+        name: requester_type
+        required: true
+        type: string
+      - description: Requester ID
+        in: path
+        name: requester_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Decline a request for access to a document
       tags:
       - documents
   /v1/documents/{id}/approvals:
