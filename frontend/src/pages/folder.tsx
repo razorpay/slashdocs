@@ -7,6 +7,7 @@ import { useTitle } from "@/lib/use-title";
 import {
   ChevronRight,
   Folder as FolderIcon,
+  FolderInput,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -53,6 +54,8 @@ import { UnifiedGrid } from "@/components/browse/unified-grid";
 import { UnifiedTable } from "@/components/browse/unified-table";
 import { ViewModeToggle } from "@/components/browse/view-mode-toggle";
 import { AccessWarningDialog, NewFolderDialog } from "@/components/browse/dialogs";
+import { MoveDialog } from "@/components/browse/move-dialog";
+import { useMoveResource } from "@/components/browse/use-resource-actions";
 import { useBridgeHost } from "./use-bridge-host";
 import { useDocumentEvents } from "./use-document-stream";
 import {
@@ -109,6 +112,7 @@ export function FolderPage() {
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
   const [renameTitle, setRenameTitle] = useState("");
 
   const delFolder = useMutation({
@@ -139,46 +143,7 @@ export function FolderPage() {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
   );
-  const [accessWarning, setAccessWarning] = useState<string | null>(null);
-
-  const moveMutation = useMutation({
-    mutationFn: async ({
-      dragType,
-      dragId,
-      targetFolderId,
-    }: {
-      dragType: string;
-      dragId: string;
-      targetFolderId: string;
-    }) => {
-      const isDoc = dragType === DRAG_TYPE.document;
-      if (targetFolderId === "__root__") {
-        if (isDoc) {
-          return api.moveDocumentToRoot(id, dragId);
-        } else {
-          return api.updateFolder(dragId, undefined, null);
-        }
-      }
-      if (!isDoc) {
-        return api.updateFolder(dragId, undefined, targetFolderId);
-      } else {
-        return api.moveDocumentToFolder(targetFolderId, dragId);
-      }
-    },
-    onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: queryKeys.foldersAll() });
-      qc.invalidateQueries({ queryKey: queryKeys.documents() });
-      qc.invalidateQueries({ queryKey: queryKeys.pins() });
-      const warning = (data as Record<string, unknown>)?.permission_warning as
-        { message?: string } | undefined;
-      if (warning?.message) {
-        setAccessWarning(warning.message);
-      } else {
-        toast.success("Moved.");
-      }
-    },
-    onError: (e) => toast.error(errorMessage(e, "Move failed")),
-  });
+  const { move, warning, clearWarning } = useMoveResource();
 
   if (folder.isLoading || contents.isLoading) {
     return (
@@ -244,7 +209,12 @@ export function FolderPage() {
     const targetFolderId = (over.id as string).replace("drop:", "");
     if (dragType === DRAG_TYPE.folder && dragId === targetFolderId) return;
     if (targetFolderId === id) return;
-    moveMutation.mutate({ dragType, dragId, targetFolderId });
+    move.mutate({
+      type: dragType === DRAG_TYPE.folder ? "folder" : "document",
+      id: dragId,
+      from: id,
+      to: targetFolderId === "__root__" ? null : targetFolderId,
+    });
   }
 
   return (
@@ -343,6 +313,9 @@ export function FolderPage() {
                 <DropdownItem onSelect={() => setNewFolderOpen(true)}>
                   <Plus className="h-4 w-4" /> New subfolder
                 </DropdownItem>
+                <DropdownItem onSelect={() => setMoveOpen(true)}>
+                  <FolderInput className="h-4 w-4" /> Move folder
+                </DropdownItem>
                 <DropdownItem
                   onSelect={() => window.setTimeout(() => setDeleteOpen(true), 0)}
                   className="text-[var(--color-danger)]"
@@ -388,7 +361,7 @@ export function FolderPage() {
                   slashdocs docs create file.html{" "}
                   <span className="whitespace-nowrap">--folder-id</span> {id}
                 </code>
-                , or drag documents onto this folder on the Documents page.
+                , or open a document and choose Move to folder in its More menu.
               </>
             }
             action={
@@ -445,10 +418,16 @@ export function FolderPage() {
           </DialogContent>
         </Dialog>
 
-        <AccessWarningDialog
-          warning={accessWarning}
-          onClose={() => setAccessWarning(null)}
+        <MoveDialog
+          open={moveOpen}
+          onOpenChange={setMoveOpen}
+          type="folder"
+          id={id}
+          title={f.title}
+          parentId={f.parent_folder_id}
         />
+
+        <AccessWarningDialog warning={warning} onClose={clearWarning} />
       </Page>
       <BrowseDragOverlay activeDrag={activeDrag} viewMode={viewMode} />
     </DndContext>

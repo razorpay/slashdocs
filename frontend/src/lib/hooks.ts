@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, APIError, type Principal } from "@/api";
 import { ROLE_RANK } from "@/lib/constants";
@@ -52,4 +53,14 @@ export function useDocumentRole(
     role,
     canEdit: (ROLE_RANK[role || ""] || 0) >= ROLE_RANK.editor,
   };
+}
+
+// useDebounced is the value after it stays the same for `delay` ms.
+export function useDebounced<T>(value: T, delay: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebounced(value), delay);
+    return () => window.clearTimeout(timeout);
+  }, [value, delay]);
+  return debounced;
 }

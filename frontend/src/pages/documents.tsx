@@ -1,15 +1,10 @@
 import { useTitle } from "@/lib/use-title";
 import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useOnboarding, autoMarkFirstDoc, onboardingProgress } from "@/lib/onboarding";
-import {
-  useInfiniteQuery,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
-import { toast } from "sonner";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { errorMessage } from "@/lib/errors";
+import { useDebounced } from "@/lib/hooks";
 import { MoreHorizontal, Plus, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Page } from "@/components/layout/page";
@@ -20,6 +15,7 @@ import { api, APIError, docID, docTitle, type Folder, type FolderEntry } from "@
 import { queryKeys } from "@/lib/queryKeys";
 import { viewModeStore } from "@/lib/view-mode";
 import { DRAG_TYPE, type ActiveDrag } from "@/components/browse/drag";
+import { useMoveResource } from "@/components/browse/use-resource-actions";
 import { BrowseDragOverlay } from "@/components/browse/drag-overlay";
 import { UnifiedGrid } from "@/components/browse/unified-grid";
 import { UnifiedTable } from "@/components/browse/unified-table";
@@ -43,12 +39,12 @@ import {
 
 export function DocumentsPage() {
   useTitle("Documents");
-  const [q, setQ] = useState("");
-  const [debouncedQ, setDebouncedQ] = useState("");
-  useEffect(() => {
-    const t = window.setTimeout(() => setDebouncedQ(q.trim()), 250);
-    return () => window.clearTimeout(t);
-  }, [q]);
+  // The search is in the URL, so Back from a result returns to the results.
+  // Typing replaces the history entry, so Back does not step through letters.
+  const [params, setParams] = useSearchParams();
+  const q = params.get("q") || "";
+  const setQ = (next: string) => setParams(next ? { q: next } : {}, { replace: true });
+  const debouncedQ = useDebounced(q.trim(), 250);
   const me = useQuery({ queryKey: queryKeys.me(), queryFn: api.me });
   // The server sends documents a page at a time.
   const docs = useInfiniteQuery({
@@ -140,43 +136,13 @@ export function DocumentsPage() {
   const viewMode = viewModeStore.useStore();
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
-  const qc = useQueryClient();
 
   // Drag and drop
   const [activeDrag, setActiveDrag] = useState<ActiveDrag | null>(null);
-  const [accessWarning, setAccessWarning] = useState<string | null>(null);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
   );
-  const moveMutation = useMutation({
-    mutationFn: async ({
-      dragType,
-      dragId,
-      targetFolderId,
-    }: {
-      dragType: string;
-      dragId: string;
-      targetFolderId: string;
-    }) => {
-      if (dragType === DRAG_TYPE.folder) {
-        return api.updateFolder(dragId, undefined, targetFolderId);
-      } else {
-        return api.moveDocumentToFolder(targetFolderId, dragId);
-      }
-    },
-    onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: queryKeys.foldersAll() });
-      qc.invalidateQueries({ queryKey: queryKeys.documents() });
-      const warning = (data as Record<string, unknown>)?.permission_warning as
-        { message?: string } | undefined;
-      if (warning?.message) {
-        setAccessWarning(warning.message);
-      } else {
-        toast.success("Moved.");
-      }
-    },
-    onError: (e) => toast.error(errorMessage(e, "Move failed")),
-  });
+  const { move, warning, clearWarning } = useMoveResource();
 
   function handleDragStart(event: DragStartEvent) {
     const raw = event.active.id as string;
@@ -200,7 +166,11 @@ export function DocumentsPage() {
     const [dragType, dragId] = (active.id as string).split(":", 2);
     const targetFolderId = (over.id as string).replace("drop:", "");
     if (dragType === DRAG_TYPE.folder && dragId === targetFolderId) return;
-    moveMutation.mutate({ dragType, dragId, targetFolderId });
+    move.mutate({
+      type: dragType === DRAG_TYPE.folder ? "folder" : "document",
+      id: dragId,
+      to: targetFolderId,
+    });
   }
 
   if (docs.isLoading) {
@@ -353,10 +323,7 @@ export function DocumentsPage() {
       <NewFolderDialog open={newFolderOpen} onOpenChange={setNewFolderOpen} />
       <UploadBackupDialog open={uploadOpen} onOpenChange={setUploadOpen} />
 
-      <AccessWarningDialog
-        warning={accessWarning}
-        onClose={() => setAccessWarning(null)}
-      />
+      <AccessWarningDialog warning={warning} onClose={clearWarning} />
     </Page>
   );
 }
