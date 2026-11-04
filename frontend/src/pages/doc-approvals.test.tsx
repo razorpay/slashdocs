@@ -29,6 +29,8 @@ type FetchOptions = {
     }
   >;
   users?: Array<{ id: string; email: string; name: string }>;
+  // The approvals endpoint fails with this status.
+  approvalsStatus?: number;
 };
 
 // Decisions the page posted, in order.
@@ -62,6 +64,12 @@ function installFetch(options: FetchOptions = {}, posted: PostedDecision[] = [])
           owner: OWNER,
           current_version_id: options.currentVersionID ?? "ver_2",
         });
+      }
+      if (url.startsWith("/v1/documents/doc_1/approvals") && options.approvalsStatus) {
+        return jsonResponse(
+          { error: { code: "unavailable", message: "Approvals are unavailable." } },
+          options.approvalsStatus,
+        );
       }
       if (url.startsWith("/v1/documents/doc_1/approvals")) {
         const asked = new URL(url, "http://x").searchParams.get("version") || "";
@@ -234,6 +242,34 @@ describe("ApprovalsDialog", () => {
     );
   });
 
+  it("picks the only match with one Enter", async () => {
+    installFetch({
+      users: [{ id: "usr_rev", email: "reviewer@example.com", name: "Reviewer" }],
+    });
+    renderDialog({ isOwner: true });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Request approval" }));
+    const input = await screen.findByRole("combobox", { name: "Approver" });
+    await user.type(input, "rev");
+    expect(await screen.findByRole("option", { name: /Reviewer/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await user.keyboard("{Enter}");
+    expect(input).toHaveValue("reviewer@example.com");
+  });
+
+  it("says that the approvals did not load, and offers Retry", async () => {
+    installFetch({ approvalsStatus: 503 });
+    renderDialog({ status: "pending", approved: 0, total: 1, isOwner: true });
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Open approvals/ }),
+    );
+    expect(await screen.findByText("Could not load approvals")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+    expect(screen.queryByText("No approvers assigned")).toBeNull();
+  });
+
   it("shows nothing to a non-owner when no approvers are assigned", async () => {
     installFetch();
     renderDialog({ isOwner: false });
@@ -385,7 +421,11 @@ describe("the approver's review actions", () => {
     installFetch({ approvalsByVersion: { ver_2: pendingOwn } }, posted);
     renderDialog({ status: "pending", approved: 0, total: 1 });
     await openApprovals();
-    await userEvent.click(await screen.findByRole("button", { name: "Approve" }));
+    // The decision takes the first focus, not Close.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Approve" })).toHaveFocus(),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
 
     await waitFor(() => expect(posted).toHaveLength(1));
     expect(posted[0]).toEqual({ version_id: "ver_2", decision: "approved" });

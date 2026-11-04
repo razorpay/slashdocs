@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Check, CircleDashed, ClipboardCheck, X } from "lucide-react";
+import { Check, ClipboardCheck, Clock, X } from "lucide-react";
 
 import {
   api,
@@ -21,6 +21,9 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/input";
+import { RetryButton, revealOnHover, Skeleton } from "@/components/ui/misc";
+import { ErrorState } from "@/components/error-state";
+import { cn } from "@/lib/cn";
 import { ADDRESS_PATTERN, COMMENT_STATUS } from "@/lib/constants";
 import { errorMessage } from "@/lib/errors";
 import { queryKeys } from "@/lib/queryKeys";
@@ -33,7 +36,7 @@ const STATUS_BADGE: Record<
   { label: string; variant: "success" | "warning" | "danger"; Icon: typeof Check }
 > = {
   approved: { label: "Approved", variant: "success", Icon: Check },
-  pending: { label: "Pending", variant: "warning", Icon: CircleDashed },
+  pending: { label: "Pending", variant: "warning", Icon: Clock },
   rejected: { label: "Rejected", variant: "danger", Icon: X },
 };
 
@@ -215,7 +218,7 @@ function decisionLabel(item: ApprovalListItem, current: boolean) {
   }
   return (
     <span className="flex items-center gap-1 text-xs text-[var(--color-fg-muted)]">
-      <CircleDashed className="h-3.5 w-3.5" /> Pending
+      <Clock className="h-3.5 w-3.5" /> Pending
       {current && item.earlier
         ? ` · ${item.earlier.decision === "approved" ? "approved" : "rejected"} before the latest edits`
         : null}
@@ -343,8 +346,11 @@ export function ReviewActions({
       ) : (
         <div className="flex flex-wrap gap-2">
           {own.decision !== "approved" ? (
+            // The decision is why the approver opens the dialog, so Approve
+            // takes the first focus.
             <Button
               size="sm"
+              autoFocus
               disabled={decide.isPending}
               onClick={() =>
                 mine.length > 0
@@ -358,7 +364,8 @@ export function ReviewActions({
           {own.decision !== "rejected" ? (
             <Button
               size="sm"
-              variant="danger"
+              variant="outline"
+              className="text-[var(--color-danger)]"
               disabled={decide.isPending}
               onClick={() => setRejectOpen(true)}
             >
@@ -368,7 +375,8 @@ export function ReviewActions({
           {own.decision && own.id ? (
             <Button
               size="sm"
-              variant="danger"
+              variant="outline"
+              className="text-[var(--color-danger)]"
               disabled={revoke.isPending}
               onClick={() => revoke.mutate(own.id!)}
             >
@@ -510,38 +518,48 @@ export function Approvals({ onClose }: { onClose?: () => void }) {
     enabled: !!docId,
   });
 
-  const items = approvals.data?.items || [];
   const summary = approvals.data?.summary;
 
   return (
     <div className="flex max-h-[70vh] flex-col">
-      <div className="border-b border-[var(--color-border)] px-6 pb-3">
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-xs text-[var(--color-fg-muted)]">
-            {!summary?.total
-              ? "No approvers assigned"
-              : isCurrentVersion
-                ? "On the current document"
-                : "On earlier content"}
-          </p>
-          <ApprovalStatusBadge
-            status={approvals.data?.status}
-            approved={summary?.approved}
-            total={summary?.total}
-          />
-        </div>
+      <div className="flex min-h-9 items-center justify-between gap-2 border-b border-[var(--color-border)] px-6 pb-3">
+        {summary ? (
+          <>
+            <p className="text-xs text-[var(--color-fg-muted)]">
+              {!summary.total
+                ? "No approvers assigned"
+                : isCurrentVersion
+                  ? "On the current document"
+                  : "On earlier content"}
+            </p>
+            <ApprovalStatusBadge
+              status={approvals.data?.status}
+              approved={summary.approved}
+              total={summary.total}
+            />
+          </>
+        ) : null}
       </div>
       <div className="flex-1 space-y-1 overflow-y-auto px-4 py-3">
-        {approvals.isLoading ? (
-          <p className="px-2 text-xs text-[var(--color-fg-muted)]">Loading…</p>
-        ) : items.length === 0 ? (
+        {approvals.isPending ? (
+          <>
+            <Skeleton className="h-9 w-full" />
+            <Skeleton className="h-9 w-full" />
+          </>
+        ) : approvals.isError ? (
+          <ErrorState
+            title="Could not load approvals"
+            description={errorMessage(approvals.error, "Try again in a moment.")}
+            action={<RetryButton query={approvals} />}
+          />
+        ) : approvals.data.items.length === 0 ? (
           isOwner ? (
             <p className="px-2 text-xs text-[var(--color-fg-muted)]">
               Add someone who has not worked on this document to request a review.
             </p>
           ) : null
         ) : (
-          items.map((item) => (
+          approvals.data.items.map((item) => (
             <ApproverRow
               key={item.approver.type + ":" + item.approver.id}
               item={item}
@@ -615,7 +633,10 @@ function ApproverRow({
         <Button
           size="icon"
           variant="ghost"
-          className="h-6 w-6 opacity-0 transition-opacity group-hover:opacity-100"
+          className={cn(
+            "h-6 w-6 transition-opacity pointer-coarse:h-10 pointer-coarse:w-10",
+            revealOnHover,
+          )}
           aria-label={`Remove ${label} as approver`}
           disabled={remove.isPending}
           onClick={() => remove.mutate(request.id)}
@@ -657,6 +678,7 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
       name: u.name || u.email || u.id,
       detail: u.name ? u.email : undefined,
       address: u.email || "",
+      icon: <PersonAvatar who={u} size={24} />,
     }));
   return (
     <form
