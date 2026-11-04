@@ -49,7 +49,7 @@ func TestPostgresDecisionWaitsForAConcurrentPush(t *testing.T) {
 
 			pushed := make(chan error, 1)
 			go func() {
-				_, err := store.CreateVersion(ctx, doc.ID, ver.ID, "", []byte("<html>v2</html>"), tc.pusher)
+				_, err := store.CreateVersion(ctx, doc.ID, ver.ID, "", "", []byte("<html>v2</html>"), tc.pusher)
 				pushed <- err
 			}()
 			if err := waitForLockWaiters(waitCtx, store.Pool(), 1); err != nil {
@@ -93,7 +93,7 @@ func TestPostgresPushRemovesTheApproverWhoMadeIt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := store.CreateVersion(ctx, doc.ID, ver.ID, "", []byte("<html>v1</html>"), editor); err != nil {
+	if _, err := store.CreateVersion(ctx, doc.ID, ver.ID, "", "", []byte("<html>v1</html>"), editor); err != nil {
 		t.Fatal(err)
 	}
 

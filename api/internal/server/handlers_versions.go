@@ -97,7 +97,7 @@ func (h handlers) createVersion(c *gin.Context) {
 		return
 	}
 	observeHTML("version_create", len(html))
-	v, err := h.deps.repository.CreateVersion(c.Request.Context(), c.Param("id"), c.PostForm("base_version_id"), c.PostForm("change_summary"), html, *p)
+	v, err := h.deps.repository.CreateVersion(c.Request.Context(), c.Param("id"), c.PostForm("base_version_id"), "", c.PostForm("change_summary"), html, *p)
 	// A conflict means the base version was stale; report the current one.
 	if errors.Is(err, repo.ErrVersionConflict) {
 		versionConflict(c, err, "base_version_id is stale")
@@ -201,7 +201,7 @@ func (h handlers) saveEdits(ctx context.Context, docID string, in editDocumentRe
 		summary = textedit.Summary(in.Edits)
 	}
 	observeHTML("version_edit", len(edited))
-	v, err := h.deps.repository.CreateVersion(ctx, docID, base, summary, edited, author)
+	v, err := h.deps.repository.CreateVersion(ctx, docID, base, "", summary, edited, author)
 	return v, base, err
 }
 
@@ -275,7 +275,7 @@ func (h handlers) restoreVersion(c *gin.Context) {
 	if summary == "" {
 		summary = restoredSummary(old)
 	}
-	v, err := h.deps.repository.CreateVersion(ctx, old.DocumentID, d.CurrentVersionID, summary, html, *current(c))
+	v, err := h.deps.repository.CreateVersion(ctx, old.DocumentID, d.CurrentVersionID, "", summary, html, *current(c))
 	if errors.Is(err, repo.ErrVersionConflict) {
 		versionConflict(c, err, "the document changed while it was restored; try again")
 		return
