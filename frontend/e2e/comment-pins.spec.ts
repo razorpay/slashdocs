@@ -149,6 +149,24 @@ test("pins close together merge, and the cluster lists its threads", async ({
   ).toBeVisible();
 });
 
+test("the strip of comment ticks marks pins too", async ({ page, slashdocs }) => {
+  const title = uniqueName("Pin ticks");
+  const long = documentHTML(title).replace(
+    "</body>",
+    '<div style="height:3000px"></div></body>',
+  );
+  const document = await slashdocs.createDocument(title, long);
+  await slashdocs.createComment(document.id, "Label this axis", {
+    quote: "Revenue chart",
+    point: { target: "chart", x: 0.5, y: 0.5 },
+  });
+  await page.goto(`/app/d/${document.id}`);
+  await page.getByRole("button", { name: "Comment 1 of 1: Revenue chart" }).click();
+  await expect(
+    page.getByRole("dialog", { name: "Comment thread" }).getByText("Label this axis"),
+  ).toBeVisible();
+});
+
 test("C is the document's own when the document takes it", async ({
   page,
   slashdocs,

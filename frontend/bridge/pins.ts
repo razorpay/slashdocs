@@ -325,6 +325,8 @@ type Placed = {
 export type PinHost = {
   doc: () => Document | null;
   post: (message: Record<string, unknown>) => void;
+  // laidOut tells the bridge that the pins found their elements again.
+  laidOut: () => void;
 };
 
 // createPinLayer draws the pins of one bridge, and places new ones.
@@ -406,6 +408,7 @@ export function createPinLayer(host: PinHost) {
     lastSignature = null;
     lastPositions = null;
     schedule();
+    host.laidOut();
   }
 
   // draw moves each pin to its spot, and regroups the pins when they moved
@@ -744,6 +747,15 @@ export function createPinLayer(host: PinHost) {
             inline: "nearest",
             behavior: "smooth",
           });
+    },
+    // tops gives where the spot of each placed pin is, from the top of the
+    // document, for the strip of comment ticks.
+    tops(): { id: string; top: number }[] {
+      const scrollY = d?.defaultView?.scrollY ?? 0;
+      return placed.map(({ pin, el }) => {
+        const box = el.getBoundingClientRect();
+        return { id: pin.id, top: box.top + pin.anchor.point.y * box.height + scrollY };
+      });
     },
     // rect gives where a pin's spot is, for its popover, or null when the pin
     // is not in this version.
