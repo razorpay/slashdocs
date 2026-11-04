@@ -11,7 +11,7 @@
 // execCommand writes <b> and <i>, copies the source attribute of an element
 // that it splits onto both halves, and keeps its own undo stack.
 
-import { blockOf } from "./dom.ts";
+import { blockOf, reducedMotion } from "./dom.ts";
 import type { SourceMap } from "./source-map.ts";
 import { SOURCE_ATTR } from "./source-pieces.ts";
 
@@ -28,7 +28,13 @@ export interface Editor {
 }
 
 // The input types that structure handles, from beforeinput or a shortcut.
-export type Input = { type: string; text?: string; html?: string };
+// ranges are the ranges that the browser says an input changes.
+export type Input = {
+  type: string;
+  text?: string;
+  html?: string;
+  ranges?: StaticRange[];
+};
 
 // The reasons to refuse an input. The frame is not trusted, so the app
 // shows its own text for each one.
@@ -42,8 +48,6 @@ export const REFUSED = {
   format: "format",
   // A list of blocks that are not all paragraphs.
   list: "list",
-  // A link address that is not http, https, mailto or #.
-  link: "link",
   // Structure or formatting in script text, which takes plain text only.
   plainText: "plain-text",
 };
@@ -57,7 +61,34 @@ const NOT_CONTENT = /^(script|style|template|noscript|textarea|title)$/;
 const BRIDGE_UI =
   ".slashdocs-selection-action,.slashdocs-heading-link,.slashdocs-text-flash,.slashdocs-script-hint,.slashdocs-link-input";
 const SAME_FORMAT = { strong: "strong,b", em: "em,i" };
+type Format = keyof typeof SAME_FORMAT;
 const SAFE_HREF = /^(https?:|mailto:|#)/i;
+const LINK_HIGHLIGHT = "slashdocs-link";
+const LINK_GAP = 6;
+const LINK_ENTER: Keyframe[] = [
+  { opacity: 0, transform: "scale(.97)" },
+  { opacity: 1, transform: "none" },
+];
+// The link box follows the colors of the selection actions. The document's
+// own styles do not reach it. The card resets without !important, which
+// would stop its animation.
+const LINK_STYLE = `
+  .slashdocs-link-input,.slashdocs-link-input>i,.slashdocs-link-input>div *{all:initial!important}
+  .slashdocs-link-input>div{all:initial;position:fixed!important;z-index:2147483647!important;display:flex!important;flex-wrap:wrap!important;gap:4px!important;max-width:calc(100vw - 16px)!important;padding:4px!important;border-radius:10px!important;background:#fff!important;color:#18181b!important;box-shadow:0 0 0 1px #0001,0 4px 16px #0002!important;font:13px/1.4 system-ui,sans-serif!important}
+  .slashdocs-link-input input{box-sizing:border-box!important;width:min(280px,60vw)!important;height:40px!important;padding:0 8px!important;color:inherit!important;font:inherit!important}
+  .slashdocs-link-input button{height:40px!important;padding:0 10px!important;border-radius:8px!important;color:#b91c1c!important;font:500 13px/40px system-ui,sans-serif!important;cursor:pointer!important}
+  .slashdocs-link-input button:hover{background:#fef2f2!important}
+  .slashdocs-link-input button:focus-visible{outline:2px solid #6366f1!important;outline-offset:-2px!important}
+  .slashdocs-link-input p{flex-basis:100%!important;padding:0 8px 4px!important;color:#71717a!important;font:12px/1.4 system-ui,sans-serif!important;overflow-wrap:anywhere!important}
+  .slashdocs-link-input p:empty{display:none!important}
+  .slashdocs-link-input p[data-error]{color:#b91c1c!important}
+  .slashdocs-link-input i{position:fixed!important;pointer-events:none!important;background:#6366f140!important}
+  ::highlight(${LINK_HIGHLIGHT}){background-color:#6366f140}
+  [data-slashdocs-surface=dark] .slashdocs-link-input>div{background:#27272a!important;color:#f4f4f5!important;box-shadow:0 0 0 1px #fff2,0 4px 16px #0004!important}
+  [data-slashdocs-surface=dark] .slashdocs-link-input button{color:#fca5a5!important}
+  [data-slashdocs-surface=dark] .slashdocs-link-input button:hover{background:#3f3f46!important}
+  [data-slashdocs-surface=dark] .slashdocs-link-input p{color:#a1a1aa!important}
+  [data-slashdocs-surface=dark] .slashdocs-link-input p[data-error]{color:#fca5a5!important}`;
 
 // Pasted HTML keeps these elements. Other block elements become paragraphs,
 // the content of other inline elements stays without them, and the elements
@@ -69,10 +100,19 @@ const DROPPED =
   /^(script|style|template|noscript|head|title|svg|math|select|textarea|iframe|object)$/;
 
 const NOTHING: Change = { blocks: [], run() {} };
+const TYPING = /^insert(Text|ReplacementText)$/;
 
 export function createStructure(e: Editor) {
   const { d } = e;
+  // The frame's window, whose highlights mark the words of a link.
+  const view = d.defaultView as (Window & typeof globalThis) | null;
   let linkBox: HTMLElement | null = null;
+  // Bold or italic that the reader turned on or off at a caret. They apply
+  // to the next typed text while the caret stays at that place.
+  let pending: { at: Range; formats: Format[] } | null = null;
+  // The inline element, such as a badge or a link, whose last text the
+  // reader deleted.
+  let emptied: Element | null = null;
 
   // input gives the change for an input, a reason to refuse it, or null to
   // let the browser do it.
@@ -80,15 +120,19 @@ export function createStructure(e: Editor) {
     if (/^(insertFromDrop|deleteByDrag)$/.test(type)) return REFUSED.drop;
     const r = selection(d);
     if (!r) return null;
+    const formats = pending && sameRange(pending.at, r) ? pending.formats : [];
+    pending = null;
     if (!r.collapsed && notEditableIn(e, r)) return REFUSED.crossesScript;
+    if (type === "insertText" && formats.length)
+      return change(r, (at) => typeFormatted(at, text, formats));
     if (type === "insertParagraph") return paragraph(r);
     if (type === "insertLineBreak") return change(r, (at) => lineBreak(at));
     if (type === "insertFromPaste" || type === "insertFromPasteAsQuotation")
       return change(r, (at) =>
         paste(at, html ? sanitize(d, html) : paragraphs(d, text)),
       );
-    if (type === "formatBold") return format(r, "strong");
-    if (type === "formatItalic") return format(r, "em");
+    if (type === "formatBold") return format(r, "strong", formats);
+    if (type === "formatItalic") return format(r, "em", formats);
     if (type === "insertUnorderedList") return list(r, "ul");
     if (type === "insertOrderedList") return list(r, "ol");
     if (/^(format|insertHorizontalRule|insertLink)/.test(type)) return REFUSED.format;
@@ -152,6 +196,44 @@ export function createStructure(e: Editor) {
     return { blocks: [into, from], run: () => join(into, from) };
   }
 
+  // keep gives the change for an input that deletes all the text of an
+  // inline element, or that types next to the element that one emptied.
+  // Browsers remove such an element and type the next text outside it, which
+  // loses its tag and attributes. The editor keeps the element instead, and
+  // types the next text in it.
+  function keep({ type, text = "", ranges }: Input): Change | null {
+    const typing = TYPING.test(type);
+    if (!typing && !type.startsWith("delete")) return null;
+    const r = typing ? selection(d) : rangeOf(ranges?.[0]);
+    if (!r) return null;
+    const el =
+      typing &&
+      r.collapsed &&
+      emptied?.isConnected &&
+      !emptied.textContent &&
+      beside(emptied, r)
+        ? emptied
+        : coveredInline(r);
+    if (!el) return null;
+    return {
+      blocks: [blockOf(el)!],
+      run() {
+        const t = d.createTextNode(typing ? text : "");
+        el.replaceChildren(t);
+        d.getSelection()!.collapse(t, t.length);
+        emptied = typing ? null : el;
+      },
+    };
+  }
+
+  function rangeOf(target: StaticRange | undefined): Range | null {
+    if (!target) return null;
+    const r = d.createRange();
+    r.setStart(target.startContainer, target.startOffset);
+    r.setEnd(target.endContainer, target.endOffset);
+    return r;
+  }
+
   // split ends block at the caret, and puts the rest in a new element after
   // it: one like block, or a paragraph after a heading.
   function split(block: Element, at: Range) {
@@ -170,7 +252,8 @@ export function createStructure(e: Editor) {
 
   // lift moves a list item out of its list as a paragraph, and splits the
   // list in two when the item is in the middle. Blocks in the item, such as
-  // a nested list, follow the paragraph.
+  // a nested list, follow the paragraph. The second part of a numbered list
+  // continues its numbers.
   function lift(li: Element) {
     const list = li.parentElement!;
     const p = d.createElement("p");
@@ -186,6 +269,10 @@ export function createStructure(e: Editor) {
     else {
       const next = continuation(e, list);
       next.append(...rest);
+      if (list.localName === "ol") {
+        const start = Number(list.getAttribute("start")) || 1;
+        next.setAttribute("start", String(start + list.children.length));
+      }
       list.after(...lifted, next);
     }
     if (!list.firstElementChild) list.remove();
@@ -269,17 +356,24 @@ export function createStructure(e: Editor) {
     d.getSelection()!.collapse(last.parentNode!, indexOf(last) + 1);
   }
 
-  function format(r: Range, tag: "strong" | "em"): Change {
-    if (r.collapsed) return NOTHING;
+  // format toggles bold or italic on the selection. At a caret, it toggles
+  // the format of the next typed text, in addition to formats, the formats
+  // that are pending there.
+  function format(r: Range, tag: Format, formats: Format[]): Change {
+    if (r.collapsed) {
+      const others = formats.filter((f) => f !== tag);
+      pending = {
+        at: r,
+        formats: others.length < formats.length ? others : [...formats, tag],
+      };
+      return NOTHING;
+    }
     return {
       blocks: blocksIn(d, r),
       run() {
         const r = selection(d)!;
         const texts = textsIn(e, r);
-        const within = (t: Text) => {
-          const el = t.parentElement?.closest(SAME_FORMAT[tag]);
-          return el && blockOf(t)!.contains(el) ? el : null;
-        };
+        const within = (t: Text) => formatAround(t, tag);
         const formatted = () => texts.map(within).find(Boolean);
         if (texts.every(within)) {
           for (let el = formatted(); el; el = formatted()) unwrapAround(el, texts);
@@ -315,6 +409,21 @@ export function createStructure(e: Editor) {
       el[side](copy);
     }
     el.replaceWith(...el.childNodes);
+  }
+
+  // typeFormatted types text at the caret with each of formats toggled: in a
+  // new element of that format, or out of the element of that format that
+  // holds the caret. The caret stays in the text, so typing continues it.
+  function typeFormatted(at: Range, text: string, formats: Format[]) {
+    dropFiller(blockOf(at.startContainer)!);
+    const t = d.createTextNode(text);
+    at.insertNode(t);
+    for (const tag of formats) {
+      const el = formatAround(t, tag);
+      if (el) unwrapAround(el, [t]);
+      else wrap([t], () => d.createElement(tag));
+    }
+    d.getSelection()!.collapse(t, t.length);
   }
 
   // wrap puts each text in a new element, and joins those that are next to
@@ -382,8 +491,12 @@ export function createStructure(e: Editor) {
     };
   }
 
-  // link opens a small field for the address of a link next to the
-  // selection. Enter applies it, and Esc or leaving the field cancels.
+  // link opens a small field for the address of a link, below the selection
+  // or above it when there is no room below. The selected words stay marked
+  // while the field has focus. A line under the field shows the address that
+  // the link gets, or why it cannot have it. Enter applies the address, and
+  // Esc or leaving the box cancels. In a link, the field shows its address
+  // and a button removes the link.
   function link() {
     const r = selection(d);
     if (!r) return;
@@ -392,47 +505,120 @@ export function createStructure(e: Editor) {
       return;
     }
     closeLink();
+    const a = linkAround(r);
+    // At a caret in a link, the field is for the whole link.
+    const words = r.collapsed && a ? d.createRange() : r;
+    if (words !== r) words.selectNodeContents(a!);
+    // The box is outside the body, so the editor does not see it change.
     const box = d.createElement("div");
     box.className = "slashdocs-link-input";
     box.setAttribute("contenteditable", "false");
+    const style = d.createElement("style");
+    style.textContent = LINK_STYLE;
+    const card = d.createElement("div");
     const field = d.createElement("input");
     field.type = "url";
     field.placeholder = "Paste a link, then press Enter";
     field.setAttribute("aria-label", "Link address");
-    field.value = linkAround(r)?.getAttribute("href") ?? "";
-    field.style.cssText =
-      "all:initial;width:280px;padding:6px 8px;border-radius:6px;background:#fff;color:#18181b;font:13px/1.4 system-ui,sans-serif;box-shadow:0 0 0 1px #0002,0 4px 16px #0002";
-    // jsdom has no layout, and so no rectangles for ranges.
-    const rect = r.getBoundingClientRect?.();
-    box.style.cssText = `all:initial;position:fixed;z-index:2147483647;left:${rect?.left ?? 0}px;top:${(rect?.bottom ?? 0) + 6}px`;
-    box.append(field);
+    field.value = a?.getAttribute("href") ?? "";
+    const note = d.createElement("p");
+    note.setAttribute("aria-live", "polite");
+    card.append(field);
+    if (a) {
+      const remove = d.createElement("button");
+      remove.type = "button";
+      remove.textContent = "Remove link";
+      // The field keeps the focus, so that a click does not cancel.
+      remove.addEventListener("mousedown", (event) => event.preventDefault());
+      remove.addEventListener("click", () => close(""));
+      card.append(remove);
+    }
+    card.append(note);
+    box.append(style, card);
     d.documentElement.append(box);
     linkBox = box;
+    mark(words, box);
+    place(card, words);
+    motion(card, LINK_ENTER, 150);
     field.focus();
     const close = (href: string | null) => {
       closeLink();
       d.body.focus();
       d.getSelection()!.removeAllRanges();
       d.getSelection()!.addRange(r);
-      if (href === null) return;
-      const value = normalizeHref(href);
-      if (value === null) e.refuse(REFUSED.link);
-      else e.apply(linkChange(r, value));
+      if (href !== null) e.apply(linkChange(r, href));
     };
-    field.addEventListener("keydown", (event) => {
+    // The note shows an address that differs from the typed one.
+    field.addEventListener("input", () => {
+      const href = normalizeHref(field.value);
+      note.removeAttribute("data-error");
+      note.textContent = href && href !== field.value.trim() ? `Links to ${href}` : "";
+    });
+    card.addEventListener("keydown", (event) => {
       event.stopPropagation();
-      if (event.key === "Enter") close(field.value);
-      else if (event.key === "Escape") close(null);
+      if (event.key === "Enter" && event.target === field) {
+        const href = normalizeHref(field.value);
+        if (href !== null) close(href);
+        else {
+          note.setAttribute("data-error", "");
+          note.textContent = "A link must start with http, https, mailto or #.";
+        }
+      } else if (event.key === "Escape") close(null);
       else return;
       event.preventDefault();
     });
-    field.addEventListener("blur", () => linkBox === box && close(null));
+    card.addEventListener("focusout", (event) => {
+      if (linkBox === box && !card.contains(event.relatedTarget as Node | null))
+        close(null);
+    });
+  }
+
+  // mark keeps the words of a link marked while its field has focus, with no
+  // change to the document: with the Custom Highlight API, or else with boxes
+  // over the words in the link box.
+  function mark(words: Range, box: Element) {
+    if (view?.CSS?.highlights) {
+      view.CSS.highlights.set(LINK_HIGHLIGHT, new view.Highlight(words));
+      return;
+    }
+    for (const rect of words.getClientRects?.() ?? []) {
+      const over = d.createElement("i");
+      over.style.cssText = `left:${rect.left}px!important;top:${rect.top}px!important;width:${rect.width}px!important;height:${rect.height}px!important`;
+      box.append(over);
+    }
+  }
+
+  // motion plays keyframes on el, unless the reader asks for less motion.
+  // jsdom has no animations.
+  function motion(el: Element, keyframes: Keyframe[], duration: number) {
+    if (!el.animate || reducedMotion(d)) return null;
+    return el.animate(keyframes, { duration, easing: "ease-out", fill: "forwards" });
+  }
+
+  // place puts card below the last line of words, with a gap, or above the
+  // first line when there is no room below.
+  function place(card: HTMLElement, words: Range) {
+    // jsdom has no layout, and so no rectangles for ranges.
+    const lines = [...(words.getClientRects?.() ?? [])];
+    if (!lines.length || !view) return;
+    const { offsetWidth: width, offsetHeight: height } = card;
+    const [first, last] = [lines[0], lines.at(-1)!];
+    const below = last.bottom + LINK_GAP + height <= view.innerHeight - 8;
+    const line = below ? last : first;
+    const top = below ? last.bottom + LINK_GAP : first.top - LINK_GAP - height;
+    const left = Math.max(8, Math.min(line.left, view.innerWidth - width - 8));
+    card.style.setProperty("left", `${left}px`, "important");
+    card.style.setProperty("top", `${Math.max(8, top)}px`, "important");
   }
 
   function closeLink() {
     const box = linkBox;
     linkBox = null;
-    box?.remove();
+    view?.CSS?.highlights?.delete(LINK_HIGHLIGHT);
+    if (!box) return;
+    const exit = motion(box.querySelector("div")!, [...LINK_ENTER].reverse(), 120);
+    if (exit) exit.onfinish = () => box.remove();
+    else box.remove();
   }
 
   // linkChange links the selection to href: it changes the address of a
@@ -501,7 +687,7 @@ export function createStructure(e: Editor) {
     };
   }
 
-  return { input, link, plain, stop: closeLink };
+  return { input, keep, link, plain, stop: closeLink };
 }
 
 // selection gives the selected range. A triple click selects up to the start
@@ -525,6 +711,44 @@ export function selection(d: Document): Range | null {
   return r;
 }
 
+// coveredInline gives the innermost inline element in a block whose text r
+// covers all of.
+function coveredInline(r: Range): Element | null {
+  if (r.collapsed) return null;
+  const block = blockOf(r.startContainer);
+  for (
+    let el = elementOf(r.commonAncestorContainer);
+    el && el !== block && block?.contains(el);
+    el = el.parentElement
+  ) {
+    if (!el.querySelector("br,img") && !textOutside(r, el)) return el;
+  }
+  return null;
+}
+
+// textOutside tells whether el holds text before or after r.
+function textOutside(r: Range, el: Element): boolean {
+  const rest = el.ownerDocument.createRange();
+  rest.selectNodeContents(el);
+  rest.setEnd(r.startContainer, r.startOffset);
+  if (rest.toString()) return true;
+  rest.selectNodeContents(el);
+  rest.setStart(r.endContainer, r.endOffset);
+  return !!rest.toString();
+}
+
+// beside tells whether the caret of r is in el, or next to it with nothing
+// that shows between them.
+function beside(el: Element, r: Range): boolean {
+  if (el.contains(r.startContainer)) return true;
+  const gap = el.ownerDocument.createRange();
+  gap.selectNode(el);
+  if (r.compareBoundaryPoints(Range.START_TO_START, gap) < 0)
+    gap.setStart(r.startContainer, r.startOffset);
+  else gap.setEnd(r.startContainer, r.startOffset);
+  return blockOf(el) === blockOf(r.startContainer) && !shows(gap);
+}
+
 function sameRange(a: Range, b: Range): boolean {
   return (
     a.startContainer === b.startContainer &&
@@ -536,6 +760,12 @@ function sameRange(a: Range, b: Range): boolean {
 
 export function elementOf(node: Node): Element | null {
   return node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+}
+
+// formatAround gives the element of a format that holds node in its block.
+function formatAround(node: Node, tag: Format): Element | null {
+  const el = elementOf(node)?.closest(SAME_FORMAT[tag]);
+  return el && blockOf(node)!.contains(el) ? el : null;
 }
 
 // editable tells whether the editor may change node as HTML: it is not in

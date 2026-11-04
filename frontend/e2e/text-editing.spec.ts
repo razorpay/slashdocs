@@ -216,7 +216,7 @@ test("text from a script offers to ask an agent", async ({ page, slashdocs }) =>
 
   await openEditable(page, document.id);
   await renderedDocument(page).locator("#status").click();
-  const hint = renderedDocument(page).getByText("This text comes from a script.");
+  const hint = renderedDocument(page).getByText("A script on the page writes this text.");
   await expect(hint).toBeVisible();
   await renderedDocument(page)
     .getByRole("button", { name: "Ask an agent to change this" })
@@ -374,4 +374,96 @@ test("keeps the editor's words when someone changes other text first", async ({
     .poll(() => latestSource(page, document.id))
     .toBe(html.replace("keep it", "share it").replace("twice", "three times"));
   await expect(renderedDocument(page).locator("#intro")).toContainText("share it");
+});
+
+test.describe("formatting", () => {
+  test("the Bold button of the selection actions makes the words bold", async ({
+    page,
+    slashdocs,
+  }) => {
+    const html = documentHTML();
+    const document = await slashdocs.createDocument(uniqueName("Bold button"), html);
+
+    await openEditable(page, document.id);
+    const saved = nextSave(page, document.id);
+    await placeCaret(page, "#tail", "twice");
+    const bold = renderedDocument(page).getByRole("button", { name: "Bold" });
+    await bold.click();
+    await expect(bold).toHaveAttribute("aria-pressed", "true");
+    expect((await saved).status()).toBe(201);
+
+    expect(await latestSource(page, document.id)).toBe(
+      html.replace("retry twice", "retry <strong>twice</strong>"),
+    );
+  });
+
+  test("Cmd or Ctrl+B at a caret makes the next typed words bold", async ({
+    page,
+    slashdocs,
+  }) => {
+    const html = documentHTML();
+    const document = await slashdocs.createDocument(uniqueName("Bold caret"), html);
+
+    await openEditable(page, document.id);
+    const saved = nextSave(page, document.id);
+    await placeCaret(page, "#tail", "retry ", { collapse: true });
+    await page.keyboard.press("ControlOrMeta+b");
+    await page.keyboard.type("only");
+    expect((await saved).status()).toBe(201);
+
+    await expect
+      .poll(() => latestSource(page, document.id))
+      .toBe(html.replace("retry twice", "retry <strong>only</strong>twice"));
+  });
+
+  test("Cmd or Ctrl+K in a link shows its address, and Remove link takes it off", async ({
+    page,
+    slashdocs,
+  }) => {
+    const html = documentHTML();
+    const linked = html.replace(
+      "this guide",
+      '<a href="https://example.com/guide">this guide</a>',
+    );
+    const document = await slashdocs.createDocument(uniqueName("Link"), linked);
+
+    await openEditable(page, document.id);
+    const saved = nextSave(page, document.id);
+    await placeCaret(page, "#intro a", "this", { collapse: true });
+    await page.keyboard.press("ControlOrMeta+k");
+    const field = renderedDocument(page).getByRole("textbox", { name: "Link address" });
+    await expect(field).toHaveValue("https://example.com/guide");
+    await renderedDocument(page).getByRole("button", { name: "Remove link" }).click();
+    await expect(field).toHaveCount(0);
+    expect((await saved).status()).toBe(201);
+
+    expect(await latestSource(page, document.id)).toBe(html);
+  });
+
+  test("a numbered list that Enter splits keeps its numbers", async ({
+    page,
+    slashdocs,
+  }) => {
+    const html = documentHTML().replace(
+      "</body>",
+      "<ol><li>Plan</li><li>Build</li><li>Ship</li></ol>\n  </body>",
+    );
+    const document = await slashdocs.createDocument(uniqueName("Numbers"), html);
+
+    await openEditable(page, document.id);
+    const saved = nextSave(page, document.id);
+    await placeCaret(page, "ol li", "Build", { nth: 1, collapse: true });
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter");
+    expect((await saved).status()).toBe(201);
+
+    await expect
+      .poll(() => latestSource(page, document.id))
+      .toContain('<ol start="3"><li>Ship</li></ol>');
+    await page.reload();
+    await expect(renderedDocument(page).locator("ol").nth(1)).toHaveAttribute(
+      "start",
+      "3",
+    );
+  });
 });

@@ -54,7 +54,7 @@ async function open(body: string, script?: (d: Document) => void) {
       saved(),
       changes.reduce((html, [from, to]) => html.replace(from, to), source),
     );
-  return { source, saved, expect, refused };
+  return { source, saved, expect, refused, run: editor.run };
 }
 
 // at finds a place in the text of the document. "|" marks it in the text of
@@ -84,18 +84,36 @@ function input(inputType: string, data: Record<string, string> = {}) {
     bubbles: true,
     cancelable: true,
   });
+  const range = targetRange(inputType);
   Object.defineProperty(event, "dataTransfer", {
     value: { getData: (t: string) => data[t] ?? "" },
   });
+  Object.defineProperty(event, "getTargetRanges", {
+    value: () => [new StaticRange(range)],
+  });
   dispatch(document.body, event);
   if (event.defaultPrevented) return false;
-  const range = document.getSelection()!.getRangeAt(0);
+  if (inputType.startsWith("delete")) range.deleteContents();
   if (inputType === "insertText") {
     range.deleteContents();
     range.insertNode(document.createTextNode(data.text));
   }
   dispatch(document.body, new InputEvent("input", { inputType, bubbles: true }));
   return true;
+}
+
+// targetRange gives the range that the browser changes for an input: the
+// selection, or the character next to a caret for a character delete.
+function targetRange(inputType: string): Range {
+  const range = document.getSelection()!.getRangeAt(0).cloneRange();
+  const { startContainer: node, startOffset: offset } = range;
+  if (range.collapsed && node.nodeType === Node.TEXT_NODE) {
+    if (inputType === "deleteContentBackward" && offset > 0)
+      range.setStart(node, offset - 1);
+    if (inputType === "deleteContentForward" && offset < (node as Text).length)
+      range.setEnd(node, offset + 1);
+  }
+  return range;
 }
 
 function key(init: KeyboardEventInit, target: EventTarget = document.body) {
@@ -169,6 +187,13 @@ describe("Enter", () => {
     doc.expect(["<td>Ten minutes</td>", "<td>Ten<br> minutes</td>"]);
   });
 
+  test("with Shift at the end of a paragraph keeps the new line", async () => {
+    const doc = await open("<p>Ten minutes</p>");
+    place("Ten minutes|");
+    input("insertLineBreak");
+    doc.expect(["<p>Ten minutes</p>", "<p>Ten minutes<br><br></p>"]);
+  });
+
   test("with Shift adds a line break", async () => {
     const doc = await open("<p>Ten minutes</p>");
     place("Ten| minutes");
@@ -222,6 +247,45 @@ describe("Backspace and Delete", () => {
     place("O|ne", "T|wo");
     assert.isFalse(input("deleteContentBackward"));
     assert.deepEqual(doc.refused, [REFUSED.crossesScript]);
+    assert.equal(doc.saved(), doc.source);
+  });
+});
+
+describe("an inline element that loses all its text", () => {
+  test("keeps its tag and attributes for the next typing", async () => {
+    const doc = await open('<p>State: <span class="badge">Pending</span></p>');
+    place("Pending|");
+    for (let i = 0; i < 7; i++) input("deleteContentBackward");
+    const badge = document.querySelector(".badge")!;
+    assert.isTrue(badge.isConnected);
+    assert.isFalse(input("insertText", { text: "Done" }));
+    assert.equal(badge.textContent, "Done");
+    doc.expect([
+      '<span class="badge">Pending</span>',
+      '<span class="badge">Done</span>',
+    ]);
+  });
+
+  test("keeps a link when typing replaces all its text", async () => {
+    const doc = await open('<p>See <a href="/docs" class="x">the docs</a>.</p>');
+    place("|the docs", "the docs|");
+    assert.isFalse(input("insertText", { text: "help" }));
+    doc.expect(["the docs", "help"]);
+  });
+
+  test("keeps script text and its id when the reader deletes all of it", async () => {
+    const doc = await open('<p>Health: <b id="health"></b></p>', (d) => {
+      d.getElementById("health")!.textContent = "Green";
+    });
+    const health = document.getElementById("health")!;
+    health.setAttribute("data-slashdocs-script-edit", "");
+    health.setAttribute("contenteditable", "true");
+    place("Green|");
+    for (let i = 0; i < 5; i++) input("deleteContentBackward");
+    assert.isFalse(input("insertText", { text: "Amber" }));
+    assert.equal(document.getElementById("health"), health);
+    assert.equal(health.textContent, "Amber");
+    // The app writes script text into the script, not into the regions.
     assert.equal(doc.saved(), doc.source);
   });
 });
@@ -366,5 +430,145 @@ describe("script text", () => {
     assert.equal(status.textContent, "Rea!dy");
     // The app writes script text into the script, not into the regions.
     assert.equal(doc.saved(), doc.source);
+  });
+});
+
+describe("formatting at a caret, links and numbered lists", () => {
+  const bold = () => key({ key: "b", metaKey: true });
+  const linkField = () =>
+    document.querySelector<HTMLInputElement>(".slashdocs-link-input input");
+
+  test("bold at a caret makes the next typed text bold, and typing continues it", async () => {
+    const doc = await open("<p>Hello world</p>");
+    place("Hello |world");
+    bold();
+    assert.isFalse(input("insertText", { text: "big" }));
+    assert.isTrue(input("insertText", { text: "!" }));
+    doc.expect(["Hello world", "Hello <strong>big!</strong>world"]);
+  });
+
+  test("bold twice at a caret types plain text", async () => {
+    const doc = await open("<p>Hello world</p>");
+    place("Hello |world");
+    bold();
+    bold();
+    assert.isTrue(input("insertText", { text: "big " }));
+    doc.expect(["Hello world", "Hello big world"]);
+  });
+
+  test("bold and italic at a caret apply together", async () => {
+    const doc = await open("<p>Hello world</p>");
+    place("Hello |world");
+    bold();
+    input("formatItalic");
+    input("insertText", { text: "big" });
+    doc.expect(["Hello world", "Hello <strong><em>big</em></strong>world"]);
+  });
+
+  test("bold at a caret in bold text types the next text out of it", async () => {
+    const doc = await open("<p><strong>Hello world</strong></p>");
+    place("Hello| world");
+    bold();
+    input("insertText", { text: " big" });
+    doc.expect([
+      "<strong>Hello world</strong>",
+      "<strong>Hello</strong> big<strong> world</strong>",
+    ]);
+  });
+
+  test("bold at a caret stops when the caret moves", async () => {
+    const doc = await open("<p>Hello world</p>");
+    place("Hello |world");
+    bold();
+    place("Hello world|");
+    assert.isTrue(input("insertText", { text: "!" }));
+    doc.expect(["Hello world", "Hello world!"]);
+  });
+
+  test("run does an input as its shortcut does", async () => {
+    const doc = await open("<p>Hello world</p>");
+    place("Hello |world", "Hello world|");
+    doc.run("formatBold");
+    doc.expect(["Hello world", "Hello <strong>world</strong>"]);
+    doc.run("insertLink");
+    assert.equal(document.activeElement, linkField());
+  });
+
+  test("a link field in a link shows its address, and Remove link takes the link off", async () => {
+    const doc = await open(
+      '<p>See <a href="https://example.com/docs">the docs</a>.</p>',
+    );
+    place("the |docs");
+    key({ key: "k", metaKey: true });
+    assert.equal(linkField()!.value, "https://example.com/docs");
+    const remove = document.querySelector<HTMLButtonElement>(
+      ".slashdocs-link-input button",
+    )!;
+    assert.equal(remove.textContent, "Remove link");
+    remove.click();
+    assert.isNull(linkField());
+    doc.expect(['<a href="https://example.com/docs">the docs</a>', "the docs"]);
+  });
+
+  test("a link field shows the address that the link gets, and refuses a bad one", async () => {
+    const doc = await open("<p>Hello world</p>");
+    place("Hello |world", "Hello world|");
+    key({ key: "k", metaKey: true });
+    const field = linkField()!;
+    const note = document.querySelector(".slashdocs-link-input p")!;
+    field.value = "example.com";
+    field.dispatchEvent(new Event("input"));
+    assert.equal(note.textContent, "Links to https://example.com");
+    field.value = "javascript:alert(1)";
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    assert.equal(linkField(), field);
+    assert.equal(note.textContent, "A link must start with http, https, mailto or #.");
+    assert.deepEqual(doc.refused, []);
+    assert.equal(doc.saved(), doc.source);
+  });
+
+  test("a link field marks the words of the link until it closes", async () => {
+    const set = new Map<string, unknown>();
+    Object.assign(window, {
+      CSS: { highlights: set },
+      Highlight: class {
+        constructor(readonly range: Range) {}
+      },
+    });
+    try {
+      await open('<p>See <a href="https://example.com">the docs</a>.</p>');
+      place("the |docs");
+      key({ key: "k", metaKey: true });
+      const { range } = set.get("slashdocs-link") as { range: Range };
+      assert.equal(range.toString(), "the docs");
+      linkField()!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+      assert.isFalse(set.has("slashdocs-link"));
+    } finally {
+      Object.assign(window, { CSS: undefined, Highlight: undefined });
+    }
+  });
+
+  test("a numbered list that Enter splits continues its numbers", async () => {
+    const doc = await open('<ol start="2"><li>One</li><li>Two</li><li>Three</li></ol>');
+    place("Two|");
+    input("insertParagraph");
+    input("insertParagraph");
+    doc.expect([
+      '<ol start="2"><li>One</li><li>Two</li><li>Three</li></ol>',
+      '<ol start="2"><li>One</li><li>Two</li></ol><p></p><ol start="4"><li>Three</li></ol>',
+    ]);
+  });
+
+  test("a numbered list with no start continues from 1", async () => {
+    const doc = await open("<ol><li>One</li><li>Two</li></ol>");
+    place("One|");
+    input("insertParagraph");
+    input("insertParagraph");
+    doc.expect([
+      "<ol><li>One</li><li>Two</li></ol>",
+      '<ol><li>One</li></ol><p></p><ol start="2"><li>Two</li></ol>',
+    ]);
   });
 });

@@ -28,8 +28,14 @@ export interface TextEditor {
   // The regions for every change since editing started. Taking them does
   // not reset them.
   take(): { regions: Region[] };
+  // The same regions, for a draft: the editor keeps the highlights that it
+  // took off.
+  peek(): { regions: Region[] };
   // The source map of the document, which script text uses too.
   map: SourceMap;
+  // run does an input on the selection as its shortcut does, for example
+  // "formatBold" or "insertLink".
+  run(type: string): void;
   stop(): void;
 }
 
@@ -278,12 +284,16 @@ export function startTextEditing(
     if (script[0] || script[1]) {
       if (script[0] !== script[1] || !PLAIN_INPUT.test(type))
         return refuse(REFUSED.plainText);
-      if (!type.startsWith("insertFromPaste")) {
+      const kept = structure.keep(input);
+      // Script text is not part of any block.
+      if (kept) apply({ ...kept, blocks: [] });
+      // Pasted text in script text stays on one line.
+      else if (type.startsWith("insertFromPaste"))
+        apply(structure.plain((input.text ?? "").replace(/\s*\n\s*/g, " ")));
+      else {
         openNative(type, ends);
         return false;
       }
-      // Pasted text in script text stays on one line.
-      apply(structure.plain((input.text ?? "").replace(/\s*\n\s*/g, " ")));
       return true;
     }
     if (ends.some((n) => !editable(editor, n))) return refuse(REFUSED.script);
@@ -291,7 +301,7 @@ export function startTextEditing(
       structure.link();
       return true;
     }
-    const change = structure.input(input);
+    const change = structure.keep(input) ?? structure.input(input);
     if (typeof change === "string") return refuse(change);
     if (change) apply(change);
     else openNative(type, ends);
@@ -310,6 +320,7 @@ export function startTextEditing(
       type: event.inputType,
       text: event.data ?? event.dataTransfer?.getData("text/plain") ?? "",
       html: event.dataTransfer?.getData("text/html") ?? "",
+      ranges: event.getTargetRanges(),
     });
     if (handled) event.preventDefault();
   };
@@ -365,13 +376,19 @@ export function startTextEditing(
 
   return {
     map,
-    take() {
+    run(type) {
+      handle({ type });
+    },
+    peek() {
       closeNative();
       flush();
-      const regions = map.regions();
+      return { regions: map.regions() };
+    },
+    take() {
+      const changes = this.peek();
       dirty.clear();
       held.clear();
-      return { regions };
+      return changes;
     },
     stop() {
       closeNative();
