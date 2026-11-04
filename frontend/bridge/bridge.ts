@@ -15,7 +15,7 @@ import {
 } from "./highlight.ts";
 import { createCursorChat, createCursorLayer, trackPointer } from "./cursors.ts";
 import { createPinLayer, parsePins, type PinRect } from "./pins.ts";
-import { caretRange, isEditableTarget } from "./dom.ts";
+import { caretRange, isEditableTarget, reducedMotion, scrollBehavior } from "./dom.ts";
 import { startTextEditing, type TextEditor } from "./text-editing.ts";
 import { CHORD_KEYS } from "../src/lib/esc-chord.ts";
 import {
@@ -835,7 +835,10 @@ type Theme = "dark" | "light";
       if (isActive && !scrollTarget) scrollTarget = el;
     });
     if (scroll && scrollTarget) {
-      (scrollTarget as Element).scrollIntoView({ block: "center", behavior: "smooth" });
+      (scrollTarget as Element).scrollIntoView({
+        block: "center",
+        behavior: scrollBehavior(d),
+      });
     }
   }
 
@@ -1288,7 +1291,7 @@ type Theme = "dark" | "light";
       const t = fragmentTarget(d, href);
       if (t) {
         e.preventDefault();
-        t.scrollIntoView({ block: "start", behavior: "smooth" });
+        t.scrollIntoView({ block: "start", behavior: scrollBehavior(d) });
         try {
           d.defaultView!.history.replaceState(null, "", href);
         } catch (err) {}
@@ -1650,13 +1653,11 @@ type Theme = "dark" | "light";
     const resting = {
       backgroundColor: d.defaultView!.getComputedStyle(target).backgroundColor,
     };
-    const reducedMotion = d.defaultView!.matchMedia(
-      "(prefers-reduced-motion: reduce)",
-    ).matches;
+    const reduced = reducedMotion(d);
     // A single arrival cue, with no layout changes or persistent author styles.
     headingFlash = target.animate(
       [highlight, { ...highlight, offset: 0.25 }, resting],
-      { duration: 1400, easing: reducedMotion ? "steps(1, end)" : "ease-out" },
+      { duration: 1400, easing: reduced ? "steps(1, end)" : "ease-out" },
     );
   }
   let textVisibilityObserver: MutationObserver | undefined;
@@ -1729,9 +1730,7 @@ type Theme = "dark" | "light";
       behavior: "instant",
     });
     textFlashStarted = Date.now();
-    const reducedMotion = d.defaultView!.matchMedia(
-      "(prefers-reduced-motion: reduce)",
-    ).matches;
+    const reduced = reducedMotion(d);
     // Non-interactive overlays avoid splitting text nodes or disturbing comments.
     Array.from(range.getClientRects())
       .slice(0, 200)
@@ -1744,7 +1743,7 @@ type Theme = "dark" | "light";
         flash.style.cssText = `all:initial;position:fixed!important;pointer-events:none!important;z-index:2147483646!important;left:${r.left}px!important;top:${r.top}px!important;width:${r.width}px!important;height:${r.height}px!important;background:rgba(56,189,248,.32)!important;box-shadow:0 0 0 1px rgba(14,165,233,.65)!important;border-radius:3px!important`;
         d.body.appendChild(flash);
         const animation = flash.animate(
-          reducedMotion
+          reduced
             ? [{ opacity: 1 }, { opacity: 1, offset: 0.85 }, { opacity: 0 }]
             : [
                 { opacity: 0.2 },
@@ -1754,7 +1753,7 @@ type Theme = "dark" | "light";
                 { opacity: 1, offset: 0.72 },
                 { opacity: 0 },
               ],
-          { duration: 2200, easing: reducedMotion ? "steps(1, end)" : "ease-in-out" },
+          { duration: 2200, easing: reduced ? "steps(1, end)" : "ease-in-out" },
         );
         animation.onfinish = () => flash.remove();
       });
@@ -1880,11 +1879,10 @@ type Theme = "dark" | "light";
     const runVimScroll = (action: VimScrollAction, repeat = false) => {
       const view = d.defaultView;
       if (!view) return;
-      const reducedMotion = view.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      const behavior = reducedMotion ? "instant" : "smooth";
+      const behavior = scrollBehavior(d);
       if (action === "line-down" || action === "line-up") {
         const direction = action === "line-down" ? 1 : -1;
-        if (!repeat || reducedMotion) {
+        if (!repeat || behavior === "instant") {
           stopGlide();
           view.scrollBy({ top: direction * VIM_LINE_PX, behavior });
           return;

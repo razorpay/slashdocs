@@ -10,6 +10,7 @@
 //
 // Spans inside SVG content cannot be wrapped (non-SVG children of `<text>`
 // don't render), so those get a `<rect>` overlay behind the text instead.
+import { scrollBehavior } from "./dom.ts";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -130,7 +131,7 @@ function svgHighlight(
   el.parentNode!.insertBefore(rect, el);
   el.classList.add("slashdocs-svg-mark-text");
   if (active && scroll) {
-    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    el.scrollIntoView({ block: "center", behavior: scrollBehavior(el.ownerDocument) });
   }
   return 1;
 }
@@ -208,7 +209,10 @@ export function highlightRange(
   }
 
   if (active && scroll && scrollTarget) {
-    scrollTarget.scrollIntoView({ block: "center", behavior: "smooth" });
+    scrollTarget.scrollIntoView({
+      block: "center",
+      behavior: scrollBehavior(scrollTarget.ownerDocument),
+    });
   }
   return count;
 }

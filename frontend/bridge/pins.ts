@@ -11,7 +11,7 @@ import {
   sharedChildren,
   sharedElement,
 } from "./cursors.ts";
-import { caretRange } from "./dom.ts";
+import { caretRange, scrollBehavior } from "./dom.ts";
 
 // Comment pins: point comments drawn over the document, in the bridge window,
 // as live cursors are. A pin names an element and a spot in its box. On each
@@ -745,7 +745,7 @@ export function createPinLayer(host: PinHost) {
           ?.el.scrollIntoView({
             block: "center",
             inline: "nearest",
-            behavior: "smooth",
+            behavior: scrollBehavior(d),
           });
     },
     // tops gives where the spot of each placed pin is, from the top of the
