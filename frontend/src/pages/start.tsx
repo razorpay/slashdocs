@@ -305,6 +305,10 @@ function TryItOut({ path }: { path: SetupPath }) {
         publishes it to slashdocs.
       </p>
       <CodeBlock wrap>{TRY_IT_PROMPT + PUBLISH[path]}</CodeBlock>
+      <p className="mt-3 text-sm text-[var(--color-fg-muted)]">
+        People who can edit the document change its words in place: they click the text
+        and type. Each pause saves a version.
+      </p>
     </div>
   );
 }
