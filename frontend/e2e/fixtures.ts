@@ -34,6 +34,7 @@ export async function installAppStorage(page: Page) {
       if (window.location.origin !== appOrigin) return;
       window.localStorage.setItem("slashdocs.onboarding", JSON.stringify(onboarding));
       window.localStorage.setItem("slashdocs:view-mode", JSON.stringify("list"));
+      window.localStorage.setItem("slashdocs:edit-hint-seen", "true");
     },
     { appOrigin: APP_ORIGIN, onboarding: ONBOARDING_STATE },
   );
