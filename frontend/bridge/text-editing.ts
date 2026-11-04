@@ -20,7 +20,7 @@ export interface TextEditor {
 // Elements whose text is not document text: code, and the bridge's own
 // controls that it adds to the document.
 const NOT_TEXT =
-  "script,style,noscript,template,textarea,.slashdocs-selection-action,.slashdocs-text-flash";
+  "script,style,noscript,template,textarea,.slashdocs-selection-action,.slashdocs-heading-link,.slashdocs-text-flash";
 
 // Input that would change structure rather than text.
 const STRUCTURAL_INPUT =
@@ -137,10 +137,7 @@ export function startTextEditing(
     style.id = STYLE_ID;
     style.textContent =
       "[data-slashdocs-text-editing] body{outline:none!important;caret-color:auto}" +
-      "[data-slashdocs-text-editing] a{cursor:text!important}" +
-      // The bridge's copy-link button sits inside each heading; hidden, the
-      // caret cannot land in it and typed text stays in the heading's text.
-      "[data-slashdocs-text-editing] .slashdocs-heading-link{display:none!important}";
+      "[data-slashdocs-text-editing] a{cursor:text!important}";
     (d.head || d.documentElement).appendChild(style);
   }
 

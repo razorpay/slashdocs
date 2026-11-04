@@ -67,7 +67,9 @@ test("saves edited words as the editor pauses, and only the changed text", async
 
   await openEditable(page, document.id);
   await expect(page.getByText("Can edit", { exact: true })).toBeVisible();
-  await expect(renderedDocument(page).locator(".slashdocs-heading-link")).toBeHidden();
+  await expect(
+    renderedDocument(page).locator(".slashdocs-heading-link"),
+  ).toHaveAttribute("contenteditable", "false");
 
   const saved = nextEdit(page, document.id);
   await selectWord(page, "#ttl", "10");
