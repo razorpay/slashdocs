@@ -289,14 +289,20 @@ func (h handlers) restoreVersion(c *gin.Context) {
 	c.JSON(http.StatusCreated, createVersionResponse{ID: v.ID, Number: v.Number, SHA256: v.SHA256, ChangeSummary: v.ChangeSummary})
 }
 
-// restoredSummary names a restore by the time of the version it brings back,
-// since people know the history by time, not by version number.
+// restoredSummary names a restore by the entry it brings back, with the
+// words that History shows for that entry. A time would show in one time
+// zone here and in the reader's own zone in the list.
 func restoredSummary(old repo.Version) string {
-	created, err := time.Parse(time.RFC3339, old.CreatedAt)
-	if err != nil {
-		return "Restored an earlier version"
+	name, _, _ := strings.Cut(strings.TrimSpace(old.ChangeSummary), "\n")
+	name = strings.TrimSpace(strings.TrimLeft(name, "-*• "))
+	switch {
+	case name != "":
+	case old.Number == 1:
+		name = "Created"
+	default:
+		name = "Edited"
 	}
-	return "Restored the version from " + created.UTC().Format("Jan 2, 2006, 15:04 UTC")
+	return "Restored “" + name + "”"
 }
 
 // versionConflict writes the 409 for a stale base, naming the current version.
