@@ -119,11 +119,13 @@ export function insertMention(
     return draft;
   }
   const label = `@${mentionPrincipalLabel(principal)}`;
-  const body = draft.body.slice(0, start) + label + " " + draft.body.slice(end);
+  // A space follows the mention, unless the text after it starts with one.
+  const space = draft.body[end] === " " ? "" : " ";
+  const body = draft.body.slice(0, start) + label + space + draft.body.slice(end);
   const reconciled = reconcileMentionDraft(draft, body, {
     oldStart: start,
     oldEnd: end,
-    newEnd: start + label.length + 1,
+    newEnd: start + label.length + space.length,
   });
   return {
     body,

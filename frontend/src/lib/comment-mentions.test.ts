@@ -103,6 +103,13 @@ test("insertMention replaces an exactly selected tagged mention", () => {
   });
 });
 
+test("insertMention adds no second space before a space", () => {
+  assert.deepEqual(insertMention({ body: "@rev thoughts?", mentions: [] }, 0, 4, bob), {
+    body: "@Bob thoughts?",
+    mentions: [mention(bob, 0, 4)],
+  });
+});
+
 test("rendering rejects structured ranges embedded in longer mention tokens", () => {
   for (const [body, candidate] of [
     ["@Alice_evil", mention(alice, 0, 6)],
