@@ -525,6 +525,57 @@
   animation-delay: 420ms;
 }
 
+/* ── Toast actions ──────────────────────────────────────── */
+/* The action of a toast is a primary button, and its cancel is a secondary
+   button, as the app's Button draws them in both themes. Sonner's rules name
+   the toaster and its theme, so these name them too. */
+[data-sonner-toaster][data-sonner-theme]
+  [data-sonner-toast][data-styled="true"]
+  [data-button] {
+  height: 2rem;
+  padding: 0 0.75rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+  box-shadow: var(--shadow-button-primary);
+  transition: background-color 150ms ease-out;
+}
+[data-sonner-toaster][data-sonner-theme]
+  [data-sonner-toast][data-styled="true"]
+  [data-button]:hover {
+  background: var(--color-accent-strong);
+}
+[data-sonner-toaster][data-sonner-theme]
+  [data-sonner-toast][data-styled="true"]
+  [data-button]:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+[data-sonner-toaster][data-sonner-theme]
+  [data-sonner-toast][data-styled="true"]
+  [data-button][data-cancel] {
+  background: var(--color-surface-muted);
+  color: var(--color-fg);
+  box-shadow: none;
+}
+[data-sonner-toaster][data-sonner-theme]
+  [data-sonner-toast][data-styled="true"]
+  [data-button][data-cancel]:hover {
+  background: var(--color-border);
+}
+/* A toast with two actions puts its message on the full width, and the two
+   buttons in a row below it, so that a long message does not wrap into a
+   narrow column. The message leaves room only for the icon. */
+[data-sonner-toast][data-styled="true"]:has([data-cancel]):has([data-action]) {
+  flex-wrap: wrap;
+  row-gap: 0.75rem;
+}
+[data-sonner-toast][data-styled="true"]:has([data-cancel]):has([data-action])
+  [data-content] {
+  flex-basis: calc(100% - 1.5rem);
+}
+
 /* ── Mobile delights & touch polish ─────────────────────── */
 @media (hover: none) and (pointer: coarse) {
   /* Kill the flashy grey tap highlight; we do our own feedback */
