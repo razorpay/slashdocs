@@ -851,15 +851,10 @@ func TestApproverWhoCreatesAVersionIsRemoved(t *testing.T) {
 	e := newTestEnv(t)
 	mustAssignApprover(t, e, e.doc.ID, "editor@example.com", fixtureOwner)
 	mustAssignApprover(t, e, e.doc.ID, "viewer@example.com", fixtureOwner)
-	html, err := e.store.GetVersionHTML(context.Background(), e.ver.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
 	// The editor has not created a version yet, so they may approve version 1.
 	assertStatus(t, submitApproval(t, e, e.doc.ID, e.ver.ID, "approved", fixtureEditor), http.StatusCreated)
 
-	// Even a push of the same content makes the editor a version creator.
-	second := pushApprovalTestVersionHTML(t, e, e.doc.ID, e.ver.ID, string(html), fixtureEditor)
+	second := pushApprovalTestVersion(t, e, e.doc.ID, e.ver.ID, fixtureEditor)
 
 	list := listApprovals(t, e, e.doc.ID, "", fixtureOwner)
 	if len(list.Items) != 1 || list.Items[0].Approver.Email != "viewer@example.com" || list.Status != "pending" {
@@ -871,6 +866,28 @@ func TestApproverWhoCreatesAVersionIsRemoved(t *testing.T) {
 		if !strings.Contains(rr.Body.String(), "You edited this document") {
 			t.Fatalf("body = %s, want the edited-this-document message", rr.Body.String())
 		}
+	}
+}
+
+// An edit that its author undoes, back to the content before it, changes
+// nothing under review. So a stray key does not stop an editor from
+// approving, but an edit that stays does.
+func TestEditThatItsAuthorUndoesDoesNotMakeAnAuthor(t *testing.T) {
+	e := newTestEnv(t)
+	html, err := e.store.GetVersionHTML(context.Background(), e.ver.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	typed := pushApprovalTestVersion(t, e, e.doc.ID, e.ver.ID, fixtureEditor)
+	undone := pushApprovalTestVersionHTML(t, e, e.doc.ID, typed, string(html), fixtureEditor)
+	mustAssignApprover(t, e, e.doc.ID, "editor@example.com", fixtureOwner)
+	assertStatus(t, submitApproval(t, e, e.doc.ID, undone, "approved", fixtureEditor), http.StatusCreated)
+
+	// An undo after another person's edit does not undo that edit.
+	theirs := pushApprovalTestVersionHTML(t, e, e.doc.ID, undone, "<html><body>theirs</body></html>", fixtureOwner)
+	pushApprovalTestVersionHTML(t, e, e.doc.ID, theirs, string(html), fixtureEditor)
+	if list := listApprovals(t, e, e.doc.ID, "", fixtureOwner); len(list.Items) != 0 {
+		t.Fatalf("items = %+v, want the editor removed", list.Items)
 	}
 }
 

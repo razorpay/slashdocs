@@ -93,7 +93,7 @@ func TestPostgresPushRemovesTheApproverWhoMadeIt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := store.CreateVersion(ctx, doc.ID, ver.ID, "", "", []byte("<html>v1</html>"), editor); err != nil {
+	if _, err := store.CreateVersion(ctx, doc.ID, ver.ID, "", "", []byte("<html>v2</html>"), editor); err != nil {
 		t.Fatal(err)
 	}
 
