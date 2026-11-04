@@ -16,7 +16,7 @@ import { Page } from "@/components/layout/page";
 import { beat } from "@/lib/enter";
 import { Skeleton, EmptyState } from "@/components/ui/misc";
 import { Dropdown, DropdownContent, DropdownTrigger } from "@/components/ui/dropdown";
-import { api, docID, docTitle, type Folder, type FolderEntry } from "@/api";
+import { api, APIError, docID, docTitle, type Folder, type FolderEntry } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { viewModeStore } from "@/lib/view-mode";
 import { DRAG_TYPE, type ActiveDrag } from "@/components/browse/drag";
@@ -58,6 +58,8 @@ export function DocumentsPage() {
     getNextPageParam: (last, pages) =>
       last.has_more ? pages.reduce((n, page) => n + page.items.length, 0) : undefined,
     placeholderData: (prev) => prev,
+    // The page shows the error.
+    meta: { suppressGlobalError: true },
   });
   const pins = useQuery({
     queryKey: queryKeys.pins(),
@@ -70,17 +72,21 @@ export function DocumentsPage() {
     placeholderData: (prev) => prev,
     enabled: !structuredSearch,
   });
-  const { state: onb } = useOnboarding();
-  const nav = useNavigate();
-  useEffect(() => {
-    if (onb.status === "active" && onboardingProgress(onb).done === 0) {
-      nav("/app/start", { replace: true });
-    }
-  }, [onb, nav]);
   const documents = useMemo(
     () => docs.data?.pages.flatMap((page) => page.items) || [],
     [docs.data],
   );
+  // A new reader, with no documents and no setup progress on this browser,
+  // starts at the setup guide.
+  const { state: onb } = useOnboarding();
+  const nav = useNavigate();
+  const noDocuments =
+    docs.isSuccess && !docs.isPlaceholderData && !debouncedQ && documents.length === 0;
+  useEffect(() => {
+    if (noDocuments && onb.status === "active" && onboardingProgress(onb).done === 0) {
+      nav("/app/start", { replace: true });
+    }
+  }, [noDocuments, onb, nav]);
   useEffect(() => {
     if (documents.length > 0) autoMarkFirstDoc();
   }, [documents]);
@@ -207,6 +213,9 @@ export function DocumentsPage() {
   }
   const searching = debouncedQ.length > 0;
   const empty = !searching && documents.length === 0 && folders.length === 0;
+  // The server rejects a search it cannot read with a 400 and says why.
+  const invalidSearch =
+    searching && docs.error instanceof APIError && docs.error.status === 400;
 
   const name = (me.data?.user || me.data?.principal)?.name?.split(" ")[0];
 
@@ -235,17 +244,19 @@ export function DocumentsPage() {
         </h2>
         <div className="flex items-center gap-2">
           <ViewModeToggle />
-          <Button
-            variant="outline"
-            size="md"
-            aria-label="New folder"
-            tooltip="New folder"
-            onClick={() => setNewFolderOpen(true)}
-            className="shrink-0 px-3 sm:px-4"
-          >
-            <Plus className="h-3.5 w-3.5 sm:mr-1.5" />{" "}
-            <span className="hidden sm:inline">New folder</span>
-          </Button>
+          {!searching && (
+            <Button
+              variant="outline"
+              size="md"
+              aria-label="New folder"
+              tooltip="New folder"
+              onClick={() => setNewFolderOpen(true)}
+              className="shrink-0 px-3 sm:px-4"
+            >
+              <Plus className="h-3.5 w-3.5 sm:mr-1.5" />{" "}
+              <span className="hidden sm:inline">New folder</span>
+            </Button>
+          )}
           <Dropdown>
             <DropdownTrigger asChild>
               <Button
@@ -267,10 +278,24 @@ export function DocumentsPage() {
       {!searching && <FeaturedItems />}
 
       {docs.error ? (
-        <EmptyState
-          title={searching ? "Search query not valid" : "Could not load documents"}
-          description={errorMessage(docs.error, "Could not search documents.")}
-        />
+        invalidSearch ? (
+          <EmptyState
+            title="Search query not valid"
+            description={errorMessage(docs.error)}
+          />
+        ) : (
+          <EmptyState
+            title={
+              searching ? "Could not search documents" : "Could not load documents"
+            }
+            description="Something went wrong. Please try again."
+            action={
+              <Button variant="outline" onClick={() => docs.refetch()}>
+                Retry
+              </Button>
+            }
+          />
+        )
       ) : empty ? (
         <EmptyDocs />
       ) : searching ? (
