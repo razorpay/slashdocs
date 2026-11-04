@@ -53,6 +53,7 @@ function renderDocBar(
   labelsEnabled = true,
   viewers: Viewer[] = [],
   requesters: unknown[] = [],
+  role: "owner" | "editor" = "owner",
 ) {
   vi.stubGlobal(
     "fetch",
@@ -78,7 +79,7 @@ function renderDocBar(
       if (url === "/v1/documents/doc_1/access") {
         return new Response(
           JSON.stringify({
-            current_role: "owner",
+            current_role: role,
             items: [],
           }),
           { headers: { "Content-Type": "application/json" } },
@@ -126,7 +127,7 @@ function renderDocBar(
             title="Test Document"
             docId="doc_1"
             owner={OWNER}
-            principal={OWNER}
+            principal={role === "owner" ? OWNER : { type: "user", id: "usr_editor" }}
             current="v_1"
             latest="v_2"
             previewing={false}
@@ -285,6 +286,16 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
       "focus-visible:outline-none",
     );
     expect(screen.queryByRole("textbox", { name: "Document title" })).toBeNull();
+  });
+
+  it("tells an editor why the More menu cannot rename", async () => {
+    const user = userEvent.setup();
+    renderDocBar(true, [], [], "editor");
+    await user.click(screen.getByRole("button", { name: "More" }));
+    const rename = await screen.findByRole("menuitem", { name: /^Rename/ });
+    expect(rename).toHaveAttribute("aria-disabled", "true");
+    expect(rename).toHaveTextContent("Only the owner can rename");
+    expect(screen.queryByRole("button", { name: /^Rename / })).toBeNull();
   });
 
   it("tells a reader who cannot edit what they may do", () => {
