@@ -218,19 +218,19 @@ export function highlightRange(
 }
 
 /**
- * Remove every highlight artifact previously created by `highlightRange` and
- * merge the text nodes that wrapping split apart.
+ * Remove every highlight artifact that `highlightRange` created inside `root`
+ * and merge the text nodes that wrapping split apart.
  */
-export function clearHighlights(d: Document): void {
+export function clearHighlights(root: ParentNode): void {
   const parents = new Set<Node>();
-  d.querySelectorAll("mark.slashdocs-mark").forEach((m) => {
+  root.querySelectorAll("mark.slashdocs-mark").forEach((m) => {
     if (m.parentNode) {
       parents.add(m.parentNode);
     }
     m.replaceWith(...m.childNodes);
   });
-  d.querySelectorAll(".slashdocs-svg-mark-rect").forEach((r) => r.remove());
-  d.querySelectorAll<HTMLElement>(".slashdocs-svg-mark-text").forEach((t) => {
+  root.querySelectorAll(".slashdocs-svg-mark-rect").forEach((r) => r.remove());
+  root.querySelectorAll<HTMLElement>(".slashdocs-svg-mark-text").forEach((t) => {
     t.classList.remove("slashdocs-svg-mark-text");
     delete t.dataset.cid;
   });
