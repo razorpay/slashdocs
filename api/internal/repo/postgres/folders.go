@@ -451,6 +451,7 @@ func (s *Store) MoveDocumentToFolder(ctx context.Context, _ auth.Principal, fold
 	if moved == 0 {
 		return false, repo.ErrNotFound
 	}
+	var toIndex string
 	if doc.ParentFolderID != folderID {
 		// Book mode (A8, A10): leave the source book's outline, then fill a
 		// placeholder in the target's. Each takes its book row lock after the
@@ -458,7 +459,7 @@ func (s *Store) MoveDocumentToFolder(ctx context.Context, _ auth.Principal, fold
 		if err := removeFromFolderBook(ctx, q, doc.ParentFolderID, docID, removedMovedOut); err != nil {
 			return false, err
 		}
-		if err := s.fillFolderPlaceholder(ctx, q, folderID, doc); err != nil {
+		if toIndex, err = fillFolderPlaceholder(ctx, q, folderID, doc); err != nil {
 			return false, err
 		}
 	}
@@ -466,7 +467,14 @@ func (s *Store) MoveDocumentToFolder(ctx context.Context, _ auth.Principal, fold
 	if err != nil {
 		return false, err
 	}
-	return hasGrants, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	if toIndex != "" {
+		// A12: index the filled chapter best-effort, outside the tree lock.
+		s.indexAfterCommit(ctx, toIndex)
+	}
+	return hasGrants, nil
 }
 
 func (s *Store) MoveDocumentToRoot(ctx context.Context, folderID, docID string) error {

@@ -23,9 +23,9 @@ var systemActor = auth.Principal{Type: auth.PrincipalUser, ID: "system"}
 
 // Lock order for every outline writer (A8): the folder-tree advisory lock
 // first, where the path takes it, then the documents row, then the books row
-// (GetBookForUpdate), then version rows (ensureSections). The book row lock
-// is taken before the outline is read, so that writers never build on a
-// stale outline.
+// (GetBookForUpdate). The book row lock is taken before the outline is read,
+// so that writers never build on a stale outline. Section indexing for fills
+// and CreateBook runs after commit, outside all of these locks.
 
 func (s *Store) CreateBook(ctx context.Context, folderID string, outline books.Outline, actor auth.Principal) (repo.Book, error) {
 	tx, err := s.db.Begin(ctx)
@@ -60,35 +60,44 @@ func (s *Store) CreateBook(ctx context.Context, folderID string, outline books.O
 	if _, _, err := insertOutline(ctx, q, id, outline, "Book created", actor); err != nil {
 		return repo.Book{}, err
 	}
-	// A12: the chapters a book places are indexed now; everything else is
-	// indexed on demand.
+	// A12: the chapters a book places are indexed, best-effort and after
+	// commit; everything else is indexed on demand.
+	var toIndex []string
 	for _, docID := range books.DocIDs(outline) {
-		if err := s.indexChapter(ctx, q, folderID, docID); err != nil {
+		v, err := chapterVersion(ctx, q, folderID, docID)
+		if err != nil {
 			return repo.Book{}, err
+		}
+		if v != "" {
+			toIndex = append(toIndex, v)
 		}
 	}
 	b, err := getBook(ctx, q, id)
 	if err != nil {
 		return repo.Book{}, err
 	}
-	return b, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return repo.Book{}, err
+	}
+	s.indexAfterCommit(ctx, toIndex...)
+	return b, nil
 }
 
-// indexChapter indexes the current version of a document in folderID. A
-// document that is gone or elsewhere is skipped: the handler validates the
+// chapterVersion returns the current version of a document in folderID, or
+// "" for a document that is gone or elsewhere: the handler validates the
 // outline, and a read-time prune drops what it missed.
-func (s *Store) indexChapter(ctx context.Context, q *dbsqlc.Queries, folderID, docID string) error {
+func chapterVersion(ctx context.Context, q *dbsqlc.Queries, folderID, docID string) (string, error) {
 	d, err := q.GetDocument(ctx, docID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
+		return "", nil
 	}
 	if err != nil {
-		return fmt.Errorf("load chapter %s: %w", docID, err)
+		return "", fmt.Errorf("load chapter %s: %w", docID, err)
 	}
 	if d.ParentFolderID != folderID || !d.CurrentVersionID.Valid {
-		return nil
+		return "", nil
 	}
-	return s.ensureSections(ctx, q, d.CurrentVersionID.String)
+	return d.CurrentVersionID.String, nil
 }
 
 func (s *Store) GetBook(ctx context.Context, id string) (repo.Book, error) {
@@ -247,24 +256,22 @@ func lockFolderBook(ctx context.Context, q *dbsqlc.Queries, folderID string) (re
 }
 
 // fillFolderPlaceholder puts a document that moved into folderID into the
-// matching placeholder of the folder's book, if there is one, and indexes the
-// document's current version (A12).
-func (s *Store) fillFolderPlaceholder(ctx context.Context, q *dbsqlc.Queries, folderID string, doc dbsqlc.GetDocumentRow) error {
+// matching placeholder of the folder's book, if there is one. It returns the
+// document's current version when it filled one, for the caller to index
+// after commit (A12), and "" otherwise.
+func fillFolderPlaceholder(ctx context.Context, q *dbsqlc.Queries, folderID string, doc dbsqlc.GetDocumentRow) (string, error) {
 	b, ok, err := lockFolderBook(ctx, q, folderID)
 	if err != nil || !ok {
-		return err
+		return "", err
 	}
 	o, n, filled := books.FillPlaceholder(b.Outline, books.DocTitle{ID: doc.ID, Title: doc.Title})
 	if !filled {
-		return nil
+		return "", nil
 	}
 	if _, _, err := insertOutline(ctx, q, b.ID, o, fmt.Sprintf("Chapter %d filled by %s", n, doc.ID), systemActor); err != nil {
-		return err
+		return "", err
 	}
-	if !doc.CurrentVersionID.Valid {
-		return nil
-	}
-	return s.ensureSections(ctx, q, doc.CurrentVersionID.String)
+	return doc.CurrentVersionID.String, nil
 }
 
 // Reasons recorded when a document leaves a book (A10).

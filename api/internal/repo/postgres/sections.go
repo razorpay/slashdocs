@@ -64,22 +64,49 @@ func (s *Store) indexPublishedSections(ctx context.Context, tx pgx.Tx, documentI
 	if !inBook {
 		return nil
 	}
+	_, err = s.trySections(ctx, tx, versionID, html)
+	return err
+}
+
+// trySections inserts a version's sections in a savepoint of tx. When the
+// insert fails it rolls back to the savepoint, logs, and returns ok=false
+// with a nil error, so that the rest of tx goes on and the version stays
+// unindexed for EnsureVersionSections and the backfill. err is set only
+// when the savepoint itself fails or ctx is done.
+func (s *Store) trySections(ctx context.Context, tx pgx.Tx, versionID string, html []byte) (ok bool, err error) {
 	sp, err := tx.Begin(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err := insertSections(ctx, s.q.WithTx(sp), versionID, html); err != nil {
 		if rbErr := sp.Rollback(ctx); rbErr != nil {
-			return errors.Join(err, rbErr)
+			return false, errors.Join(err, rbErr)
 		}
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return false, ctx.Err()
 		}
-		slog.WarnContext(ctx, "version sections not indexed at publish",
+		slog.WarnContext(ctx, "version sections not indexed",
 			slog.String("version_id", versionID), slog.Any("error", err))
-		return nil
+		return false, nil
 	}
-	return sp.Commit(ctx)
+	return true, sp.Commit(ctx)
+}
+
+// indexAfterCommit indexes versions best-effort once the caller's
+// transaction has committed, outside the folder-tree lock, so that a blob
+// read never runs under that lock and a failure never fails the caller. A
+// version that fails stays unindexed for EnsureVersionSections and the
+// backfill; one deleted meanwhile is skipped.
+func (s *Store) indexAfterCommit(ctx context.Context, versionIDs ...string) {
+	for _, id := range versionIDs {
+		if ctx.Err() != nil {
+			return
+		}
+		if err := s.EnsureVersionSections(ctx, id); err != nil && !errors.Is(err, repo.ErrNotFound) {
+			slog.WarnContext(ctx, "version sections not indexed",
+				slog.String("version_id", id), slog.Any("error", err))
+		}
+	}
 }
 
 // pgText makes heading text safe to store: PostgreSQL text must be valid
@@ -197,8 +224,13 @@ func (s *Store) indexSectionBatch(ctx context.Context, skipped []string) (indexe
 			failed = append(failed, v.ID)
 			continue
 		}
-		if err := insertSections(ctx, q, v.ID, doc); err != nil {
+		ok, err := s.trySections(ctx, tx, v.ID, doc)
+		if err != nil {
 			return 0, nil, err
+		}
+		if !ok {
+			failed = append(failed, v.ID)
+			continue
 		}
 		indexed++
 	}
