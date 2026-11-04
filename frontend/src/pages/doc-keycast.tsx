@@ -1,6 +1,15 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { CHORD_KEYS, type ChordKey, type ChordState } from "@/lib/esc-chord";
+import {
+  CHORD_KEYS,
+  CHORD_WINDOW_MS,
+  type ChordKey,
+  type ChordState,
+} from "@/lib/esc-chord";
 
+// Keycast shows that Esc waits for a letter: the letters and what they do,
+// and a line that runs out with the time to press one. After that time, a
+// letter is a plain key again, so C places a comment instead of opening the
+// comments.
 export function Keycast({
   state,
   available,
@@ -29,10 +38,20 @@ export function Keycast({
             {resolvedKey ? (
               <>
                 <span className="text-white/50">+</span>
-                <span>{resolvedKey}</span>
+                <span>{resolvedKey.toUpperCase()}</span>
               </>
             ) : null}
           </div>
+          {resolvedKey ? null : (
+            <motion.div
+              role="progressbar"
+              aria-label="Time to press a letter"
+              initial={{ scaleX: 1 }}
+              animate={{ scaleX: 0 }}
+              transition={{ duration: CHORD_WINDOW_MS / 1000, ease: "linear" }}
+              className="mt-1 h-0.5 origin-left rounded-full bg-[var(--color-fg-muted)] motion-reduce:hidden"
+            />
+          )}
           <div className="mt-1.5 pl-1 text-xs text-[var(--color-fg-muted)]">
             {resolvedKey
               ? label
@@ -42,9 +61,9 @@ export function Keycast({
                       key={item.key}
                       className="mr-3 inline-block whitespace-nowrap"
                     >
-                      <span className="font-mono font-medium text-[var(--color-fg)]">
-                        {item.key}
-                      </span>{" "}
+                      <kbd className="mr-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-1 font-mono font-medium text-[var(--color-fg)]">
+                        {item.key.toUpperCase()}
+                      </kbd>
                       {item.hint}
                     </span>
                   ),
