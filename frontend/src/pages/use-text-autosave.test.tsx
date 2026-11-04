@@ -53,8 +53,13 @@ function setup() {
     onSaved: vi.fn(),
     reload: vi.fn(),
     probe: vi.fn<Render>(),
+    replaceText: vi.fn(),
   };
-  const { result } = renderHook(() => useTextAutosave(options));
+  const hook = renderHook(
+    (props: { loaded: typeof loaded }) => useTextAutosave({ ...options, ...props }),
+    { initialProps: { loaded } },
+  );
+  const { result } = hook;
   const pause = async () => {
     act(() => result.current.changed(1));
     await act(() => vi.advanceTimersByTimeAsync(1500));
@@ -64,7 +69,7 @@ function setup() {
     frame.regions = [second(text)];
     await pause();
   };
-  return { ...options, frame, type, pause, result };
+  return { ...options, frame, type, pause, result, hook };
 }
 
 it("saves the edits as replacements on the loaded version", async () => {
@@ -179,10 +184,60 @@ it("keeps the draft and stops saving when someone else changed the same text", a
     cancel: { label: string; onClick: () => void };
   };
   expect([action.label, cancel.label]).toEqual(["Copy my text", "Show their version"]);
-  action.onClick({ preventDefault: vi.fn() });
-  expect(write).toHaveBeenCalledWith("Try it now.");
+  // The copy holds what the reader typed after the conflict too.
+  await act(async () => action.onClick({ preventDefault: vi.fn() }));
+  expect(write).toHaveBeenCalledWith("Try it now!");
   cancel.onClick();
   expect(reload).toHaveBeenCalledTimes(1);
+});
+
+it("clears the unsaved state when a new load drops the draft", async () => {
+  vi.spyOn(api, "editSource").mockRejectedValue(
+    new APIError(409, "edit_conflict", "the text changed"),
+  );
+  const { type, setState, hook } = setup();
+
+  await type("Try it now.");
+  expect(setState).toHaveBeenLastCalledWith("paused");
+  hook.rerender({ loaded: { version: "ver_2", load: 1 } });
+
+  expect(setState).toHaveBeenLastCalledWith("idle");
+});
+
+it("saves the last draft when the frame goes before the pause", async () => {
+  const edit = vi.spyOn(api, "editSource").mockResolvedValue(saved("ver_2"));
+  const { result, hook, take } = setup();
+
+  act(() => {
+    result.current.drafted({ regions: [second("Try it now.")], scripts: [] });
+    result.current.changed(1);
+  });
+  hook.unmount();
+  await act(() => vi.advanceTimersByTimeAsync(0));
+
+  expect(take).not.toHaveBeenCalled();
+  expect(edit).toHaveBeenCalledExactlyOnceWith(
+    "doc_1",
+    expect.objectContaining({
+      replacements: [{ start: 21, end: 24, old_html: "it.", new_html: "it now." }],
+    }),
+  );
+});
+
+it("counts the attempts of a save that fails, and offers a copy", async () => {
+  const error = vi.spyOn(toast, "error");
+  vi.spyOn(api, "editSource").mockRejectedValue(new TypeError("Failed to fetch"));
+  const { type } = setup();
+
+  await type("Try it now.");
+  await act(() => vi.advanceTimersByTimeAsync(5000));
+
+  expect(error).toHaveBeenLastCalledWith(
+    "Your edits are not saved yet. Trying again (attempt 2)…",
+    expect.objectContaining({
+      action: expect.objectContaining({ label: "Copy my text" }),
+    }),
+  );
 });
 
 it("saves nothing when the edits cannot be written into the source", async () => {
@@ -197,8 +252,11 @@ it("saves nothing when the edits cannot be written into the source", async () =>
 
   expect(edit).not.toHaveBeenCalled();
   expect(reload).not.toHaveBeenCalled();
-  expect(error).toHaveBeenCalledWith("A script moved this content.", expect.anything());
-  expect(setState).toHaveBeenLastCalledWith("failed");
+  expect(error).toHaveBeenCalledWith(
+    "This edit does not fit the source of the document, so it cannot save.",
+    expect.anything(),
+  );
+  expect(setState).toHaveBeenLastCalledWith("refused");
 });
 
 it("shows the latest version when the frame no longer matches its source", async () => {
@@ -226,6 +284,8 @@ describe("script text", () => {
     async (html, _locator, strings) => ({
       text: shows(html),
       counts: strings.map((s) => (s === shows(html) ? 2 : 0)),
+      texts: 2,
+      errors: 0,
     });
 
   beforeEach(() => vi.mocked(api.getVersionHTML).mockResolvedValue(SCRIPT));
@@ -236,13 +296,10 @@ describe("script text", () => {
     expect(await result.current.scriptEditable("Run it.")).toBe(false);
   });
 
-  it("saves a change that shows, says where it shows, and undoes it", async () => {
+  it("saves a change that shows, changes its other places in place, and undoes it", async () => {
     const success = vi.spyOn(toast, "success");
-    const edit = vi
-      .spyOn(api, "editSource")
-      .mockResolvedValueOnce(saved("ver_2"))
-      .mockResolvedValueOnce(saved("ver_3"));
-    const { frame, probe, pause, reload, onSaved } = setup();
+    const edit = vi.spyOn(api, "editSource").mockResolvedValue(saved("ver_2"));
+    const { frame, probe, pause, reload, replaceText } = setup();
     probe.mockImplementation(render());
 
     frame.scripts = [change];
@@ -255,38 +312,38 @@ describe("script text", () => {
       replacements: [
         { start: literalAt, end: literalAt + 4, old_html: '"Try', new_html: '"Run' },
       ],
+      change_summary: "Changed “Try it.” to “Run it.” in 2 places",
     });
-    expect(reload).toHaveBeenCalledTimes(1);
+    expect(reload).not.toHaveBeenCalled();
+    expect(replaceText).toHaveBeenLastCalledWith("Try it.", "Run it.");
     const [message, options] = success.mock.lastCall!;
-    expect(message).toBe("Changed in 2 places");
+    expect(message).toBe("Changed “Try it.” to “Run it.” in 2 places");
     const { action } = options as { action: { label: string; onClick: () => void } };
     expect(action.label).toBe("Undo");
 
+    // Undo puts the text back on the page, which the next save saves.
     action.onClick();
-    await act(() => vi.advanceTimersByTimeAsync(0));
-    expect(edit).toHaveBeenLastCalledWith("doc_1", {
-      base_version_id: "ver_2",
-      client_change_id: expect.any(String),
-      replacements: [
-        { start: literalAt, end: literalAt + 4, old_html: '"Run', new_html: '"Try' },
-      ],
-    });
-    expect(onSaved).toHaveBeenLastCalledWith("ver_3", false);
-    expect(reload).toHaveBeenCalledTimes(2);
+    expect(replaceText).toHaveBeenLastCalledWith("Run it.", "Try it.");
   });
 
   it("refuses a change that does not show where the reader typed it, and saves the rest", async () => {
     const error = vi.spyOn(toast, "error");
     const edit = vi.spyOn(api, "editSource").mockResolvedValue(saved("ver_2"));
-    const { frame, probe, pause, reload } = setup();
+    const { frame, probe, pause, reload, setState } = setup();
     probe.mockImplementation(render(() => "Try it."));
 
     frame.scripts = [change];
     await pause();
     expect(edit).not.toHaveBeenCalled();
+    // The text stays on screen, so the reader learns that it is not saved,
+    // and may copy or discard it.
+    expect(setState).toHaveBeenLastCalledWith("refused");
     expect(error).toHaveBeenCalledWith(
       "The page does not show the new text where you typed it.",
-      expect.anything(),
+      expect.objectContaining({
+        action: expect.objectContaining({ label: "Copy my text" }),
+        cancel: expect.objectContaining({ label: "Discard my change" }),
+      }),
     );
 
     // The next save checks it no more, and saves the other edits.
@@ -300,7 +357,7 @@ describe("script text", () => {
     ];
     await pause();
     expect(probe).toHaveBeenCalledTimes(2);
-    expect(error).toHaveBeenCalledTimes(1);
+    expect(setState).toHaveBeenLastCalledWith("refused");
     expect(edit.mock.lastCall![1].replacements).toEqual([
       { start: 10, end: 10, old_html: "", new_html: "Hi" },
     ]);

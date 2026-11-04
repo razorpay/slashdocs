@@ -19,10 +19,12 @@ import {
   blockOf,
   caretRange,
   isEditableTarget,
+  markSurface,
   reducedMotion,
   scrollBehavior,
 } from "./dom.ts";
 import { startTextEditing, type TextEditor } from "./text-editing.ts";
+import { elementOf, REFUSED } from "./structure.ts";
 import { probe, startScriptText, type ScriptText } from "./script-text.ts";
 import { CHORD_KEYS } from "../src/lib/esc-chord.ts";
 import {
@@ -525,11 +527,32 @@ type Theme = "dark" | "light";
   // comment rail keeps its positions.
   let highlightsHeld = false;
 
+  const DRAFT_MS = 100;
+  let draftTimer: ReturnType<typeof setTimeout> | undefined;
+
+  // textChanges gives the edits on screen and the scroll of the document.
+  // A take starts the next save: the highlights of the changed blocks come
+  // back.
+  function textChanges(take: boolean) {
+    const { regions } = (take ? textEditor?.take() : textEditor?.peek()) ?? {
+      regions: [],
+    };
+    if (take) releaseHighlights();
+    return {
+      regions,
+      scripts: scriptText?.take() ?? [],
+      top: Math.round(doc()?.defaultView?.scrollY ?? 0),
+    };
+  }
+
   // Text editing makes the document editable in place. The frame's srcdoc
   // is the source as the server tagged it, before any script ran.
   function setTextEditing(on: boolean): void {
     const d = doc();
+    // The selection actions change with editing.
+    selectionAction?.remove();
     if (!on) {
+      clearTimeout(draftTimer);
       // Script text gives back the contenteditable values that the source
       // map gave it, so it stops first.
       scriptText?.stop();
@@ -540,12 +563,25 @@ type Theme = "dark" | "light";
       return;
     }
     if (textEditor || !d) return;
+    markSurface(d);
     const post = (message: object) => parent.postMessage(message, targetOrigin());
-    const onDirty = (count: number) => post({ type: "slashdocs:text-dirty", count });
+    // Each change also sends a draft soon after it, which the app saves when
+    // the frame goes before a save.
+    const onDirty = (count: number) => {
+      post({ type: "slashdocs:text-dirty", count });
+      clearTimeout(draftTimer);
+      draftTimer = setTimeout(
+        () => post({ type: "slashdocs:text-draft", ...textChanges(false) }),
+        DRAFT_MS,
+      );
+    };
     textEditor = startTextEditing(d, frame.srcdoc, {
       beforeTouch: holdHighlights,
       onDirty,
-      onRefused: (reason) => post({ type: "slashdocs:text-refused", reason }),
+      // A hint at the script text already says why it does not change.
+      onRefused: (reason) =>
+        (reason === REFUSED.script && scriptText?.pulse()) ||
+        post({ type: "slashdocs:text-refused", reason }),
     });
     if (textEditor)
       scriptText = startScriptText(d, {
@@ -1960,33 +1996,58 @@ type Theme = "dark" | "light";
       behavior: "instant",
     });
     textFlashStarted = Date.now();
+    flashRects(d, Array.from(range.getClientRects()), TEXT_FLASH);
+  }
+
+  // A flash blinks twice on text that a link goes to, and fades once on text
+  // that changed. Reduced motion holds it, then takes it away.
+  type Flash = { keyframes: Keyframe[]; duration: number };
+  const TEXT_FLASH: Flash = {
+    keyframes: [
+      { opacity: 0.2 },
+      { opacity: 1, offset: 0.12 },
+      { opacity: 0.25, offset: 0.25 },
+      { opacity: 1, offset: 0.38 },
+      { opacity: 1, offset: 0.72 },
+      { opacity: 0 },
+    ],
+    duration: 2200,
+  };
+  const CHANGED_FLASH: Flash = {
+    keyframes: [{ opacity: 0 }, { opacity: 1, offset: 0.15 }, { opacity: 0 }],
+    duration: 1200,
+  };
+
+  // flashRects puts a flash over each rectangle. Overlays that take no
+  // pointer events do not split text nodes or disturb comments.
+  function flashRects(
+    d: Document,
+    rects: DOMRect[],
+    { keyframes, duration }: Flash,
+  ): void {
     const reduced = reducedMotion(d);
-    // Non-interactive overlays avoid splitting text nodes or disturbing comments.
-    Array.from(range.getClientRects())
-      .slice(0, 200)
-      .forEach((r) => {
-        if (!r.width || !r.height) return;
-        const flash = d.createElement("span");
-        flash.className = "slashdocs-text-flash";
-        flash.setAttribute("aria-hidden", "true");
-        // Keep opacity animatable: an important `all` reset overrides animation values.
-        flash.style.cssText = `all:initial;position:fixed!important;pointer-events:none!important;z-index:2147483646!important;left:${r.left}px!important;top:${r.top}px!important;width:${r.width}px!important;height:${r.height}px!important;background:rgba(56,189,248,.32)!important;box-shadow:0 0 0 1px rgba(14,165,233,.65)!important;border-radius:3px!important`;
-        d.body.appendChild(flash);
-        const animation = flash.animate(
-          reduced
-            ? [{ opacity: 1 }, { opacity: 1, offset: 0.85 }, { opacity: 0 }]
-            : [
-                { opacity: 0.2 },
-                { opacity: 1, offset: 0.12 },
-                { opacity: 0.25, offset: 0.25 },
-                { opacity: 1, offset: 0.38 },
-                { opacity: 1, offset: 0.72 },
-                { opacity: 0 },
-              ],
-          { duration: 2200, easing: reduced ? "steps(1, end)" : "ease-in-out" },
-        );
-        animation.onfinish = () => flash.remove();
-      });
+    rects.slice(0, 200).forEach((r) => {
+      if (!r.width || !r.height) return;
+      const flash = d.createElement("span");
+      flash.className = "slashdocs-text-flash";
+      flash.setAttribute("aria-hidden", "true");
+      // Keep opacity animatable: an important `all` reset overrides animation values.
+      flash.style.cssText = `all:initial;position:fixed!important;pointer-events:none!important;z-index:2147483646!important;left:${r.left}px!important;top:${r.top}px!important;width:${r.width}px!important;height:${r.height}px!important;background:rgba(56,189,248,.32)!important;box-shadow:0 0 0 1px rgba(14,165,233,.65)!important;border-radius:3px!important`;
+      d.body.appendChild(flash);
+      const animation = flash.animate(
+        reduced
+          ? [{ opacity: 1 }, { opacity: 1, offset: 0.85 }, { opacity: 0 }]
+          : keyframes,
+        { duration, easing: reduced ? "steps(1, end)" : "ease-in-out" },
+      );
+      animation.onfinish = () => flash.remove();
+    });
+  }
+
+  function rectsOf(node: Node): DOMRect[] {
+    const range = node.ownerDocument!.createRange();
+    range.selectNodeContents(node);
+    return Array.from(range.getClientRects());
   }
 
   function setupFrame(): void {
@@ -2346,24 +2407,37 @@ type Theme = "dark" | "light";
       e.data.type === "slashdocs:text-collect" &&
       typeof e.data.requestId === "string"
     ) {
-      const { regions } = textEditor?.take() ?? { regions: [] };
-      releaseHighlights();
       parent.postMessage(
         {
           type: "slashdocs:text-changes",
           requestId: e.data.requestId,
-          regions,
-          scripts: scriptText?.take() ?? [],
+          ...textChanges(true),
         },
         targetOrigin(),
       );
+      return;
+    }
+    // A saved script string shows its new text in every place, and the
+    // places that changed flash.
+    if (
+      e.data.type === "slashdocs:script-replace" &&
+      typeof e.data.from === "string" &&
+      typeof e.data.to === "string"
+    ) {
+      const d = doc();
+      const texts = scriptText?.replace(e.data.from, e.data.to) ?? [];
+      if (d) flashRects(d, texts.flatMap(rectsOf), CHANGED_FLASH);
       return;
     }
     if (
       e.data.type === "slashdocs:script-text-result" &&
       typeof e.data.requestId === "string"
     ) {
-      scriptText?.answer(e.data.requestId, e.data.editable === true);
+      scriptText?.answer(
+        e.data.requestId,
+        e.data.editable === true,
+        e.data.failed === true,
+      );
       return;
     }
     // The app renders a changed source in a hidden frame here, beside the
@@ -2376,7 +2450,12 @@ type Theme = "dark" | "light";
     ) {
       const { requestId, html, locator, strings } = e.data;
       void probe(frame, html, locator, strings.map(String))
-        .catch(() => ({ text: null, counts: strings.map(() => 0) }))
+        .catch(() => ({
+          text: null,
+          counts: strings.map(() => 0),
+          texts: 0,
+          errors: 0,
+        }))
         .then((result) =>
           parent.postMessage(
             { type: "slashdocs:probe-result", requestId, ...result },

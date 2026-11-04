@@ -16,6 +16,7 @@ import { ErrorState } from "@/components/error-state";
 import { errorMessage } from "@/lib/errors";
 import { CHORD_KEYS } from "@/lib/esc-chord";
 import { cursorsShownStore, parseCursorSpot } from "@/lib/live-cursors";
+import { createPersistentStore } from "@/lib/persistent-store";
 import { principalColor } from "@/lib/principals";
 import { useDocumentExport } from "./use-document-export";
 import { useDoc } from "./doc-context";
@@ -40,6 +41,12 @@ const FORWARDED_KEYS = new Set<string>([
   ...CHORD_KEYS.map((item) => item.key),
 ]);
 const VIM_KEYS = new Set(["j", "k", "g", "G"]);
+
+const editHintSeen = createPersistentStore<boolean>("slashdocs:edit-hint-seen", false);
+const editHint = () =>
+  matchMedia("(pointer: coarse)").matches
+    ? "Type to edit. Tap Done to leave the text."
+    : "Type to edit. Press Esc to leave the text.";
 
 // Renders the sandboxed document iframe for the document page. useBridgeHost
 // serves the theme and KV; this adds comments, selection, zoom, and links.
@@ -232,7 +239,15 @@ export function RenderFrame() {
       }),
     [postToFrame],
   );
-  const { changed: textChanged, scriptEditable } = useTextAutosave({
+  // The scroll of the frame at its last report, which a load for a save
+  // keeps.
+  const frameTop = useRef(0);
+  const restoreTop = useRef<number | undefined>(undefined);
+  const {
+    changed: textChanged,
+    drafted: textDrafted,
+    scriptEditable,
+  } = useTextAutosave({
     docId,
     loaded,
     take: takeTextEdits,
@@ -259,10 +274,18 @@ export function RenderFrame() {
       if (saved) stayOnVersion(saved);
       else showLatest();
       setKept(undefined);
+      restoreTop.current = frameTop.current;
       setReloads((n) => n + 1);
     },
     probe,
+    replaceText: (from, to) =>
+      postToFrame({ type: "slashdocs:script-replace", from, to }),
   });
+  useEffect(() => {
+    if (!ready || restoreTop.current === undefined) return;
+    postToFrame({ type: "slashdocs:scroll-to", top: restoreTop.current });
+    restoreTop.current = undefined;
+  }, [ready, postToFrame]);
 
   // Vim scrolling works whether focus is inside the rendered document or on
   // the surrounding viewer chrome. The bridge handles the actual scroll so
@@ -467,6 +490,12 @@ export function RenderFrame() {
       }
       if (e.data?.type === "slashdocs:document-click") {
         handleRenderedDocumentClick();
+        // An editor learns once, at the first click in the text, that it
+        // types and how to leave it.
+        if (editable && !editHintSeen.read()) {
+          editHintSeen.write(true);
+          toast.info(editHint(), { id: "edit-hint", duration: 8000 });
+        }
       }
       if (e.data?.type === "slashdocs:unfollowed") {
         onUnfollowCursor?.();
@@ -476,13 +505,16 @@ export function RenderFrame() {
       if (e.data?.type === "slashdocs:ready" && readyRef.current) {
         paintRef.current();
       }
-      if (
-        e.data?.type === "slashdocs:text-changes" &&
-        typeof e.data.requestId === "string"
-      ) {
-        const resolve = textCollects.current.get(e.data.requestId);
-        textCollects.current.delete(e.data.requestId);
-        resolve?.(parseTextEditResult(e.data));
+      if (/^slashdocs:text-(changes|draft)$/.test(e.data?.type)) {
+        if (isOffset(e.data.top)) frameTop.current = e.data.top;
+        const result = parseTextEditResult(e.data);
+        if (e.data.type === "slashdocs:text-draft") {
+          if (result) textDrafted(result);
+        } else if (typeof e.data.requestId === "string") {
+          const resolve = textCollects.current.get(e.data.requestId);
+          textCollects.current.delete(e.data.requestId);
+          resolve?.(result);
+        }
       }
       if (
         e.data?.type === "slashdocs:probe-result" &&
@@ -498,11 +530,17 @@ export function RenderFrame() {
         typeof e.data.text === "string"
       ) {
         const { requestId } = e.data;
-        void scriptEditable(e.data.text)
-          .catch(() => false)
-          .then((editable) =>
+        void scriptEditable(e.data.text).then(
+          (editable) =>
             postToFrame({ type: "slashdocs:script-text-result", requestId, editable }),
-          );
+          () =>
+            postToFrame({
+              type: "slashdocs:script-text-result",
+              requestId,
+              editable: false,
+              failed: true,
+            }),
+        );
       }
       // The reader cannot change this script text here, so a comment asks an
       // agent to.
@@ -607,7 +645,9 @@ export function RenderFrame() {
     setCommentPositions,
     setDocumentHeight,
     applyZoom,
+    editable,
     textChanged,
+    textDrafted,
     scriptEditable,
     postToFrame,
     onUnfollowCursor,
@@ -755,7 +795,8 @@ function reloadURL(url: string, reloads: number): string {
 
 // Messages for the reasons the frame gives when it refuses an edit.
 const REFUSALS = new Map([
-  ["script", "A script on the page makes this content, so it cannot change here."],
+  // The hint at script text says the same.
+  ["script", "A script on the page writes this text."],
   [
     "crosses-script",
     "The selection includes content that a script makes. Select less text.",
@@ -763,7 +804,6 @@ const REFUSALS = new Map([
   ["drop", "Dragging content into the document does not work. Copy and paste it."],
   ["format", "Only bold, italic, links and lists can change here."],
   ["list", "Only paragraphs can become a list."],
-  ["link", "A link must start with http, https, mailto or #."],
   ["plain-text", "Text from a script takes plain words only."],
 ]);
 
@@ -786,11 +826,13 @@ function parseTextEditResult(
 // parseProbeResult reads a probe-result message, checked as the text
 // changes are.
 function parseProbeResult(data: Record<string, unknown>): ProbeResult | undefined {
-  const { text, counts } = data;
+  const { text, counts, texts, errors } = data;
   return (text === null || typeof text === "string") &&
     Array.isArray(counts) &&
-    counts.every(isOffset)
-    ? { text, counts }
+    counts.every(isOffset) &&
+    isOffset(texts) &&
+    isOffset(errors)
+    ? { text, counts, texts, errors }
     : undefined;
 }
 
