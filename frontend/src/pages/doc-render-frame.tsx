@@ -76,6 +76,7 @@ export function RenderFrame() {
     onUnfollowCursor,
     editable,
     setSaveState,
+    setText,
     stayOnVersion,
     showLatest,
   } = useDoc();
@@ -553,6 +554,13 @@ export function RenderFrame() {
             body: `Please change “${anchor.quote}” to: `,
           });
       }
+      if (e.data?.type === "slashdocs:text-focus") {
+        setText({
+          focused: e.data.on === true,
+          undo: () => postToFrame({ type: "slashdocs:text-undo" }),
+          leave: () => postToFrame({ type: "slashdocs:leave-text" }),
+        });
+      }
       if (e.data?.type === "slashdocs:text-dirty" && typeof e.data.count === "number") {
         textChanged(e.data.count);
       }
@@ -646,6 +654,7 @@ export function RenderFrame() {
     setDocumentHeight,
     applyZoom,
     editable,
+    setText,
     textChanged,
     textDrafted,
     scriptEditable,

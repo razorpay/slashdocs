@@ -7,6 +7,8 @@ import {
   Pencil,
   type LucideIcon,
 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { useDoc, type SaveState } from "./doc-context";
 
@@ -50,6 +52,8 @@ const STATUS: Record<SaveState, Status> = {
 // The longest label of a save, "Not saved", has 9 characters. The label
 // keeps that width, so that the title does not move as the label changes.
 const LABEL_WIDTH = "sm:min-w-[9ch]";
+// How long Undo shows after the first save of a visit.
+const UNDO_MS = 8000;
 
 // What a reader who cannot change the words may do.
 const ACCESS: Record<"commenter" | "viewer", Status> = {
@@ -71,11 +75,69 @@ const ACCESS: Record<"commenter" | "viewer", Status> = {
 // shows only the icon of a save. A screen reader hears only that edits are
 // not saved, not each save of a pause.
 export function EditStatus({ access }: { access?: keyof typeof ACCESS }) {
-  const { editable, saveState } = useDoc();
+  const { editable, saveState, text } = useDoc();
+  const undo = useFirstSaveUndo(saveState);
   const status = editable ? STATUS[saveState] : access && ACCESS[access];
   if (!status) return null;
   const { label, title, Icon } = status;
   const failed = editable && Icon === AlertCircle;
+  return (
+    <>
+      {editable && text?.focused && (
+        // A phone has no Esc key to leave the text.
+        <Button
+          size="sm"
+          variant="secondary"
+          className="hidden pointer-coarse:inline-flex"
+          onClick={text.leave}
+        >
+          Done
+        </Button>
+      )}
+      <Status
+        label={label}
+        title={title}
+        Icon={Icon}
+        failed={failed}
+        editable={editable}
+        idle={saveState === "idle"}
+      />
+      {editable && undo && text && saveState === "saved" && (
+        <button
+          type="button"
+          onClick={text.undo}
+          className="motion-safe:animate-[pop-in_150ms_ease-out] text-xs font-medium text-[var(--color-accent)] hover:underline"
+        >
+          Undo
+        </button>
+      )}
+    </>
+  );
+}
+
+// After the first save of a visit, Undo shows for a short time, so that a
+// key pressed by accident is easy to take back.
+function useFirstSaveUndo(state: SaveState): boolean {
+  const [shown, setShown] = useState(false);
+  const saved = useRef(false);
+  useEffect(() => {
+    if (state !== "saved" || saved.current) return;
+    saved.current = true;
+    setShown(true);
+    const timer = window.setTimeout(() => setShown(false), UNDO_MS);
+    return () => window.clearTimeout(timer);
+  }, [state]);
+  return shown;
+}
+
+function Status({
+  label,
+  title,
+  Icon,
+  failed,
+  editable,
+  idle,
+}: Status & { failed: boolean; editable: boolean; idle: boolean }) {
   return (
     <span
       role="status"
@@ -83,7 +145,7 @@ export function EditStatus({ access }: { access?: keyof typeof ACCESS }) {
       title={title}
       className={cn(
         "shrink-0 items-center gap-1 text-xs text-[var(--color-fg-muted)]",
-        !editable || saveState === "idle" ? "hidden sm:inline-flex" : "inline-flex",
+        !editable || idle ? "hidden sm:inline-flex" : "inline-flex",
         failed && "text-[var(--color-danger)]",
       )}
     >
