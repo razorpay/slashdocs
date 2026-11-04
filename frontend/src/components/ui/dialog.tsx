@@ -1,7 +1,7 @@
 import * as React from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
-import { SheetHandle } from "./sheet";
+import { openFocus, SheetHandle } from "./sheet";
 import { Tooltip } from "./tooltip";
 import { cn } from "@/lib/cn";
 
@@ -17,6 +17,7 @@ export function DialogContent({
   className,
   children,
   anchor = "center",
+  onOpenAutoFocus,
   ...p
 }: React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
   anchor?: "center" | "top";
@@ -31,12 +32,14 @@ export function DialogContent({
             "dialog-sheet top-[12vh] translate-y-0 max-md:bottom-0 max-md:left-0 max-md:top-auto max-md:max-w-none max-md:translate-x-0 max-md:rounded-b-none max-md:rounded-t-2xl max-md:pb-[calc(1.5rem+env(safe-area-inset-bottom))] max-md:pt-0",
           className,
         )}
+        onOpenAutoFocus={openFocus(onOpenAutoFocus)}
         {...p}
       >
         {anchor === "top" && <SheetHandle className="mb-4 md:hidden" />}
         {children}
         <Tooltip label="Close dialog">
           <DialogPrimitive.Close
+            data-dialog-close
             aria-label="Close dialog"
             className="absolute right-3 top-[18px] inline-flex min-h-10 min-w-10 items-center justify-center rounded-md p-1 text-[var(--color-fg-muted)] transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.96] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-fg)]"
           >

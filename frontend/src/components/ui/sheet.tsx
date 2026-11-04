@@ -8,10 +8,28 @@ export const Sheet = DialogPrimitive.Root;
 export const SheetTrigger = DialogPrimitive.Trigger;
 export const SheetClose = DialogPrimitive.Close;
 
+// openFocus puts the focus of a dialog that opens on the dialog itself when
+// its close button is its first control, so that it does not open with a
+// ring on Close. Tab then goes to Close. Other dialogs focus their first
+// control, as Radix does.
+export function openFocus(onOpenAutoFocus?: (event: Event) => void) {
+  return (event: Event) => {
+    onOpenAutoFocus?.(event);
+    const content = event.currentTarget as HTMLElement;
+    const first = content.querySelector(
+      "a[href], button, input, select, textarea, [tabindex]:not([tabindex='-1'])",
+    );
+    if (event.defaultPrevented || !first?.hasAttribute("data-dialog-close")) return;
+    event.preventDefault();
+    content.focus();
+  };
+}
+
 export function SheetContent({
   className,
   children,
   side = "right",
+  onOpenAutoFocus,
   ...p
 }: React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
   side?: "right" | "left";
@@ -27,11 +45,13 @@ export function SheetContent({
             : "left-0 border-r sheet-left",
           className,
         )}
+        onOpenAutoFocus={openFocus(onOpenAutoFocus)}
         {...p}
       >
         {children}
         <Tooltip label="Close panel">
           <DialogPrimitive.Close
+            data-dialog-close
             aria-label="Close panel"
             className="absolute right-2 top-0 inline-flex h-14 w-12 items-center justify-center rounded-md text-[var(--color-fg-muted)] transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.96] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-fg)]"
           >
