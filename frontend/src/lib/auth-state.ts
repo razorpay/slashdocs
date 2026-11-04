@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "@/api";
 import { clearCommentDrafts } from "./comment-drafts";
+import { clearTextDrafts } from "./text-drafts";
 
 // Sign-out once only set this flag and kept the session cookie.
 const LEGACY_SIGNED_OUT_KEY = "slashdocs.frontend_signed_out";
@@ -30,8 +31,10 @@ export function useSignOut() {
   return useMutation({
     mutationFn: api.logout,
     onSuccess: () => {
-      // Unsent comments must not outlive the session on a shared browser.
+      // Unsent comments and text must not outlive the session on a shared
+      // browser.
       clearCommentDrafts();
+      clearTextDrafts();
       qc.clear();
       nav("/", { replace: true });
     },

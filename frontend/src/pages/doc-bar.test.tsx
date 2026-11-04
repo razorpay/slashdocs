@@ -300,16 +300,19 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
   });
 
   it("tells a reader who cannot edit what they may do", () => {
-    const status = (access?: "commenter" | "viewer", editable = false) =>
+    const status = (access?: "commenter" | "viewer", editable = false) => {
+      cleanup();
       render(
         <DocProvider value={{ ...mockDocContext, editable }}>
           <EditStatus access={access} />
         </DocProvider>,
-      ).container.textContent;
+      );
+      return screen.queryByRole("status")?.textContent;
+    };
     expect(status("commenter")).toBe("Can comment");
     expect(status("viewer")).toBe("Can view");
     expect(status("commenter", true)).toBe("Can edit");
-    expect(status()).toBe("");
+    expect(status()).toBeUndefined();
   });
 
   it("says Saving… only while a save runs, and announces only a failed save", () => {
@@ -330,20 +333,36 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     expect(status("refused")).toEqual(["Not saved", "polite"]);
   });
 
-  it("offers Undo after the first save of a visit", async () => {
-    const text = { focused: true, undo: vi.fn(), leave: vi.fn() };
-    const value = { ...mockDocContext, editable: true, text };
-    const { rerender } = render(
-      <DocProvider value={value}>
-        <EditStatus />
-      </DocProvider>,
-    );
-    rerender(
-      <DocProvider value={{ ...value, saveState: "saved" }}>
-        <EditStatus />
-      </DocProvider>,
-    );
-    await userEvent.click(screen.getByRole("button", { name: "Undo" }));
-    expect(text.undo).toHaveBeenCalled();
+  it("keeps the status and Done in place in every state, with no Undo of its own", async () => {
+    const leave = vi.fn();
+    const { rerender } = render(<></>);
+    const show = (saveState: SaveState, focused: boolean) => {
+      rerender(
+        <DocProvider
+          value={{
+            ...mockDocContext,
+            editable: true,
+            saveState,
+            text: { focused, leave },
+          }}
+        >
+          <EditStatus />
+        </DocProvider>,
+      );
+      const done = screen.getByRole("button", { name: "Done" });
+      return [
+        screen.getByRole("status").classList.contains("hidden"),
+        done.classList.contains("invisible"),
+        screen.queryByRole("button", { name: "Undo" }),
+      ];
+    };
+    // The narrow bar shows the icon of each state, the idle one too, so the
+    // title keeps its width.
+    for (const state of ["idle", "unsaved", "saving", "saved"] as const) {
+      expect(show(state, false)).toEqual([false, true, null]);
+      expect(show(state, true)).toEqual([false, false, null]);
+    }
+    await userEvent.click(screen.getByRole("button", { name: "Done" }));
+    expect(leave).toHaveBeenCalled();
   });
 });

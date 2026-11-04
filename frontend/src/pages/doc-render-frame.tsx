@@ -279,6 +279,7 @@ export function RenderFrame() {
       restoreTop.current = frameTop.current;
       setReloads((n) => n + 1);
     },
+    undo: () => postToFrame({ type: "slashdocs:text-undo" }),
     probe,
     replaceText: (from, to) =>
       postToFrame({ type: "slashdocs:script-replace", from, to }),
@@ -558,7 +559,6 @@ export function RenderFrame() {
       if (e.data?.type === "slashdocs:text-focus") {
         setText({
           focused: e.data.on === true,
-          undo: () => postToFrame({ type: "slashdocs:text-undo" }),
           leave: () => postToFrame({ type: "slashdocs:leave-text" }),
         });
       }
