@@ -7,6 +7,8 @@ import { useClientHeight } from "@/lib/use-client-height";
 import { useDoc } from "./doc-context";
 
 const SNIPPET_LENGTH = 80;
+// Ticks closer than the height of one tick would stack, so they share it.
+const TICK_PX = 16;
 
 const snippet = (c: Comment) => {
   const label = anchorLabel(c);
@@ -15,7 +17,8 @@ const snippet = (c: Comment) => {
 
 // A faint strip down the document's scrollbar with one tick per thread at its
 // place in the whole document. It lets a reader see where threads are without
-// scrolling, and open one.
+// scrolling, and open one. Threads at one place share a tick with their
+// count, which opens each of them in turn.
 export function CommentMap({ comments }: { comments: Comment[] }) {
   const {
     commentPositions,
@@ -34,6 +37,16 @@ export function CommentMap({ comments }: { comments: Comment[] }) {
     viewportHeight,
   });
 
+  const groups = ticks?.reduce<{ ids: string[]; y: number; first: number }[]>(
+    (out, { id, y }, index) => {
+      const last = out.at(-1);
+      if (last && (y - last.y) * viewportHeight < TICK_PX) last.ids.push(id);
+      else out.push({ ids: [id], y, first: index + 1 });
+      return out;
+    },
+    [],
+  );
+
   const jump = (id: string) => {
     if (id !== activeComment) {
       setActiveComment(id);
@@ -47,31 +60,43 @@ export function CommentMap({ comments }: { comments: Comment[] }) {
 
   return (
     <div ref={stripRef} className="pointer-events-none absolute inset-y-0 right-0 w-3">
-      {ticks?.map((tick, index) => {
-        const active = tick.id === activeComment;
-        const quote = snippet(byId.get(tick.id)!);
+      {groups?.map(({ ids, y, first }) => {
+        const active = !!activeComment && ids.includes(activeComment);
+        const many = ids.length > 1;
+        const quotes = ids.map((id) => snippet(byId.get(id)!)).filter(Boolean);
+        const total = ticks!.length;
+        const label = many
+          ? `Comments ${first} to ${first + ids.length - 1} of ${total}`
+          : `Comment ${first} of ${total}${quotes[0] ? `: ${quotes[0]}` : ""}`;
         return (
           <button
-            key={tick.id}
+            key={ids[0]}
             type="button"
             // The comments list reaches every thread from the keyboard, so
             // ticks only add a pointer shortcut.
             tabIndex={-1}
             aria-current={active || undefined}
-            aria-label={`Comment ${index + 1} of ${ticks.length}${quote && `: ${quote}`}`}
-            title={quote}
-            onClick={() => jump(tick.id)}
+            aria-label={label}
+            title={quotes.join("\n")}
+            onClick={() =>
+              jump(ids[(ids.indexOf(activeComment ?? "") + 1) % ids.length])
+            }
             className="pointer-events-auto group absolute inset-x-0 h-4 -translate-y-1/2 focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
-            style={{ top: `${tick.y * 100}%` }}
+            style={{ top: `${y * 100}%` }}
           >
             <span
               className={cn(
-                "absolute inset-x-0.5 top-1/2 h-0.5 -translate-y-1/2 rounded-full transition-colors",
+                "absolute inset-x-0.5 top-1/2 -translate-y-1/2 transition-colors",
+                many
+                  ? "grid h-3.5 place-items-center rounded-sm bg-[var(--color-fg-muted)] text-[9px] leading-none font-semibold text-[var(--color-bg)] tabular-nums"
+                  : "h-0.5 rounded-full bg-[var(--color-fg-muted)]/50",
                 active
                   ? "bg-[var(--color-accent)]"
-                  : "bg-[var(--color-fg-muted)]/50 group-hover:bg-[var(--color-fg)]",
+                  : "group-hover:bg-[var(--color-fg)]",
               )}
-            />
+            >
+              {many && ids.length}
+            </span>
           </button>
         );
       })}
