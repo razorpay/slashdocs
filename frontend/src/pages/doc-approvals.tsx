@@ -145,10 +145,12 @@ export function ApprovalsDialog({
     return (
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogTrigger asChild>
+          {/* On a phone only the icon shows, so it looks like the other icons
+              of the bar and not like a pressed toggle. */}
           <Button
             variant="outline"
             size="sm"
-            className="shrink-0"
+            className="shrink-0 max-sm:bg-transparent max-sm:shadow-none"
             aria-label="Request approval"
           >
             <ClipboardCheck className="h-4 w-4" />
