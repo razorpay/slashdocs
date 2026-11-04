@@ -16,11 +16,31 @@ func booksCmd(g *globals, out io.Writer) *cobra.Command {
 	c := &cobra.Command{Use: "books", Short: "Manage books (folders of chapters)"}
 
 	create := &cobra.Command{Use: "create <folder_id>", Short: "Make a folder a book", Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		var created struct {
+			BookID       string    `json:"book_id"`
+			Placed       []string  `json:"placed"`
+			NotInOutline []bookDoc `json:"not_in_outline"`
+		}
 		return action(g, out, func(cl *Client) ([]byte, error) {
-			return cl.do("POST", apiPath("/v1/folders/%s/book", args[0]), nil, "")
-		}, func(m map[string]any) string {
-			return fmt.Sprintf("Created book %s from folder %s.", fmt.Sprint(value(m, "book_id")), args[0])
-		})
+			b, err := cl.do("POST", apiPath("/v1/folders/%s/book", args[0]), nil, "")
+			if err != nil {
+				return nil, explainBookExists(err)
+			}
+			return b, json.Unmarshal(b, &created)
+		}, func(map[string]any) string {
+			return fmt.Sprintf("Created book %s from folder %s: %d documents placed, %d not in the outline.", created.BookID, args[0], len(created.Placed), len(created.NotInOutline))
+		}, actionOptions{after: func() error {
+			var sb strings.Builder
+			if len(created.NotInOutline) > 0 {
+				sb.WriteString("Not in outline:\n")
+				for _, d := range created.NotInOutline {
+					fmt.Fprintf(&sb, "  %s  %s\n", d.ID, d.Title)
+				}
+			}
+			fmt.Fprintf(&sb, "See the outline with `slashdocs books status %s`.\n", created.BookID)
+			_, err := io.WriteString(out, sb.String())
+			return err
+		}})
 	}}
 
 	show := &cobra.Command{Use: "show <book_id>", Short: "Show a book's chapters", Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
@@ -232,6 +252,33 @@ func parseOutlineFile(raw []byte) (outline json.RawMessage, versionID string, er
 	}
 	_ = json.Unmarshal(top["version_id"], &versionID)
 	return inner, versionID, nil
+}
+
+// bookDoc is a folder document the outline does not place.
+type bookDoc struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+}
+
+// explainBookExists names the existing book when the folder already is one.
+func explainBookExists(err error) error {
+	var ae *APIError
+	if !errors.As(err, &ae) || ae.Code != "book_exists" {
+		return err
+	}
+	var payload struct {
+		Error struct {
+			Details struct {
+				BookID string `json:"book_id"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	if json.Unmarshal([]byte(ae.Body), &payload) != nil || payload.Error.Details.BookID == "" {
+		return err
+	}
+	id := payload.Error.Details.BookID
+	ae.Message = fmt.Sprintf("This folder is already book %s. See it with `slashdocs books show %s`.", id, id)
+	return ae
 }
 
 // explainOutlineError turns a conflict or validation failure into text that

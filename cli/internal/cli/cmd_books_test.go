@@ -225,3 +225,37 @@ func TestBooksStatusOfAnEmptyBook(t *testing.T) {
 		t.Fatalf("status = %q, %v", out, err)
 	}
 }
+
+func TestBooksCreateListsPlacedAndUnplacedDocuments(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The shape of the server's createBookResponse.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"book_id":"book_1","outline_version_id":"bov_1","placed":["doc_r","doc_a","doc_b"],"not_in_outline":[{"id":"doc_n","title":"Notes"}]}`))
+	}))
+	defer srv.Close()
+	booksEnv(t, srv)
+	out, err := Execute([]string{"books", "create", "fld_1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Created book book_1 from folder fld_1", "3 documents placed", "1 not in the outline", "doc_n", "Notes", "slashdocs books status book_1"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("create output lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestBooksCreateOnABookNamesIt(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":{"code":"book_exists","message":"This folder is already a book.","details":{"book_id":"book_7"}}}`))
+	}))
+	defer srv.Close()
+	booksEnv(t, srv)
+	_, err := Execute([]string{"books", "create", "fld_1"})
+	if err == nil || ExitCode(err) != 5 || !strings.Contains(err.Error(), "book_7") || !strings.Contains(err.Error(), "slashdocs books show book_7") {
+		t.Fatalf("err = %v, exit %d", err, ExitCode(err))
+	}
+}
