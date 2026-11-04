@@ -100,6 +100,12 @@ func Validate(o Outline, folderDocs map[string]bool) []Problem {
 	if utf8.RuneCountInString(o.Title) > MaxTitle {
 		add("title", "Keep the title under 200 characters.")
 	}
+	if utf8.RuneCountInString(o.Subtitle) > MaxTitle {
+		add("subtitle", "Keep the subtitle under 200 characters.")
+	}
+	if len(o.Parts) > MaxEntries {
+		add("parts", "An outline can hold at most 500 parts.")
+	}
 	entry := func(path string, e Entry) {
 		count++
 		switch {
@@ -124,6 +130,9 @@ func Validate(o Outline, folderDocs map[string]bool) []Problem {
 	for pi, p := range o.Parts {
 		if strings.TrimSpace(p.Title) == "" && len(o.Parts) > 1 {
 			add(fmt.Sprintf("parts[%d].title", pi), "Give the part a title, or remove the part.")
+		}
+		if utf8.RuneCountInString(p.Title) > MaxTitle {
+			add(fmt.Sprintf("parts[%d].title", pi), "Keep the part title under 200 characters.")
 		}
 		for ci, e := range p.Chapters {
 			entry(fmt.Sprintf("parts[%d].chapters[%d]", pi, ci), e)

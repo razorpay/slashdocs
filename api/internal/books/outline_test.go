@@ -169,3 +169,42 @@ func TestFillPlaceholderNumbersAcrossParts(t *testing.T) {
 		t.Fatalf("ok=%v n=%d parts=%#v", ok, n, o2.Parts)
 	}
 }
+
+func TestValidateCapsEntriesAndTitleLengths(t *testing.T) {
+	long, limit := strings.Repeat("é", MaxTitle+1), strings.Repeat("é", MaxTitle)
+	planned := func(n int) []Entry {
+		es := make([]Entry, n)
+		for i := range es {
+			es[i] = Entry{Planned: "P"}
+		}
+		return es
+	}
+	parts := func(n int) []Part {
+		ps := make([]Part, n)
+		for i := range ps {
+			ps[i] = Part{Title: "Part"}
+		}
+		return ps
+	}
+	for _, c := range []struct {
+		name string
+		o    Outline
+		want []Problem
+	}{
+		{"at the limits", Outline{Title: limit, Subtitle: limit, Parts: []Part{{Title: limit, Chapters: append(planned(MaxEntries-1), Entry{Planned: limit})}}}, nil},
+		{"too many entries", Outline{Title: "B", Front: planned(1), Parts: []Part{{Chapters: planned(MaxEntries)}}},
+			[]Problem{{"parts", "An outline can hold at most 500 entries."}}},
+		{"long title", Outline{Title: long}, []Problem{{"title", "Keep the title under 200 characters."}}},
+		{"long subtitle", Outline{Title: "B", Subtitle: long}, []Problem{{"subtitle", "Keep the subtitle under 200 characters."}}},
+		{"long planned title", Outline{Title: "B", Back: []Entry{{Planned: long}}}, []Problem{{"back[0].planned", "Keep the title under 200 characters."}}},
+		{"long part title", Outline{Title: "B", Parts: []Part{{Title: "I"}, {Title: long}}}, []Problem{{"parts[1].title", "Keep the part title under 200 characters."}}},
+		{"too many parts", Outline{Title: "B", Parts: parts(MaxEntries + 1)}, []Problem{{"parts", "An outline can hold at most 500 parts."}}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := Validate(c.o, nil)
+			if !reflect.DeepEqual(sortedProblems(c.want), sortedProblems(got)) {
+				t.Fatalf("problems = %#v, want %#v", got, c.want)
+			}
+		})
+	}
+}
