@@ -33,7 +33,6 @@ export function NewFolderDialog({
       onOpenChange(false);
       setTitle("");
       qc.invalidateQueries({ queryKey: queryKeys.folders(parentFolderId) });
-      toast.success(parentFolderId ? "Created subfolder." : "Created folder.");
     },
     onError: (e) => toast.error(errorMessage(e, "Create failed")),
   });

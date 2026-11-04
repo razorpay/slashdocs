@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Toaster, toast } from "sonner";
+import { toast } from "sonner";
+import { Toaster } from "@/components/ui/toaster";
 import { BrowserRouter, Link, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { ChevronRight, ExternalLink, FolderIcon, Search } from "lucide-react";
@@ -258,7 +259,7 @@ export function LocalApp() {
             <main className="relative h-full overflow-auto">
               <EntryPage />
             </main>
-            <Toaster position="bottom-right" theme="system" richColors />
+            <Toaster />
           </BrowserRouter>
         </TooltipProvider>
       </QueryClientProvider>

@@ -602,7 +602,6 @@ function LabelsForm({
       qc.invalidateQueries({ queryKey: queryKeys.document(docId) });
       qc.invalidateQueries({ queryKey: queryKeys.documents() });
       onSaved();
-      toast.success("Labels updated.");
     },
     onError: (e) => toast.error(errorMessage(e, "Could not update labels")),
   });

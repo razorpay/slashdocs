@@ -330,7 +330,10 @@ async function shareWithPlatformGroup(page: Page) {
     .filter({ hasText: "platform@example.com" })
     .click();
   await shareSheet.getByRole("button", { name: "Share", exact: true }).click();
-  await expect(page.getByText("Access granted.")).toBeVisible();
+  // The field clears when the group gets access.
+  await expect(shareSheet.getByPlaceholder("Search group name or email")).toHaveValue(
+    "",
+  );
 }
 
 test("owner shares a document and folder with a verified group", async ({ page }) => {

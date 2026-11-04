@@ -113,7 +113,6 @@ export function CommentComposer({ draft }: { draft: CommentDraft }) {
       discardDraft(draft.id);
       // The new thread opens where the draft was.
       setActiveComment(created.id);
-      toast.success("Comment added.");
       q.invalidateQueries({ queryKey: queryKeys.comments(docId) });
     },
     onError: (e) => toast.error(errorMessage(e, "Could not add comment")),

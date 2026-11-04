@@ -172,7 +172,6 @@ export function ShareSheet({
     onSuccess: () => {
       setAddress("");
       setSelectedGroup(null);
-      toast.success("Access granted.");
       invalidateAccess();
     },
     onError: (e) => toast.error(errorMessage(e, "Couldn't share.")),
@@ -193,7 +192,6 @@ export function ShareSheet({
         ? api.updateGrant(rid, grantId, nextRole)
         : api.updateFolderGrant(rid, grantId, nextRole),
     onSuccess: () => {
-      toast.success("Access updated.");
       invalidateAccess();
       setPendingChange(null);
     },
@@ -213,7 +211,6 @@ export function ShareSheet({
         ? api.deleteGrant(rid, grantId)
         : api.deleteFolderGrant(rid, grantId),
     onSuccess: () => {
-      toast.success("Access revoked.");
       invalidateAccess();
       setPendingChange(null);
     },
@@ -225,7 +222,6 @@ export function ShareSheet({
         ? api.updateFolderGrant(id, grantId, nextRole)
         : api.updateGrant(id, grantId, nextRole),
     onSuccess: () => {
-      toast.success("Access updated.");
       invalidateAccess();
     },
     onError: (e) => toast.error(errorMessage(e, "Couldn't update access.")),
@@ -234,7 +230,6 @@ export function ShareSheet({
     mutationFn: (grantId: string) =>
       isFolder ? api.deleteFolderGrant(id, grantId) : api.deleteGrant(id, grantId),
     onSuccess: () => {
-      toast.success("Access revoked.");
       invalidateAccess();
     },
     onError: (e) => toast.error(errorMessage(e, "Couldn't revoke access.")),
@@ -252,7 +247,6 @@ export function ShareSheet({
       else await api.setGeneralAccess(id, next);
     },
     onSuccess: () => {
-      toast.success("General access updated.");
       invalidateAccess();
       setPendingChange(null);
     },

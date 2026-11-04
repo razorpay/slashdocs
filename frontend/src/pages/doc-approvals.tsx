@@ -583,7 +583,6 @@ function ApproverRow({
   const remove = useMutation({
     mutationFn: (approverId: string) => api.deleteApprover(docId, approverId),
     onSuccess: () => {
-      toast.success("Approver removed.");
       onChanged();
     },
     onError: (e) => toast.error(errorMessage(e, "Could not remove approver")),
@@ -643,7 +642,6 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
     mutationFn: (addr: string) => api.createApprover(docId, addr),
     onSuccess: () => {
       setAddress("");
-      toast.success("Approver assigned.");
       onAdded();
     },
     onError: (e) => toast.error(errorMessage(e, "Could not assign approver")),

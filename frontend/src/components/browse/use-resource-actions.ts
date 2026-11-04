@@ -31,7 +31,6 @@ export function useTogglePin(
         : api.putPin(resourceType, resourceId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.pins() });
-      toast.success(isPinned ? "Unpinned." : "Pinned.");
     },
     onError: (e) => toast.error(errorMessage(e)),
   });
