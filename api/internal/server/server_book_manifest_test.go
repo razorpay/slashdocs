@@ -78,8 +78,9 @@ func TestManifestHidesChaptersReaderCannotOpen(t *testing.T) {
 	if bkLen(t, body, "toc.0.children") != 2 {
 		t.Fatalf("toc should hold only the visible chapters: %s", body)
 	}
-	if n := bkPath(t, body, "metadata.numberOfChapters"); n != float64(3) {
-		t.Fatalf("numberOfChapters = %v, want 3", n)
+	// Only the chapters this reader can open are counted (R21).
+	if n := bkPath(t, body, "metadata.numberOfChapters"); n != float64(2) {
+		t.Fatalf("numberOfChapters = %v, want 2", n)
 	}
 	if got := bkPath(t, body, "metadata.canEdit"); got != false {
 		t.Fatalf("canEdit = %v, want false", got)
@@ -144,6 +145,58 @@ func TestManifestNumbersPlaceholdersAndStripsPrefixes(t *testing.T) {
 	}
 	if bkPath(t, body, "metadata.numberOfChapters") != float64(3) {
 		t.Fatalf("numberOfChapters should count the placeholder: %s", body)
+	}
+}
+
+// A reader who cannot open a whole part learns nothing about it: the count
+// leaves its chapters out and the part numbers index the reader's own toc.
+// Chapter numbers stay the same for every reader (R7), and placeholders are
+// shown to every reader.
+func TestManifestCountsAndPartsFollowTheReadersView(t *testing.T) {
+	f := newManifestFixture(t)
+	rr := do(t, f.e.h, http.MethodGet, "/v1/books/"+f.bookID+"/outline", "", bkHeaders(f.owner))
+	assertStatus(t, rr, http.StatusOK)
+	base := bkString(t, rr.Body.Bytes(), "version_id")
+	outline := `{"title":"Guide","front":[],"parts":[` +
+		`{"title":"Hidden part","chapters":[{"doc":"` + f.b + `"}]},` +
+		`{"title":"Two","chapters":[{"doc":"` + f.a + `"},{"doc":"` + f.c + `"}]},` +
+		`{"title":"Three","chapters":[{"planned":"Soon"}]}],"back":[]}`
+	rr = do(t, f.e.h, http.MethodPut, "/v1/books/"+f.bookID+"/outline",
+		`{"base_version_id":"`+base+`","outline":`+outline+`}`, bkHeaders(f.owner))
+	assertStatus(t, rr, http.StatusOK)
+	f.grantDoc(t, f.a, fixtureViewer.Email)
+	f.grantDoc(t, f.c, fixtureViewer.Email)
+
+	rr = do(t, f.e.h, http.MethodGet, "/v1/books/"+f.bookID, "", bkHeaders(principalHeader(fixtureViewer)))
+	assertStatus(t, rr, http.StatusOK)
+	body := rr.Body.Bytes()
+	if strings.Contains(string(body), "Hidden part") {
+		t.Fatalf("manifest names the hidden part: %s", body)
+	}
+	for path, want := range map[string]any{
+		"metadata.numberOfChapters":          float64(3),
+		"toc.0.title":                        "Two",
+		"toc.0.children.0.properties.part":   float64(0),
+		"toc.0.children.0.properties.number": float64(2),
+		"toc.0.children.1.properties.part":   float64(0),
+		"toc.1.title":                        "Three",
+		"toc.1.children.0.properties.part":   float64(1),
+		"toc.1.children.0.properties.number": float64(4),
+		"readingOrder.0.properties.part":     float64(0),
+		"readingOrder.1.properties.part":     float64(0),
+	} {
+		if got := bkPath(t, body, path); got != want {
+			t.Fatalf("%s = %v, want %v: %s", path, got, want, body)
+		}
+	}
+
+	// The owner sees every part, numbered as in the outline.
+	rr = do(t, f.e.h, http.MethodGet, "/v1/books/"+f.bookID, "", bkHeaders(f.owner))
+	assertStatus(t, rr, http.StatusOK)
+	body = rr.Body.Bytes()
+	if bkPath(t, body, "metadata.numberOfChapters") != float64(4) || bkPath(t, body, "toc.1.children.0.properties.part") != float64(1) ||
+		bkPath(t, body, "toc.2.children.0.properties.part") != float64(2) {
+		t.Fatalf("owner manifest: %s", body)
 	}
 }
 

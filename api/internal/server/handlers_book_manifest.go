@@ -58,9 +58,11 @@ type chapterProps struct {
 	DocumentID string     `json:"documentId,omitempty"`
 	Kind       books.Kind `json:"kind"`
 	Number     int        `json:"number,omitempty"`
-	Part       int        `json:"part"`
-	VersionID  string     `json:"versionId,omitempty"`
-	WordCount  int        `json:"wordCount,omitempty"`
+	// Part is the index of the chapter's part in this reader's toc, or -1
+	// for front and back matter.
+	Part      int    `json:"part"`
+	VersionID string `json:"versionId,omitempty"`
+	WordCount int    `json:"wordCount,omitempty"`
 }
 
 type manifestTOC struct {
@@ -195,7 +197,10 @@ func (v bookView) manifest() manifestResponse {
 		toc[i] = manifestTOC{Title: p.Title, Children: []manifestLink{}}
 	}
 	for _, e := range v.Entries {
-		if e.Kind == books.KindChapter || e.Kind == books.KindPlanned {
+		// Count what this reader can see, so that the total does not reveal
+		// hidden chapters after the last visible one. Placeholders are shown
+		// to every reader.
+		if e.Kind == books.KindPlanned || (e.Kind == books.KindChapter && v.Visible[e.Doc]) {
 			out.Metadata.NumberOfChapters++
 		}
 		if e.Kind == books.KindPlanned {
@@ -215,9 +220,16 @@ func (v bookView) manifest() manifestResponse {
 		}
 	}
 	for _, t := range toc {
-		if len(t.Children) > 0 {
-			out.TOC = append(out.TOC, t)
+		if len(t.Children) == 0 {
+			continue
 		}
+		// Number parts by their place in this reader's toc, so that the
+		// outline index does not count the parts the reader cannot see. The
+		// readingOrder link shares these properties.
+		for _, l := range t.Children {
+			l.Properties.Part = len(out.TOC)
+		}
+		out.TOC = append(out.TOC, t)
 	}
 	return out
 }

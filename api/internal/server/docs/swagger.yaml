@@ -312,6 +312,9 @@ definitions:
       number:
         type: integer
       part:
+        description: |-
+          Part is the index of the chapter's part in this reader's toc, or -1
+          for front and back matter.
         type: integer
       versionId:
         type: string

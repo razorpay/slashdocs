@@ -3513,6 +3513,7 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "part": {
+                    "description": "Part is the index of the chapter's part in this reader's toc, or -1\nfor front and back matter.",
                     "type": "integer"
                 },
                 "versionId": {
