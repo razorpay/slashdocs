@@ -235,6 +235,7 @@ export function DocBar({
         docId={docId}
         current={current}
         latest={latest}
+        canRestore={canChangeContent}
         onSelectVersion={onSelectVersion}
       />
       {config.data?.labels_enabled === true ? (

@@ -33,6 +33,7 @@ function renderHistory(
         docId="doc_1"
         current={current}
         latest="ver_2"
+        canRestore
         onSelectVersion={() => {}}
       />
     </QueryClientProvider>,

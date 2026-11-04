@@ -32,6 +32,7 @@ export function HistoryDialog({
   docId,
   current,
   latest,
+  canRestore,
   onSelectVersion,
 }: {
   open: boolean;
@@ -39,6 +40,7 @@ export function HistoryDialog({
   docId: string;
   current: string;
   latest: string;
+  canRestore: boolean;
   onSelectVersion: (versionID: string) => void;
 }) {
   const versions = useVersions(docId);
@@ -68,8 +70,8 @@ export function HistoryDialog({
         <DialogHeader>
           <DialogTitle>History</DialogTitle>
           <DialogDescription>
-            Every edit is kept. Open an entry to see the document as it was, and restore
-            it to bring it back.
+            Every edit is kept. Open an entry to see the document as it was
+            {canRestore ? ", and restore it to bring it back." : "."}
           </DialogDescription>
         </DialogHeader>
         {versions.isPending ? (
