@@ -1,6 +1,9 @@
+import { useId } from "react";
+import { motion } from "framer-motion";
 import { cn } from "@/lib/cn";
 
-// A segmented control, as in Slash: the muted track holds a raised choice.
+// A segmented control, as in Slash: the muted track holds a raised choice,
+// which slides to the option that the reader picks.
 export function Segmented<T extends string>({
   label,
   value,
@@ -14,6 +17,7 @@ export function Segmented<T extends string>({
   onChange: (value: T) => void;
   className?: string;
 }) {
+  const id = useId();
   return (
     <div
       role="tablist"
@@ -30,9 +34,16 @@ export function Segmented<T extends string>({
           role="tab"
           aria-selected={value === o.value}
           onClick={() => onChange(o.value)}
-          className="h-8 flex-1 whitespace-nowrap rounded-[6px] px-3 text-sm font-medium text-[var(--color-fg-muted)] transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.97] aria-selected:bg-[var(--color-surface)] aria-selected:text-[var(--color-fg)] aria-selected:shadow-[var(--shadow-border)]"
+          className="relative h-8 flex-1 whitespace-nowrap rounded-[6px] px-3 text-sm font-medium text-[var(--color-fg-muted)] transition-[color,transform] duration-150 ease-out active:scale-[0.97] aria-selected:text-[var(--color-fg)]"
         >
-          {o.label}
+          {value === o.value ? (
+            <motion.span
+              layoutId={id}
+              transition={{ type: "spring", duration: 0.25, bounce: 0 }}
+              className="absolute inset-0 rounded-[6px] bg-[var(--color-surface)] shadow-[var(--shadow-border)]"
+            />
+          ) : null}
+          <span className="relative">{o.label}</span>
         </button>
       ))}
     </div>

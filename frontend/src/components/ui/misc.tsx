@@ -8,6 +8,30 @@ import { Button } from "./button";
 export const revealOnHover =
   "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100";
 
+// Collapse opens to the height of its content and closes to none. Closed, it
+// takes no focus.
+export function Collapse({
+  open,
+  className,
+  children,
+}: {
+  open: boolean;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      inert={!open}
+      className={cn(
+        "grid transition-[grid-template-rows,opacity] duration-200 ease-out motion-reduce:transition-none",
+        open ? "grid-rows-[1fr]" : "grid-rows-[0fr] opacity-0",
+      )}
+    >
+      <div className={cn("min-h-0 overflow-hidden", className)}>{children}</div>
+    </div>
+  );
+}
+
 export function Skeleton({ className, ...p }: React.HTMLAttributes<HTMLDivElement>) {
   return <div className={cn("skeleton rounded-md", className)} {...p} />;
 }
