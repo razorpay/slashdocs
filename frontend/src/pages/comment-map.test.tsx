@@ -23,6 +23,18 @@ const stripHeight = (px: number) =>
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(px);
 beforeEach(() => stripHeight(500));
 
+// jsdom has no media queries. A test may ask for a touch screen.
+let coarse = false;
+beforeEach(() => {
+  coarse = false;
+  window.matchMedia = (query: string) =>
+    ({
+      matches: coarse && query === "(pointer: coarse)",
+      addEventListener() {},
+      removeEventListener() {},
+    }) as unknown as MediaQueryList;
+});
+
 // The ticks are pointer-first (tabindex -1), so find them regardless of focusability.
 const ticks = () => screen.getAllByRole("button", { hidden: true });
 const tick = (name: RegExp) => screen.getByRole("button", { name, hidden: true });
@@ -130,4 +142,22 @@ it("opens each thread of a joined tick in turn", async () => {
   await userEvent.click(tick(/Comments 1 to 2/));
 
   expect(doc.setActiveComment).toHaveBeenCalledWith("near");
+});
+
+it("joins nearer threads on a touch screen, so each target is 40px", () => {
+  // 30px apart: two ticks for a mouse, one for a finger.
+  const near = {
+    commentPositions: new Map([...positions, ["near", { top: 260, bottom: 280 }]]),
+  };
+  const list = [...comments, comment("near", "opening words")];
+  renderMap(near, list);
+  expect(ticks()).toHaveLength(3);
+
+  cleanup();
+  coarse = true;
+  renderMap(near, list);
+  expect(ticks().map((t) => t.getAttribute("aria-label"))).toEqual([
+    "Comments 1 to 2 of 3",
+    "Comment 3 of 3: closing remarks",
+  ]);
 });
