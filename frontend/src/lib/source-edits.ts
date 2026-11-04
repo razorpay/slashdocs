@@ -357,34 +357,107 @@ const describe = (element: P.Element) =>
 const refName = (ref: ChildRef) => `child ${ref.index} of ${ref.parent}`;
 
 // replacementsBetween gives the replacements that turn prev into next, at
-// UTF-8 byte offsets of prev: one from the first to the last word that
-// differs. Whole words read better in the version history than parts of
-// them, and they never split a surrogate pair.
+// UTF-8 byte offsets of prev: one for each run of words that differs.
+// Separate replacements let the server move each one onto a newer version,
+// so that edits far apart never conflict. Whole words read better in the
+// version history than parts of them, and they never split a surrogate
+// pair.
 export function replacementsBetween(prev: string, next: string): Replacement[] {
   if (prev === next) return [];
-  const shorter = Math.min(prev.length, next.length);
-  let head = 0;
-  while (head < shorter && prev[head] === next[head]) head++;
-  let tail = 0;
-  while (tail < shorter - head && prev.at(-1 - tail) === next.at(-1 - tail)) tail++;
-  while (head > 0 && WORD.test(prev[head - 1])) head--;
-  while (tail > 0 && WORD.test(prev[prev.length - tail])) tail--;
-  const old_html = prev.slice(head, prev.length - tail);
-  const start = utf8Length(prev.slice(0, head));
-  return [
-    {
-      start,
-      end: start + utf8Length(old_html),
-      old_html,
-      new_html: next.slice(head, next.length - tail),
-    },
-  ];
+  const a = prev.match(TOKEN) ?? [];
+  const b = next.match(TOKEN) ?? [];
+  const replacements: Replacement[] = [];
+  // The tokens of prev and next before the end of the last common run, and
+  // the UTF-8 length of those of prev.
+  let i = 0;
+  let j = 0;
+  let byte = 0;
+  for (const [ai, bj, length] of [...commonRuns(a, b), [a.length, b.length, 0]]) {
+    const old_html = a.slice(i, ai).join("");
+    if (ai > i || bj > j)
+      replacements.push({
+        start: byte,
+        end: byte + utf8Length(old_html),
+        old_html,
+        new_html: b.slice(j, bj).join(""),
+      });
+    byte += utf8Length(a.slice(i, ai + length).join(""));
+    i = ai + length;
+    j = bj + length;
+  }
+  return replacements;
 }
 
 const encoder = new TextEncoder();
 const utf8Length = (text: string) => encoder.encode(text).length;
-// A character of a word: not white space and not the edge of a tag.
+// A token is a word, a run of white space, or the edge of a tag.
+const TOKEN = /[^\s<>]+|\s+|[<>]/g;
 const WORD = /[^\s<>]/;
+// Myers' diff costs memory by the square of the count of tokens that
+// differ. Beyond this count, one replacement covers the change.
+const MAX_EDITS = 1000;
+
+// A run of tokens that a and b have in common: its index in a and in b, and
+// its length.
+type Run = [number, number, number];
+
+// commonRuns gives the runs that a and b have in common, in order, from
+// Myers' diff of the tokens between their common start and end. A run
+// without words does not divide two changes, so that "twice" to "three
+// times" stays one change.
+function commonRuns(a: string[], b: string[]): Run[] {
+  let head = 0;
+  while (head < a.length && head < b.length && a[head] === b[head]) head++;
+  let tail = 0;
+  while (
+    tail < a.length - head &&
+    tail < b.length - head &&
+    a.at(-1 - tail) === b.at(-1 - tail)
+  )
+    tail++;
+  const middle = myers(a.slice(head, a.length - tail), b.slice(head, b.length - tail));
+  return [
+    [0, 0, head] as Run,
+    ...middle.map(([x, y, length]): Run => [head + x, head + y, length]),
+    [a.length - tail, b.length - tail, tail] as Run,
+  ].filter(([x, , length]) => a.slice(x, x + length).some((t) => WORD.test(t)));
+}
+
+// myers gives the common runs of a and b, or none when more than MAX_EDITS
+// tokens differ. trace[d][k + d] is the furthest place in a on diagonal k
+// after d edits.
+function myers(a: string[], b: string[]): Run[] {
+  const trace: Int32Array[] = [];
+  // The place in a that the furthest path on diagonal k after d edits
+  // comes from, and whether it comes down (an insert) or across (a delete).
+  const from = (d: number, k: number) => {
+    const prev = trace[d - 1];
+    const down = k === -d || (k !== d && prev[k - 1 + d - 1] < prev[k + 1 + d - 1]);
+    return down
+      ? { x: prev[k + 1 + d - 1], k: k + 1, start: prev[k + 1 + d - 1] }
+      : { x: prev[k - 1 + d - 1], k: k - 1, start: prev[k - 1 + d - 1] + 1 };
+  };
+  for (let d = 0; d <= Math.min(a.length + b.length, MAX_EDITS); d++) {
+    const v = new Int32Array(2 * d + 1);
+    trace.push(v);
+    for (let k = -d; k <= d; k += 2) {
+      let x = d ? from(d, k).start : 0;
+      while (x < a.length && x - k < b.length && a[x] === b[x - k]) x++;
+      v[k + d] = x;
+      if (x < a.length || x - k < b.length) continue;
+      // Back from the end, each step gives the common run that it ends.
+      const runs: Run[] = [];
+      for (let e = d; e >= 0; e--) {
+        const step = e ? from(e, k) : { x: 0, k: 0, start: 0 };
+        runs.push([step.start, step.start - k, x - step.start]);
+        x = step.x;
+        k = step.k;
+      }
+      return runs.reverse();
+    }
+  }
+  return [];
+}
 
 // tagSource gives the source with SOURCE_ATTR on every start tag, right
 // after the tag name, as the server renders it. offsetOf maps the offset of

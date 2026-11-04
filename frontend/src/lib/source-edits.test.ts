@@ -227,6 +227,28 @@ describe("replacementsBetween", () => {
     ).toEqual([{ start: 9, end: 14, old_html: "twice", new_html: "three times" }]);
   });
 
+  test("gives one replacement for each change, so that changes far apart never conflict", () => {
+    expect(
+      replacementsBetween(
+        "<p>For authors.</p><p>Retry twice.</p><p>Read the guide.</p>",
+        "<p>For readers.</p><p>Retry twice.</p><p>Read the handbook.</p>",
+      ),
+    ).toEqual([
+      { start: 7, end: 15, old_html: "authors.", new_html: "readers." },
+      { start: 50, end: 56, old_html: "guide.", new_html: "handbook." },
+    ]);
+  });
+
+  test("gives one replacement when more words differ than a diff can follow", () => {
+    const words = (n: number, w: string) => Array(n).fill(w).join(" ");
+    const [replacement, ...rest] = replacementsBetween(
+      `<p>a ${words(600, "x")} b</p>`,
+      `<p>a ${words(600, "y")} b</p>`,
+    );
+    expect(rest).toEqual([]);
+    expect(replacement.old_html).toBe(words(600, "x"));
+  });
+
   test("keeps a surrogate pair whole", () => {
     expect(replacementsBetween("<p>😀</p>", "<p>😃</p>")).toEqual([
       { start: 3, end: 7, old_html: "😀", new_html: "😃" },
