@@ -40,7 +40,7 @@ export function DevelopersPage() {
             <McpConnect />
             <p className="text-pretty text-xs text-[var(--color-fg-muted)]">
               Interactive clients open the normal slashdocs sign-in flow automatically;
-              unattended agents can use a service-account token.
+              unattended agents can use a bot token.
             </p>
           </CardContent>
         </Card>
@@ -83,7 +83,7 @@ export function DevelopersPage() {
               </p>
             </div>
             <div>
-              <div className="text-sm font-medium">Service account token</div>
+              <div className="text-sm font-medium">Bot token</div>
               <p className="mt-1 text-pretty text-xs text-[var(--color-fg-muted)]">
                 Bearer token for headless agents that can't run OAuth — n8n, scheduled
                 jobs, CI. Mint a key under{" "}
@@ -91,7 +91,7 @@ export function DevelopersPage() {
                   className="font-medium text-[var(--color-fg)] underline-offset-2 hover:underline"
                   to="/app/settings/service-accounts"
                 >
-                  Service accounts
+                  Bots
                 </Link>{" "}
                 and pass it as{" "}
                 <code className="font-mono">Authorization: Bearer …</code>.
@@ -103,17 +103,18 @@ export function DevelopersPage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Bot className="h-4 w-4" /> Service accounts
+              <Bot className="h-4 w-4" /> Bots
             </CardTitle>
             <CardDescription>
-              Headless identities for agents that can’t run OAuth (n8n, CI, scheduled
-              jobs). Mint bearer tokens here. Most users should ignore this — remote MCP
-              clients and the CLI both handle interactive sign-in automatically.
+              Bots (service accounts in the API) are headless identities for agents that
+              can’t run OAuth (n8n, CI, scheduled jobs). Mint bearer tokens here. Most
+              users should ignore this — remote MCP clients and the CLI both handle
+              interactive sign-in automatically.
             </CardDescription>
           </CardHeader>
           <CardContent>
             <Button asChild variant="outline">
-              <Link to="/app/settings/service-accounts">Manage service accounts</Link>
+              <Link to="/app/settings/service-accounts">Manage bots</Link>
             </Button>
           </CardContent>
         </Card>
@@ -141,7 +142,7 @@ export function DevelopersPage() {
           <CardHeader>
             <CardTitle>Example: raw HTTP</CardTitle>
             <CardDescription>
-              List documents using a service-account bearer token.
+              List documents with the bearer token of a bot.
             </CardDescription>
           </CardHeader>
           <CardContent>
