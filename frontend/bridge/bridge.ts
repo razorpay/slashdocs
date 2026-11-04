@@ -803,6 +803,7 @@ type Theme = "dark" | "light";
       }
       const sel = d.getSelection();
       if (!sel) return;
+      const focused = body.matches(":focus");
       if (saved.backward) {
         sel.setBaseAndExtent(
           range.endContainer,
@@ -818,6 +819,9 @@ type Theme = "dark" | "light";
           range.endOffset,
         );
       }
+      // A selection in editable text focuses it, but text that Esc left
+      // stays left, so the keys after Esc stay shortcuts.
+      if (!focused) body.blur();
       restoredSelection = range;
       restoredSelectionExpiry = Date.now() + 1000;
     } catch {
