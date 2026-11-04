@@ -162,6 +162,14 @@ test("a highlight painted in an svg does not change the paths in it", () => {
   }
 });
 
+test("the copy-link button at the start of a heading does not change its paths", () => {
+  document.body.innerHTML =
+    '<h2><button class="slashdocs-heading-link"></button>Plan <code>q3</code></h2>';
+  const code = document.querySelector("code")!;
+  assert.strictEqual(pathOf(code), "0.0");
+  assert.strictEqual(elementAtPath(document, "0.0"), code);
+});
+
 test("a new pin shows and has its spot at once, before the next frame", () => {
   document.body.innerHTML = '<main><p id="spot">Pin here</p></main>';
   layout();

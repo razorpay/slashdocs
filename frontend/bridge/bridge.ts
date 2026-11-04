@@ -1625,7 +1625,10 @@ type Theme = "dark" | "light";
     if (!d.getElementById("slashdocs-heading-link-style")) {
       const style = d.createElement("style");
       style.id = "slashdocs-heading-link-style";
-      style.textContent = `.slashdocs-heading-link{position:relative!important;display:inline-flex!important;vertical-align:middle;width:40px;height:40px;margin:0 0 0 4px;padding:0;align-items:center;justify-content:center;border:0;border-radius:6px;background:transparent;color:inherit;font:20px sans-serif;opacity:0;cursor:pointer;transition:opacity .15s}.slashdocs-heading-link::before{content:"#"}h1:hover>.slashdocs-heading-link,h2:hover>.slashdocs-heading-link,h3:hover>.slashdocs-heading-link,h4:hover>.slashdocs-heading-link,h5:hover>.slashdocs-heading-link,h6:hover>.slashdocs-heading-link,.slashdocs-heading-link:focus-visible{opacity:.65}.slashdocs-heading-link:focus-visible{outline:2px solid currentColor}@media(pointer:coarse){.slashdocs-heading-link{opacity:.5}}@media print{.slashdocs-heading-link{display:none!important}}`;
+      // The link button is out of flow, in the gutter before the heading's
+      // first line. Headings keep the height that the author gave them, so
+      // readers, editors and previews lay out the document in the same way.
+      style.textContent = `.slashdocs-heading-link{position:absolute!important;box-sizing:border-box!important;width:1.2em!important;margin:0!important;margin-inline-start:-1.2em!important;padding:0!important;border:0!important;border-radius:4px;background:transparent!important;color:inherit;font:inherit;text-align:center;cursor:pointer}.slashdocs-heading-link::before{content:"#";opacity:0;transition:opacity .15s ease-out}:is(h1,h2,h3,h4,h5,h6):hover>.slashdocs-heading-link::before,.slashdocs-heading-link:focus-visible::before{opacity:.5}.slashdocs-heading-link:hover::before{opacity:.85}.slashdocs-heading-link:focus-visible{outline:2px solid currentColor}@media print{.slashdocs-heading-link{display:none!important}}`;
       d.head.appendChild(style);
     }
     Array.from(d.querySelectorAll("h1,h2,h3,h4,h5,h6")).forEach((heading) => {
@@ -1645,6 +1648,9 @@ type Theme = "dark" | "light";
         const button = d.createElement("button");
         button.type = "button";
         button.className = "slashdocs-heading-link";
+        // The editor's caret and typing stay in the heading's text.
+        button.contentEditable = "false";
+        button.addEventListener("mousedown", (event) => event.preventDefault());
         button.setAttribute(
           "aria-label",
           `Copy link to ${heading.textContent?.trim() || "heading"}`,
@@ -1658,7 +1664,7 @@ type Theme = "dark" | "light";
             targetOrigin(),
           );
         });
-        heading.appendChild(button);
+        heading.prepend(button);
       }
     });
     if (pendingHeading) navigateHeading(pendingHeading);

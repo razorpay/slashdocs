@@ -9,7 +9,7 @@ import { isEditableTarget, reducedMotion, scrollBehavior } from "./dom.ts";
 // Elements the bridge adds to a document. Viewers do not all have the same
 // ones, so cursor paths skip them.
 const BRIDGE_ELEMENTS =
-  "mark.slashdocs-mark,.slashdocs-svg-mark-rect,.slashdocs-selection-action,.slashdocs-text-flash";
+  "mark.slashdocs-mark,.slashdocs-svg-mark-rect,.slashdocs-selection-action,.slashdocs-heading-link,.slashdocs-text-flash";
 const MAX_PATH_DEPTH = 64;
 
 // The playback delay follows how late batches arrive, within these limits.
