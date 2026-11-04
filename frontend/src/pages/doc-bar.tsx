@@ -9,6 +9,7 @@ import {
   Eye,
   EyeOff,
   FileDown,
+  FolderInput,
   History,
   ArrowUpToLine,
   Maximize2,
@@ -25,7 +26,6 @@ import {
 import { AccountMenu } from "@/components/layout/topbar";
 import { CommentsToggle, DocBarFrame } from "@/components/layout/doc-bar-frame";
 import { Button } from "@/components/ui/button";
-import { Avatar } from "@/components/ui/misc";
 import {
   Dropdown,
   DropdownContent,
@@ -47,6 +47,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetTrigger } from "@/components/ui/sheet";
 import { DeleteDocumentDialog } from "@/components/delete-document-dialog";
+import { MoveDialog } from "@/components/browse/move-dialog";
 import { api, type Principal, type ApprovalStatus, type ApprovalSummary } from "@/api";
 import { canManageSharing } from "@/lib/constants";
 import { useDocumentRole } from "@/lib/hooks";
@@ -55,6 +56,7 @@ import { cursorsShownStore } from "@/lib/live-cursors";
 import { principalColor } from "@/lib/principals";
 import { ShareSheet } from "./doc-share-sheet";
 import { ApprovalsDialog } from "./doc-approvals";
+import { PersonAvatar } from "./doc-comment-parts";
 import { useDoc } from "./doc-context";
 import { useShowSaved } from "./use-show-saved";
 import { UploadVersionMenuItem, UploadVersionSheet } from "./doc-upload-version";
@@ -127,6 +129,7 @@ export function DocBar({
   const q = useQueryClient();
   const [uploadOpen, setUploadOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [labelsOpen, setLabelsOpen] = useState(false);
   const backTo = parentFolder ? `/app/folders/${parentFolder.id}` : "/app/documents";
@@ -139,7 +142,15 @@ export function DocBar({
     role,
     canEdit,
   } = useDocumentRole(docId, owner, principal);
+  const { printDocument: exportPDF, signIn } = useDoc();
   const canManageAccess = canManageSharing(role);
+  // The share sheet lists the requests. Their count waits on its button.
+  const accessRequests = useQuery({
+    queryKey: queryKeys.documentAccessRequests(docId),
+    queryFn: () => api.documentAccessRequests(docId),
+    enabled: canManageAccess && !signIn,
+  });
+  const requestCount = accessRequests.data?.items.length ?? 0;
   const shareFrameFocusRef = useRef<HTMLIFrameElement | null>(null);
   const del = useMutation({
     mutationFn: () => api.deleteDocument(docId),
@@ -150,7 +161,6 @@ export function DocBar({
     },
     onError: (e) => toast.error(errorMessage(e, "Delete failed")),
   });
-  const { printDocument: exportPDF, signIn } = useDoc();
   const showSaved = useShowSaved();
   return (
     <DocBarFrame
@@ -228,9 +238,13 @@ export function DocBar({
             <Button
               variant="ghost"
               size="icon"
-              className="shrink-0"
+              className="relative shrink-0"
               title="Share"
-              aria-label="Share"
+              aria-label={
+                requestCount
+                  ? `Share, ${requestCount} ${requestCount === 1 ? "request" : "requests"} for access`
+                  : "Share"
+              }
               onPointerDown={() => {
                 const active = document.activeElement;
                 shareFrameFocusRef.current =
@@ -241,6 +255,14 @@ export function DocBar({
               }}
             >
               <Share2 className="h-4 w-4" />
+              {requestCount ? (
+                <span
+                  data-state="open"
+                  className="pop absolute right-0.5 top-0.5 min-w-4 rounded-full bg-[var(--color-accent)] px-1 text-[10px] font-medium leading-4 tabular-nums text-white"
+                >
+                  {requestCount}
+                </span>
+              ) : null}
             </Button>
           </SheetTrigger>
           <ShareSheet
@@ -318,6 +340,9 @@ export function DocBar({
               {canChangeContent ? (
                 <UploadVersionMenuItem onSelect={() => setUploadOpen(true)} />
               ) : null}
+              <DropdownItem onSelect={() => setMoveOpen(true)}>
+                <FolderInput className="h-4 w-4" /> Move to folder
+              </DropdownItem>
               <DropdownSeparator />
               <DropdownItem
                 onSelect={() => setDeleteOpen(true)}
@@ -337,6 +362,14 @@ export function DocBar({
             onUploaded={showSaved}
             open={uploadOpen}
             onOpenChange={setUploadOpen}
+          />
+          <MoveDialog
+            open={moveOpen}
+            onOpenChange={setMoveOpen}
+            type="document"
+            id={docId}
+            title={title}
+            parentId={parentFolder?.id}
           />
           <DeleteDocumentDialog
             title={title}
@@ -421,7 +454,7 @@ function Viewers({
             className="relative shrink-0 sm:hidden"
           >
             {followed ? (
-              <ViewerFace viewer={followed} size={22} />
+              <FollowedFace viewer={followed} />
             ) : (
               <Users className="h-4 w-4" />
             )}
@@ -465,14 +498,15 @@ function ViewerAvatar({
               setMenuOpen(true);
             }}
             style={{
-              // Followed: a gap, then the viewer's color, as a pressed state.
+              // The surface parts the stacked avatars. Followed: a ring in the
+              // viewer's color after it, as a pressed state.
               boxShadow: following
                 ? `0 0 0 2px var(--color-surface), 0 0 0 4px ${color}`
-                : `0 0 0 2px ${color}, 0 0 0 4px var(--color-surface)`,
+                : "0 0 0 2px var(--color-surface)",
             }}
             className="relative rounded-full transition-[translate,scale,box-shadow] duration-150 ease-out hover:z-10 hover:-translate-y-0.5 active:translate-y-0 active:scale-95 focus-visible:z-10 motion-reduce:transition-none"
           >
-            <Avatar size={28} name={name} src={viewer.principal.picture_url} />
+            <PersonAvatar who={viewer.principal} size={28} />
           </button>
         </DropdownTrigger>
       </Tooltip>
@@ -488,7 +522,7 @@ function ViewerList({ viewers, ...actions }: { viewers: Viewer[] } & ViewerActio
   return viewers.map((viewer) => (
     <DropdownGroup key={viewer.session}>
       <DropdownLabel className="flex items-center gap-2 normal-case tracking-normal">
-        <ViewerFace viewer={viewer} size={18} />
+        <PersonAvatar who={viewer.principal} size={18} />
         <span className="min-w-0 flex-1 truncate">
           {principalLabel(viewer.principal)}
         </span>
@@ -523,18 +557,14 @@ function ViewerItems({
   );
 }
 
-// ViewerFace is a viewer's avatar in a ring of their cursor color.
-function ViewerFace({ viewer, size }: { viewer: Viewer; size: number }) {
+// FollowedFace is the followed viewer's avatar in a ring of their color.
+function FollowedFace({ viewer }: { viewer: Viewer }) {
   return (
     <span
       className="shrink-0 rounded-full"
       style={{ boxShadow: `0 0 0 2px ${principalColor(viewer.principal)}` }}
     >
-      <Avatar
-        size={size}
-        name={principalLabel(viewer.principal)}
-        src={viewer.principal.picture_url}
-      />
+      <PersonAvatar who={viewer.principal} size={22} />
     </span>
   );
 }
