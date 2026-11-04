@@ -15,6 +15,25 @@ import { scrollBehavior } from "./dom.ts";
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 /**
+ * Scroll the highlight `el` to the center of the view, unless all of it shows
+ * already, as text that the reader just selected does: then the document stays
+ * where the reader looks.
+ */
+export function reveal(el: Element): void {
+  const view = el.ownerDocument.defaultView;
+  const box = el.getBoundingClientRect();
+  if (
+    view &&
+    box.top >= 0 &&
+    box.left >= 0 &&
+    box.bottom <= view.innerHeight &&
+    box.right <= view.innerWidth
+  )
+    return;
+  el.scrollIntoView({ block: "center", behavior: scrollBehavior(el.ownerDocument) });
+}
+
+/**
  * Returns true if any part of `node` lies within `range`.
  */
 function isNodeInRange(range: Range, node: Node): boolean {
@@ -131,7 +150,7 @@ function svgHighlight(
   el.parentNode!.insertBefore(rect, el);
   el.classList.add("slashdocs-svg-mark-text");
   if (active && scroll) {
-    el.scrollIntoView({ block: "center", behavior: scrollBehavior(el.ownerDocument) });
+    reveal(el);
   }
   return 1;
 }
@@ -208,12 +227,7 @@ export function highlightRange(
     count += 1;
   }
 
-  if (active && scroll && scrollTarget) {
-    scrollTarget.scrollIntoView({
-      block: "center",
-      behavior: scrollBehavior(scrollTarget.ownerDocument),
-    });
-  }
+  if (active && scroll && scrollTarget) reveal(scrollTarget);
   return count;
 }
 
