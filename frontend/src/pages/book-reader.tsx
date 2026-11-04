@@ -522,7 +522,7 @@ function Note({
     <div
       role="status"
       aria-label={label}
-      className="pointer-events-auto flex max-w-full items-center gap-2 rounded-full bg-[var(--color-surface)] py-1 pl-4 pr-1 text-sm shadow-[var(--shadow-pop)] ring-1 ring-[var(--color-border)]"
+      className="pointer-events-auto flex max-w-full items-center gap-2 rounded-2xl bg-[var(--color-surface)] py-1 pl-4 pr-1 text-sm shadow-[var(--shadow-pop)] ring-1 ring-[var(--color-border)]"
     >
       {children}
       <button
@@ -559,7 +559,7 @@ function OfferNote({
   const n = at?.properties?.number;
   const chapter = n ? `Ch ${n}` : (at?.title ?? "another chapter");
   return (
-    <span className="min-w-0 truncate">
+    <span className="min-w-0">
       On another device you were at {chapter}
       {section ? ` · ${section}` : ""}
     </span>
@@ -918,7 +918,7 @@ function ReaderBar({
         )}
         <nav
           aria-label="Breadcrumb"
-          className="flex min-w-0 flex-1 items-center gap-1.5 text-sm"
+          className="flex min-w-16 flex-1 items-center gap-1.5 text-sm"
         >
           <Link
             to={home}
@@ -970,7 +970,11 @@ function ReaderBar({
           open={controls.commentsOpen}
           onToggle={controls.onToggleComments}
         />
-        {user ? <AccountMenu user={user} /> : null}
+        {user ? (
+          <span className="hidden sm:contents">
+            <AccountMenu user={user} />
+          </span>
+        ) : null}
       </header>
       {headings?.length ? (
         <SectionTracker headings={headings} section={section} onJump={onJump} />

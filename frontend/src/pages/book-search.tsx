@@ -108,7 +108,7 @@ export function BookSearch({
             autoFocus
             value={text}
             onChange={(e) => setText(e.target.value)}
-            className="h-10 min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-[var(--color-fg-muted)]"
+            className="h-10 min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-[var(--color-fg-muted)] [&::-webkit-search-cancel-button]:appearance-none"
           />
           <button
             type="button"

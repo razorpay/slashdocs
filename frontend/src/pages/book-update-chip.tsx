@@ -143,7 +143,8 @@ export function BookUpdateChip({
               aria-hidden="true"
               className="h-1.5 w-1.5 rounded-full bg-[var(--color-warning)]"
             />
-            Updated since you read
+            <span className="sm:hidden">Updated</span>
+            <span className="hidden sm:inline">Updated since you read</span>
           </button>
         }
       >
