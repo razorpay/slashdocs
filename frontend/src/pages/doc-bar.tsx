@@ -220,13 +220,14 @@ export function DocBar({
       {behind ? (
         <Button
           variant="ghost"
-          size="icon"
-          title="Show the latest edits"
-          aria-label="Show the latest edits"
-          className="shrink-0"
+          size="sm"
+          title="Show the latest version"
+          aria-label="Show the latest version"
+          className="shrink-0 px-2"
           onClick={onShowLatest}
         >
           <ArrowUpToLine className="h-4 w-4" />
+          <span className="hidden sm:inline">Latest</span>
         </Button>
       ) : null}
       <HistoryDialog
@@ -390,6 +391,15 @@ export function DocBar({
                 <Trash2 className="h-4 w-4" /> Delete document
               </DropdownItem>
             </>
+          ) : canEdit ? (
+            // An editor sees why they cannot rename, instead of no Rename.
+            <DropdownItem disabled>
+              <Pencil className="h-4 w-4" />
+              <span className="flex flex-col">
+                Rename
+                <span className="text-xs">Only the owner can rename</span>
+              </span>
+            </DropdownItem>
           ) : null}
         </DropdownContent>
       </Dropdown>
