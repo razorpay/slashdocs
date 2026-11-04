@@ -15,8 +15,11 @@
 export const SOURCE_ATTR = "data-slashdocs-source";
 
 // A text or comment node of the version source: the offset of the start tag
-// of its parent element, and its index among that element's children in the
-// version source.
+// of its parent element, or -1 for the document, and its index among that
+// parent's children in the version source. Children are counted as the
+// source map counts them: the children of an element with no start tag, such
+// as an implied <tbody>, count as children of its parent, and adjacent text
+// is one child.
 export type ChildRef = { parent: number; index: number };
 
 export type Piece =
