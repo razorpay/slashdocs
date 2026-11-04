@@ -10,9 +10,9 @@ import {
   type ApprovalListItem,
   type ApprovalStatus,
 } from "@/api";
-import { Avatar } from "@/components/ui/misc";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Combobox } from "@/components/ui/combobox";
 import {
   Dialog,
   DialogContent,
@@ -20,12 +20,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Input, Textarea } from "@/components/ui/input";
-import { COMMENT_STATUS } from "@/lib/constants";
+import { Textarea } from "@/components/ui/input";
+import { ADDRESS_PATTERN, COMMENT_STATUS } from "@/lib/constants";
 import { errorMessage } from "@/lib/errors";
 import { queryKeys } from "@/lib/queryKeys";
 import { samePrincipal } from "@/lib/principals";
 import { useDoc } from "./doc-context";
+import { PersonAvatar } from "./doc-comment-parts";
 
 const STATUS_BADGE: Record<
   ApprovalStatus,
@@ -594,7 +595,7 @@ function ApproverRow({
   const label = item.approver.name || item.approver.email || item.approver.id;
   return (
     <div className="group flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-[var(--color-surface-muted)]">
-      <Avatar name={label} src={item.approver.picture_url} size={24} />
+      <PersonAvatar who={item.approver} size={24} />
       <div className="min-w-0 flex-1">
         <div className="truncate text-xs font-medium">{label}</div>
         {decisionLabel(item, current)}
@@ -647,7 +648,16 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
     },
     onError: (e) => toast.error(errorMessage(e, "Could not assign approver")),
   });
-  const items = suggestions.data?.items || [];
+  const trimmed = address.trim();
+  const options = (suggestions.data?.items || [])
+    .filter((u) => u.email !== trimmed)
+    .slice(0, 5)
+    .map((u) => ({
+      key: u.id,
+      name: u.name || u.email || u.id,
+      detail: u.name ? u.email : undefined,
+      address: u.email || "",
+    }));
   return (
     <form
       className="border-t border-[var(--color-border)] px-6 py-3"
@@ -656,16 +666,25 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
         // Send the raw address so the server resolves either a user email or a
         // service-account (bot) address; assuming "user" here made bot
         // approvers impossible to assign from the UI.
-        if (address.trim()) add.mutate(address.trim());
+        if (ADDRESS_PATTERN.test(trimmed)) add.mutate(trimmed);
       }}
     >
       <div className="flex gap-2">
-        <Input
-          placeholder="Add approver by email or bot address…"
-          value={address}
-          onChange={(e) => setAddress(e.target.value)}
-        />
-        <Button type="submit" disabled={!address.trim() || add.isPending}>
+        <div className="flex-1">
+          <Combobox
+            aria-label="Approver"
+            placeholder="Email or bot address"
+            value={address}
+            onValueChange={setAddress}
+            options={options}
+            onPick={(u) => setAddress(u.address)}
+            listAbove
+          />
+        </div>
+        <Button
+          type="submit"
+          disabled={!ADDRESS_PATTERN.test(trimmed) || add.isPending}
+        >
           Add
         </Button>
       </div>
@@ -673,21 +692,6 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
         Approvers need access to this document. Anyone who edited it, in the browser, by
         upload, or by an agent, can&apos;t approve it. This includes you.
       </p>
-      {address && items.length > 0 ? (
-        <div className="mt-1 overflow-hidden rounded-md border border-[var(--color-border)]">
-          {items.slice(0, 5).map((u) => (
-            <button
-              key={u.id}
-              type="button"
-              className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-[var(--color-surface-muted)]"
-              onClick={() => setAddress(u.email || "")}
-            >
-              <span className="font-medium">{u.name || u.email}</span>
-              <span className="text-[var(--color-fg-muted)]">{u.email}</span>
-            </button>
-          ))}
-        </div>
-      ) : null}
     </form>
   );
 }

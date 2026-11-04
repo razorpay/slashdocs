@@ -43,5 +43,5 @@ export const GENERAL_ACCESS_NONE = "none";
 // only for inline hints.
 export const BOT_DOMAIN_SUFFIX = ".bot";
 
-// Example bot address shown in sharing placeholders and hints.
-export const BOT_ADDRESS_EXAMPLE = "report-creator@brave.otter.bot";
+// An email or a bot address. The server makes the full check.
+export const ADDRESS_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

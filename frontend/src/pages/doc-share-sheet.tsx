@@ -1,16 +1,10 @@
-import {
-  useEffect,
-  useId,
-  useMemo,
-  useState,
-  type ComponentPropsWithoutRef,
-} from "react";
+import { useEffect, useMemo, useState, type ComponentPropsWithoutRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { errorMessage } from "@/lib/errors";
-import { Check, ChevronDown, Copy, LockKeyhole, UsersRound } from "lucide-react";
+import { Check, ChevronDown, Copy, LockKeyhole, UsersRound, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Combobox } from "@/components/ui/combobox";
 import { Skeleton } from "@/components/ui/misc";
 import {
   Dropdown,
@@ -28,9 +22,11 @@ import {
 import {
   api,
   APIError,
+  type AccessRequest,
   type AccessSource,
   type EffectiveAccessItem,
   type GoogleGroup,
+  type Principal,
 } from "@/api";
 import { cn } from "@/lib/cn";
 import { publicURL } from "@/lib/config";
@@ -41,11 +37,9 @@ import {
   GENERAL_ACCESS_NONE,
   ROLE_RANK,
   BOT_DOMAIN_SUFFIX,
-  BOT_ADDRESS_EXAMPLE,
+  ADDRESS_PATTERN,
 } from "@/lib/constants";
-
-// An email or a bot address. The server makes the full check.
-const ADDRESS_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+import { PersonAvatar } from "./doc-comment-parts";
 
 const GENERAL_ACCESS_OPTIONS = [
   { value: GENERAL_ACCESS_NONE, label: "No access" },
@@ -190,7 +184,8 @@ export function ShareSheet({
       setSelectedGroup(null);
       invalidateAccess();
     },
-    onError: (e) => toast.error(errorMessage(e, "Couldn't share.")),
+    // The error shows under the field, not as a toast.
+    onError: () => {},
   });
   const updateGrant = useMutation({
     mutationFn: ({
@@ -361,54 +356,56 @@ export function ShareSheet({
             detail: g.email,
             address: g.email,
             group: g,
+            icon: <UsersRound className="h-4 w-4 shrink-0" />,
           }))
       : userSuggestions
           .filter((u) => u.email !== address.trim())
           .map((u) => ({
-            key: u.id || u.email,
-            name: u.name || u.email,
+            key: u.id,
+            name: u.name || u.email || u.id,
             detail: u.name ? u.email : undefined,
             address: u.email || "",
             group: null,
           }))
-  ).map((s) => ({ ...s, granted: grantees.has(s.address) }));
-  type Suggestion = (typeof suggestions)[number];
-
-  // The field is a combobox: the arrow keys move through the suggestions that
-  // can be picked, Enter picks one, and Escape closes the list.
-  const listId = useId();
-  const [listOpen, setListOpen] = useState(false);
-  const [activeKey, setActiveKey] = useState<string>();
-  const showList = listOpen && suggestions.length > 0;
-  const pickable = suggestions.filter((s) => !s.granted);
-  const active = showList ? pickable.find((s) => s.key === activeKey) : undefined;
-  const optionId = (s: Suggestion) => `${listId}-${suggestions.indexOf(s)}`;
-  const pick = (s: Suggestion) => {
-    setSelectedGroup(s.group);
-    setAddress(s.address);
-    setListOpen(false);
-  };
-  const move = (step: number) => {
-    const i = active ? pickable.indexOf(active) : -1;
-    const next = pickable[Math.min(Math.max(i + step, 0), pickable.length - 1)];
-    setListOpen(true);
-    setActiveKey(next?.key);
-  };
+  ).map((s) => ({
+    ...s,
+    disabledNote: grantees.has(s.address) ? "Has access" : undefined,
+  }));
 
   const everyoneLabel = config.data?.everyone_label || "Everyone on this server";
   const isPublic = config.data?.deployment === "public";
-  const userPlaceholder = isPublic ? "user@gmail.com" : "user@org.example";
   const resourceLabel = isFolder ? "folder" : "document";
+  // No user matches the field. On a public server the search finds only
+  // contacts, so a share can still work. On an org server it finds every user,
+  // so the share would fail.
+  const noUserMatch =
+    shareMode === "people" &&
+    debouncedAddress.length >= 2 &&
+    !debouncedAddress.includes(BOT_DOMAIN_SUFFIX) &&
+    userSearch.isSuccess &&
+    !userSearch.isFetching &&
+    userSuggestions.length === 0;
+  const noAccount = noUserMatch && !isPublic;
+  const hint =
+    shareMode === "groups"
+      ? "Select a server-verified organization group before sharing."
+      : noUserMatch
+        ? isPublic
+          ? "None of your contacts match. You can share with anyone who signed in once."
+          : "No slashdocs user matches. They need to sign in once before you can share with them."
+        : isPublic
+          ? "Enter a full email, or add a bot by its address. People you share with appear as you type."
+          : "Search existing slashdocs users by email, or add a bot by its address.";
+  const changeMode = (mode: typeof shareMode) => {
+    setShareMode(mode);
+    setAddress("");
+    setSelectedGroup(null);
+    m.reset();
+  };
 
   return (
     <SheetContent
       aria-describedby={undefined}
-      // Escape closes the open suggestions first, and the sheet only after.
-      onEscapeKeyDown={(e) => {
-        if (!showList) return;
-        e.preventDefault();
-        setListOpen(false);
-      }}
       onOpenAutoFocus={onOpenAutoFocus}
       onInteractOutside={onInteractOutside}
     >
@@ -492,11 +489,7 @@ export function ShareSheet({
                       role="tab"
                       aria-selected={shareMode === "people"}
                       className={`rounded-md px-2 py-1.5 text-xs font-medium ${shareMode === "people" ? "bg-[var(--color-surface)] shadow-sm" : "text-[var(--color-fg-muted)]"}`}
-                      onClick={() => {
-                        setShareMode("people");
-                        setAddress("");
-                        setSelectedGroup(null);
-                      }}
+                      onClick={() => changeMode("people")}
                     >
                       People and bots
                     </button>
@@ -505,115 +498,45 @@ export function ShareSheet({
                       role="tab"
                       aria-selected={shareMode === "groups"}
                       className={`rounded-md px-2 py-1.5 text-xs font-medium ${shareMode === "groups" ? "bg-[var(--color-surface)] shadow-sm" : "text-[var(--color-fg-muted)]"}`}
-                      onClick={() => {
-                        setShareMode("groups");
-                        setAddress("");
-                        setSelectedGroup(null);
-                      }}
+                      onClick={() => changeMode("groups")}
                     >
                       Google Groups
                     </button>
                   </div>
                 ) : null}
                 <div>
-                  {/* The suggestions float under the field, over the form. */}
-                  <div className="relative">
-                    <Input
-                      role="combobox"
-                      aria-label={
-                        shareMode === "groups" ? "Google Group" : "Person or bot"
-                      }
-                      aria-autocomplete="list"
-                      aria-expanded={showList}
-                      aria-controls={listId}
-                      aria-activedescendant={active ? optionId(active) : undefined}
-                      placeholder={
-                        shareMode === "groups"
-                          ? "Search group name or email"
-                          : `${userPlaceholder}  or  ${BOT_ADDRESS_EXAMPLE}`
-                      }
-                      value={address}
-                      onChange={(e) => {
-                        setAddress(e.target.value);
-                        setListOpen(true);
-                        setActiveKey(undefined);
-                        if (shareMode === "groups") setSelectedGroup(null);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-                          e.preventDefault();
-                          move(e.key === "ArrowDown" ? 1 : -1);
-                        } else if (e.key === "Enter" && active) {
-                          e.preventDefault();
-                          pick(active);
-                        }
-                      }}
-                      autoCapitalize="off"
-                      autoCorrect="off"
-                      spellCheck={false}
-                    />
-                    <ul
-                      id={listId}
-                      role="listbox"
-                      hidden={!showList}
-                      className="absolute inset-x-0 top-full z-10 mt-1 max-h-64 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-[var(--shadow-pop)]"
+                  <Combobox
+                    aria-label={
+                      shareMode === "groups" ? "Google Group" : "Person or bot"
+                    }
+                    aria-invalid={!!m.error || undefined}
+                    placeholder={
+                      shareMode === "groups"
+                        ? "Search group name or email"
+                        : "Email or bot address"
+                    }
+                    value={address}
+                    onValueChange={(next) => {
+                      setAddress(next);
+                      m.reset();
+                      if (shareMode === "groups") setSelectedGroup(null);
+                    }}
+                    options={suggestions}
+                    onPick={(s) => {
+                      setSelectedGroup(s.group);
+                      setAddress(s.address);
+                    }}
+                  />
+                  {m.error ? (
+                    <p
+                      role="alert"
+                      className="mt-1.5 text-xs text-[var(--color-danger)]"
                     >
-                      {suggestions.map((suggestion) => (
-                        <li
-                          key={suggestion.key}
-                          id={optionId(suggestion)}
-                          role="option"
-                          aria-selected={suggestion === active}
-                          aria-disabled={suggestion.granted || undefined}
-                          // The field keeps the focus.
-                          onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => !suggestion.granted && pick(suggestion)}
-                          className={cn(
-                            "flex items-center gap-2 px-3 py-2 text-sm",
-                            suggestion.granted
-                              ? "cursor-default text-[var(--color-fg-muted)]"
-                              : "cursor-pointer hover:bg-[var(--color-surface-muted)] aria-selected:bg-[var(--color-surface-muted)]",
-                          )}
-                        >
-                          {shareMode === "groups" ? (
-                            <UsersRound className="h-4 w-4 shrink-0" />
-                          ) : null}
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate font-medium">
-                              {suggestion.name}
-                            </span>
-                            {suggestion.detail ? (
-                              <span className="block truncate text-xs text-[var(--color-fg-muted)]">
-                                {suggestion.detail}
-                              </span>
-                            ) : null}
-                          </span>
-                          {suggestion.granted ? (
-                            <span className="shrink-0 text-xs">Has access</span>
-                          ) : null}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                  <p className="mt-1.5 text-[11px] text-[var(--color-fg-muted)]">
-                    {shareMode === "groups"
-                      ? "Select a server-verified organization group before sharing."
-                      : isPublic
-                        ? "Enter a full email, or add a bot by its address. People you share with appear as you type."
-                        : "Search existing slashdocs users by email, or add a bot by its address."}
-                  </p>
-                  {shareMode === "people" ? (
-                    userSuggestions.length === 0 &&
-                    debouncedAddress.length >= 2 &&
-                    !debouncedAddress.includes(BOT_DOMAIN_SUFFIX) &&
-                    !userSearch.isFetching ? (
-                      <div className="mt-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-2 text-xs text-[var(--color-fg-muted)]">
-                        {isPublic
-                          ? "None of your contacts match. Enter a full email to share with someone else. They need to sign in once first."
-                          : "No matching slashdocs users. They need to sign in once before you can share with them."}
-                      </div>
-                    ) : null
-                  ) : selectedGroup ? (
+                      {errorMessage(m.error, "Couldn't share.")}
+                    </p>
+                  ) : null}
+                  <p className="mt-1.5 text-xs text-[var(--color-fg-muted)]">{hint}</p>
+                  {shareMode === "people" ? null : selectedGroup ? (
                     <div className="mt-2 flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
                       <UsersRound className="h-4 w-4 shrink-0" />
                       <div className="min-w-0">
@@ -634,7 +557,7 @@ export function ShareSheet({
                       Google Group search is temporarily unavailable. Try again shortly.
                     </div>
                   ) : debouncedAddress.length >= 2 ? (
-                    <div className="mt-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-2 text-xs text-[var(--color-fg-muted)]">
+                    <div className="mt-2 text-xs text-[var(--color-fg-muted)]">
                       No verified organization groups matched that search.
                     </div>
                   ) : null}
@@ -653,7 +576,7 @@ export function ShareSheet({
                     !canManageAccess ||
                     (shareMode === "groups"
                       ? !selectedGroup
-                      : !ADDRESS_PATTERN.test(address.trim())) ||
+                      : !ADDRESS_PATTERN.test(address.trim()) || noAccount) ||
                     m.isPending
                   }
                 >
@@ -667,43 +590,14 @@ export function ShareSheet({
                   Requests for access
                 </h4>
                 <div className="space-y-1">
-                  {accessRequests.data.items.map(({ requester }) => {
-                    // A bot has no email. Its name is its address.
-                    const requesterAddress = requester.email || requester.name || "";
-                    return (
-                      <div
-                        key={requester.type + ":" + requester.id}
-                        className="flex items-center justify-between gap-3 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm"
-                      >
-                        <div className="min-w-0">
-                          <div className="truncate font-medium">
-                            {requester.name || requester.email || requester.id}
-                            {requester.type === "service_account" ? " (bot)" : ""}
-                          </div>
-                          {requester.name && requester.email ? (
-                            <div className="truncate text-xs text-[var(--color-fg-muted)]">
-                              {requester.email}
-                            </div>
-                          ) : null}
-                        </div>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          className="shrink-0"
-                          disabled={!requesterAddress}
-                          aria-label={`Share with ${requesterAddress}`}
-                          onClick={() => {
-                            setShareMode("people");
-                            setSelectedGroup(null);
-                            setAddress(requesterAddress);
-                          }}
-                        >
-                          Share
-                        </Button>
-                      </div>
-                    );
-                  })}
+                  {accessRequests.data.items.map((request) => (
+                    <AccessRequestRow
+                      key={request.requester.type + ":" + request.requester.id}
+                      docId={id}
+                      request={request}
+                      onDone={invalidateAccess}
+                    />
+                  ))}
                 </div>
               </div>
             ) : null}
@@ -745,11 +639,9 @@ export function ShareSheet({
                         key={item.principal.type + ":" + item.principal.id}
                         className="flex items-center justify-between gap-3 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm"
                       >
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5 truncate font-medium">
-                            {isGroup ? (
-                              <UsersRound className="h-3.5 w-3.5 shrink-0" />
-                            ) : null}
+                        <GrantAvatar principal={item.principal} />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-medium">
                             {principalLabel}
                             {item.principal?.type === "service_account" ? " (bot)" : ""}
                           </div>
@@ -853,6 +745,94 @@ export function ShareSheet({
         )}
       </SheetBody>
     </SheetContent>
+  );
+}
+
+// GrantAvatar is the face of whoever has access. A group has none, so its
+// icon takes the place.
+function GrantAvatar({ principal }: { principal: Principal }) {
+  if (principal.type !== "google_group")
+    return <PersonAvatar who={principal} size={24} />;
+  return (
+    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--color-surface-muted)] text-[var(--color-fg-muted)]">
+      <UsersRound className="h-3.5 w-3.5" />
+    </span>
+  );
+}
+
+// AccessRequestRow is a request for access: share with the requester in a
+// role, or decline.
+function AccessRequestRow({
+  docId,
+  request: { requester },
+  onDone,
+}: {
+  docId: string;
+  request: AccessRequest;
+  onDone: () => void;
+}) {
+  const [role, setRole] = useState<string>(DEFAULT_ROLE);
+  // A bot has no email. Its name is its address.
+  const address = requester.email || requester.name || "";
+  const share = useMutation({
+    mutationFn: () => api.createGrant(docId, address, role),
+    onSuccess: onDone,
+    onError: (e) => toast.error(errorMessage(e, "Couldn't share.")),
+  });
+  const decline = useMutation({
+    mutationFn: () => api.declineAccessRequest(docId, requester),
+    onSuccess: onDone,
+    onError: (e) => toast.error(errorMessage(e, "Couldn't decline the request.")),
+  });
+  const busy = share.isPending || decline.isPending;
+  return (
+    // On a narrow screen, the actions go under the name.
+    <div className="flex flex-wrap items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm">
+      <PersonAvatar who={requester} size={24} />
+      <div className="min-w-0 flex-1 basis-28">
+        <div className="truncate font-medium">
+          {requester.name || requester.email || requester.id}
+          {requester.type === "service_account" ? " (bot)" : ""}
+        </div>
+        {requester.name && requester.email ? (
+          <div className="truncate text-xs text-[var(--color-fg-muted)]">
+            {requester.email}
+          </div>
+        ) : null}
+      </div>
+      <div className="ml-auto flex items-center gap-2">
+        <RoleMenu
+          label={`Role for ${address}`}
+          value={role}
+          options={ROLES}
+          onChange={setRole}
+          disabled={busy}
+        />
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="shrink-0"
+          disabled={!address || busy}
+          aria-label={`Share with ${address}`}
+          onClick={() => share.mutate()}
+        >
+          Share
+        </Button>
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          className="h-8 w-8 shrink-0"
+          tooltip="Decline"
+          disabled={busy}
+          aria-label={`Decline ${address}`}
+          onClick={() => decline.mutate()}
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
   );
 }
 
