@@ -2,6 +2,7 @@ import { afterEach, assert, test } from "vitest";
 import {
   CLUSTER_RADIUS,
   clusterPins,
+  createPinLayer,
   parsePins,
   pinElement,
   pointAt,
@@ -159,4 +160,48 @@ test("a highlight painted in an svg does not change the paths in it", () => {
   } finally {
     delete proto.getBBox;
   }
+});
+
+test("a new pin shows and has its spot at once, before the next frame", () => {
+  document.body.innerHTML = '<main><p id="spot">Pin here</p></main>';
+  layout();
+  const layer = createPinLayer({
+    doc: () => document,
+    post: () => {},
+    laidOut: () => {},
+  });
+  layer.start(document);
+  layer.setPins(
+    parsePins([
+      {
+        id: "draft:1",
+        anchor: { quote: "", point: { target: "spot", x: 0.5, y: 0.5 } },
+        draft: true,
+      },
+    ]),
+    "draft:1",
+  );
+  assert.deepEqual(layer.rect("draft:1"), {
+    left: 300,
+    top: 222,
+    width: 28,
+    height: 28,
+  });
+  assert.ok(document.querySelector('.sd-pin[data-id="draft:1"]'));
+});
+
+test("placing a pin shows a hint until it ends", () => {
+  const layer = createPinLayer({
+    doc: () => document,
+    post: () => {},
+    laidOut: () => {},
+  });
+  layer.start(document);
+  layer.setPlacing(true);
+  assert.strictEqual(
+    document.querySelector(".sd-place-hint")?.textContent,
+    "Click to place a comment. Esc to cancel.",
+  );
+  layer.setPlacing(false);
+  assert.strictEqual(document.querySelector(".sd-place-hint"), null);
 });
