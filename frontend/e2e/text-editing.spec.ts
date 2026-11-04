@@ -344,7 +344,7 @@ test("restores an earlier version from the history", async ({ page, slashdocs })
   const history = page.getByRole("dialog");
   await history.getByRole("button", { name: "Show 2 earlier edits" }).click();
   await history
-    .getByRole("button", { name: /Replaced “twice” with “three times”/ })
+    .getByRole("button", { name: /Changed “twice” to “three times”/ })
     .click();
   await expect(renderedDocument(page).locator("#tail")).toHaveText(
     "Clients retry three times before giving up.",

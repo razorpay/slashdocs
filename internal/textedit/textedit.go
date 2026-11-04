@@ -119,7 +119,7 @@ func Summary(edits []Edit) string {
 	lines := make([]string, 0, len(edits))
 	for _, e := range edits {
 		before, after := excerpts(e.OldString, e.NewString)
-		line := "Replaced " + quote(before) + " with " + quote(after)
+		line := "Changed " + quote(before) + " to " + quote(after)
 		if e.ReplaceAll {
 			line += " everywhere"
 		}

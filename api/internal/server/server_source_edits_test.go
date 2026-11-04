@@ -89,7 +89,7 @@ func TestEditSourceReplacesByPosition(t *testing.T) {
 	if out.Number != 2 || out.BaseVersionID != verID || out.Rebased {
 		t.Fatalf("response = %+v", out)
 	}
-	if want := "Replaced “Try” with “Run”\nAdded a paragraph: “New words”"; out.ChangeSummary != want {
+	if want := "Changed “Try” to “Run”\nAdded a paragraph: “New words”"; out.ChangeSummary != want {
 		t.Fatalf("change_summary = %q, want %q", out.ChangeSummary, want)
 	}
 	want := "<html><body>\n<h1>Café 😀</h1>\n<p>Try it.</p>\n<p>Middle.</p>\n<p>Run it.</p>\n<p>New <b>words</b></p>\n</body></html>"
