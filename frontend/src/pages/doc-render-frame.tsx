@@ -11,7 +11,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type Anchor } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { COMMENT_STATUS } from "@/lib/constants";
-import { Center } from "@/components/ui/misc";
+import { Center, RetryButton } from "@/components/ui/misc";
+import { ErrorState } from "@/components/error-state";
+import { errorMessage } from "@/lib/errors";
 import { CHORD_KEYS } from "@/lib/esc-chord";
 import { cursorsShownStore, parseCursorSpot } from "@/lib/live-cursors";
 import { principalColor } from "@/lib/principals";
@@ -599,7 +601,14 @@ export function RenderFrame() {
   // The parent (DocPage) only mounts RenderFrame when a current version
   // exists, so version is always set here.
   if (token.isLoading) return <Center>Preparing secure render…</Center>;
-  if (token.error) return <Center>Could not create render token.</Center>;
+  if (token.error)
+    return (
+      <ErrorState
+        title="Could not open the document"
+        description={errorMessage(token.error)}
+        action={<RetryButton query={token} />}
+      />
+    );
 
   const showZoomBadge = Math.round(scale * 100) !== 100;
 
