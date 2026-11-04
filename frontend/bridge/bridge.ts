@@ -4,7 +4,7 @@ import { snapshotForPrint } from "./document-export.ts";
 import { dispatchPublicEvent, PUBLIC_NAMES } from "./public-names.ts";
 import type { RenderedTextWithBrPositions } from "./anchoring/rendered-text.ts";
 import { renderedTextOf } from "./anchoring/rendered-text.ts";
-import { describeAnchor, resolveAnchor } from "./anchoring/index.ts";
+import { describeAnchor, resolveAnchor, snapToWords } from "./anchoring/index.ts";
 import { TextRange } from "./anchoring/text-range.ts";
 import type { CommentAnchor } from "./anchoring/types.ts";
 import {
@@ -1437,7 +1437,7 @@ type Theme = "dark" | "light";
   function commitSelection(range: Range): void {
     const d = doc();
     if (!d?.body) return;
-    const anchor = describeAnchor(d.body, range);
+    const anchor = describeAnchor(d.body, snapToWords(range));
     if (!anchor) return;
     dismissSelectionAction();
     parent.postMessage({ type: "slashdocs:selection", anchor }, targetOrigin());
@@ -1525,7 +1525,7 @@ type Theme = "dark" | "light";
         "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71",
         () => {
           if (!actionRange) return;
-          const anchor = describeAnchor(d.body, actionRange);
+          const anchor = describeAnchor(d.body, snapToWords(actionRange));
           parent.postMessage({ type: "slashdocs:copy-text", anchor }, targetOrigin());
         },
       );

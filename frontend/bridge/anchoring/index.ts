@@ -25,6 +25,7 @@ import { TextRange } from "./text-range.ts";
 import type { CommentAnchor } from "./types.ts";
 
 export type { CommentAnchor } from "./types.ts";
+export { snapToWords } from "./word-range.ts";
 
 /**
  * Number of characters around the quote to capture as prefix/suffix context.
