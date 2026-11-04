@@ -75,7 +75,7 @@ func (q *Queries) GetBookByFolder(ctx context.Context, folderID string) (string,
 }
 
 const getBookForUpdate = `-- name: GetBookForUpdate :one
-SELECT id, COALESCE(current_outline_version_id,'') AS outline_version_id FROM books WHERE id = $1 FOR UPDATE
+SELECT id, COALESCE(current_outline_version_id,'') AS outline_version_id FROM books WHERE id = $1 FOR NO KEY UPDATE
 `
 
 type GetBookForUpdateRow struct {
@@ -83,6 +83,8 @@ type GetBookForUpdateRow struct {
 	OutlineVersionID string
 }
 
+// NO KEY UPDATE serializes outline writers without blocking the KEY SHARE
+// that foreign-key checks on book_id take (reading-position saves).
 func (q *Queries) GetBookForUpdate(ctx context.Context, id string) (GetBookForUpdateRow, error) {
 	row := q.db.QueryRow(ctx, getBookForUpdate, id)
 	var i GetBookForUpdateRow
@@ -140,7 +142,7 @@ func (q *Queries) GetChapterReads(ctx context.Context, arg GetChapterReadsParams
 }
 
 const getVersionSectionsForUpdate = `-- name: GetVersionSectionsForUpdate :one
-SELECT sections_indexed, html_blob_key FROM versions WHERE id = $1 FOR UPDATE
+SELECT sections_indexed, html_blob_key FROM versions WHERE id = $1 FOR NO KEY UPDATE
 `
 
 type GetVersionSectionsForUpdateRow struct {
@@ -148,7 +150,8 @@ type GetVersionSectionsForUpdateRow struct {
 	HtmlBlobKey     string
 }
 
-// Locks the version so that concurrent on-demand indexing inserts its sections once.
+// Locks the version so that concurrent on-demand indexing inserts its sections
+// once, without blocking foreign-key checks such as CreateVersion's parent.
 func (q *Queries) GetVersionSectionsForUpdate(ctx context.Context, id string) (GetVersionSectionsForUpdateRow, error) {
 	row := q.db.QueryRow(ctx, getVersionSectionsForUpdate, id)
 	var i GetVersionSectionsForUpdateRow
@@ -327,7 +330,7 @@ SELECT v.id,v.html_blob_key FROM versions v
 JOIN documents d ON d.id = v.document_id
 JOIN books b ON b.folder_id = d.parent_folder_id
 WHERE NOT v.sections_indexed AND v.id <> ALL(COALESCE($1::text[], '{}'))
-ORDER BY v.created_at LIMIT $2 FOR UPDATE OF v SKIP LOCKED
+ORDER BY v.created_at LIMIT $2 FOR NO KEY UPDATE OF v SKIP LOCKED
 `
 
 type ListUnsectionedVersionsParams struct {
@@ -342,6 +345,7 @@ type ListUnsectionedVersionsRow struct {
 
 // Versions of documents in book folders that have no sections yet (A12). Locks
 // the rows, so that servers that index at the same time skip each other's.
+// NO KEY UPDATE leaves foreign-key checks on version ids unblocked.
 func (q *Queries) ListUnsectionedVersions(ctx context.Context, arg ListUnsectionedVersionsParams) ([]ListUnsectionedVersionsRow, error) {
 	rows, err := q.db.Query(ctx, listUnsectionedVersions, arg.Skipped, arg.RowLimit)
 	if err != nil {

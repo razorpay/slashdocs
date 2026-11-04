@@ -7,7 +7,9 @@ FROM books b LEFT JOIN book_outline_versions v ON v.id=b.current_outline_version
 -- name: GetBookByFolder :one
 SELECT id FROM books WHERE folder_id = @folder_id;
 -- name: GetBookForUpdate :one
-SELECT id, COALESCE(current_outline_version_id,'') AS outline_version_id FROM books WHERE id = @id FOR UPDATE;
+-- NO KEY UPDATE serializes outline writers without blocking the KEY SHARE
+-- that foreign-key checks on book_id take (reading-position saves).
+SELECT id, COALESCE(current_outline_version_id,'') AS outline_version_id FROM books WHERE id = @id FOR NO KEY UPDATE;
 -- name: DeleteBook :execrows
 DELETE FROM books WHERE id = @id;
 -- name: NextOutlineNumber :one
@@ -28,14 +30,16 @@ SELECT ord,section_id,title,level,text_hash,words FROM version_sections WHERE ve
 -- name: ListUnsectionedVersions :many
 -- Versions of documents in book folders that have no sections yet (A12). Locks
 -- the rows, so that servers that index at the same time skip each other's.
+-- NO KEY UPDATE leaves foreign-key checks on version ids unblocked.
 SELECT v.id,v.html_blob_key FROM versions v
 JOIN documents d ON d.id = v.document_id
 JOIN books b ON b.folder_id = d.parent_folder_id
 WHERE NOT v.sections_indexed AND v.id <> ALL(COALESCE(@skipped::text[], '{}'))
-ORDER BY v.created_at LIMIT @row_limit FOR UPDATE OF v SKIP LOCKED;
+ORDER BY v.created_at LIMIT @row_limit FOR NO KEY UPDATE OF v SKIP LOCKED;
 -- name: GetVersionSectionsForUpdate :one
--- Locks the version so that concurrent on-demand indexing inserts its sections once.
-SELECT sections_indexed, html_blob_key FROM versions WHERE id = @id FOR UPDATE;
+-- Locks the version so that concurrent on-demand indexing inserts its sections
+-- once, without blocking foreign-key checks such as CreateVersion's parent.
+SELECT sections_indexed, html_blob_key FROM versions WHERE id = @id FOR NO KEY UPDATE;
 -- name: DocumentInBook :one
 SELECT EXISTS(SELECT 1 FROM documents d JOIN books b ON b.folder_id = d.parent_folder_id WHERE d.id = @document_id);
 -- name: VersionWords :many
