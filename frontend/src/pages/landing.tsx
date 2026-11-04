@@ -138,7 +138,8 @@ export function LandingPage() {
               and publish the next version.
             </p>
             <div className="mx-auto mt-10 flex max-w-xl flex-col gap-3 sm:flex-row sm:items-center">
-              <CodeBlock className="min-w-0 flex-1 bg-[var(--color-surface)] text-left">{`curl -fsSL ${publicURL()}/install.sh | sh`}</CodeBlock>
+              {/* A narrow screen scrolls the command without a scrollbar. */}
+              <CodeBlock className="min-w-0 flex-1 bg-[var(--color-surface)] text-left [&_pre]:[scrollbar-width:none]">{`curl -fsSL ${publicURL()}/install.sh | sh`}</CodeBlock>
               <Button asChild size="lg">
                 <Link to="/login">Sign in</Link>
               </Button>
