@@ -117,7 +117,8 @@ func validate(i int, e Edit) error {
 func Summary(edits []Edit) string {
 	lines := make([]string, 0, len(edits))
 	for _, e := range edits {
-		line := fmt.Sprintf("Replaced %q with %q", clip(e.OldString), clip(e.NewString))
+		before, after := excerpts(e.OldString, e.NewString)
+		line := fmt.Sprintf("Replaced %q with %q", before, after)
 		if e.ReplaceAll {
 			line += " everywhere"
 		}
@@ -126,11 +127,41 @@ func Summary(edits []Edit) string {
 	return strings.Join(lines, "\n")
 }
 
-const summaryRunes = 60
+const (
+	summaryRunes = 60
+	contextWords = 3
+)
 
-// clip shortens s to a readable single line.
+// excerpts shows the words that differ between the old and new strings, with
+// a few of the words they share on each side, so that a small change in a long
+// string stays visible. An ellipsis marks the text that is cut.
+func excerpts(oldString, newString string) (string, string) {
+	a, b := strings.Fields(oldString), strings.Fields(newString)
+	// head and tail count the words that both strings start and end with.
+	head := 0
+	for head < len(a) && head < len(b) && a[head] == b[head] {
+		head++
+	}
+	tail := 0
+	for tail < len(a)-head && tail < len(b)-head && a[len(a)-1-tail] == b[len(b)-1-tail] {
+		tail++
+	}
+	from, cut := max(head-contextWords, 0), max(tail-contextWords, 0)
+	excerpt := func(words []string) string {
+		s := strings.Join(words[from:len(words)-cut], " ")
+		if from > 0 {
+			s = "…" + s
+		}
+		if cut > 0 {
+			s += "…"
+		}
+		return clip(s)
+	}
+	return excerpt(a), excerpt(b)
+}
+
+// clip shortens a very long change to summaryRunes runes.
 func clip(s string) string {
-	s = strings.Join(strings.Fields(s), " ")
 	if utf8.RuneCountInString(s) <= summaryRunes {
 		return s
 	}
