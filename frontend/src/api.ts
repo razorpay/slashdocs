@@ -1,3 +1,5 @@
+import type { Replacement } from "@/lib/source-edits";
+
 export type Principal = {
   type: "user" | "service_account" | "google_group" | "anyone";
   id: string;
@@ -318,7 +320,8 @@ export class APIError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+// send makes a request and throws an APIError for a response that is not ok.
+async function send(path: string, init: RequestInit = {}): Promise<Response> {
   const res = await fetch(path, {
     credentials: "include",
     ...init,
@@ -341,6 +344,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     } catch {}
     throw new APIError(res.status, code, msg, details);
   }
+  return res;
+}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await send(path, init);
   if (res.status === 204) return undefined as T;
   const ct = res.headers.get("content-type") || "";
   if (ct.includes("application/json")) {
@@ -438,20 +446,29 @@ export const api = {
       body: fd,
     });
   },
-  getVersionHTML: (doc: string, version: string) =>
-    request<string>(`/v1/documents/${doc}/versions/${version}/html`),
-  // Applies exact find-and-replace edits on the server. Without a base
-  // version they apply to whatever version is current.
-  editDocument: (
+  // The source of a version, exactly as stored. A leading byte order mark
+  // stays, because the server counts it in the offsets of source edits.
+  getVersionHTML: async (doc: string, version: string) => {
+    const res = await send(`/v1/documents/${doc}/versions/${version}/html`);
+    return new TextDecoder("utf-8", { ignoreBOM: true }).decode(
+      await res.arrayBuffer(),
+    );
+  },
+  // Replaces ranges of the source of the base version, by position. When a
+  // newer version exists, the server moves each range onto it, and rebased
+  // is true. A retry with the same client_change_id returns the version that
+  // the first request made.
+  editSource: (
     doc: string,
     input: {
-      edits: { old_string: string; new_string: string }[];
-      base_version_id?: string;
+      base_version_id: string;
+      client_change_id: string;
       change_summary?: string;
+      replacements: Replacement[];
     },
   ) =>
-    request<Version & { base_version_id: string; edits_applied: number }>(
-      `/v1/documents/${doc}/edits`,
+    request<Version & { base_version_id: string; rebased: boolean }>(
+      `/v1/documents/${doc}/source-edits`,
       { method: "POST", body: JSON.stringify(input) },
     ),
   // Saves the content of an earlier version as the newest one.
