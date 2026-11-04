@@ -20,8 +20,9 @@ export type ComboboxOption = {
 
 // Combobox is a field with suggestions that float under it, or above it at
 // the bottom of a dialog. The arrow keys move through the options that can be
-// picked, Enter picks one, and Escape closes the list before the dialog or
-// sheet around it.
+// picked, and Enter picks the active one. The first one is active when the
+// list opens, so one match takes one Enter. Escape closes the list before the
+// dialog or sheet around it.
 export function Combobox<T extends ComboboxOption>({
   value,
   onValueChange,
@@ -41,7 +42,9 @@ export function Combobox<T extends ComboboxOption>({
   const [activeKey, setActiveKey] = useState<string>();
   const showList = open && options.length > 0;
   const pickable = options.filter((o) => !o.disabledNote);
-  const active = showList ? pickable.find((o) => o.key === activeKey) : undefined;
+  const active = showList
+    ? (pickable.find((o) => o.key === activeKey) ?? pickable[0])
+    : undefined;
   const optionId = (o: T) => `${listId}-${options.indexOf(o)}`;
   const pick = (o: T) => {
     onPick(o);
@@ -112,14 +115,16 @@ export function Combobox<T extends ComboboxOption>({
             role="option"
             aria-selected={option === active}
             aria-disabled={!!option.disabledNote || undefined}
-            // The field keeps the focus.
+            // The field keeps the focus. The pointer moves the active option
+            // too, so one option shows what Enter picks.
             onMouseDown={(e) => e.preventDefault()}
+            onMouseEnter={() => !option.disabledNote && setActiveKey(option.key)}
             onClick={() => !option.disabledNote && pick(option)}
             className={cn(
-              "flex items-center gap-2 px-3 py-2 text-sm",
+              "flex min-h-10 items-center gap-2 px-3 py-1.5 text-sm transition-[background-color] duration-150 ease-out",
               option.disabledNote
                 ? "cursor-default text-[var(--color-fg-muted)]"
-                : "cursor-pointer hover:bg-[var(--color-highlight)] aria-selected:bg-[var(--color-highlight)]",
+                : "cursor-pointer aria-selected:bg-[var(--color-highlight)]",
             )}
           >
             {option.icon}
