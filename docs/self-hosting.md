@@ -805,7 +805,9 @@ cached; the page never asks the directory.
 comments, grants, sessions, and OAuth state in Postgres. Documents are
 versioned immutably; each push, edit or restore creates a new version. Edits
 in the browser save as the editor pauses, so a session of typing makes several
-versions. The UI shows them as the document's history.
+versions. The UI shows them as the document's history. To find the source of
+an edit by position, the render adds a `data-slashdocs-source` attribute to
+each element of the document. The stored HTML never contains it.
 
 For search, Postgres also keeps the visible text of each new version. After an
 upgrade from a release without content search, every server reads the older

@@ -89,9 +89,10 @@ version for the active context, so --base-version is optional.
 Publishing model:
   - Creating a document stores the uploaded HTML as version 1.
   - Pushing HTML, or editing its text, creates a new immutable version.
-  - People with the editor role change the text in the slashdocs UI. Their
-    edits save as they pause, through the same edits as docs edit, so each
-    pause is a new version. The UI shows versions as the document's history,
+  - People with the editor role edit the document in the slashdocs UI: words,
+    paragraphs, lists, bold, italic and links. Each pause in their typing
+    saves the HTML of the elements they changed, by position, as a new
+    version. The rest of the HTML stays byte-for-byte the same. The UI shows versions as the document's history,
     where people preview and restore them.
   - Runtime KV changes from uploaded HTML do not create versions; see:
       slashdocs guidelines interactivity kv
@@ -116,6 +117,11 @@ slashdocs renders uploaded HTML inside the document reader.
   - Links should be explicit and safe for a reader to open in a new tab.
   - If your document has scripts, make initialization idempotent; the render
     frame may reload as versions or theme settings change.
+  - Put text that people may fix in the HTML. Editors can change text that a
+    script shows only when it is exactly one string literal in an inline
+    script, or one string value in a <script type="application/json"> block.
+    Text that code builds, such as "Total: " + n, is read only in the browser:
+    editors ask an agent to change it.
 
 Useful next pages:
   slashdocs guidelines rendering theme
