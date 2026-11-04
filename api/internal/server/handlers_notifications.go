@@ -132,6 +132,23 @@ func (h handlers) listDocumentAccessRequests(c *gin.Context) {
 	c.JSON(http.StatusOK, listResponse[repo.AccessRequest]{Items: items})
 }
 
+// listManagedAccessRequests godoc
+// @Summary List requests for access to the documents that the caller manages
+// @Description The newest first, across every document on which the caller manages access. Each request names its document.
+// @Tags documents
+// @Security bearerAuth
+// @Security cookieAuth
+// @Success 200 {object} listResponse[repo.DocumentAccessRequest]
+// @Router /v1/access-requests [get]
+func (h handlers) listManagedAccessRequests(c *gin.Context) {
+	items, err := h.deps.repository.ListManagedAccessRequests(c.Request.Context(), *current(c))
+	if err != nil {
+		internalErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, listResponse[repo.DocumentAccessRequest]{Items: items})
+}
+
 // declineDocumentAccessRequest godoc
 // @Summary Decline a request for access to a document
 // @Description Removes the request without a grant. The requester can ask again.

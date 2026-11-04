@@ -228,6 +228,36 @@ func (s *Store) RequestDocumentAccess(ctx context.Context, requester auth.Princi
 	return tx.Commit(ctx)
 }
 
+// accessRequestRows selects each request in document_access_requests r with
+// its document and its requester.
+const accessRequestRows = `SELECT r.document_id, d.title, r.requester_type, r.requester_id,
+		COALESCE(u.email,''), COALESCE(u.name,sa.name,''), r.requested_at
+	FROM document_access_requests r
+	JOIN documents d ON d.id=r.document_id
+	LEFT JOIN users u ON r.requester_type='user' AND u.id=r.requester_id
+	LEFT JOIN service_accounts sa ON r.requester_type='service_account' AND sa.id=r.requester_id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+	`
+
+// queryAccessRequests runs a query that starts with accessRequestRows.
+func (s *Store) queryAccessRequests(ctx context.Context, sql string, args ...any) ([]repo.DocumentAccessRequest, error) {
+	rows, err := s.db.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []repo.DocumentAccessRequest{}
+	for rows.Next() {
+		var r repo.DocumentAccessRequest
+		var requestedAt time.Time
+		if err := rows.Scan(&r.DocumentID, &r.DocumentTitle, &r.Requester.Type, &r.Requester.ID, &r.Requester.Email, &r.Requester.Name, &requestedAt); err != nil {
+			return nil, err
+		}
+		r.RequestedAt = requestedAt.UTC().Format(time.RFC3339Nano)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // ListAccessRequests returns the requests for access to a document, the
 // newest first. With a requester, it returns only theirs.
 func (s *Store) ListAccessRequests(ctx context.Context, documentID string, requester *auth.Principal) ([]repo.AccessRequest, error) {
@@ -235,28 +265,39 @@ func (s *Store) ListAccessRequests(ctx context.Context, documentID string, reque
 	if requester != nil {
 		only = *requester
 	}
-	rows, err := s.db.Query(ctx, `SELECT r.requester_type, r.requester_id,
-		COALESCE(u.email,''), COALESCE(u.name,sa.name,''), r.requested_at
-	FROM document_access_requests r
-	LEFT JOIN users u ON r.requester_type='user' AND u.id=r.requester_id
-	LEFT JOIN service_accounts sa ON r.requester_type='service_account' AND sa.id=r.requester_id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+	items, err := s.queryAccessRequests(ctx, accessRequestRows+`
 	WHERE r.document_id=$1 AND ($2='' OR (r.requester_type=$2 AND r.requester_id=$3))
 	ORDER BY r.requested_at DESC`, documentID, only.Type, only.ID)
-	if err != nil {
-		return nil, err
+	out := make([]repo.AccessRequest, len(items))
+	for i, item := range items {
+		out[i] = item.AccessRequest
 	}
-	defer rows.Close()
-	out := []repo.AccessRequest{}
-	for rows.Next() {
-		var r repo.AccessRequest
-		var requestedAt time.Time
-		if err := rows.Scan(&r.Requester.Type, &r.Requester.ID, &r.Requester.Email, &r.Requester.Name, &requestedAt); err != nil {
-			return nil, err
-		}
-		r.RequestedAt = requestedAt.UTC().Format(time.RFC3339Nano)
-		out = append(out, r)
-	}
-	return out, rows.Err()
+	return out, err
+}
+
+// ListManagedAccessRequests finds the documents that have a request, walks up
+// their folders, and keeps a document when the principal owns it or one of
+// its folders, or holds an editor grant on it or one of its folders. This is
+// the rule of RoleForDocument for the editor role.
+func (s *Store) ListManagedAccessRequests(ctx context.Context, p auth.Principal) ([]repo.DocumentAccessRequest, error) {
+	return s.queryAccessRequests(ctx, `WITH RECURSIVE chain(document_id, resource_id, parent_folder_id, owner_type, owner_id, depth) AS (
+		SELECT d.id, d.id, d.parent_folder_id, d.owner_type, d.owner_id, 0 FROM documents d
+		WHERE d.id IN (SELECT document_id FROM document_access_requests)
+		UNION ALL
+		SELECT c.document_id, f.id, f.parent_folder_id, f.owner_type, f.owner_id, c.depth+1
+		FROM chain c JOIN folders f ON f.id=c.parent_folder_id
+		WHERE c.depth < 64
+	), managed AS (
+		SELECT c.document_id FROM chain c
+		WHERE (c.owner_type=$1 AND c.owner_id=$2) OR EXISTS (
+			SELECT 1 FROM resource_grants g
+			WHERE g.resource_id=c.resource_id AND g.revoked_at IS NULL AND g.role='editor'
+			AND (g.principal_type='anyone' OR (g.principal_type=$1 AND g.principal_id=$2)
+				OR (g.principal_type='google_group' AND g.principal_id=ANY($3::text[]))))
+	)
+	`+accessRequestRows+`
+	WHERE r.document_id IN (SELECT document_id FROM managed)
+	ORDER BY r.requested_at DESC`, p.Type, p.ID, p.GoogleGroupIDs)
 }
 
 // DeclineAccessRequest removes a request for access to a document, and its
