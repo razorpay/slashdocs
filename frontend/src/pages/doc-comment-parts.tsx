@@ -15,7 +15,6 @@ import {
   RotateCcw,
   Send,
   Trash2,
-  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api, type Comment, type Principal } from "@/api";
@@ -268,7 +267,7 @@ function EditableBody({ c, docId }: { c: Comment; docId: string }) {
   };
   return (
     <form
-      className="flex min-w-0 items-end gap-1"
+      className="min-w-0"
       onClick={(e) => e.stopPropagation()}
       onSubmit={(e) => {
         e.preventDefault();
@@ -276,7 +275,6 @@ function EditableBody({ c, docId }: { c: Comment; docId: string }) {
       }}
     >
       <MentionTextarea
-        rows={1}
         autoFocus
         draft={draft}
         onChange={setDraft}
@@ -291,31 +289,28 @@ function EditableBody({ c, docId }: { c: Comment; docId: string }) {
           event.preventDefault();
           if (ready) save.mutate();
         }}
-        className="block max-h-40 min-h-9 resize-none py-1.5 text-sm [field-sizing:content]"
       />
-      <Button
-        type="button"
-        size="icon"
-        variant="ghost"
-        aria-label="Cancel edit"
-        title="Cancel edit (Esc)"
-        disabled={save.isPending}
-        onClick={cancel}
-        className={cn("shrink-0", muted)}
-      >
-        <X className="h-4 w-4" />
-      </Button>
-      <Button
-        type="submit"
-        size="icon"
-        aria-label="Save comment"
-        title="Save comment (Enter)"
-        aria-keyshortcuts="Enter"
-        disabled={!ready}
-        className="shrink-0"
-      >
-        <Send className="h-4 w-4" />
-      </Button>
+      <div className="mt-2 flex justify-end gap-2">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          title="Cancel (Esc)"
+          disabled={save.isPending}
+          onClick={cancel}
+        >
+          Cancel
+        </Button>
+        <Button
+          type="submit"
+          size="sm"
+          title="Save (Enter)"
+          aria-keyshortcuts="Enter"
+          disabled={!ready}
+        >
+          Save
+        </Button>
+      </div>
     </form>
   );
 }
@@ -356,27 +351,27 @@ export function ComposeField({
     if (ready) onSubmit();
   };
   return (
-    <form className="flex min-w-0 flex-1 items-end gap-2" onSubmit={submit}>
+    <form className="min-w-0 flex-1" onSubmit={submit}>
       <MentionTextarea
-        rows={1}
         autoFocus={autoFocus}
         draft={value}
         onChange={onChange}
         placeholder={placeholder}
         onKeyDown={sendOnEnter}
-        className="block max-h-40 min-h-9 resize-none py-1.5 text-sm [field-sizing:content]"
+        action={
+          <Button
+            size="icon"
+            type="submit"
+            aria-label={sendLabel}
+            title={`${sendLabel} (Enter)`}
+            aria-keyshortcuts="Enter"
+            disabled={!ready}
+            className="shrink-0"
+          >
+            <Send className="h-4 w-4" />
+          </Button>
+        }
       />
-      <Button
-        size="icon"
-        type="submit"
-        aria-label={sendLabel}
-        title={`${sendLabel} (Enter)`}
-        aria-keyshortcuts="Enter"
-        disabled={!ready}
-        className="shrink-0"
-      >
-        <Send className="h-4 w-4" />
-      </Button>
     </form>
   );
 }
@@ -422,12 +417,12 @@ export function ReplyRow({
   return (
     <div
       className={cn(
-        "flex items-end gap-2 border-t border-[var(--color-border)] px-3 py-2.5",
+        "flex items-start gap-2 border-t border-[var(--color-border)] px-3 py-2.5",
         className,
       )}
     >
       {self ? (
-        <span className="pb-[9px]">
+        <span className="pt-[9px]">
           <PersonAvatar who={self} size={18} />
         </span>
       ) : null}

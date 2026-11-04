@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
@@ -33,17 +34,17 @@ export function MentionTextarea({
   onChange,
   onKeyDown,
   placeholder,
-  rows,
-  className,
   autoFocus,
+  action,
 }: {
   draft: MentionDraft;
   onChange: (draft: MentionDraft) => void;
   onKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   placeholder?: string;
-  rows?: number;
-  className?: string;
   autoFocus?: boolean;
+  // A button at the end of the field, such as Send. The notes under the
+  // field do not move it.
+  action?: ReactNode;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const beforeInputSelection = useRef<TextSelection | null>(null);
@@ -109,8 +110,12 @@ export function MentionTextarea({
     };
   }, [visible, suggestions.length]);
 
+  // The caret goes to the end, so a kept draft goes on where it stopped.
   useLayoutEffect(() => {
-    if (autoFocus) ref.current?.focus({ preventScroll: true });
+    const el = ref.current;
+    if (!autoFocus || !el) return;
+    el.focus({ preventScroll: true });
+    el.setSelectionRange(el.value.length, el.value.length);
   }, [autoFocus]);
 
   const syncTarget = (el: HTMLTextAreaElement) => {
@@ -217,35 +222,39 @@ export function MentionTextarea({
 
   return (
     <div className="relative min-w-0 flex-1">
-      <Textarea
-        ref={ref}
-        rows={rows}
-        value={draft.body}
-        onChange={() => {}}
-        onInput={(event) => {
-          const el = event.currentTarget;
-          const before = beforeInputSelection.current;
-          beforeInputSelection.current = null;
-          const after = { start: el.selectionStart, end: el.selectionEnd };
-          const edit = before
-            ? inferTextareaEdit(draft.body, el.value, before, after)
-            : null;
-          onChange(reconcileMentionDraft(draft, el.value, edit));
-          syncTarget(el);
-        }}
-        role="combobox"
-        aria-autocomplete="list"
-        aria-expanded={visible}
-        aria-controls={visible ? listID : undefined}
-        aria-activedescendant={visible ? `${listID}-${activeIndex}` : undefined}
-        onClick={(event) => syncTarget(event.currentTarget)}
-        onBlur={() => setOpen(false)}
-        onKeyUp={(event) => syncTarget(event.currentTarget)}
-        onSelect={(event) => syncTarget(event.currentTarget)}
-        onKeyDown={handleKeyDown}
-        placeholder={placeholder}
-        className={className}
-      />
+      <div className="flex items-end gap-2">
+        <Textarea
+          ref={ref}
+          rows={1}
+          value={draft.body}
+          onChange={() => {}}
+          onInput={(event) => {
+            const el = event.currentTarget;
+            const before = beforeInputSelection.current;
+            beforeInputSelection.current = null;
+            const after = { start: el.selectionStart, end: el.selectionEnd };
+            const edit = before
+              ? inferTextareaEdit(draft.body, el.value, before, after)
+              : null;
+            onChange(reconcileMentionDraft(draft, el.value, edit));
+            syncTarget(el);
+          }}
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={visible}
+          aria-controls={visible ? listID : undefined}
+          aria-activedescendant={visible ? `${listID}-${activeIndex}` : undefined}
+          onClick={(event) => syncTarget(event.currentTarget)}
+          onBlur={() => setOpen(false)}
+          onKeyUp={(event) => syncTarget(event.currentTarget)}
+          onSelect={(event) => syncTarget(event.currentTarget)}
+          onKeyDown={handleKeyDown}
+          placeholder={placeholder}
+          // One line that grows with the text.
+          className="block max-h-40 min-h-9 min-w-0 resize-none py-1.5 text-sm [field-sizing:content]"
+        />
+        {action}
+      </div>
       {visible
         ? createPortal(
             <div
