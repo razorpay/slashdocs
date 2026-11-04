@@ -462,6 +462,21 @@ func (q *Queries) ListComments(ctx context.Context, arg ListCommentsParams) ([]L
 	return items, nil
 }
 
+const updateCommentAnchor = `-- name: UpdateCommentAnchor :exec
+UPDATE comments SET anchor_json=$1, selected_text=$2 WHERE id=$3
+`
+
+type UpdateCommentAnchorParams struct {
+	AnchorJson   []byte
+	SelectedText string
+	ID           string
+}
+
+func (q *Queries) UpdateCommentAnchor(ctx context.Context, arg UpdateCommentAnchorParams) error {
+	_, err := q.db.Exec(ctx, updateCommentAnchor, arg.AnchorJson, arg.SelectedText, arg.ID)
+	return err
+}
+
 const updateCommentBody = `-- name: UpdateCommentBody :exec
 UPDATE comments SET body=$1, edited=true WHERE id=$2
 `

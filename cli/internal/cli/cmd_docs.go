@@ -698,6 +698,22 @@ func editArgs(olds, news []string, all bool, file string) ([]textedit.Edit, erro
 	return edits, nil
 }
 
+// commentPoint builds the point of a point comment from --target, --label,
+// --x and --y, or returns nil when none of them is set.
+func commentPoint(cmd *cobra.Command, target, label string, x, y float64) (map[string]any, error) {
+	f := cmd.Flags()
+	if !f.Changed("target") && !f.Changed("label") && !f.Changed("x") && !f.Changed("y") {
+		return nil, nil
+	}
+	if target == "" || !f.Changed("x") || !f.Changed("y") {
+		return nil, usageError{errors.New("a point comment needs --target, --x and --y")}
+	}
+	if x < 0 || x > 1 || y < 0 || y > 1 {
+		return nil, usageError{errors.New("--x and --y must be between 0 and 1")}
+	}
+	return map[string]any{"target": target, "label": label, "x": x, "y": y}, nil
+}
+
 func commentsCmd(g *globals, out io.Writer) *cobra.Command {
 	c := &cobra.Command{Use: "comments", Short: "Manage document review comments"}
 
@@ -721,7 +737,8 @@ func commentsCmd(g *globals, out io.Writer) *cobra.Command {
 	list.Flags().StringVar(&listStatus, "status", "", "filter threads by status: open, resolved or all")
 	list.Flags().StringVar(&listVersion, "version", "", "filter by version ID")
 
-	var createBody, createQuote, createPrefix, createSuffix, createVersion string
+	var createBody, createQuote, createPrefix, createSuffix, createVersion, createTarget, createLabel string
+	var createX, createY float64
 	var createMentions []string
 	var createBodyFile string
 	create := &cobra.Command{Use: "create <doc_id>", Short: "Create a document comment", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
@@ -730,11 +747,21 @@ func commentsCmd(g *globals, out io.Writer) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		if createBody == "" || createVersion == "" || createQuote == "" {
-			return usageError{errors.New("--body (or --body-file), --version, and --quote are required")}
+		if createBody == "" || createVersion == "" {
+			return usageError{errors.New("--body (or --body-file) and --version are required")}
+		}
+		anchor := map[string]any{"quote": createQuote, "prefix": createPrefix, "suffix": createSuffix}
+		point, err := commentPoint(cmd, createTarget, createLabel, createX, createY)
+		if err != nil {
+			return err
+		}
+		if point != nil {
+			anchor["point"] = point
+		} else if createQuote == "" {
+			return usageError{errors.New("--quote is required, or --target with --x and --y for a point comment")}
 		}
 		return action(g, out, func(c *Client) ([]byte, error) {
-			return c.commentJSON("POST", apiPath("/v1/documents/%s/comments", args[0]), map[string]any{"body": createBody, "version_id": createVersion, "anchor": map[string]any{"quote": createQuote, "prefix": createPrefix, "suffix": createSuffix}}, createMentions, false)
+			return c.commentJSON("POST", apiPath("/v1/documents/%s/comments", args[0]), map[string]any{"body": createBody, "version_id": createVersion, "anchor": anchor}, createMentions, false)
 		}, func(m map[string]any) string {
 			return "Added comment " + fmt.Sprint(value(m, "id")) + " on " + args[0] + "."
 		})
@@ -745,6 +772,10 @@ func commentsCmd(g *globals, out io.Writer) *cobra.Command {
 	create.Flags().StringVar(&createQuote, "quote", "", "anchor: the exact quoted text")
 	create.Flags().StringVar(&createPrefix, "prefix", "", "anchor: text immediately before the quote")
 	create.Flags().StringVar(&createSuffix, "suffix", "", "anchor: text immediately after the quote")
+	create.Flags().StringVar(&createTarget, "target", "", "point anchor: data-slashdocs-target value or id of the element to pin on; needs --x and --y, and --quote may give the start of its text")
+	create.Flags().StringVar(&createLabel, "label", "", "point anchor: a short name for the element in comment lists")
+	create.Flags().Float64Var(&createX, "x", 0, "point anchor: horizontal position as a fraction of the element's box, 0 to 1")
+	create.Flags().Float64Var(&createY, "y", 0, "point anchor: vertical position as a fraction of the element's box, 0 to 1")
 	create.Flags().StringVar(&createVersion, "version", "", "version ID the comment anchors to")
 
 	var replyBody string

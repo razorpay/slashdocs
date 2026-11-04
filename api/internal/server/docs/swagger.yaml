@@ -40,6 +40,13 @@ definitions:
         type: string
       end_offset:
         type: integer
+      point:
+        allOf:
+        - $ref: '#/definitions/repo.AnchorPoint'
+        description: |-
+          Point pins the comment to a spot in an element instead of to the quoted
+          text. The text fields then hold the start of the element's own text,
+          which finds the element again after the document changes.
       prefix:
         type: string
       quote:
@@ -48,6 +55,19 @@ definitions:
         type: integer
       suffix:
         type: string
+    type: object
+  repo.AnchorPoint:
+    properties:
+      label:
+        type: string
+      path:
+        type: string
+      target:
+        type: string
+      x:
+        type: number
+      "y":
+        type: number
     type: object
   repo.ApprovalSummary:
     properties:
@@ -782,6 +802,10 @@ definitions:
     type: object
   server.patchCommentRequest:
     properties:
+      anchor:
+        allOf:
+        - $ref: '#/definitions/repo.Anchor'
+        description: Anchor moves a point comment to a new spot.
       body:
         type: string
       mentions:
@@ -1445,8 +1469,9 @@ paths:
       consumes:
       - application/json
       - application/vnd.slashdocs.comment-mentions+json
-      description: Requests with non-empty mentions must use Content-Type application/vnd.slashdocs.comment-mentions+json
-        so mixed-version deployments fail closed instead of dropping metadata.
+      description: |-
+        Requests with non-empty mentions must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed instead of dropping metadata.
+        The anchor is a text anchor with a non-empty quote, or a point: anchor.point names an element by target (its data-slashdocs-target value or id) and path (its child-index path under the body), and x and y are fractions of its box from 0 to 1. The text fields of a point hold the start of the element's text, which finds the element again after the document changes.
       parameters:
       - description: Document ID
         in: path
@@ -1498,7 +1523,8 @@ paths:
       - application/vnd.slashdocs.comment-mentions+json
       description: Any request containing the mentions key, including an empty array,
         must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version
-        deployments fail closed.
+        deployments fail closed. An anchor with a point moves a point comment to a
+        new spot. Text comments cannot move.
       parameters:
       - description: Document ID
         in: path

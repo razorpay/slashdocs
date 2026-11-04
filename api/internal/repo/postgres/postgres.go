@@ -1349,7 +1349,7 @@ func (s *Store) UpdateComment(ctx context.Context, id string, update repo.Commen
 	if err != nil {
 		return repo.Comment{}, err
 	}
-	if err := applyCommentUpdate(ctx, q, id, effectiveBody, bodyChanged, update.Status, nextMentions, replaceMentions); err != nil {
+	if err := applyCommentUpdate(ctx, q, id, effectiveBody, bodyChanged, update.Status, update.Anchor, nextMentions, replaceMentions); err != nil {
 		return repo.Comment{}, err
 	}
 	if replaceMentions {
@@ -1358,7 +1358,7 @@ func (s *Store) UpdateComment(ctx context.Context, id string, update repo.Commen
 		}
 	}
 	comment.Body = effectiveBody
-	if update.Status != "" {
+	if update.Status != "" || update.Anchor != nil {
 		updated, err := q.GetComment(ctx, id)
 		if err != nil {
 			return repo.Comment{}, err
@@ -1428,7 +1428,7 @@ func newlyMentionedUserIDs(previous, next []repo.CommentMention) []string {
 	return added
 }
 
-func applyCommentUpdate(ctx context.Context, q *dbsqlc.Queries, commentID, body string, bodyChanged bool, status string, mentions []repo.CommentMention, replaceMentions bool) error {
+func applyCommentUpdate(ctx context.Context, q *dbsqlc.Queries, commentID, body string, bodyChanged bool, status string, anchor *repo.Anchor, mentions []repo.CommentMention, replaceMentions bool) error {
 	if bodyChanged {
 		if err := q.UpdateCommentBody(ctx, dbsqlc.UpdateCommentBodyParams{Body: body, ID: commentID}); err != nil {
 			return err
@@ -1436,6 +1436,15 @@ func applyCommentUpdate(ctx context.Context, q *dbsqlc.Queries, commentID, body 
 	}
 	if status != "" {
 		if err := q.UpdateCommentStatus(ctx, dbsqlc.UpdateCommentStatusParams{Status: status, ID: commentID}); err != nil {
+			return err
+		}
+	}
+	if anchor != nil {
+		b, err := json.Marshal(anchor)
+		if err != nil {
+			return err
+		}
+		if err := q.UpdateCommentAnchor(ctx, dbsqlc.UpdateCommentAnchorParams{AnchorJson: b, SelectedText: anchor.Quote, ID: commentID}); err != nil {
 			return err
 		}
 	}

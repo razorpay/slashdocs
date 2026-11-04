@@ -902,7 +902,7 @@
                         "cookieAuth": []
                     }
                 ],
-                "description": "Requests with non-empty mentions must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed instead of dropping metadata.",
+                "description": "Requests with non-empty mentions must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed instead of dropping metadata.\nThe anchor is a text anchor with a non-empty quote, or a point: anchor.point names an element by target (its data-slashdocs-target value or id) and path (its child-index path under the body), and x and y are fractions of its box from 0 to 1. The text fields of a point hold the start of the element's text, which finds the element again after the document changes.",
                 "consumes": [
                     "application/json",
                     "application/vnd.slashdocs.comment-mentions+json"
@@ -984,7 +984,7 @@
                         "cookieAuth": []
                     }
                 ],
-                "description": "Any request containing the mentions key, including an empty array, must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed.",
+                "description": "Any request containing the mentions key, including an empty array, must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed. An anchor with a point moves a point comment to a new spot. Text comments cannot move.",
                 "consumes": [
                     "application/json",
                     "application/vnd.slashdocs.comment-mentions+json"
@@ -2351,6 +2351,14 @@
                 "end_offset": {
                     "type": "integer"
                 },
+                "point": {
+                    "description": "Point pins the comment to a spot in an element instead of to the quoted\ntext. The text fields then hold the start of the element's own text,\nwhich finds the element again after the document changes.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/repo.AnchorPoint"
+                        }
+                    ]
+                },
                 "prefix": {
                     "type": "string"
                 },
@@ -2362,6 +2370,26 @@
                 },
                 "suffix": {
                     "type": "string"
+                }
+            }
+        },
+        "repo.AnchorPoint": {
+            "type": "object",
+            "properties": {
+                "label": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "target": {
+                    "type": "string"
+                },
+                "x": {
+                    "type": "number"
+                },
+                "y": {
+                    "type": "number"
                 }
             }
         },
@@ -3466,6 +3494,14 @@
         "server.patchCommentRequest": {
             "type": "object",
             "properties": {
+                "anchor": {
+                    "description": "Anchor moves a point comment to a new spot.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/repo.Anchor"
+                        }
+                    ]
+                },
                 "body": {
                     "type": "string"
                 },

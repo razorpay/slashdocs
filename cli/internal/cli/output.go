@@ -304,10 +304,30 @@ func compactRow(m map[string]any) string {
 	if mentions := mentionLabels(value(m, "mentions")); len(mentions) > 0 {
 		parts = append(parts, "mentions="+strings.Join(mentions, ","))
 	}
+	if pin := pinLabel(value(m, "anchor")); pin != "" {
+		parts = append(parts, "pin="+pin)
+	}
 	if len(parts) == 0 {
 		return fmt.Sprintf("%v", m)
 	}
 	return strings.Join(parts, "  ")
+}
+
+// pinLabel names the element of a point comment by its label, or else by its
+// target, or "element"; it is "" for a text comment. The row shows the start
+// of the element's text as selected_text.
+func pinLabel(anchor any) string {
+	a, _ := anchor.(map[string]any)
+	p, ok := value(a, "point").(map[string]any)
+	if !ok {
+		return ""
+	}
+	for _, key := range []string{"label", "target"} {
+		if s, _ := value(p, key).(string); s != "" {
+			return s
+		}
+	}
+	return "element"
 }
 
 // sourceGrantIDs collects explicit grant ids from an effective-access row's

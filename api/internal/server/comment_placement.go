@@ -23,6 +23,9 @@ type placementDoc struct {
 	html     string
 	text     renderedText
 	textDone bool
+	// targets holds the data-slashdocs-target values and ids of the
+	// version's elements, for point comments.
+	targets map[string]bool
 }
 
 // renderedText is a version's body text as the viewer anchors against it
@@ -49,6 +52,31 @@ func (d *placementDoc) renderedText() renderedText {
 		d.text = renderedBodyText(d.html)
 	}
 	return d.text
+}
+
+func (d *placementDoc) hasTarget(target string) bool {
+	if d.targets == nil {
+		d.targets = elementTargets(d.html)
+	}
+	return d.targets[target]
+}
+
+// elementTargets returns the data-slashdocs-target values and ids of the
+// elements in doc, the names that a point comment gives its element.
+func elementTargets(doc string) map[string]bool {
+	out := map[string]bool{}
+	root, err := html.Parse(strings.NewReader(doc))
+	if err != nil {
+		return out
+	}
+	for n := range root.Descendants() {
+		for _, a := range n.Attr {
+			if a.Namespace == "" && (a.Key == "data-slashdocs-target" || a.Key == "id") {
+				out[a.Val] = true
+			}
+		}
+	}
+	return out
 }
 
 // renderedBodyText returns the body's textContent with each <br> read as a
@@ -110,7 +138,19 @@ func utf16Len(s string) int { return len(utf16.Encode([]rune(s))) }
 // there, or else on a copy whose surrounding text agrees with the stored
 // context, so that editing the commented copy does not leave the comment on
 // another one.
+//
+// A point is placed while its element is there: by its target, or else by
+// the start of its text, as a quote. A point with neither is placed by its
+// path, which only the viewer can follow, so it counts as placed.
 func placedOn(cm repo.Comment, doc *placementDoc) bool {
+	if p := cm.Anchor.Point; p != nil {
+		if p.Target != "" && doc.hasTarget(p.Target) {
+			return true
+		}
+		if cm.SelectedText == "" {
+			return p.Target == ""
+		}
+	}
 	if !strings.Contains(doc.html, cm.SelectedText) {
 		return false
 	}

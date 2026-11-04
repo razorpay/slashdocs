@@ -3,7 +3,12 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math"
 	"net/http"
+	"regexp"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 
@@ -59,11 +64,53 @@ type patchCommentRequest struct {
 	Body     *string                  `json:"body"`
 	Status   string                   `json:"status"`
 	Mentions *[]commentMentionRequest `json:"mentions"`
+	// Anchor moves a point comment to a new spot.
+	Anchor *repo.Anchor `json:"anchor"`
+}
+
+// maxCommentBodyRunes bounds a comment or reply body. Longer ones are pastes
+// by mistake, and they stretch a thread without end.
+const maxCommentBodyRunes = 20000
+
+// pointTargetPattern is the allowed value of a point's target, a
+// data-slashdocs-target value or an element id. The limits keep targets safe
+// to match against stored HTML and to use in a selector.
+var pointTargetPattern = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,128}$`)
+
+// maxPointLabel bounds the name of a point's element.
+const maxPointLabel = 128
+
+// validCommentAnchor checks the anchor of a new thread: a text anchor needs a
+// quote, and a point needs a valid element and a spot inside its box. It
+// rounds the fractions of a point to four decimals in place.
+func validCommentAnchor(a *repo.Anchor) bool {
+	p := a.Point
+	if p == nil {
+		return a.Quote != ""
+	}
+	if (p.Target != "" && !pointTargetPattern.MatchString(p.Target)) || !cursorPathPattern.MatchString(p.Path) ||
+		!plainText(p.Label, maxPointLabel) || !unitFraction(p.X) || !unitFraction(p.Y) {
+		return false
+	}
+	p.X = math.Round(p.X*1e4) / 1e4
+	p.Y = math.Round(p.Y*1e4) / 1e4
+	return true
+}
+
+func unitFraction(v float64) bool {
+	return v >= 0 && v <= 1
+}
+
+// blankCommentBody reports whether body has nothing but white space, which
+// shows as an empty comment.
+func blankCommentBody(body string) bool {
+	return strings.TrimSpace(body) == ""
 }
 
 // CreateComment godoc
 // @Summary Create comment
 // @Description Requests with non-empty mentions must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed instead of dropping metadata.
+// @Description The anchor is a text anchor with a non-empty quote, or a point: anchor.point names an element by target (its data-slashdocs-target value or id) and path (its child-index path under the body), and x and y are fractions of its box from 0 to 1. The text fields of a point hold the start of the element's text, which finds the element again after the document changes.
 // @Tags comments
 // @Security bearerAuth
 // @Security cookieAuth
@@ -94,7 +141,7 @@ func (h handlers) createComment(c *gin.Context) {
 		return
 	}
 	in.Body = normalized
-	if in.VersionID == "" || in.Body == "" || in.Anchor.Quote == "" {
+	if in.VersionID == "" || blankCommentBody(in.Body) || !validCommentAnchor(&in.Anchor) {
 		badRequest(c, "invalid comment")
 		return
 	}
@@ -183,7 +230,7 @@ func (h handlers) createCommentReply(c *gin.Context) {
 		return
 	}
 	in.Body = normalized
-	if in.Body == "" {
+	if blankCommentBody(in.Body) {
 		badRequest(c, "invalid reply")
 		return
 	}
@@ -199,7 +246,7 @@ func (h handlers) createCommentReply(c *gin.Context) {
 
 // PatchComment godoc
 // @Summary Update comment
-// @Description Any request containing the mentions key, including an empty array, must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed.
+// @Description Any request containing the mentions key, including an empty array, must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed. An anchor with a point moves a point comment to a new spot. Text comments cannot move.
 // @Tags comments
 // @Security bearerAuth
 // @Security cookieAuth
@@ -228,17 +275,23 @@ func (h handlers) patchComment(c *gin.Context) {
 		badRequest(c, message)
 		return
 	}
+	if in.Anchor != nil && !h.validCommentMove(c, in.Anchor) {
+		return
+	}
 	var mentions *[]repo.CommentMention
 	if in.Mentions != nil {
 		converted := commentMentions(*in.Mentions)
 		mentions = &converted
 	}
-	cm, err := h.deps.repository.UpdateComment(c.Request.Context(), c.Param("comment_id"), repo.CommentUpdate{Body: in.Body, Status: in.Status, Mentions: mentions})
+	cm, err := h.deps.repository.UpdateComment(c.Request.Context(), c.Param("comment_id"), repo.CommentUpdate{Body: in.Body, Status: in.Status, Mentions: mentions, Anchor: in.Anchor})
 	if err != nil {
 		commentWriteError(c, err)
 		return
 	}
 	event := "updated"
+	if in.Anchor != nil {
+		event = "moved"
+	}
 	switch in.Status {
 	case commentStatusResolved:
 		event = "resolved"
@@ -264,11 +317,11 @@ func normalizePatchCommentRequest(in *patchCommentRequest) string {
 		in.Body = nil
 	}
 	switch {
-	case in.Body != nil && *in.Body == "":
+	case in.Body != nil && blankCommentBody(*in.Body):
 		return "comment body cannot be empty"
 	case in.Status != "" && in.Status != commentStatusOpen && in.Status != commentStatusResolved:
 		return "invalid comment status"
-	case in.Body == nil && in.Status == "" && in.Mentions == nil:
+	case in.Body == nil && in.Status == "" && in.Mentions == nil && in.Anchor == nil:
 		return "nothing to update"
 	default:
 		return ""
@@ -280,7 +333,29 @@ func normalizeCommentBodyInput(body string) (string, string) {
 	if normalized != body {
 		return "", "legacy mention markers are not supported; reload the client and try again"
 	}
+	if utf8.RuneCountInString(normalized) > maxCommentBodyRunes {
+		return "", fmt.Sprintf("comment is too long (at most %d characters)", maxCommentBodyRunes)
+	}
 	return normalized, ""
+}
+
+// validCommentMove checks a new spot for a comment: only a point thread
+// moves, and only to another valid point. Text comments keep their anchor.
+func (h handlers) validCommentMove(c *gin.Context, a *repo.Anchor) bool {
+	if a.Point == nil || !validCommentAnchor(a) {
+		badRequest(c, "invalid comment anchor")
+		return false
+	}
+	cm, err := h.deps.repository.GetComment(c.Request.Context(), c.Param("comment_id"))
+	if err != nil {
+		commentWriteError(c, err)
+		return false
+	}
+	if cm.Anchor.Point == nil || cm.ParentCommentID != "" {
+		badRequest(c, "only a point comment can move")
+		return false
+	}
+	return true
 }
 
 func commentMentions(items []commentMentionRequest) []repo.CommentMention {
