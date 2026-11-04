@@ -205,6 +205,12 @@ export function chapterName(l: ManifestLink): string {
   return n ? `Chapter ${n}, ${l.title}` : l.title;
 }
 
+// "3 · Retries" for the breadcrumb and chapter cards.
+export function chapterCrumb(l: ManifestLink): string {
+  const n = l.properties?.number;
+  return n ? `${n} · ${l.title}` : l.title;
+}
+
 // The links either side of href in reading order.
 export function neighbours(
   m: Manifest,

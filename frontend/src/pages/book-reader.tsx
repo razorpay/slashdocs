@@ -1,47 +1,21 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-  type RefObject,
-} from "react";
-import {
-  Link,
   Navigate,
   useLocation,
   useNavigate,
   useParams,
   useSearchParams,
 } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import {
-  ArrowLeft,
-  ArrowRight,
-  Check,
-  ChevronRight,
-  FileText,
-  Keyboard,
-  List,
-  Search,
-  Type,
-  Undo2,
-  X,
-} from "lucide-react";
 import type { RestoreMethod } from "../../bridge/reading";
-import type { Principal } from "@/api";
 import {
   booksApi,
   chapterByNumber,
   chapterName,
   neighbours,
-  partTitle,
   shouldOfferOtherDevice,
   latestPosition,
-  type BookState,
-  type ChapterHeading,
   type Manifest,
   type ManifestLink,
   type ReadingPosition,
@@ -50,32 +24,25 @@ import { queryKeys } from "@/lib/queryKeys";
 import { useMe } from "@/lib/hooks";
 import { useTitle } from "@/lib/use-title";
 import { useIsMobile } from "@/lib/use-media-query";
-import { cn } from "@/lib/cn";
 import {
   deviceIdStore,
   readerSettingsStore,
   useReaderSettings,
-  type StoredReaderSettings,
 } from "@/lib/reader-store";
-import { Button } from "@/components/ui/button";
 import { Center, Skeleton } from "@/components/ui/misc";
-import { Popover } from "@/components/ui/popover";
-import { Segmented } from "@/components/ui/segmented";
-import { AccountMenu } from "@/components/layout/topbar";
-import { CommentsToggle } from "@/components/layout/doc-bar-frame";
 import {
-  useDoc,
   type PositionTarget,
   type ReaderOptions,
   type ReaderViewport,
 } from "./doc-context";
-import { DocWorkspace, type DocBarControls } from "./doc-workspace";
+import { DocWorkspace } from "./doc-workspace";
 import { useDocumentStream } from "./use-document-stream";
 import { useReadingPosition } from "./use-reading-position";
 import { BookError } from "./book-home";
 import { BookRail } from "./book-rail";
 import { BookSearch } from "./book-search";
-import { BookUpdateChip } from "./book-update-chip";
+import { ReaderBar } from "./book-reader-bar";
+import { EndOfChapter, OfferNote, ReaderOverlay } from "./book-reader-notes";
 import { useBookState, useChapterChanges, useManifest } from "./book-chapter-state";
 import { useReaderKeys } from "./book-keys";
 
@@ -138,11 +105,6 @@ const toTarget = (p: ReadingPosition): PositionTarget => ({
   section: p.section_id || undefined,
   progression: p.progression,
 });
-
-function crumb(l: ManifestLink): string {
-  const n = l.properties?.number;
-  return n ? `${n} · ${l.title}` : l.title;
-}
 
 function BookReader({
   bookId,
@@ -488,497 +450,6 @@ function BookReader({
         currentDoc={docId}
         onOpen={openResult}
       />
-    </div>
-  );
-}
-
-// Gives the reader the frame's restorePosition, which only the document
-// context below it has.
-function CaptureRestore({
-  into,
-}: {
-  into: RefObject<((t: PositionTarget) => void) | null>;
-}) {
-  const { restorePosition } = useDoc();
-  useEffect(() => {
-    into.current = restorePosition ?? null;
-    return () => {
-      into.current = null;
-    };
-  }, [into, restorePosition]);
-  return null;
-}
-
-function Note({
-  label,
-  children,
-  onDismiss,
-}: {
-  label: string;
-  children: ReactNode;
-  onDismiss: () => void;
-}) {
-  return (
-    <div
-      role="status"
-      aria-label={label}
-      className="pointer-events-auto flex max-w-full items-center gap-2 rounded-2xl bg-[var(--color-surface)] py-1 pl-4 pr-1 text-sm shadow-[var(--shadow-pop)] ring-1 ring-[var(--color-border)]"
-    >
-      {children}
-      <button
-        type="button"
-        aria-label="Dismiss"
-        onClick={onDismiss}
-        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[var(--color-fg-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-fg)]"
-      >
-        <X aria-hidden="true" className="h-3.5 w-3.5" />
-      </button>
-    </div>
-  );
-}
-
-// "Ch 3 · Retries": the other device's chapter and, once known, its section.
-function OfferNote({
-  offer,
-  manifest,
-}: {
-  offer: ReadingPosition;
-  manifest: Manifest;
-}) {
-  const at = manifest.readingOrder.find(
-    (l) => l.properties?.documentId === offer.document_id,
-  );
-  const headings = useQuery({
-    queryKey: queryKeys.headings(offer.document_id, offer.version_id),
-    queryFn: () => booksApi.headings(offer.document_id, offer.version_id),
-    enabled: !!offer.section_id && !!offer.version_id,
-    staleTime: Infinity,
-    meta: { suppressGlobalError: true },
-  });
-  const section = headings.data?.items.find((h) => h.id === offer.section_id)?.text;
-  const n = at?.properties?.number;
-  const chapter = n ? `Ch ${n}` : (at?.title ?? "another chapter");
-  return (
-    <span className="min-w-0">
-      On another device you were at {chapter}
-      {section ? ` · ${section}` : ""}
-    </span>
-  );
-}
-
-function ReaderOverlay({
-  restoreRef,
-  offer,
-  onGoOffer,
-  onDismissOffer,
-  back,
-  onBack,
-  onDismissBack,
-  end,
-}: {
-  restoreRef: RefObject<((t: PositionTarget) => void) | null>;
-  offer: ReactNode;
-  onGoOffer: () => void;
-  onDismissOffer: () => void;
-  back: boolean;
-  onBack: () => void;
-  onDismissBack: () => void;
-  end: ReactNode;
-}) {
-  return (
-    <>
-      <CaptureRestore into={restoreRef} />
-      {offer || back ? (
-        <div className="pointer-events-none absolute inset-x-4 top-3 z-20 flex flex-col items-center gap-2">
-          {offer ? (
-            <Note label="Other device" onDismiss={onDismissOffer}>
-              {offer}
-              <span aria-hidden="true" className="text-[var(--color-fg-muted)]">
-                —
-              </span>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-7 px-2"
-                onClick={onGoOffer}
-              >
-                Go there
-              </Button>
-            </Note>
-          ) : null}
-          {back ? (
-            <Note label="Back" onDismiss={onDismissBack}>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="-ml-2 h-7 px-2"
-                onClick={onBack}
-              >
-                <Undo2 aria-hidden="true" className="h-3.5 w-3.5" />
-                Back to where you were
-              </Button>
-            </Note>
-          ) : null}
-        </div>
-      ) : null}
-      {end}
-    </>
-  );
-}
-
-function EndOfChapter({
-  bookId,
-  docId,
-  manifest,
-  link,
-  next,
-  state,
-}: {
-  bookId: string;
-  docId: string;
-  manifest: Manifest;
-  link: ManifestLink;
-  next?: ManifestLink;
-  state?: BookState;
-}) {
-  const qc = useQueryClient();
-  const done = state?.chapters[docId]?.state === "done";
-  const toggle = useMutation({
-    mutationFn: (value: boolean) => booksApi.done(bookId, docId, value),
-    onSettled: () => qc.invalidateQueries({ queryKey: queryKeys.book(bookId) }),
-  });
-  const pressed = toggle.isPending ? !!toggle.variables : done;
-  const part = link.properties?.part;
-  const nextPart = next?.properties?.part;
-  const newPart =
-    next?.properties?.kind === "chapter" && nextPart !== undefined && nextPart !== part
-      ? partTitle(manifest, nextPart)
-      : undefined;
-  return (
-    <section
-      aria-label="End of chapter"
-      className="pointer-events-auto absolute bottom-4 left-1/2 z-20 flex w-[min(40rem,calc(100%-2rem))] -translate-x-1/2 flex-wrap items-center gap-3 rounded-lg bg-[var(--color-surface)] p-3 shadow-[var(--shadow-pop)] ring-1 ring-[var(--color-border)]"
-    >
-      <Button
-        variant={pressed ? "secondary" : "outline"}
-        aria-pressed={pressed}
-        onClick={() => toggle.mutate(!pressed)}
-      >
-        <Check
-          aria-hidden="true"
-          className={cn("h-4 w-4", pressed ? "opacity-100" : "opacity-40")}
-        />
-        Mark chapter done
-      </Button>
-      {next?.href ? (
-        <Link
-          to={next.href}
-          className="group flex min-w-0 flex-1 items-center justify-between gap-3 rounded-md px-3 py-2 hover:bg-[var(--color-surface-muted)]"
-        >
-          <span className="min-w-0">
-            <span className="block text-xs text-[var(--color-fg-muted)]">
-              {newPart ? `${newPart} starts` : "Next"}
-            </span>
-            <span className="block truncate font-medium text-[var(--color-fg)]">
-              {crumb(next)}
-            </span>
-          </span>
-          <ArrowRight
-            aria-hidden="true"
-            className="h-4 w-4 shrink-0 text-[var(--color-fg-muted)] transition-transform group-hover:translate-x-0.5"
-          />
-        </Link>
-      ) : (
-        <Link
-          to={`/app/b/${encodeURIComponent(bookId)}`}
-          className="flex-1 rounded-md px-3 py-2 text-sm text-[var(--color-fg-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-fg)]"
-        >
-          You reached the end of the book. Back to the book home
-        </Link>
-      )}
-    </section>
-  );
-}
-
-const SIZE_OPTIONS = [
-  { value: "s", label: "Small" },
-  { value: "m", label: "Medium" },
-  { value: "l", label: "Large" },
-] as const;
-const WIDTH_OPTIONS = [
-  { value: "narrow", label: "Narrow" },
-  { value: "comfortable", label: "Comfortable" },
-  { value: "wide", label: "Wide" },
-] as const;
-const THEME_OPTIONS = [
-  { value: "light", label: "Light" },
-  { value: "paper", label: "Paper" },
-  { value: "system", label: "System" },
-] as const;
-
-function setSetting(patch: Partial<StoredReaderSettings>) {
-  readerSettingsStore.write({ ...readerSettingsStore.read(), ...patch });
-}
-
-// Aa: text size, line width, theme and single-key shortcuts (R11, A14).
-// Settings are kept per device and apply to every book.
-function ReadingSettings({ onShowShortcuts }: { onShowShortcuts: () => void }) {
-  const [open, setOpen] = useState(false);
-  const s = readerSettingsStore.useStore();
-  return (
-    <Popover
-      open={open}
-      onOpenChange={setOpen}
-      label="Reading settings"
-      trigger={
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Reading settings"
-          className="shrink-0"
-        >
-          <Type className="h-4 w-4" />
-        </Button>
-      }
-    >
-      <div className="space-y-4">
-        {(
-          [
-            ["Text size", "size", SIZE_OPTIONS],
-            ["Line width", "width", WIDTH_OPTIONS],
-            ["Theme", "theme", THEME_OPTIONS],
-          ] as const
-        ).map(([label, key, options]) => (
-          <div key={key}>
-            <p className="mb-1.5 text-xs font-medium text-[var(--color-fg-muted)]">
-              {label}
-            </p>
-            <Segmented
-              label={label}
-              value={s[key]}
-              options={[...options]}
-              onChange={(value) => setSetting({ [key]: value })}
-            />
-          </div>
-        ))}
-        <label className="flex items-center justify-between gap-3">
-          <span>
-            <span className="block font-medium">Single-key shortcuts</span>
-            <span className="block text-xs text-[var(--color-fg-muted)]">
-              ← → for chapters, T for contents, / to search
-            </span>
-          </span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={s.shortcuts}
-            aria-label="Single-key shortcuts"
-            onClick={() => setSetting({ shortcuts: !s.shortcuts })}
-            className={cn(
-              "relative h-6 w-10 shrink-0 rounded-full transition-colors",
-              s.shortcuts
-                ? "bg-[var(--color-accent)]"
-                : "bg-[var(--color-border-strong)]",
-            )}
-          >
-            <span
-              aria-hidden="true"
-              className={cn(
-                "absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-[left]",
-                s.shortcuts ? "left-[18px]" : "left-0.5",
-              )}
-            />
-          </button>
-        </label>
-        <div className="flex items-center justify-between gap-3 border-t border-[var(--color-border)] pt-3 text-xs text-[var(--color-fg-muted)]">
-          <span>Saved on this device for every book.</span>
-          <button
-            type="button"
-            className="inline-flex items-center gap-1 hover:text-[var(--color-fg)]"
-            onClick={() => {
-              setOpen(false);
-              onShowShortcuts();
-            }}
-          >
-            <Keyboard aria-hidden="true" className="h-3.5 w-3.5" />
-            Shortcuts
-          </button>
-        </div>
-      </div>
-    </Popover>
-  );
-}
-
-// Segments for the chapter's top-level sections, with the reader's one
-// highlighted. A deeper heading counts as part of the section above it.
-function SectionTracker({
-  headings,
-  section,
-  onJump,
-}: {
-  headings: ChapterHeading[];
-  section: string;
-  onJump: (id: string) => void;
-}) {
-  const top = Math.min(...headings.map((h) => h.level));
-  const segments = headings.filter((h) => h.level === top);
-  const at = headings.findIndex((h) => h.id === section);
-  let currentId = "";
-  for (let i = at; i >= 0; i--) {
-    if (headings[i].level === top) {
-      currentId = headings[i].id;
-      break;
-    }
-  }
-  const currentIndex = segments.findIndex((s) => s.id === currentId);
-  if (segments.length < 2) return null;
-  return (
-    <div className="flex h-8 items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-chrome)] px-4">
-      <span className="w-40 shrink-0 truncate text-xs text-[var(--color-fg-muted)] sm:w-56">
-        {currentIndex >= 0 ? segments[currentIndex].text : "Start of chapter"}
-      </span>
-      <div role="group" aria-label="Sections" className="flex min-w-0 flex-1 gap-1">
-        {segments.map((s, i) => (
-          <button
-            key={s.id}
-            type="button"
-            aria-label={s.text}
-            title={s.text}
-            aria-current={i === currentIndex ? "location" : undefined}
-            onClick={() => onJump(s.id)}
-            className="group flex h-6 min-w-0 flex-1 items-center"
-          >
-            <span
-              className={cn(
-                "block h-1 w-full rounded-full transition-colors group-hover:h-1.5",
-                i === currentIndex
-                  ? "bg-[var(--color-accent)]"
-                  : i < currentIndex
-                    ? "bg-[color-mix(in_srgb,var(--color-accent)_35%,transparent)]"
-                    : "bg-[var(--color-border)]",
-              )}
-            />
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ReaderBar({
-  controls,
-  bookId,
-  manifest,
-  link,
-  version,
-  shortcuts,
-  isMobile,
-  onContents,
-  onSearch,
-  onJump,
-  headings,
-  section,
-  user,
-}: {
-  controls: DocBarControls;
-  bookId: string;
-  manifest: Manifest;
-  link: ManifestLink;
-  version: string;
-  shortcuts: boolean;
-  isMobile: boolean;
-  onContents: () => void;
-  onSearch: () => void;
-  onJump: (id: string) => void;
-  headings?: ChapterHeading[];
-  section: string;
-  user?: Principal;
-}) {
-  const home = `/app/b/${encodeURIComponent(bookId)}`;
-  const docId = link.properties!.documentId!;
-  return (
-    <div>
-      <header className="flex h-14 items-center gap-1 border-b border-[var(--color-border)] bg-[var(--color-chrome)] px-2 sm:gap-2 sm:px-3">
-        {isMobile ? (
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Contents"
-            className="shrink-0"
-            onClick={onContents}
-          >
-            <List className="h-4 w-4" />
-          </Button>
-        ) : (
-          <Button asChild variant="ghost" size="icon" className="shrink-0">
-            <Link to={home} title="Back to the book" aria-label="Back to the book">
-              <ArrowLeft className="h-4 w-4" />
-            </Link>
-          </Button>
-        )}
-        <nav
-          aria-label="Breadcrumb"
-          className="flex min-w-16 flex-1 items-center gap-1.5 text-sm"
-        >
-          <Link
-            to={home}
-            className="hidden max-w-48 shrink truncate text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] sm:block"
-          >
-            {manifest.metadata.title}
-          </Link>
-          <ChevronRight
-            aria-hidden="true"
-            className="hidden h-3.5 w-3.5 shrink-0 text-[var(--color-fg-muted)] sm:block"
-          />
-          <span aria-current="page" className="truncate font-semibold">
-            {crumb(link)}
-          </span>
-        </nav>
-        <BookUpdateChip
-          bookId={bookId}
-          doc={docId}
-          versionId={version}
-          onOpenSection={onJump}
-        />
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Search this book"
-          aria-keyshortcuts={shortcuts ? "/" : undefined}
-          tooltip={shortcuts ? "Search (/)" : "Search"}
-          className="shrink-0"
-          onClick={onSearch}
-        >
-          <Search className="h-4 w-4" />
-        </Button>
-        <ReadingSettings onShowShortcuts={controls.onShowShortcuts} />
-        <Button
-          asChild
-          variant="ghost"
-          size="icon"
-          className="hidden shrink-0 sm:inline-flex"
-        >
-          <Link
-            to={`/app/d/${encodeURIComponent(docId)}?version=${encodeURIComponent(version)}`}
-            title="Open as a document, with versions and sharing"
-            aria-label="Open as a document"
-          >
-            <FileText className="h-4 w-4" />
-          </Link>
-        </Button>
-        <CommentsToggle
-          open={controls.commentsOpen}
-          onToggle={controls.onToggleComments}
-        />
-        {user ? (
-          <span className="hidden sm:contents">
-            <AccountMenu user={user} />
-          </span>
-        ) : null}
-      </header>
-      {headings?.length ? (
-        <SectionTracker headings={headings} section={section} onJump={onJump} />
-      ) : null}
     </div>
   );
 }
