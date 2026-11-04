@@ -96,13 +96,13 @@ export function placeClear(
       height,
     }),
   );
-  // el must not hide text from the test for text.
-  el.style.setProperty("visibility", "hidden", "important");
+  // el must not hide the text under it from the test for text.
+  el.style.setProperty("display", "none", "important");
   const place =
     boxes.find(
       (box) => !lines.some((line) => overlap(box, line)) && !coversText(d, box),
     ) ?? boxes[0];
-  el.style.removeProperty("visibility");
+  el.style.removeProperty("display");
   el.style.setProperty("left", `${place.left}px`, "important");
   el.style.setProperty("top", `${place.top}px`, "important");
 }
