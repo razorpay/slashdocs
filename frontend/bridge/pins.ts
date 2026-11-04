@@ -283,7 +283,10 @@ const CSS = `
 @media (prefers-reduced-motion:no-preference){.sd-pin[data-new]{animation:sd-pin-in 180ms cubic-bezier(.23,1,.32,1)}}
 @media (prefers-reduced-motion:reduce){.sd-pin,.sd-cluster{transition:none}}
 @keyframes sd-pin-in{from{opacity:0;scale:.9}}
-@media print{.sd-pins{display:none}}
+.sd-place-hint{position:fixed;left:50%;top:12px;z-index:2147483646;translate:-50% 0;padding:6px 12px;border-radius:999px;background:#18181b;color:#fff;font:500 12px/1.4 system-ui,-apple-system,sans-serif;white-space:nowrap;box-shadow:${SHADOW};pointer-events:none}
+@media (prefers-reduced-motion:no-preference){.sd-place-hint{animation:sd-place-hint-in 180ms cubic-bezier(.23,1,.32,1)}}
+@keyframes sd-place-hint-in{from{opacity:0;translate:-50% -4px}}
+@media print{.sd-pins,.sd-place-hint{display:none}}
 `;
 
 // plusIcon draws the "+" that an unsent pin shows.
@@ -376,6 +379,7 @@ export function createPinLayer(host: PinHost) {
   let pressed: string | undefined;
   let placing = false;
   let placeStyle: HTMLStyleElement | null = null;
+  let placeHint: HTMLElement | null = null;
   let observer: MutationObserver | null = null;
   // Listeners on the current document, removed when another one loads.
   let detach = new AbortController();
@@ -407,6 +411,9 @@ export function createPinLayer(host: PinHost) {
     lastResults = key;
     lastSignature = null;
     lastPositions = null;
+    // Drawn at once, so a new pin shows, and has its spot for its popover,
+    // before the next frame.
+    draw();
     schedule();
     host.laidOut();
   }
@@ -644,23 +651,30 @@ export function createPinLayer(host: PinHost) {
     if (stable < 3) schedule();
   }
 
+  // The frame is this window's: one asked of a document's window is lost
+  // when the document reloads, and the pins would stop drawing.
   function schedule() {
-    const view = d?.defaultView;
-    if (!view) return;
+    if (!d) return;
     stable = 0;
-    frame ||= view.requestAnimationFrame(tick);
+    frame ||= requestAnimationFrame(tick);
   }
 
   function setPlacing(next: boolean) {
     if (!d || placing === next) return;
     placing = next;
     placeStyle?.remove();
-    placeStyle = null;
+    placeHint?.remove();
+    placeStyle = placeHint = null;
     if (placing) {
       placeStyle = d.createElement("style");
       placeStyle.setAttribute("data-slashdocs-injected", "");
       placeStyle.textContent = `html,html *{cursor:${PLACE_CURSOR}!important;user-select:none!important}`;
       d.head.appendChild(placeStyle);
+      placeHint = document.createElement("div");
+      placeHint.className = "sd-place-hint";
+      placeHint.setAttribute("role", "status");
+      placeHint.textContent = "Click to place a comment. Esc to cancel.";
+      layer.after(placeHint);
     }
     host.post({ type: "slashdocs:pin-placing", on: placing });
   }
