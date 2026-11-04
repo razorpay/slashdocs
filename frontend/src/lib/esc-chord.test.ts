@@ -50,6 +50,15 @@ describe("reduceChord", () => {
     expect(press(armed(), "q")).toEqual({ state: IDLE, effect: null });
   });
 
+  it("keeps waiting through Shift and keys that name no letter", () => {
+    for (const key of ["Shift", "Meta", "Unidentified"])
+      expect(press(armed(), key)).toEqual({ state: { phase: "armed" }, effect: null });
+    expect(press(press(armed(), "Shift").state, "C").effect).toEqual({
+      type: "run",
+      key: "c",
+    });
+  });
+
   it("falls through to ordinary Escape when the window expires", () => {
     expect(reduceChord(armed(), { type: "expire" }, ALL)).toEqual({
       state: IDLE,
