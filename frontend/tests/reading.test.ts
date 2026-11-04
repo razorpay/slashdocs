@@ -5,7 +5,10 @@ import {
   documentTheme,
   progression,
   READER_KEYS,
+  READER_SIZES,
+  READER_WIDTHS,
   readerSettingsCSS,
+  RESTORE_METHODS,
   restoreMethod,
   sectionAt,
 } from "../bridge/reading.ts";
@@ -64,6 +67,16 @@ describe("readerSettingsCSS", () => {
       readerSettingsCSS({ size: "m", width: "comfortable", theme: "system" }),
     ).not.toContain("#f8f4ea");
   });
+  it("gives every allowed size and width its own CSS", () => {
+    const sizes = READER_SIZES.map((size) =>
+      readerSettingsCSS({ ...DEFAULT_READER_SETTINGS, size }),
+    );
+    const widths = READER_WIDTHS.map((width) =>
+      readerSettingsCSS({ ...DEFAULT_READER_SETTINGS, width }),
+    );
+    expect(new Set(sizes).size).toBe(READER_SIZES.length);
+    expect(new Set(widths).size).toBe(READER_WIDTHS.length);
+  });
   it("ignores inherited keys", () => {
     const css = readerSettingsCSS({
       size: "constructor",
@@ -95,6 +108,8 @@ describe("documentTheme", () => {
 });
 
 describe("restoreMethod", () => {
+  it("returns only listed methods", () =>
+    expect([...RESTORE_METHODS]).toEqual(["quote", "section", "progression", "none"]));
   it("prefers the quote", () =>
     expect(
       restoreMethod({ quoteResolved: true, sectionExists: true, progression: 0.4 }),

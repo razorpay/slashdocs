@@ -2,10 +2,16 @@
 // they are unit tested in tests/reading.test.ts; bridge.ts only applies what
 // they return.
 
+// The allowed reader settings, listed once: the bridge maps them to CSS and
+// the app's settings store validates saved values against them.
+export const READER_SIZES = ["s", "m", "l"] as const;
+export const READER_WIDTHS = ["narrow", "comfortable", "wide"] as const;
+export const READER_THEMES = ["light", "paper", "system"] as const;
+
 export type ReaderSettings = {
-  size: "s" | "m" | "l";
-  width: "narrow" | "comfortable" | "wide";
-  theme: "light" | "paper" | "system";
+  size: (typeof READER_SIZES)[number];
+  width: (typeof READER_WIDTHS)[number];
+  theme: (typeof READER_THEMES)[number];
 };
 
 export const DEFAULT_READER_SETTINGS: ReaderSettings = {
@@ -17,7 +23,9 @@ export const DEFAULT_READER_SETTINGS: ReaderSettings = {
 // Keys the bridge forwards to the reader, never while the reader is typing.
 export const READER_KEYS = ["ArrowLeft", "ArrowRight", "t", "T", "/"] as const;
 
-export type RestoreMethod = "quote" | "section" | "progression" | "none";
+// How a position restore landed, as position-restored reports it.
+export const RESTORE_METHODS = ["quote", "section", "progression", "none"] as const;
+export type RestoreMethod = (typeof RESTORE_METHODS)[number];
 
 // Zoom scales px-sized text too, which a root font-size would not.
 const SIZES: Record<ReaderSettings["size"], string> = {

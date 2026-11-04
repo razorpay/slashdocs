@@ -4,7 +4,7 @@ import {
   textLinkFragment,
   TEXT_LINK_PREFIX,
 } from "../../bridge/text-link";
-import { READER_KEYS, type RestoreMethod } from "../../bridge/reading";
+import { READER_KEYS, RESTORE_METHODS, type RestoreMethod } from "../../bridge/reading";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "react-router-dom";
@@ -26,7 +26,7 @@ const FORWARDED_KEYS = new Set<string>([
 ]);
 const VIM_KEYS = new Set(["j", "k", "g", "G"]);
 const READER_KEY_SET = new Set<string>(READER_KEYS);
-const RESTORE_METHODS = new Set<string>(["quote", "section", "progression", "none"]);
+const RESTORE_METHOD_SET = new Set<string>(RESTORE_METHODS);
 
 // Renders the sandboxed document iframe for the document page. useBridgeHost
 // serves the theme and KV; this adds comments, selection, zoom, and links.
@@ -398,7 +398,7 @@ export function RenderFrame() {
       if (
         e.data?.type === "slashdocs:position-restored" &&
         typeof e.data.method === "string" &&
-        RESTORE_METHODS.has(e.data.method)
+        RESTORE_METHOD_SET.has(e.data.method)
       ) {
         readerRef.current?.onRestored?.(e.data.method as RestoreMethod);
       }

@@ -1,5 +1,11 @@
 import { useMemo } from "react";
-import { DEFAULT_READER_SETTINGS, type ReaderSettings } from "../../bridge/reading";
+import {
+  DEFAULT_READER_SETTINGS,
+  READER_SIZES,
+  READER_THEMES,
+  READER_WIDTHS,
+  type ReaderSettings,
+} from "../../bridge/reading";
 import { createPersistentStore } from "./persistent-store";
 
 export type StoredReaderSettings = ReaderSettings & { shortcuts: boolean };
@@ -12,9 +18,9 @@ const pick = <T extends string>(v: unknown, allowed: readonly T[], fallback: T):
 function deserialize(raw: unknown): StoredReaderSettings {
   const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   return {
-    size: pick(o.size, ["s", "m", "l"], DEFAULTS.size),
-    width: pick(o.width, ["narrow", "comfortable", "wide"], DEFAULTS.width),
-    theme: pick(o.theme, ["light", "paper", "system"], DEFAULTS.theme),
+    size: pick(o.size, READER_SIZES, DEFAULTS.size),
+    width: pick(o.width, READER_WIDTHS, DEFAULTS.width),
+    theme: pick(o.theme, READER_THEMES, DEFAULTS.theme),
     shortcuts: typeof o.shortcuts === "boolean" ? o.shortcuts : DEFAULTS.shortcuts,
   };
 }
