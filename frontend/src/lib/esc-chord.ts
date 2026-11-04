@@ -1,7 +1,8 @@
 // Esc-leader keyboard chords for the document viewer. Timing and effects live
 // in use-esc-chord.ts so this state machine remains deterministic and testable.
 
-export const CHORD_WINDOW_MS = 800;
+// The keycast shows the time left, so the window can be long enough to read it.
+export const CHORD_WINDOW_MS = 1000;
 export const CHORD_RESOLVED_MS = 600;
 
 export type ChordKey = "t" | "f" | "c" | "m" | "h";
@@ -15,6 +16,16 @@ export const CHORD_KEYS: ReadonlyArray<{ key: ChordKey; hint: string }> = [
 ];
 
 const KEYS: ReadonlySet<string> = new Set(CHORD_KEYS.map((item) => item.key));
+// Keys that are no letter of their own, as Shift on the way to a capital C.
+// They do not end the chord.
+const PASSIVE_KEYS: ReadonlySet<string> = new Set([
+  "Shift",
+  "Control",
+  "Alt",
+  "Meta",
+  "CapsLock",
+  "Unidentified",
+]);
 
 export type ChordState =
   { phase: "idle" } | { phase: "armed" } | { phase: "resolved"; key: ChordKey };
@@ -51,6 +62,7 @@ export function reduceChord(
   }
 
   const armed = state.phase === "armed";
+  if (PASSIVE_KEYS.has(event.key)) return { state, effect: null };
   if (event.modified) {
     return { state: armed ? IDLE : state, effect: null };
   }
