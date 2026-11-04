@@ -58,7 +58,8 @@ export function HistoryDialog({
           <History className="h-4 w-4" />
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-2xl">
+      {/* The top stays put, so the dialog does not jump as a session opens. */}
+      <DialogContent className="top-[12vh] max-w-2xl translate-y-0">
         <DialogHeader>
           <DialogTitle>History</DialogTitle>
           <DialogDescription>
@@ -82,6 +83,10 @@ export function HistoryDialog({
   );
 }
 
+// The focus ring of the Button, drawn inside, as the list clips at its edges.
+const focusRing =
+  "focus-visible:outline-4 focus-visible:-outline-offset-4 focus-visible:outline-[color-mix(in_srgb,var(--color-accent)_24%,transparent)]";
+
 function HistorySessionRow({
   session,
   current,
@@ -97,8 +102,7 @@ function HistorySessionRow({
   // The row shows the newest entry. The list under it shows the rest.
   const [newest, ...earlier] = session.entries;
   const oldest = session.entries[session.entries.length - 1];
-  const viewing = session.entries.some((v) => v.id === current);
-  const edits = session.entries.length;
+  const viewing = current !== latest && session.entries.some((v) => v.id === current);
   return (
     <div
       className={`rounded-xl border border-[var(--color-border)] ${
@@ -108,7 +112,7 @@ function HistorySessionRow({
       <button
         type="button"
         onClick={() => onSelect(newest.id)}
-        className="flex w-full flex-col gap-1 rounded-xl p-4 text-left transition-colors hover:bg-[var(--color-surface-muted)]/60"
+        className={`flex w-full flex-col gap-1 rounded-xl p-4 text-left transition-colors hover:bg-[var(--color-surface-muted)]/60 ${focusRing}`}
         aria-current={newest.id === current ? "true" : undefined}
       >
         <div className="flex flex-wrap items-center gap-2">
@@ -119,9 +123,7 @@ function HistorySessionRow({
         </div>
         <span className="text-xs text-[var(--color-fg-muted)]">
           {principalLabel(session.author)}
-          {edits > 1
-            ? ` · ${edits} edits since ${formatTimestamp(oldest.created_at)}`
-            : ""}
+          {earlier.length ? ` · since ${formatTimestamp(oldest.created_at)}` : ""}
         </span>
         <ChangeSummary version={newest} />
       </button>
@@ -131,7 +133,7 @@ function HistorySessionRow({
             type="button"
             onClick={() => setExpanded((e) => !e)}
             aria-expanded={expanded}
-            className="flex w-full items-center gap-1 border-t border-[var(--color-border)] px-4 py-2 text-xs text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]"
+            className={`flex w-full items-center gap-1 border-t border-[var(--color-border)] px-4 py-2 text-xs text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] ${focusRing}`}
           >
             <ChevronDown
               className={`h-3.5 w-3.5 transition-transform duration-200 ease-out motion-reduce:transition-none ${expanded ? "rotate-180" : ""}`}
@@ -148,7 +150,7 @@ function HistorySessionRow({
                     type="button"
                     onClick={() => onSelect(v.id)}
                     aria-current={v.id === current ? "true" : undefined}
-                    className="flex w-full flex-col gap-0.5 rounded-lg px-2 py-1.5 text-left hover:bg-[var(--color-surface-muted)]/60"
+                    className={`flex w-full flex-col gap-0.5 rounded-lg px-2 py-1.5 text-left hover:bg-[var(--color-surface-muted)]/60 ${focusRing}`}
                   >
                     <span className="flex flex-wrap items-center gap-2 text-sm">
                       <RelativeTime iso={v.created_at} />
@@ -177,7 +179,7 @@ function EntryBadges({
 }) {
   return (
     <>
-      {version.id === current ? (
+      {version.id === current && current !== latest ? (
         <Badge variant="accent">
           <Check className="h-3 w-3" /> Viewing
         </Badge>
