@@ -45,6 +45,7 @@ import { ReaderBar } from "./book-reader-bar";
 import { EndOfChapter, OfferNote, ReaderOverlay } from "./book-reader-notes";
 import { useBookState, useChapterChanges, useManifest } from "./book-chapter-state";
 import { useReaderKeys } from "./book-keys";
+import { useHeldVersion } from "./book-held-version";
 
 const END_PROGRESSION = 0.98;
 const PAGE_KEYS = ["ArrowLeft", "ArrowRight", "/"] as const;
@@ -136,15 +137,35 @@ function BookReader({
     [qc, bookId],
   );
 
-  // The version being read is pinned for the chapter visit. A newer one,
-  // whether the live stream or a manifest refetch brings it, only offers a
-  // switch; the frame never swaps under the reader.
+  // Switching to a newer version keeps the reader's place: the quote anchor
+  // resolves fuzzily in the new version, once its frame is ready.
+  const versionRestore = useRef<PositionTarget | null>(null);
+  const lastView = useRef<ReaderViewport | null>(null);
+  const here = useCallback(
+    (): Back => ({
+      href,
+      docId,
+      target: lastView.current
+        ? {
+            anchor: lastView.current.anchor,
+            section: lastView.current.section || undefined,
+            progression: lastView.current.progression,
+          }
+        : { progression: 0 },
+    }),
+    [href, docId],
+  );
   const latest = link.properties?.versionId ?? "";
-  const [held, setHeld] = useState({ doc: docId, version: latest });
-  if (held.doc !== docId || (!held.version && latest)) {
-    setHeld({ doc: docId, version: latest });
-  }
-  const current = (held.doc === docId && held.version) || latest;
+  const current = useHeldVersion({
+    docId,
+    latest,
+    reading: true,
+    beforeView: () => {
+      versionRestore.current = here().target;
+      // The saved place wins over a heading the link named.
+      if (location.hash) nav(href, { replace: true });
+    },
+  });
   const stream = useDocumentStream({
     docId,
     version: current,
@@ -160,7 +181,6 @@ function BookReader({
     enabled: state.isSuccess && !!current,
     onReachedEnd: invalidateBook,
   });
-  const lastView = useRef<ReaderViewport | null>(null);
   const [section, setSection] = useState("");
   const [atEnd, setAtEnd] = useState(false);
   const { onViewport: saveViewport, onRestored: restoreDone } = position;
@@ -193,20 +213,6 @@ function BookReader({
   );
 
   const [back, setBack] = useState<Back | null>(null);
-  const here = useCallback(
-    (): Back => ({
-      href,
-      docId,
-      target: lastView.current
-        ? {
-            anchor: lastView.current.anchor,
-            section: lastView.current.section || undefined,
-            progression: lastView.current.progression,
-          }
-        : { progression: 0 },
-    }),
-    [href, docId],
-  );
   const jumpWithin = useCallback(
     (t: PositionTarget) => {
       setBack(here());
@@ -214,32 +220,12 @@ function BookReader({
     },
     [here],
   );
-  // Switching to a newer version keeps the reader's place: the quote anchor
-  // resolves fuzzily in the new version, once its frame is ready.
-  const versionRestore = useRef<PositionTarget | null>(null);
-  const viewVersion = useCallback(
-    (version: string) => {
-      versionRestore.current = here().target;
-      setHeld({ doc: docId, version });
-    },
-    [here, docId],
-  );
   useEffect(() => {
     const target = versionRestore.current;
     if (!target) return;
     versionRestore.current = null;
     restoreSaved(target);
   }, [current, restoreSaved]);
-  const viewVersionRef = useRef(viewVersion);
-  viewVersionRef.current = viewVersion;
-  const offeredVersion = useRef("");
-  useEffect(() => {
-    if (!latest || current === latest || offeredVersion.current === latest) return;
-    offeredVersion.current = latest;
-    toast.info("A new version of this chapter is available.", {
-      action: { label: "View", onClick: () => viewVersionRef.current(latest) },
-    });
-  }, [latest, current]);
 
   const goChapter = useCallback(
     (to: string, jump: boolean) => {

@@ -480,6 +480,31 @@ describe("BookReader", () => {
     });
   });
 
+  it("binds the new-version toast to its chapter and drops it on chapter change", async () => {
+    const user = userEvent.setup();
+    const info = vi.spyOn(toast, "info").mockReturnValue("toast_ver_2b");
+    const dismiss = vi.spyOn(toast, "dismiss");
+    const { client } = renderReader();
+    await screen.findByTestId("workspace");
+    act(() => reader().onViewport!({ section: "setup", progression: 0.3 }));
+    const newer = bookManifest();
+    newer.readingOrder[1].properties!.versionId = "ver_2b";
+    vi.mocked(booksApi.manifest).mockResolvedValue(newer);
+    await act(() => client.invalidateQueries({ queryKey: ["book", "b1"] }));
+    await waitFor(() => expect(info).toHaveBeenCalled());
+    const [, options] = info.mock.calls.find(
+      ([message]) => message === "A new version of this chapter is available.",
+    )!;
+    await user.keyboard("{ArrowRight}");
+    expect(where()).toBe("/app/b/b1/c/doc_3");
+    expect(dismiss).toHaveBeenCalledWith("toast_ver_2b");
+    // A View click that still lands does nothing to the next chapter.
+    act(() =>
+      (options as unknown as { action: { onClick: () => void } }).action.onClick(),
+    );
+    expect(screen.getByTestId("workspace")).toHaveAttribute("data-version", "ver_3");
+  });
+
   it("keeps the changed-heading marks after the update is seen", async () => {
     const { client } = renderReader(
       "/app/b/b1/c/doc_2",
