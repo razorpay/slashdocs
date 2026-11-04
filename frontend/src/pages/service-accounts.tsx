@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { errorMessage } from "@/lib/errors";
 import { Bot, KeyRound, Plus, Power, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Field, Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { CodeBlock, EmptyState, Skeleton } from "@/components/ui/misc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -402,10 +402,21 @@ function NewBotForm({
         }}
         className="space-y-4"
       >
-        <div>
-          <label className="mb-1 block text-xs font-medium text-[var(--color-fg-muted)]">
-            Name
-          </label>
+        <Field
+          label="Name"
+          hint={
+            <>
+              Letters, numbers, and hyphens. Add{" "}
+              <code className="font-mono">@something.bot</code> to pick your bot's
+              address, or skip it and we'll pick one for you.
+            </>
+          }
+          error={
+            hasDomain &&
+            !domainLooksValid &&
+            `Addresses must end in ${BOT_DOMAIN_SUFFIX}.`
+          }
+        >
           <Input
             placeholder="n8n-prod   or   n8n-prod@ops.team.bot"
             value={value}
@@ -415,17 +426,7 @@ function NewBotForm({
             spellCheck={false}
             autoFocus
           />
-          <p className="mt-1 text-[11px] text-[var(--color-fg-muted)]">
-            Letters, numbers, and hyphens. Add{" "}
-            <code className="font-mono">@something.bot</code> to pick your bot's
-            address, or skip it and we'll pick one for you.
-          </p>
-          {hasDomain && !domainLooksValid && (
-            <p className="mt-1 text-[11px] text-[var(--color-danger)]">
-              Addresses must end in {BOT_DOMAIN_SUFFIX}.
-            </p>
-          )}
-        </div>
+        </Field>
 
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose}>
