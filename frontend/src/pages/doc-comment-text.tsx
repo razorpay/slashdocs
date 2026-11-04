@@ -266,7 +266,7 @@ export function MentionTextarea({
                     role="option"
                     aria-selected={index === activeIndex}
                     type="button"
-                    className="flex min-h-10 w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm transition-[background-color,color] duration-150 ease-out aria-selected:bg-[var(--color-surface-muted)]"
+                    className="flex min-h-10 w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm transition-[background-color,color] duration-150 ease-out aria-selected:bg-[var(--color-highlight)]"
                     onPointerDown={(event) => event.preventDefault()}
                     onMouseEnter={() => setActiveIndex(index)}
                     onClick={(event) => {

@@ -47,6 +47,8 @@
   --color-chrome: #f7f7f7;
   --color-surface: #ffffff;
   --color-surface-muted: #f7f7f7;
+  /* The option that a key or the pointer picks in a menu or list. */
+  --color-highlight: #eef0f2;
   --color-border: #dee1e3;
   --color-border-strong: #c8cdd0;
   --color-fg: #050505;
@@ -68,6 +70,7 @@
   --color-chrome: #131415;
   --color-surface: #1f2124;
   --color-surface-muted: #1b1c1d;
+  --color-highlight: #2e3135;
   --color-border: #3b3d40;
   --color-border-strong: #585c5f;
   --color-fg: #ffffff;

@@ -212,7 +212,7 @@ export function DocumentSearchInput({
               type="button"
               role="option"
               aria-selected={index === activeIndex}
-              className="flex min-h-10 w-full items-center gap-3 rounded-sm px-3 py-2 text-left transition-[background-color,color] duration-150 ease-out hover:bg-[var(--color-surface-muted)] aria-selected:bg-[var(--color-surface-muted)]"
+              className="flex min-h-10 w-full items-center gap-3 rounded-sm px-3 py-2 text-left transition-[background-color,color] duration-150 ease-out hover:bg-[var(--color-highlight)] aria-selected:bg-[var(--color-highlight)]"
               onMouseDown={(event) => event.preventDefault()}
               onMouseEnter={() => setActiveIndex(index)}
               onClick={() => choose(index)}
