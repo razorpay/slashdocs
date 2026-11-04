@@ -27,7 +27,9 @@ export function typingOrInLayer(e: KeyboardEvent): boolean {
 }
 
 // useCommentPins draws the point comments of the document as pins in the
-// render frame, and turns the frame's pin gestures into drafts and moves.
+// render frame, and turns the frame's pin gestures into drafts and moves. The
+// frame tells which pins it could not place, and which moved to their spot
+// in the page.
 // Open pins always show; a resolved one shows while its thread is open.
 export function useCommentPins(
   frame: RefObject<HTMLIFrameElement | null>,
@@ -46,6 +48,7 @@ export function useCommentPins(
     startDraft,
     moveDraft,
     setUnanchoredComments,
+    setMovedPins,
     placingPin,
     setPlacingPin,
   } = useDoc();
@@ -117,18 +120,18 @@ export function useCommentPins(
   useFrameMessage(frame, origin, ready, (data) => {
     if (data.type === "slashdocs:pins-result" && Array.isArray(data.results)) {
       // Capped: a forged message must not grow app state without bound.
-      const results = (data.results as Array<{ id?: unknown; placed?: unknown }>).slice(
-        0,
-        10_000,
-      );
-      setUnanchoredComments(
-        "pins",
+      const results = (
+        data.results as Array<{ id?: unknown; placed?: unknown; moved?: unknown }>
+      ).slice(0, 10_000);
+      // The ids of the results whose key has the value.
+      const ids = (key: "placed" | "moved", value: boolean) =>
         new Set(
           results.flatMap((r) =>
-            r && r.placed === false && typeof r.id === "string" ? [r.id] : [],
+            r?.[key] === value && typeof r.id === "string" ? [r.id] : [],
           ),
-        ),
-      );
+        );
+      setUnanchoredComments("pins", ids("placed", false));
+      setMovedPins(ids("moved", true));
     }
     if (data.type === "slashdocs:pin-placing") setPlacingPin(data.on === true);
     if (data.type === "slashdocs:pin-place") {

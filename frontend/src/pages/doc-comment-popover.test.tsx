@@ -37,6 +37,7 @@ function renderThread(more: Partial<DocContextValue> = {}) {
     activeComment: "c1",
     setActiveComment: () => {},
     unanchoredComments: new Set(["c1"]),
+    movedPins: new Set(),
     signIn: () => {},
     ...more,
   } as unknown as DocContextValue;

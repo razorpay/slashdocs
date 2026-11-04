@@ -23,9 +23,15 @@ test("pins from the app are checked, and anything malformed is dropped", () => {
       initials: "IN",
       replies: 2,
     },
-    { id: "c2", anchor: anchor({ path: "0.3", x: 1, y: 0 }) },
+    { id: "c2", anchor: anchor({ path: "0.3", x: -0.5, y: 1.5 }) },
     { id: "d1", anchor: anchor({ x: 0, y: 1 }), draft: true },
-    { id: "bad-x", anchor: anchor({ target: "t", x: 1.5, y: 0 }) },
+    {
+      id: "paged",
+      anchor: anchor({ x: 0, y: 0, page_x: 120, page_y: 0, viewport_w: 1280 }),
+    },
+    // A page spot without its viewport is dropped, and the pin kept.
+    { id: "half", anchor: anchor({ target: "t", x: 0, y: 0, page_x: 120, page_y: 9 }) },
+    { id: "bad-x", anchor: anchor({ target: "t", x: 1001, y: 0 }) },
     { id: "bad-target", anchor: anchor({ target: "has space", x: 0, y: 0 }) },
     { id: "bad-path", anchor: anchor({ path: "0..1", x: 0, y: 0 }) },
     { id: "no-anchor" },
@@ -34,8 +40,19 @@ test("pins from the app are checked, and anything malformed is dropped", () => {
   ]);
   assert.deepEqual(
     pins.map((p) => p.id),
-    ["c1", "c2", "d1"],
+    ["c1", "c2", "d1", "paged", "half"],
   );
+  assert.deepEqual(pins[3].anchor.point, {
+    target: "",
+    path: "",
+    label: "",
+    x: 0,
+    y: 0,
+    page_x: 120,
+    page_y: 0,
+    viewport_w: 1280,
+  });
+  assert.strictEqual(pins[4].anchor.point.page_x, undefined);
   assert.strictEqual(pins[0].replies, 2);
   assert.strictEqual(pins[0].anchor.quote, "Revenue");
   assert.strictEqual(pins[2].draft, true);
@@ -89,7 +106,15 @@ test("a spot names its element by id, path and the start of its text", () => {
     '<main><section id="card"><h3 aria-label="Plan">Plan for Q3</h3><p>Ship it.</p></section></main>';
   layout();
   const spot = pointAt(document, 200, 225);
-  assert.deepEqual(spot?.point, { path: "0.0.0", label: "Plan", x: 0.25, y: 0.25 });
+  assert.deepEqual(spot?.point, {
+    path: "0.0.0",
+    label: "Plan",
+    x: 0.25,
+    y: 0.25,
+    page_x: 200,
+    page_y: 225,
+    viewport_w: window.innerWidth,
+  });
   assert.strictEqual(spot?.quote, "Plan for Q3");
 });
 
@@ -108,23 +133,54 @@ test("a pin finds its element by target, else by path, else by its text", () => 
   assert.strictEqual(at({ path: "0.1" }, "Nowhere in it"), null);
 });
 
-test("a spot over the body's margin takes the nearest element, never the body", () => {
-  document.body.innerHTML = '<main id="page"><p>Wide margins</p></main>';
-  document.elementFromPoint = (() => document.body) as typeof document.elementFromPoint;
+test("a spot in the page margin stays where it is, on the body", () => {
+  document.body.innerHTML =
+    '<main id="page"><h1>Pricing</h1><p>Wide margins</p></main>';
+  document.elementFromPoint = (() =>
+    document.documentElement) as typeof document.elementFromPoint;
   Element.prototype.getBoundingClientRect = function (this: Element) {
-    return this.id === "page"
+    return this === document.body
       ? new DOMRect(300, 0, 600, 400)
-      : new DOMRect(0, 0, 1200, 400);
+      : new DOMRect(300, 0, 600, 100);
   };
-  const spot = pointAt(document, 50, 100);
-  assert.deepEqual(spot?.point, { target: "page", path: "0", x: 0, y: 0.25 });
+  const spot = pointAt(document, 120, 220)!;
+  assert.deepEqual(spot.point, {
+    path: "",
+    label: "Pricing",
+    x: -0.3,
+    y: 0.55,
+    page_x: 120,
+    page_y: 220,
+    viewport_w: window.innerWidth,
+  });
+  assert.strictEqual(spot.quote, "");
+  assert.strictEqual(pinElement(document, spot), document.body);
 
-  // Nothing takes a pin outside the viewport, or in a body without elements.
+  // Nothing takes a pin outside the viewport.
   document.elementFromPoint = (() => null) as typeof document.elementFromPoint;
   assert.strictEqual(pointAt(document, 50, -100), null);
-  document.elementFromPoint = (() => document.body) as typeof document.elementFromPoint;
-  document.body.innerHTML = "";
-  assert.strictEqual(pointAt(document, 50, 100), null);
+});
+
+test("a spot on a small element goes to its container, at the same spot", () => {
+  document.body.innerHTML =
+    '<section id="card"><i id="dot"></i><h2>Plan</h2><p>Ship it.</p></section>';
+  document.elementFromPoint = (() =>
+    document.getElementById("dot")) as typeof document.elementFromPoint;
+  Element.prototype.getBoundingClientRect = function (this: Element) {
+    if (this.id === "dot") return new DOMRect(110, 210, 6, 6);
+    return new DOMRect(100, 200, 400, 100);
+  };
+  const spot = pointAt(document, 112, 212)!;
+  assert.deepEqual(spot.point, {
+    target: "card",
+    path: "0",
+    label: "Plan",
+    x: 0.03,
+    y: 0.12,
+    page_x: 112,
+    page_y: 212,
+    viewport_w: window.innerWidth,
+  });
 });
 
 test("a pin on an element without text is not moved to another element", () => {
@@ -133,7 +189,15 @@ test("a pin on an element without text is not moved to another element", () => {
   document.elementFromPoint = (() =>
     document.querySelector("canvas")) as typeof document.elementFromPoint;
   const spot = pointAt(document, 200, 250)!;
-  assert.deepEqual(spot.point, { path: "0.1", label: "canvas", x: 0.25, y: 0.5 });
+  assert.deepEqual(spot.point, {
+    path: "0.1",
+    label: "canvas",
+    x: 0.25,
+    y: 0.5,
+    page_x: 200,
+    page_y: 250,
+    viewport_w: window.innerWidth,
+  });
   assert.strictEqual(pinElement(document, spot)?.localName, "canvas");
   // The image before it is gone: the svg now holds the path.
   document.querySelector("img")!.remove();
@@ -196,6 +260,49 @@ test("a new pin shows and has its spot at once, before the next frame", () => {
     height: 28,
   });
   assert.ok(document.querySelector('.sd-pin[data-id="draft:1"]'));
+});
+
+test("a pin whose element is gone shows at its page spot, marked as moved", () => {
+  document.body.innerHTML = "<main><p>Rewritten</p></main>";
+  layout();
+  const posted: Record<string, unknown>[] = [];
+  const layer = createPinLayer({
+    doc: () => document,
+    post: (message) => posted.push(message),
+    laidOut: () => {},
+  });
+  layer.start(document);
+  const gone = { target: "intro", x: 0.5, y: 0.5 };
+  layer.setPins(
+    parsePins([
+      {
+        id: "moved",
+        anchor: {
+          quote: "",
+          point: {
+            ...gone,
+            page_x: 60,
+            page_y: 300,
+            viewport_w: window.innerWidth / 2,
+          },
+        },
+      },
+      { id: "lost", anchor: { quote: "", point: gone } },
+    ]),
+  );
+  // Its x follows the viewport's width, which doubled.
+  assert.deepEqual(layer.rect("moved"), { left: 120, top: 272, width: 28, height: 28 });
+  assert.strictEqual(layer.rect("lost"), null);
+  const pin = document.querySelector<HTMLElement>('.sd-pin[data-id="moved"]')!;
+  assert.ok("moved" in pin.dataset);
+  assert.strictEqual(pin.getAttribute("aria-label"), "Comment, moved");
+  assert.deepEqual(
+    posted.filter((m) => m.type === "slashdocs:pins-result").at(-1)?.results,
+    [
+      { id: "moved", placed: true, moved: true },
+      { id: "lost", placed: false, moved: false },
+    ],
+  );
 });
 
 test("placing a pin shows a hint until it ends", () => {
