@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, FolderIcon, PanelRightClose, PanelRightOpen } from "lucide-react";
+import { ArrowLeft, FolderIcon, MessageSquareText } from "lucide-react";
 import { Logo } from "./logo";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -80,16 +80,12 @@ export function CommentsToggle({
       variant="ghost"
       size="icon"
       onClick={onToggle}
-      aria-label={open ? "Hide comments" : "Show comments"}
-      tooltip={open ? false : "Show comments (Esc C)"}
-      aria-pressed={open}
+      aria-label="Comments"
+      tooltip={open ? false : "Comments (Esc C)"}
+      aria-expanded={open}
       className="shrink-0"
     >
-      {open ? (
-        <PanelRightClose className="h-4 w-4" />
-      ) : (
-        <PanelRightOpen className="h-4 w-4" />
-      )}
+      <MessageSquareText className="h-4 w-4" />
     </Button>
   );
 }

@@ -81,6 +81,8 @@ export function DocBar({
   onShowLatest,
   viewers,
   onFollowViewer,
+  followedSession,
+  onUnfollowViewer = () => {},
   commentsOpen,
   onToggleComments,
   onShowShortcuts,
@@ -108,7 +110,11 @@ export function DocBar({
   onSelectVersion: (versionID: string) => void;
   onShowLatest: () => void;
   viewers: Viewer[];
-  onFollowViewer: (viewer: Viewer) => void;
+  // Goes to a viewer once, or follows them continuously.
+  onFollowViewer: (viewer: Viewer, continuous?: boolean) => void;
+  // The session of the viewer the reader follows, if any.
+  followedSession?: string;
+  onUnfollowViewer?: () => void;
   commentsOpen: boolean;
   onToggleComments: () => void;
   onShowShortcuts: () => void;
@@ -167,7 +173,13 @@ export function DocBar({
         isOwner={canManage}
         defaultOpen={approvalsOpen}
       />
-      <Viewers viewers={viewers} latest={latest} onFollow={onFollowViewer} />
+      <Viewers
+        viewers={viewers}
+        latest={latest}
+        onFollow={onFollowViewer}
+        followedSession={followedSession}
+        onUnfollow={onUnfollowViewer}
+      />
       {viewers.length ? <CursorsToggle /> : null}
       {behind ? (
         <Button
@@ -352,57 +364,145 @@ export function DocBar({
 
 // Other people viewing the document, in the colors of their cursors.
 // Clicking one goes to their cursor, or else to what they see.
+// Viewers shows who else reads the document. A click goes to where a viewer
+// is, once. The context menu of an avatar follows the viewer instead, until
+// the reader moves. Viewers past the first few are in a "+N" menu, where
+// each can be followed too.
 function Viewers({
   viewers,
   latest,
   onFollow,
+  followedSession,
+  onUnfollow,
 }: {
   viewers: Viewer[];
   latest: string;
-  onFollow: (viewer: Viewer) => void;
+  onFollow: (viewer: Viewer, continuous?: boolean) => void;
+  followedSession?: string;
+  onUnfollow: () => void;
 }) {
   if (!viewers.length) return null;
-  const hidden = viewers.length - MAX_VIEWER_AVATARS;
+  const hidden = viewers.slice(MAX_VIEWER_AVATARS);
+  const key = (viewer: Viewer) => `${viewer.principal.type}:${viewer.principal.id}`;
   return (
     <div
       role="group"
       aria-label="People viewing this document"
       className="hidden shrink-0 items-center -space-x-1.5 pr-1 sm:flex"
     >
-      {viewers.slice(0, MAX_VIEWER_AVATARS).map((viewer) => {
-        const name = principalLabel(viewer.principal);
-        const earlier = !!viewer.version && viewer.version !== latest;
-        return (
-          <Tooltip
-            key={`${viewer.principal.type}:${viewer.principal.id}`}
-            label={earlier ? `${name} · viewing an earlier edit` : name}
-          >
+      {viewers.slice(0, MAX_VIEWER_AVATARS).map((viewer) => (
+        <ViewerAvatar
+          key={key(viewer)}
+          viewer={viewer}
+          latest={latest}
+          following={viewer.session === followedSession}
+          onFollow={onFollow}
+          onUnfollow={onUnfollow}
+        />
+      ))}
+      {hidden.length > 0 ? (
+        <Dropdown>
+          <DropdownTrigger asChild>
             <button
               type="button"
-              aria-label={`Go to where ${name} is viewing`}
-              onClick={() => onFollow(viewer)}
-              style={{
-                boxShadow: `0 0 0 2px ${principalColor(viewer.principal)}, 0 0 0 4px var(--color-surface)`,
-              }}
-              className="relative rounded-full transition-transform duration-150 ease-out hover:z-10 hover:-translate-y-0.5 focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)] motion-reduce:transition-none"
+              aria-label={`${hidden.length} more ${hidden.length === 1 ? "viewer" : "viewers"}`}
+              aria-pressed={hidden.some((viewer) => viewer.session === followedSession)}
+              className="relative flex h-7 min-w-7 items-center justify-center rounded-full bg-[var(--color-surface-muted)] px-1.5 text-xs font-medium tabular-nums text-[var(--color-fg-muted)] ring-2 ring-[var(--color-surface)] transition-[translate,scale] duration-150 ease-out hover:z-10 hover:-translate-y-0.5 hover:text-[var(--color-fg)] active:translate-y-0 active:scale-95 aria-pressed:text-[var(--color-fg)] aria-pressed:ring-[var(--color-accent)] focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)] motion-reduce:transition-none"
             >
-              <Avatar size={28} name={name} src={viewer.principal.picture_url} />
+              +{hidden.length}
             </button>
-          </Tooltip>
-        );
-      })}
-      {hidden > 0 ? (
-        <span
-          title={viewers
-            .slice(MAX_VIEWER_AVATARS)
-            .map((viewer) => principalLabel(viewer.principal))
-            .join(", ")}
-          className="relative flex h-7 min-w-7 items-center justify-center rounded-full bg-[var(--color-surface-muted)] px-1.5 text-xs font-medium tabular-nums text-[var(--color-fg-muted)] ring-2 ring-[var(--color-surface)]"
-        >
-          +{hidden}
-        </span>
+          </DropdownTrigger>
+          <DropdownContent>
+            {hidden.map((viewer) => {
+              const name = principalLabel(viewer.principal);
+              const following = viewer.session === followedSession;
+              return (
+                <DropdownItem
+                  key={key(viewer)}
+                  onSelect={() => (following ? onUnfollow() : onFollow(viewer, true))}
+                  aria-label={following ? `Stop following ${name}` : `Follow ${name}`}
+                >
+                  <span
+                    className="rounded-full"
+                    style={{
+                      boxShadow: `0 0 0 2px ${principalColor(viewer.principal)}`,
+                    }}
+                  >
+                    <Avatar size={22} name={name} src={viewer.principal.picture_url} />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{name}</span>
+                  {following ? (
+                    <span className="text-xs text-[var(--color-fg-muted)]">
+                      Following
+                    </span>
+                  ) : null}
+                </DropdownItem>
+              );
+            })}
+          </DropdownContent>
+        </Dropdown>
       ) : null}
     </div>
+  );
+}
+
+function ViewerAvatar({
+  viewer,
+  latest,
+  following,
+  onFollow,
+  onUnfollow,
+}: {
+  viewer: Viewer;
+  latest: string;
+  following: boolean;
+  onFollow: (viewer: Viewer, continuous?: boolean) => void;
+  onUnfollow: () => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const name = principalLabel(viewer.principal);
+  const earlier = !!viewer.version && viewer.version !== latest;
+  const color = principalColor(viewer.principal);
+  let label = earlier ? `${name} · viewing an earlier edit` : name;
+  if (following) label = `Following ${name}`;
+  return (
+    <span className="relative">
+      <Tooltip label={label}>
+        <button
+          type="button"
+          aria-label={`Go to where ${name} is viewing`}
+          aria-pressed={following}
+          onClick={() => onFollow(viewer)}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setMenuOpen(true);
+          }}
+          style={{
+            // Followed: a gap, then the viewer's color, as a pressed state.
+            boxShadow: following
+              ? `0 0 0 2px var(--color-surface), 0 0 0 4px ${color}`
+              : `0 0 0 2px ${color}, 0 0 0 4px var(--color-surface)`,
+          }}
+          className="relative rounded-full transition-[translate,scale,box-shadow] duration-150 ease-out hover:z-10 hover:-translate-y-0.5 active:translate-y-0 active:scale-95 focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)] motion-reduce:transition-none"
+        >
+          <Avatar size={28} name={name} src={viewer.principal.picture_url} />
+        </button>
+      </Tooltip>
+      {/* The context menu opens at the avatar. Its trigger takes no input,
+          so a click still goes to the viewer. */}
+      <Dropdown open={menuOpen} onOpenChange={setMenuOpen} modal={false}>
+        <DropdownTrigger asChild>
+          <span aria-hidden="true" className="pointer-events-none absolute inset-0" />
+        </DropdownTrigger>
+        <DropdownContent>
+          <DropdownItem
+            onSelect={() => (following ? onUnfollow() : onFollow(viewer, true))}
+          >
+            {following ? `Stop following ${name}` : `Follow ${name}`}
+          </DropdownItem>
+        </DropdownContent>
+      </Dropdown>
+    </span>
   );
 }
 

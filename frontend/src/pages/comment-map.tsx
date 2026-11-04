@@ -1,30 +1,25 @@
 import { useMemo } from "react";
 import type { Comment } from "@/api";
 import { cn } from "@/lib/cn";
-import { commentTicks } from "@/lib/comment-rail";
+import { anchorLabel } from "@/lib/comment-pins";
+import { commentTicks } from "@/lib/comment-ticks";
 import { useClientHeight } from "@/lib/use-client-height";
 import { useDoc } from "./doc-context";
 
 const SNIPPET_LENGTH = 80;
 
 const snippet = (c: Comment) => {
-  const quote = (c.selected_text || c.anchor?.quote || "").trim();
-  return quote.length > SNIPPET_LENGTH ? `${quote.slice(0, SNIPPET_LENGTH)}…` : quote;
+  const label = anchorLabel(c);
+  return label.length > SNIPPET_LENGTH ? `${label.slice(0, SNIPPET_LENGTH)}…` : label;
 };
 
-// A faint strip down the comments rail with one tick per thread at its place in
-// the whole document. It lets a reader see where threads are without scrolling,
-// and jump to one.
-export function CommentMap({
-  comments,
-  topInset,
-}: {
-  comments: Comment[];
-  topInset: number;
-}) {
+// A faint strip down the document's scrollbar with one tick per thread at its
+// place in the whole document. It lets a reader see where threads are without
+// scrolling, and open one.
+export function CommentMap({ comments }: { comments: Comment[] }) {
   const {
     commentPositions,
-    commentViewport,
+    documentHeight,
     activeComment,
     setActiveComment,
     scrollDocumentTo,
@@ -35,9 +30,8 @@ export function CommentMap({
   const ticks = commentTicks({
     ids: comments.map((c) => c.id),
     positions: commentPositions,
-    scrollHeight: commentViewport.scrollHeight,
+    scrollHeight: documentHeight,
     viewportHeight,
-    topInset,
   });
 
   const jump = (id: string) => {
@@ -60,7 +54,8 @@ export function CommentMap({
           <button
             key={tick.id}
             type="button"
-            // The cards are already keyboard-reachable, so ticks only add a pointer shortcut.
+            // The comments list reaches every thread from the keyboard, so
+            // ticks only add a pointer shortcut.
             tabIndex={-1}
             aria-current={active || undefined}
             aria-label={`Comment ${index + 1} of ${ticks.length}${quote && `: ${quote}`}`}

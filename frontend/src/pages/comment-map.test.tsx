@@ -14,8 +14,8 @@ const comment = (id: string, quote: string) =>
   ({ id, selected_text: quote, status: "open" }) as Comment;
 const comments = [comment("late", "closing remarks"), comment("early", "opening line")];
 const positions = new Map([
-  ["late", { top: 1100, bottom: 1120 }],
-  ["early", { top: 300, bottom: 320 }],
+  ["late", { top: 1000, bottom: 1020 }],
+  ["early", { top: 200, bottom: 220 }],
 ]);
 
 // jsdom has no layout, so give the strip a viewport height to measure.
@@ -29,7 +29,7 @@ const tick = (name: RegExp) => screen.getByRole("button", { name, hidden: true }
 function renderMap(overrides: Partial<DocContextValue> = {}, list = comments) {
   const doc = {
     commentPositions: positions,
-    commentViewport: { scrollTop: 0, scrollHeight: 1100 },
+    documentHeight: 1000,
     activeComment: undefined,
     setActiveComment: vi.fn(),
     scrollDocumentTo: vi.fn(),
@@ -37,7 +37,7 @@ function renderMap(overrides: Partial<DocContextValue> = {}, list = comments) {
   } as unknown as DocContextValue;
   render(
     <DocProvider value={doc}>
-      <CommentMap comments={list} topInset={100} />
+      <CommentMap comments={list} />
     </DocProvider>,
   );
   return doc;
@@ -58,7 +58,7 @@ it("places each tick at its share of the document", () => {
   expect(ticks().map((t) => t.style.top)).toEqual(["20%", "100%"]);
 });
 
-it("leaves the ticks out of the tab order, since every card is already focusable", () => {
+it("leaves the ticks out of the tab order, since the comments list reaches every thread", () => {
   renderMap();
 
   for (const t of ticks()) expect(t).toHaveAttribute("tabindex", "-1");
@@ -93,13 +93,13 @@ it("scrolls to a thread that is already active, since activating it again would 
   await userEvent.click(tick(/closing remarks/));
 
   // The thread's top, less a third of the viewport so it lands above centre.
-  expect(doc.scrollDocumentTo).toHaveBeenCalledWith(1100 - 500 / 3);
+  expect(doc.scrollDocumentTo).toHaveBeenCalledWith(1000 - 500 / 3);
   expect(doc.setActiveComment).not.toHaveBeenCalled();
 });
 
 it("renders nothing when the document fits on one screen", () => {
   stripHeight(500);
-  renderMap({ commentViewport: { scrollTop: 0, scrollHeight: 550 } });
+  renderMap({ documentHeight: 450 });
 
   expect(screen.queryByRole("button", { hidden: true })).not.toBeInTheDocument();
 });

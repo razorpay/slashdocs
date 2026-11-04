@@ -21,6 +21,7 @@ import { Center, Skeleton } from "@/components/ui/misc";
 import { Button } from "@/components/ui/button";
 import { DocBar } from "./doc-bar";
 import { DocWorkspace } from "./doc-workspace";
+import type { FollowRequest } from "./doc-context";
 import { PreviewBanner } from "./doc-preview-banner";
 import { cursorsShownStore } from "@/lib/live-cursors";
 import { useDocumentStream, type Viewer } from "./use-document-stream";
@@ -214,25 +215,47 @@ export function DocumentPage() {
     });
   }, [latest, current, showLatest]);
 
-  // Show the version another viewer reads, at their cursor, or else at the
-  // passage they look at.
+  // Show the version another viewer reads: once at their cursor, or else at
+  // the passage they look at, or, to follow them, at their view as it moves.
   const cursorsShown = cursorsShownStore.useStore();
-  const [followedCursor, setFollowedCursor] = useState<{ session: string }>();
+  const [followedCursor, setFollowedCursor] = useState<FollowRequest>();
   const { cursorVersion } = stream;
   const followViewer = useCallback(
-    (viewer: Viewer) => {
+    (viewer: Viewer, continuous = false) => {
       const version = cursorsShown && cursorVersion(viewer.session);
       if (version) {
         showVersion(version);
-        setFollowedCursor({ session: viewer.session });
+        setFollowedCursor({ session: viewer.session, continuous });
         return;
       }
+      setFollowedCursor(undefined);
       if (viewer.version) showVersion(viewer.version);
       const hash = textLinkFragment(viewer.anchor);
       if (hash) nav({ search: location.search, hash }, { replace: true });
     },
     [cursorsShown, cursorVersion, showVersion, nav, location.search],
   );
+  const unfollow = useCallback(() => setFollowedCursor(undefined), []);
+  const followedSession = followedCursor?.continuous
+    ? followedCursor.session
+    : undefined;
+  // Following stops when the viewer leaves, when cursors are hidden, and on
+  // Esc outside the document. Inside it, the bridge stops on the reader's own
+  // scroll, click or typing.
+  const followedGone =
+    !!followedSession &&
+    (!cursorsShown || !stream.viewers.some((v) => v.session === followedSession));
+  useEffect(() => {
+    if (followedGone) setFollowedCursor(undefined);
+  }, [followedGone]);
+  useEffect(() => {
+    if (!followedSession) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFollowedCursor(undefined);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [followedSession]);
 
   if (doc.isLoading) {
     return (
@@ -286,6 +309,7 @@ export function DocumentPage() {
       signIn={signIn}
       stream={stream}
       followedCursor={followedCursor}
+      onUnfollowCursor={unfollow}
       onDocumentClick={closeShare}
       editable={editable}
       stayOnVersion={stayOnVersion}
@@ -309,6 +333,8 @@ export function DocumentPage() {
           onShowLatest={showLatest}
           viewers={stream.viewers}
           onFollowViewer={followViewer}
+          followedSession={followedSession}
+          onUnfollowViewer={unfollow}
           shareOpen={shareOpen}
           onShareOpenChange={setShareOpen}
           approvalStatus={doc.data.approval_status}

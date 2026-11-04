@@ -7,11 +7,9 @@ import { createPersistentStore } from "./persistent-store";
 export type CommentDraft = {
   id: string;
   version: string;
+  // Empty for a point comment on an element without text.
   quote: string;
   anchor?: Partial<Anchor>;
-  // Document offset of the selection, used until the highlight reports its
-  // own position.
-  top?: number;
   body: string;
   mentions: CommentMention[];
   updatedAt: number;
@@ -30,7 +28,9 @@ const store = createPersistentStore<DraftsByDocument>(
     const out: DraftsByDocument = {};
     for (const [docId, drafts] of Object.entries(parsed as DraftsByDocument)) {
       const fresh = Array.isArray(drafts)
-        ? drafts.filter((d) => d?.id && d.quote && d.updatedAt > oldest)
+        ? drafts.filter(
+            (d) => d?.id && (d.quote || d.anchor?.point) && d.updatedAt > oldest,
+          )
         : [];
       if (fresh.length) out[docId] = fresh;
     }
