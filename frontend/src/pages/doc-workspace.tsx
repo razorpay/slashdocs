@@ -13,7 +13,11 @@ import { useQuery } from "@tanstack/react-query";
 import { api, type CommentMention, type Principal } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { signInPath } from "@/lib/auth-state";
-import { useCommentDrafts } from "@/lib/comment-drafts";
+import {
+  keepPendingComment,
+  takePendingComment,
+  useCommentDrafts,
+} from "@/lib/comment-drafts";
 import { Button } from "@/components/ui/button";
 import { Center } from "@/components/ui/misc";
 import { SheetHandle } from "@/components/ui/sheet";
@@ -54,8 +58,10 @@ const NO_STREAM = {
 
 const noop = () => {};
 
-// The intent in the sign-in path of a reader who asked to comment on a spot.
+// The intents in the sign-in path of a reader who asked to comment on a spot,
+// or on the text that they selected.
 const PIN_INTENT = "pin";
+const COMMENT_INTENT = "comment";
 
 export type DocBarControls = {
   // The comments list is open.
@@ -209,19 +215,6 @@ export function DocWorkspace({
     if (signIn) nav(signInPath(location, PIN_INTENT));
     else setPlacingPin(true);
   }, [signIn, nav, location]);
-  const intent = searchParams.get("intent");
-  useEffect(() => {
-    if (intent !== PIN_INTENT || !principal) return;
-    setPlacingPin(true);
-    setSearchParams(
-      (params) => {
-        const next = new URLSearchParams(params);
-        next.delete("intent");
-        return next;
-      },
-      { replace: true },
-    );
-  }, [intent, principal, setSearchParams]);
 
   const [drafts, updateDrafts] = useCommentDrafts(docId);
   // Drafts left empty on an earlier visit hold nothing worth keeping.
@@ -247,17 +240,21 @@ export function DocWorkspace({
   }, [activeComment, updateDrafts]);
 
   // A selection or a placed pin starts a new draft next to the drafts that
-  // have text. Picking the same text or spot again returns to its draft.
+  // have text. Picking the same text or spot again returns to its draft. A
+  // reader who is signed out signs in first, and comes back to the draft.
   const startDraft = useCallback(
-    (selection: PendingSelection) => {
-      if (signIn) return signIn();
+    (selection: PendingSelection, draftVersion = version) => {
+      if (signIn) {
+        keepPendingComment({ docId, version: draftVersion, selection });
+        return nav(signInPath(location, COMMENT_INTENT));
+      }
       let draftId = `draft:${randomId()}`;
       updateDrafts((list) => {
         const key = (anchor?: PendingSelection["anchor"]) =>
           JSON.stringify([anchor?.point, anchor?.start_offset]);
         const same = list.find(
           (draft) =>
-            draft.version === version &&
+            draft.version === draftVersion &&
             draft.quote === selection.quote &&
             key(draft.anchor) === key(selection.anchor),
         );
@@ -267,7 +264,7 @@ export function DocWorkspace({
         }
         const draft = {
           id: draftId,
-          version,
+          version: draftVersion,
           ...selection,
           body: "",
           mentions: [],
@@ -277,8 +274,24 @@ export function DocWorkspace({
       });
       setActiveComment(draftId);
     },
-    [version, updateDrafts, signIn],
+    [docId, version, updateDrafts, signIn, nav, location],
   );
+  // Back from sign-in, the reader goes on with what they asked for.
+  const intent = searchParams.get("intent");
+  useEffect(() => {
+    if (!intent || !principal) return;
+    if (intent === PIN_INTENT) setPlacingPin(true);
+    const pending = intent === COMMENT_INTENT && takePendingComment(docId);
+    if (pending) startDraft(pending.selection, pending.version);
+    setSearchParams(
+      (params) => {
+        const next = new URLSearchParams(params);
+        next.delete("intent");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [intent, principal, docId, startDraft, setSearchParams]);
   const saveDraft = useCallback(
     (draftId: string, text: { body: string; mentions: CommentMention[] }) =>
       updateDrafts((list) =>

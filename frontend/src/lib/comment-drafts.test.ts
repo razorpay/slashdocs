@@ -2,6 +2,8 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearCommentDrafts,
+  keepPendingComment,
+  takePendingComment,
   useCommentDrafts,
   useDraftText,
   useReplyDraft,
@@ -71,6 +73,19 @@ describe("useReplyDraft", () => {
     act(() => result.current[1]({ body: "Agreed", mentions: [] }));
     act(() => clearCommentDrafts());
     expect(result.current[0]).toBeUndefined();
+  });
+});
+
+describe("takePendingComment", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("gives the comment that waits for a document once", () => {
+    const pending = { docId: "doc_a", version: "ver_1", selection: { quote: "text" } };
+    keepPendingComment(pending);
+    expect(takePendingComment("doc_b")).toBeNull();
+    keepPendingComment(pending);
+    expect(takePendingComment("doc_a")).toEqual(pending);
+    expect(takePendingComment("doc_a")).toBeNull();
   });
 });
 

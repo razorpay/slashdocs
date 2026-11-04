@@ -19,6 +19,14 @@ export type CommentDraft = {
 // An unsent reply to a thread.
 type ReplyDraft = MentionDraft & { updatedAt: number };
 
+// A comment that a reader who is signed out started on a selection. It waits
+// while they sign in, and then opens as a draft.
+export type PendingComment = {
+  docId: string;
+  version: string;
+  selection: Pick<CommentDraft, "quote" | "anchor">;
+};
+
 const MAX_AGE = 30 * 24 * 60 * 60 * 1000;
 const EMPTY: CommentDraft[] = [];
 const fresh = (updatedAt: number) => updatedAt > Date.now() - MAX_AGE;
@@ -58,10 +66,16 @@ const replies = createPersistentStore<RepliesByDocument>(
   },
 );
 
+const pending = createPersistentStore<PendingComment | null>(
+  "slashdocs.pending-comment",
+  null,
+);
+
 // Unsent comments must not outlive the session on a shared browser.
 export function clearCommentDrafts() {
   store.write({});
   replies.write({});
+  pending.write(null);
 }
 
 // useCommentDrafts reads and updates one document's drafts. Every open tab
@@ -98,6 +112,17 @@ export function useReplyDraft(docId: string, threadId: string) {
     [docId, threadId],
   );
   return [draft, update] as const;
+}
+
+export function keepPendingComment(comment: PendingComment) {
+  pending.write(comment);
+}
+
+// takePendingComment gives the comment that waits for a document, once.
+export function takePendingComment(docId: string): PendingComment | null {
+  const comment = pending.read();
+  pending.write(null);
+  return comment?.docId === docId ? comment : null;
 }
 
 // Typing stays in local state and reaches storage after a short pause, so a
