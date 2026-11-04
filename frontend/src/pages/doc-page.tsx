@@ -138,10 +138,8 @@ export function DocumentPage() {
     enabled: !!id && !doc.error,
     meta: { suppressGlobalError: true },
   });
-  // A version picked from the history, or the one on screen when someone else
-  // changed the document: the reader stays on it until they ask for the
-  // latest.
-  const [selectedVersion, setSelectedVersion] = useState<string>();
+  // The version on screen when someone else changed the document: the reader
+  // stays on it until they ask for the latest.
   const [pinnedVersion, setPinnedVersion] = useState<string>();
   const [shareOpen, setShareOpen] = useState(searchParams.get("share") === "1");
   const closeShare = useCallback(() => setShareOpen(false), []);
@@ -158,10 +156,9 @@ export function DocumentPage() {
   const latest =
     currentVersionID(doc.data || {}) ||
     versionID(versionItems[versionItems.length - 1] || {});
-  const browsed = selectedVersion || queryVersion;
-  const current = browsed || pinnedVersion || latest;
+  const current = queryVersion || pinnedVersion || latest;
   // An earlier version from the history is a preview: it does not change.
-  const previewing = !!browsed && browsed !== latest;
+  const previewing = !!queryVersion && queryVersion !== latest;
   const { canEdit } = useDocumentRole(id, doc.data?.owner, me.data?.principal);
   // An assigned approver reviews the document. Typing in it would make them
   // an author, which removes them as an approver, so it stays read-only.
@@ -178,22 +175,22 @@ export function DocumentPage() {
   const canChangeContent = canEdit && approverKnown && !approver;
   const editable = canChangeContent && !previewing;
 
-  // The link keeps its fragment, such as a text link.
-  const showLatest = useCallback(() => {
-    setSelectedVersion(undefined);
-    setPinnedVersion(undefined);
-    const search = new URLSearchParams(location.search);
-    if (!search.has("version")) return;
-    search.delete("version");
-    nav({ search: search.toString(), hash: location.hash }, { replace: true });
-  }, [nav, location.search, location.hash]);
-  // Going to the latest version follows it, so the reader's own edits keep
-  // the page on it.
+  // The version on screen is in the link, so a reload or a copied link keeps
+  // a preview from the history. The link keeps its fragment, such as a text
+  // link. Going to the latest version follows it, so the reader's own edits
+  // keep the page on it.
   const showVersion = useCallback(
-    (version: string) =>
-      version === latest ? showLatest() : setSelectedVersion(version),
-    [latest, showLatest],
+    (version?: string, hash = location.hash) => {
+      const search = new URLSearchParams(location.search);
+      if (!version || version === latest) {
+        setPinnedVersion(undefined);
+        search.delete("version");
+      } else search.set("version", version);
+      nav({ search: search.toString(), hash }, { replace: true });
+    },
+    [nav, location.search, location.hash, latest],
   );
+  const showLatest = useCallback(() => showVersion(), [showVersion]);
   // A link to the latest version is a link to the document.
   useEffect(() => {
     if (queryVersion && queryVersion === latest) showLatest();
@@ -248,9 +245,9 @@ export function DocumentPage() {
         return;
       }
       setFollowedCursor(undefined);
-      if (viewer.version) showVersion(viewer.version);
-      const hash = textLinkFragment(viewer.anchor);
-      if (hash) nav({ search: location.search, hash }, { replace: true });
+      const hash = textLinkFragment(viewer.anchor) || undefined;
+      if (viewer.version) showVersion(viewer.version, hash);
+      else if (hash) nav({ search: location.search, hash }, { replace: true });
     },
     [cursorsShown, cursorVersion, showVersion, nav, location.search],
   );
