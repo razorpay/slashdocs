@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import {
   Bot,
   Check,
+  Inbox,
   LogOut,
   Monitor,
   Moon,
@@ -24,9 +25,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { Avatar } from "@/components/ui/misc";
 import { useSignOut } from "@/lib/auth-state";
-import { useMe } from "@/lib/hooks";
+import { RelativeTime } from "@/components/ui/relative-time";
+import { useAccessRequests, useMe } from "@/lib/hooks";
 import { useTheme } from "@/lib/theme";
-import { principalColor } from "@/lib/principals";
+import { principalColor, principalLabel } from "@/lib/principals";
 import type { Principal } from "@/api";
 
 // The app bar sits on the page, as the landing header does, so the
@@ -67,6 +69,61 @@ export function GetStarted() {
         {done}/{total}
       </span>
     </Link>
+  );
+}
+
+// The requests for access on every document that the reader shares. Each one
+// opens the share sheet of its document. With no request, nothing shows.
+export function AccessRequestsMenu() {
+  const nav = useNavigate();
+  const items = useAccessRequests().data?.items ?? [];
+  if (!items.length) return null;
+  const count = `${items.length} ${items.length === 1 ? "request" : "requests"} for access`;
+  return (
+    <Dropdown>
+      <DropdownTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="relative min-h-10 min-w-10 rounded-full"
+          tooltip="Requests for access"
+          aria-label={count}
+        >
+          <Inbox className="h-4 w-4" />
+          <span
+            data-state="open"
+            className="pop absolute right-1 top-1 min-w-4 rounded-full bg-[var(--color-accent)] px-1 text-[10px] font-medium leading-4 tabular-nums text-white"
+          >
+            {items.length}
+          </span>
+        </Button>
+      </DropdownTrigger>
+      <DropdownContent className="w-80">
+        <DropdownLabel>Requests for access</DropdownLabel>
+        {items.map((r) => (
+          <DropdownItem
+            key={`${r.document_id}:${r.requester.type}:${r.requester.id}`}
+            onSelect={() => nav(`/app/d/${r.document_id}?share=1`)}
+          >
+            <Avatar
+              size={24}
+              src={r.requester.picture_url}
+              name={principalLabel(r.requester)}
+              color={principalColor(r.requester)}
+            />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate">
+                <span className="font-medium">{principalLabel(r.requester)}</span> asks
+                for {r.document_title}
+              </span>
+              <span className="block text-xs text-[var(--color-fg-muted)]">
+                <RelativeTime iso={r.requested_at} prefix="Asked" />
+              </span>
+            </span>
+          </DropdownItem>
+        ))}
+      </DropdownContent>
+    </Dropdown>
   );
 }
 

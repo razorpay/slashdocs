@@ -1,10 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { afterEach, describe, expect, it } from "vitest";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { AccountMenu, GetStarted } from "./topbar";
+import { AccessRequestsMenu, AccountMenu, GetStarted } from "./topbar";
 
 describe("AccountMenu", () => {
   afterEach(() => {
@@ -40,5 +40,60 @@ describe("AccountMenu", () => {
     expect(
       await screen.findByRole("link", { name: "Get started: 1 of 2 complete" }),
     ).toBeInTheDocument();
+  });
+});
+
+function Location() {
+  const { pathname, search } = useLocation();
+  return <p>{pathname + search}</p>;
+}
+
+describe("AccessRequestsMenu", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("lists the requests across documents and opens the share sheet", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              items: [
+                {
+                  document_id: "doc_1",
+                  document_title: "Plan",
+                  requester: { type: "user", id: "usr_ana", name: "Ana" },
+                  requested_at: new Date().toISOString(),
+                },
+              ],
+            }),
+            { headers: { "Content-Type": "application/json" } },
+          ),
+      ),
+    );
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <TooltipProvider>
+          <MemoryRouter initialEntries={["/app/documents"]}>
+            <Routes>
+              <Route path="/app/documents" element={<AccessRequestsMenu />} />
+              <Route path="/app/d/:id" element={<Location />} />
+            </Routes>
+          </MemoryRouter>
+        </TooltipProvider>
+      </QueryClientProvider>,
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: "1 request for access" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: /Ana asks for Plan/ }),
+    );
+    expect(await screen.findByText("/app/d/doc_1?share=1")).toBeInTheDocument();
   });
 });

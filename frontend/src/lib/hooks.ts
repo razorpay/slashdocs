@@ -55,6 +55,19 @@ export function useDocumentRole(
   };
 }
 
+// useAccessRequests is the requests on every document on which the reader
+// manages access, the newest first. The header and the document cards share
+// it.
+export function useAccessRequests() {
+  return useQuery({
+    queryKey: queryKeys.managedAccessRequests(),
+    queryFn: api.managedAccessRequests,
+    staleTime: 30_000,
+    // The list is a hint. A failure shows nothing, not an error.
+    meta: { suppressGlobalError: true },
+  });
+}
+
 // useDebounced is the value after it stays the same for `delay` ms.
 export function useDebounced<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState(value);
