@@ -159,10 +159,11 @@ export function ApprovalsDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
+        {/* The pseudo-element makes a 40px tall target. */}
         <button
           type="button"
           aria-label={`${badgeAria(shownStatus, shownApproved, shownTotal)}. Open approvals`}
-          className="shrink-0 rounded-full transition-transform duration-150 ease-out active:scale-[0.97] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
+          className="relative shrink-0 rounded-full transition-transform duration-150 ease-out active:scale-[0.97] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)] after:absolute after:inset-x-0 after:-inset-y-2"
         >
           <ApprovalStatusBadge
             status={shownStatus}
@@ -529,12 +530,12 @@ export function Approvals({ onClose }: { onClose?: () => void }) {
           />
         </div>
       </div>
-      <div className="flex-1 space-y-1 overflow-y-auto p-3">
+      <div className="flex-1 space-y-1 overflow-y-auto px-4 py-3">
         {approvals.isLoading ? (
-          <p className="px-1 text-xs text-[var(--color-fg-muted)]">Loading…</p>
+          <p className="px-2 text-xs text-[var(--color-fg-muted)]">Loading…</p>
         ) : items.length === 0 ? (
           isOwner ? (
-            <p className="px-1 text-xs text-[var(--color-fg-muted)]">
+            <p className="px-2 text-xs text-[var(--color-fg-muted)]">
               Add someone who has not worked on this document to request a review.
             </p>
           ) : null
@@ -552,7 +553,7 @@ export function Approvals({ onClose }: { onClose?: () => void }) {
         )}
       </div>
       <ReviewActions
-        className="border-t border-[var(--color-border)] p-3"
+        className="border-t border-[var(--color-border)] px-6 py-3"
         onNavigate={onClose}
       />
       {isOwner ? <AddApprover docId={docId} onAdded={invalidate} /> : null}
@@ -592,7 +593,7 @@ function ApproverRow({
   );
   const label = item.approver.name || item.approver.email || item.approver.id;
   return (
-    <div className="group flex items-start gap-2 rounded-md px-1.5 py-1.5 hover:bg-[var(--color-surface-muted)]">
+    <div className="group flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-[var(--color-surface-muted)]">
       <Avatar name={label} src={item.approver.picture_url} size={24} />
       <div className="min-w-0 flex-1">
         <div className="truncate text-xs font-medium">{label}</div>
@@ -649,7 +650,7 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
   const items = suggestions.data?.items || [];
   return (
     <form
-      className="border-t border-[var(--color-border)] p-3"
+      className="border-t border-[var(--color-border)] px-6 py-3"
       onSubmit={(e) => {
         e.preventDefault();
         // Send the raw address so the server resolves either a user email or a
@@ -663,13 +664,12 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
           placeholder="Add approver by email or bot address…"
           value={address}
           onChange={(e) => setAddress(e.target.value)}
-          className="h-8 text-xs"
         />
-        <Button size="sm" type="submit" disabled={!address.trim() || add.isPending}>
+        <Button type="submit" disabled={!address.trim() || add.isPending}>
           Add
         </Button>
       </div>
-      <p className="mt-1.5 text-[11px] text-[var(--color-fg-muted)]">
+      <p className="mt-1.5 text-xs text-[var(--color-fg-muted)]">
         Approvers need access to this document. Anyone who edited it, in the browser, by
         upload, or by an agent, can&apos;t approve it. This includes you.
       </p>

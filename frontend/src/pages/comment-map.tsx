@@ -4,11 +4,14 @@ import { cn } from "@/lib/cn";
 import { anchorLabel } from "@/lib/comment-pins";
 import { commentTicks } from "@/lib/comment-ticks";
 import { useClientHeight } from "@/lib/use-client-height";
+import { useCoarsePointer } from "@/lib/use-media-query";
 import { useDoc } from "./doc-context";
 
 const SNIPPET_LENGTH = 80;
-// Ticks closer than the height of one tick would stack, so they share it.
+// Ticks closer than the height of one tick's target would stack, so they
+// share it. A finger needs a 40px target.
 const TICK_PX = 16;
+const TOUCH_TICK_PX = 40;
 
 const snippet = (c: Comment) => {
   const label = anchorLabel(c);
@@ -28,6 +31,7 @@ export function CommentMap({ comments }: { comments: Comment[] }) {
     scrollDocumentTo,
   } = useDoc();
   const [stripRef, viewportHeight] = useClientHeight<HTMLDivElement>();
+  const tickPx = useCoarsePointer() ? TOUCH_TICK_PX : TICK_PX;
 
   const byId = useMemo(() => new Map(comments.map((c) => [c.id, c])), [comments]);
   const ticks = commentTicks({
@@ -40,7 +44,7 @@ export function CommentMap({ comments }: { comments: Comment[] }) {
   const groups = ticks?.reduce<{ ids: string[]; y: number; first: number }[]>(
     (out, { id, y }, index) => {
       const last = out.at(-1);
-      if (last && (y - last.y) * viewportHeight < TICK_PX) last.ids.push(id);
+      if (last && (y - last.y) * viewportHeight < tickPx) last.ids.push(id);
       else out.push({ ids: [id], y, first: index + 1 });
       return out;
     },
@@ -81,7 +85,9 @@ export function CommentMap({ comments }: { comments: Comment[] }) {
             onClick={() =>
               jump(ids[(ids.indexOf(activeComment ?? "") + 1) % ids.length])
             }
-            className="pointer-events-auto group absolute inset-x-0 h-4 -translate-y-1/2 focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
+            // On a touch screen, the pseudo-element makes a 40px target that
+            // reaches over the edge of the document.
+            className="pointer-events-auto group absolute inset-x-0 h-4 -translate-y-1/2 focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] pointer-coarse:after:absolute pointer-coarse:after:-inset-y-3 pointer-coarse:after:right-0 pointer-coarse:after:-left-7"
             style={{ top: `${y * 100}%` }}
           >
             <span

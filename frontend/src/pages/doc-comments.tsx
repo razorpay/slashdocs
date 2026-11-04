@@ -48,6 +48,9 @@ function Quote({ text }: { text: string }) {
   );
 }
 
+// A small header action, which grows to a 40px target on a touch screen.
+const HEADER_ACTION = "h-7 w-7 pointer-coarse:h-10 pointer-coarse:w-10";
+
 function CloseButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <Button
@@ -56,7 +59,7 @@ function CloseButton({ label, onClick }: { label: string; onClick: () => void })
       size="icon"
       onClick={onClick}
       aria-label={label}
-      className="-my-1 h-7 w-7 shrink-0 text-[var(--color-fg-muted)]"
+      className={cn("-my-1 shrink-0 text-[var(--color-fg-muted)]", HEADER_ACTION)}
     >
       <X className="h-4 w-4" />
     </Button>
@@ -194,9 +197,9 @@ export function CommentThread({ c, onClose }: { c: Comment; onClose: () => void 
             ) : null}
             <span className="-my-1 ml-auto flex shrink-0 items-center">
               {!signIn ? (
-                <ResolveButton c={c} docId={docId} className="h-7 w-7" />
+                <ResolveButton c={c} docId={docId} className={HEADER_ACTION} />
               ) : null}
-              <MoreMenu c={c} docId={docId} thread className="h-7 w-7" />
+              <MoreMenu c={c} docId={docId} thread className={HEADER_ACTION} />
               <CloseButton label="Close comment" onClick={onClose} />
             </span>
           </>
