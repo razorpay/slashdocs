@@ -230,6 +230,23 @@ func TestOutlineRequiresFolderEditor(t *testing.T) {
 	stranger := principalHeader(fixtureStranger)
 	rr = do(t, f.e.h, http.MethodGet, "/v1/folders/"+f.folderID+"/book", "", bkHeaders(stranger))
 	assertStatus(t, rr, http.StatusForbidden)
+
+	// The editor routes answer a caller with no role on the folder as if the
+	// book did not exist, so they cannot confirm a book id.
+	for _, r := range []struct{ method, path, body string }{
+		{http.MethodGet, "/outline", ""},
+		{http.MethodPut, "/outline", `{"base_version_id":"` + f.outlineVersion + `","outline":{"title":"T"}}`},
+		{http.MethodGet, "/outline/versions", ""},
+		{http.MethodGet, "/status", ""},
+		{http.MethodDelete, "", ""},
+	} {
+		rr = do(t, f.e.h, r.method, "/v1/books/"+f.bookID+r.path, r.body, bkHeaders(stranger))
+		assertStatus(t, rr, http.StatusNotFound)
+		missing := do(t, f.e.h, r.method, "/v1/books/book_missing"+r.path, r.body, bkHeaders(stranger))
+		if missing.Body.String() != rr.Body.String() {
+			t.Fatalf("%s %s: an existing book answers %s, a missing one %s", r.method, r.path, rr.Body.String(), missing.Body.String())
+		}
+	}
 }
 
 func TestMissingBookIsNotFound(t *testing.T) {

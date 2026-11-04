@@ -410,6 +410,24 @@ const docTemplate = `{
                 "responses": {
                     "204": {
                         "description": "No Content"
+                    },
+                    "403": {
+                        "description": "folder viewer without the editor role",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "missing book, or no role on its folder",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "503": {
+                        "description": "group_membership_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
                     }
                 }
             }
@@ -818,6 +836,24 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/server.outlineResponse"
                         }
+                    },
+                    "403": {
+                        "description": "folder viewer without the editor role",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "missing book, or no role on its folder",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "503": {
+                        "description": "group_membership_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
                     }
                 }
             },
@@ -863,14 +899,50 @@ const docTemplate = `{
                             "$ref": "#/definitions/server.putOutlineResponse"
                         }
                     },
+                    "400": {
+                        "description": "bad_request",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "403": {
+                        "description": "folder viewer without the editor role",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "missing book, or no role on its folder",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
                     "409": {
                         "description": "outline_conflict",
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
                     },
+                    "413": {
+                        "description": "payload_too_large",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "415": {
+                        "description": "Unsupported Media Type",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
                     "422": {
                         "description": "invalid_outline",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "503": {
+                        "description": "group_membership_unavailable",
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
@@ -906,6 +978,24 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/server.listResponse-server_outlineVersionResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "folder viewer without the editor role",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "missing book, or no role on its folder",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "503": {
+                        "description": "group_membership_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
                         }
                     }
                 }
@@ -1172,6 +1262,24 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/server.bookStatusResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "folder viewer without the editor role",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "missing book, or no role on its folder",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "503": {
+                        "description": "group_membership_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
                         }
                     }
                 }
@@ -2317,6 +2425,12 @@ const docTemplate = `{
                         "description": "Created",
                         "schema": {
                             "$ref": "#/definitions/server.createBookResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
                         }
                     },
                     "409": {

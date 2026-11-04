@@ -24,21 +24,32 @@ func (h handlers) booksOn(c *gin.Context) bool {
 }
 
 // loadBook reads the book named in the path and checks the caller's role on
-// its folder. A missing book is 404.
+// its folder. A missing book, and one whose folder the caller cannot view,
+// are both 404, so that the answer never confirms a book id. Only a folder
+// viewer or commenter who needs more is told 403.
 func (h handlers) loadBook(c *gin.Context, need repo.Role) (repo.Book, bool) {
-	b, err := h.deps.repository.GetBook(c.Request.Context(), c.Param("id"))
+	ctx := c.Request.Context()
+	b, err := h.deps.repository.GetBook(ctx, c.Param("id"))
 	if err != nil {
-		if errors.Is(err, repo.ErrNotFound) {
-			notFound(c)
-			return repo.Book{}, false
-		}
+		lookupFailed(c, err)
+		return repo.Book{}, false
+	}
+	role, err := h.deps.repository.RoleForFolder(ctx, *current(c), b.FolderID)
+	if err != nil {
 		internalErr(c, err)
 		return repo.Book{}, false
 	}
-	if !h.needFolderRole(c, b.FolderID, need) {
-		return repo.Book{}, false
+	switch {
+	case atLeast(role, need):
+		return b, true
+	case groupMembershipUnavailable(current(c)):
+		groupMembershipUnavailableResponse(c)
+	case atLeast(role, repo.RoleViewer):
+		forbidden(c, string(need)+" role required")
+	default:
+		notFound(c)
 	}
-	return b, true
+	return repo.Book{}, false
 }
 
 // bookDoc names a document that the outline does not place.
@@ -180,6 +191,7 @@ func normalizeOutline(o books.Outline) books.Outline {
 // @Security cookieAuth
 // @Param id path string true "Folder ID"
 // @Success 201 {object} createBookResponse
+// @Failure 403 {object} errorEnvelope
 // @Failure 409 {object} errorEnvelope "book_exists"
 // @Router /v1/folders/{id}/book [post]
 func (h handlers) createBook(c *gin.Context) {
@@ -274,6 +286,9 @@ func (h handlers) folderBook(c *gin.Context) {
 // @Security cookieAuth
 // @Param id path string true "Book ID"
 // @Success 204
+// @Failure 403 {object} errorEnvelope "folder viewer without the editor role"
+// @Failure 404 {object} errorEnvelope "missing book, or no role on its folder"
+// @Failure 503 {object} errorEnvelope "group_membership_unavailable"
 // @Router /v1/books/{id} [delete]
 func (h handlers) deleteBook(c *gin.Context) {
 	if !h.booksOn(c) {
@@ -301,6 +316,9 @@ func (h handlers) deleteBook(c *gin.Context) {
 // @Security cookieAuth
 // @Param id path string true "Book ID"
 // @Success 200 {object} outlineResponse
+// @Failure 403 {object} errorEnvelope "folder viewer without the editor role"
+// @Failure 404 {object} errorEnvelope "missing book, or no role on its folder"
+// @Failure 503 {object} errorEnvelope "group_membership_unavailable"
 // @Router /v1/books/{id}/outline [get]
 func (h handlers) getOutline(c *gin.Context) {
 	if !h.booksOn(c) {
@@ -339,8 +357,14 @@ func (h handlers) getOutline(c *gin.Context) {
 // @Param id path string true "Book ID"
 // @Param body body putOutlineRequest true "Outline"
 // @Success 200 {object} putOutlineResponse
+// @Failure 400 {object} errorEnvelope "bad_request"
+// @Failure 403 {object} errorEnvelope "folder viewer without the editor role"
+// @Failure 404 {object} errorEnvelope "missing book, or no role on its folder"
 // @Failure 409 {object} errorEnvelope "outline_conflict"
 // @Failure 422 {object} errorEnvelope "invalid_outline"
+// @Failure 413 {object} errorEnvelope "payload_too_large"
+// @Failure 415 {object} errorEnvelope
+// @Failure 503 {object} errorEnvelope "group_membership_unavailable"
 // @Router /v1/books/{id}/outline [put]
 func (h handlers) putOutline(c *gin.Context) {
 	if !h.booksOn(c) {
@@ -405,6 +429,9 @@ func (h handlers) putOutline(c *gin.Context) {
 // @Security cookieAuth
 // @Param id path string true "Book ID"
 // @Success 200 {object} listResponse[outlineVersionResponse]
+// @Failure 403 {object} errorEnvelope "folder viewer without the editor role"
+// @Failure 404 {object} errorEnvelope "missing book, or no role on its folder"
+// @Failure 503 {object} errorEnvelope "group_membership_unavailable"
 // @Router /v1/books/{id}/outline/versions [get]
 func (h handlers) listOutlineVersions(c *gin.Context) {
 	if !h.booksOn(c) {
@@ -433,6 +460,9 @@ func (h handlers) listOutlineVersions(c *gin.Context) {
 // @Security cookieAuth
 // @Param id path string true "Book ID"
 // @Success 200 {object} bookStatusResponse
+// @Failure 403 {object} errorEnvelope "folder viewer without the editor role"
+// @Failure 404 {object} errorEnvelope "missing book, or no role on its folder"
+// @Failure 503 {object} errorEnvelope "group_membership_unavailable"
 // @Router /v1/books/{id}/status [get]
 func (h handlers) bookStatus(c *gin.Context) {
 	if !h.booksOn(c) {
