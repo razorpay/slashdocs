@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "./tooltip";
@@ -29,5 +29,36 @@ describe("CodeBlock", () => {
       vi.advanceTimersByTime(1500);
     });
     expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
+  });
+
+  it("fades only the sides that hide text, as the command scrolls", () => {
+    render(
+      <CodeBlock copy={false}>
+        curl -fsSL https://docs.example.com/install.sh | sh
+      </CodeBlock>,
+    );
+    const pre = screen.getByText(/install\.sh/);
+    const scrollTo = (scrollLeft: number, scrollWidth = 399) => {
+      Object.assign(pre, { scrollLeft });
+      Object.defineProperties(pre, {
+        scrollWidth: { value: scrollWidth, configurable: true },
+        clientWidth: { value: 274, configurable: true },
+      });
+      fireEvent.scroll(pre);
+    };
+
+    expect(pre.style.maskImage).toBe("");
+    scrollTo(0);
+    expect(pre.style.maskImage).toMatch(
+      /^linear-gradient\(to right, black, black calc/,
+    );
+    scrollTo(60);
+    expect(pre.style.maskImage).toMatch(/transparent, black 1\.5rem, black calc/);
+    scrollTo(125);
+    expect(pre.style.maskImage).toBe(
+      "linear-gradient(to right, transparent, black 1.5rem, black)",
+    );
+    scrollTo(0, 274);
+    expect(pre.style.maskImage).toBe("");
   });
 });

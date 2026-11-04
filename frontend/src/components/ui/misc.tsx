@@ -57,6 +57,36 @@ export function useCopy<T extends HTMLElement>() {
   return { copied, copy, ref };
 }
 
+// The fade at each side of a sideways scroller that hides more text. The
+// end fades out under the Copy button.
+const FADE_START = "transparent, black 1.5rem";
+const FADE_END = "black calc(100% - 3.5rem), transparent calc(100% - 2.25rem)";
+
+// useScrollFade gives the mask that fades the sides of el that hide text, as
+// it scrolls and resizes, and none when the text fits.
+function useScrollFade(el: React.RefObject<HTMLElement | null>, content: string) {
+  const [mask, setMask] = React.useState<string>();
+  React.useLayoutEffect(() => {
+    const node = el.current;
+    if (!node) return;
+    const update = () => {
+      const start = node.scrollLeft > 0;
+      const end = node.scrollLeft + node.clientWidth < node.scrollWidth - 1;
+      const sides = `${start ? FADE_START : "black"}, ${end ? FADE_END : "black"}`;
+      setMask(start || end ? `linear-gradient(to right, ${sides})` : undefined);
+    };
+    update();
+    node.addEventListener("scroll", update, { passive: true });
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    return () => {
+      node.removeEventListener("scroll", update);
+      observer.disconnect();
+    };
+  }, [el, content]);
+  return mask;
+}
+
 export function CodeBlock({
   children,
   copy = true,
@@ -70,6 +100,7 @@ export function CodeBlock({
   className?: string;
 }) {
   const { copied, copy: copyText, ref: pre } = useCopy<HTMLPreElement>();
+  const mask = useScrollFade(pre, children);
   return (
     <div
       className={cn(
@@ -77,14 +108,13 @@ export function CodeBlock({
         className,
       )}
     >
-      {/* A long command scrolls with no scrollbar, and fades out under Copy. */}
+      {/* A long command scrolls with no scrollbar, and fades where it hides text. */}
       <pre
         ref={pre}
+        style={{ maskImage: mask }}
         className={cn(
           "p-3 pr-10 leading-relaxed text-[var(--color-fg)]",
-          wrap
-            ? "whitespace-pre-wrap"
-            : "overflow-x-auto [mask-image:linear-gradient(to_left,transparent_2.25rem,black_3.5rem)] [scrollbar-width:none]",
+          wrap ? "whitespace-pre-wrap" : "overflow-x-auto [scrollbar-width:none]",
         )}
       >
         {children}
