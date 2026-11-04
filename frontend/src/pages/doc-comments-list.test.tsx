@@ -146,7 +146,7 @@ it("shows a mention as a chip, as the thread does", () => {
     comments: [
       thread("open", "open", {
         body: "Thread @Reader please",
-        mentions: [{ principal: reader, offset: 7, length: 7 }],
+        mentions: [{ principal: { type: "user", id: "u2" }, offset: 7, length: 7 }],
       }),
     ],
   });
