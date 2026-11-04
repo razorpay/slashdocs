@@ -318,6 +318,9 @@ test("holding j scrolls faster than tapping it and stops on release", async ({
     await page.keyboard.down("j");
   }
   await page.keyboard.up("j");
+  // The key up reaches the document a frame or so later, through the frames
+  // between.
+  await page.waitForTimeout(100);
   const held = await scrollY();
   expect(held).toBeGreaterThan(1000);
   await page.waitForTimeout(300);
