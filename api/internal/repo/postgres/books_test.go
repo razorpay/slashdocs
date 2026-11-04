@@ -782,3 +782,58 @@ func TestPublishInBookIndexes(t *testing.T) {
 		t.Fatalf("ListVersionSections = %+v, %v; want X and Y", secs, err)
 	}
 }
+
+// With book mode off (SLASHDOCS_BOOKS_ENABLED=false), the store indexes no
+// sections: not on publish, not on a placeholder fill or CreateBook, and
+// not in the backfill. The outline itself is still kept up to date.
+func TestSectionIndexingOffIndexesNothing(t *testing.T) {
+	s := newStore(t)
+	s.SetSectionIndexingEnabled(false)
+	ctx := context.Background()
+	owner, f, b := bookFixture(t, s, planned("Inference Internals"))
+	doc, v1, err := s.CreateDocument(ctx, owner, "01 · Inference Internals", []byte(`<h2>K</h2><p>x y</p>`))
+	if err != nil {
+		t.Fatalf("CreateDocument: %v", err)
+	}
+	if _, err := s.MoveDocumentToFolder(ctx, owner, f.ID, doc.ID); err != nil {
+		t.Fatalf("MoveDocumentToFolder: %v", err)
+	}
+	if got := mustGetBook(t, s, b.ID); got.Outline.Parts[0].Chapters[0].Doc != doc.ID {
+		t.Fatalf("the placeholder was not filled: %+v", got.Outline)
+	}
+	v2, err := s.CreateVersion(ctx, doc.ID, v1.ID, "in book", []byte(`<h2>K</h2><p>x y z</p>`), owner)
+	if err != nil {
+		t.Fatalf("CreateVersion: %v", err)
+	}
+	other, err := s.CreateFolder(ctx, owner, "Second book", "")
+	if err != nil {
+		t.Fatalf("CreateFolder: %v", err)
+	}
+	placed, pv, err := s.CreateDocument(ctx, owner, "01 · Placed", []byte(`<h2>A</h2><p>a</p>`))
+	if err != nil {
+		t.Fatalf("CreateDocument: %v", err)
+	}
+	if _, err := s.MoveDocumentToFolder(ctx, owner, other.ID, placed.ID); err != nil {
+		t.Fatalf("MoveDocumentToFolder: %v", err)
+	}
+	if _, err := s.CreateBook(ctx, other.ID, books.Outline{Title: "B", Parts: []books.Part{{Chapters: []books.Entry{{Doc: placed.ID}}}}}, owner); err != nil {
+		t.Fatalf("CreateBook: %v", err)
+	}
+	if n, err := s.IndexVersionSections(ctx); err != nil || n != 0 {
+		t.Fatalf("IndexVersionSections = %d, %v; want 0", n, err)
+	}
+	for _, id := range []string{v1.ID, v2.ID, pv.ID} {
+		if sectionsIndexed(t, s, id) {
+			t.Fatalf("version %s was indexed with section indexing off", id)
+		}
+	}
+	if n := countRows(t, s, `SELECT count(*) FROM version_sections`); n != 0 {
+		t.Fatalf("version_sections rows = %d, want 0", n)
+	}
+
+	// Turned back on, the backfill catches up.
+	s.SetSectionIndexingEnabled(true)
+	if n, err := s.IndexVersionSections(ctx); err != nil || n != 3 {
+		t.Fatalf("IndexVersionSections after enabling = %d, %v; want 3", n, err)
+	}
+}

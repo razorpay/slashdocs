@@ -27,9 +27,12 @@ const htmlContentType = "text/html; charset=utf-8"
 
 type Store struct {
 	notificationsEnabled bool
-	db                   *pgxpool.Pool
-	q                    *dbsqlc.Queries
-	blobs                blob.Store
+	// sectionIndexingOff stops the store indexing chapter sections, for a
+	// server with book mode off. The zero value indexes.
+	sectionIndexingOff bool
+	db                 *pgxpool.Pool
+	q                  *dbsqlc.Queries
+	blobs              blob.Store
 }
 
 // rollback closes a transaction on every early-return path. pgx returns
