@@ -236,7 +236,7 @@ func TestBridgeImplementsDocumentKVUndoRedoContract(t *testing.T) {
 		"kvRedoStack",
 		"kvInversePatch",
 		"handleKVUndoRedoShortcut",
-		"isTextEditingTarget",
+		"isEditableTarget",
 		"ev.ctrlKey",
 		"ev.metaKey",
 		"ev.shiftKey",
