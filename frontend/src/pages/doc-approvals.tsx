@@ -55,24 +55,39 @@ function badgeAria(status: ApprovalStatus, approved?: number, total?: number) {
 }
 
 // ApprovalStatusBadge is the compact aggregate-status chip. Hidden entirely
-// when the document has no assigned approvers.
+// when the document has no assigned approvers. A narrow badge shows only the
+// icon and the count below the sm breakpoint, so the title keeps its space.
 export function ApprovalStatusBadge({
   status,
   approved,
   total,
+  narrow = false,
   className = "",
 }: {
   status?: ApprovalStatus;
   approved?: number;
   total?: number;
+  narrow?: boolean;
   className?: string;
 }) {
   if (!status) return null;
   const { Icon, variant } = STATUS_BADGE[status];
+  const text = badgeText(status, approved, total);
   return (
     <Badge variant={variant} className={`shrink-0 gap-1 ${className}`}>
       <Icon className="h-3 w-3" aria-hidden="true" />
-      {badgeText(status, approved, total)}
+      {narrow ? (
+        <>
+          {total ? (
+            <span className="tabular-nums sm:hidden">
+              {approved ?? 0}/{total}
+            </span>
+          ) : null}
+          <span className="hidden sm:inline">{text}</span>
+        </>
+      ) : (
+        text
+      )}
     </Badge>
   );
 }
@@ -153,6 +168,7 @@ export function ApprovalsDialog({
             status={shownStatus}
             approved={shownApproved}
             total={shownTotal}
+            narrow
             className="cursor-pointer hover:opacity-90"
           />
         </button>
@@ -168,8 +184,9 @@ function ApprovalsDialogBody({ onClose }: { onClose: () => void }) {
       className="max-w-lg overflow-hidden p-0"
       aria-describedby={undefined}
     >
-      <DialogHeader className="mb-0 border-b border-[var(--color-border)] px-5 py-4">
-        <DialogTitle className="text-sm font-semibold">Approvals</DialogTitle>
+      {/* The content has no padding, so the lists run edge to edge. */}
+      <DialogHeader className="px-6 pt-6">
+        <DialogTitle>Approvals</DialogTitle>
       </DialogHeader>
       <Approvals onClose={onClose} />
     </DialogContent>
@@ -406,8 +423,8 @@ function RejectDialog({
         className="max-w-lg overflow-hidden p-0"
         aria-describedby={undefined}
       >
-        <DialogHeader className="mb-0 border-b border-[var(--color-border)] px-5 py-4">
-          <DialogTitle className="text-sm font-semibold">Reject</DialogTitle>
+        <DialogHeader className="px-6 pt-6">
+          <DialogTitle>Reject</DialogTitle>
         </DialogHeader>
         <form
           onSubmit={(e) => {
@@ -496,7 +513,7 @@ export function Approvals({ onClose }: { onClose?: () => void }) {
 
   return (
     <div className="flex max-h-[70vh] flex-col">
-      <div className="border-b border-[var(--color-border)] px-5 py-3">
+      <div className="border-b border-[var(--color-border)] px-6 pb-3">
         <div className="flex items-center justify-between gap-2">
           <p className="text-xs text-[var(--color-fg-muted)]">
             {!summary?.total
