@@ -23,8 +23,10 @@ import { errorMessage } from "@/lib/errors";
 import { queryKeys } from "@/lib/queryKeys";
 import { principalColor, principalLabel, samePrincipal } from "@/lib/principals";
 import { COMMENT_STATUS } from "@/lib/constants";
+import { isAgentRequest } from "@/lib/agent-request";
 import { emptyMentionDraft, type MentionDraft } from "@/lib/comment-mentions";
 import { RelativeTime } from "@/components/ui/relative-time";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar } from "@/components/ui/misc";
 import {
@@ -207,6 +209,7 @@ export function Message({
             <RelativeTime iso={c.created_at} />
           </span>
         ) : null}
+        <AgentRequestBadge body={c.body} />
         {/* The thread's own actions sit in its header; a reply's on hover. */}
         {actions}
         {!thread ? (
@@ -233,6 +236,15 @@ export function Message({
       </div>
     </div>
   );
+}
+
+// AgentRequestBadge marks a comment that asks an agent to change words.
+export function AgentRequestBadge({ body }: { body: string }) {
+  return isAgentRequest(body) ? (
+    <Badge variant="accent" className="shrink-0">
+      Agent request
+    </Badge>
+  ) : null;
 }
 
 // EditableBody is a message's text, or, while its author edits it, a field

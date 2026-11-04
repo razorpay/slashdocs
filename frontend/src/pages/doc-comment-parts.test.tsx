@@ -5,7 +5,7 @@ import { useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { api, type Comment } from "@/api";
 import { emptyMentionDraft, type MentionDraft } from "@/lib/comment-mentions";
-import { ComposeField, ReplyRow } from "./doc-comment-parts";
+import { AgentRequestBadge, ComposeField, ReplyRow } from "./doc-comment-parts";
 import { DocProvider, type DocContextValue } from "./doc-context";
 
 afterEach(cleanup);
@@ -29,6 +29,14 @@ function Field({
     />
   );
 }
+
+it("marks a comment that asks an agent to change words", () => {
+  render(<AgentRequestBadge body="Please change “3 open” to: 4 open" />);
+  expect(screen.getByText("Agent request")).toBeVisible();
+  cleanup();
+  const { container } = render(<AgentRequestBadge body="Looks good" />);
+  expect(container).toBeEmptyDOMElement();
+});
 
 it("sends on Enter, and Shift+Enter starts a new line instead", async () => {
   const user = userEvent.setup();
