@@ -76,7 +76,7 @@ it("saves the edits as replacements on the loaded version", async () => {
   expect(edit).toHaveBeenCalledWith("doc_1", {
     base_version_id: "ver_1",
     client_change_id: expect.stringMatching(/^[0-9a-f-]{36}$/),
-    replacements: [{ start: 23, end: 23, old_html: "", new_html: " now" }],
+    replacements: [{ start: 21, end: 24, old_html: "it.", new_html: "it now." }],
   });
   expect(onSaved).toHaveBeenCalledWith("ver_2", true);
   expect(setState).toHaveBeenLastCalledWith("saved");
@@ -100,7 +100,7 @@ it("saves each pause on top of the last save", async () => {
     "<p>Try it.</p><p>Try it now!</p>",
   );
   expect(next.replacements).toEqual([
-    { start: 27, end: 28, old_html: ".", new_html: "!" },
+    { start: 24, end: 28, old_html: "now.", new_html: "now!" },
   ]);
   // The loaded version is read and parsed once.
   expect(api.getVersionHTML).toHaveBeenCalledTimes(1);
@@ -215,7 +215,7 @@ it("shows the latest version when the frame no longer matches its source", async
 describe("script text", () => {
   const SCRIPT = `<p></p><p></p><script>for (const p of document.querySelectorAll("p")) p.textContent = "Try it.";</script>`;
   const change = { locator: { at: 0, path: [] }, before: "Try it.", after: "Run it." };
-  const literalAt = SCRIPT.indexOf(`"Try it."`) + 1;
+  const literalAt = SCRIPT.indexOf(`"Try it."`);
 
   // A probe that runs the script above: the paragraphs show its string.
   const render =
@@ -252,7 +252,7 @@ describe("script text", () => {
       base_version_id: "ver_1",
       client_change_id: expect.any(String),
       replacements: [
-        { start: literalAt, end: literalAt + 3, old_html: "Try", new_html: "Run" },
+        { start: literalAt, end: literalAt + 4, old_html: '"Try', new_html: '"Run' },
       ],
     });
     expect(reload).toHaveBeenCalledTimes(1);
@@ -267,7 +267,7 @@ describe("script text", () => {
       base_version_id: "ver_2",
       client_change_id: expect.any(String),
       replacements: [
-        { start: literalAt, end: literalAt + 3, old_html: "Run", new_html: "Try" },
+        { start: literalAt, end: literalAt + 4, old_html: '"Run', new_html: '"Try' },
       ],
     });
     expect(onSaved).toHaveBeenLastCalledWith("ver_3", false);

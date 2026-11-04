@@ -355,8 +355,9 @@ const describe = (element: P.Element) =>
 const refName = (ref: ChildRef) => `child ${ref.index} of ${ref.parent}`;
 
 // replacementsBetween gives the replacements that turn prev into next, at
-// UTF-8 byte offsets of prev: one from the first to the last character that
-// differs.
+// UTF-8 byte offsets of prev: one from the first to the last word that
+// differs. Whole words read better in the version history than parts of
+// them, and they never split a surrogate pair.
 export function replacementsBetween(prev: string, next: string): Replacement[] {
   if (prev === next) return [];
   const shorter = Math.min(prev.length, next.length);
@@ -364,9 +365,8 @@ export function replacementsBetween(prev: string, next: string): Replacement[] {
   while (head < shorter && prev[head] === next[head]) head++;
   let tail = 0;
   while (tail < shorter - head && prev.at(-1 - tail) === next.at(-1 - tail)) tail++;
-  // Keep each surrogate pair whole, so that both sides are valid UTF-16.
-  if (head > 0 && isHighSurrogate(prev.charCodeAt(head - 1))) head--;
-  if (tail > 0 && isLowSurrogate(prev.charCodeAt(prev.length - tail))) tail--;
+  while (head > 0 && WORD.test(prev[head - 1])) head--;
+  while (tail > 0 && WORD.test(prev[prev.length - tail])) tail--;
   const old_html = prev.slice(head, prev.length - tail);
   const start = utf8Length(prev.slice(0, head));
   return [
@@ -381,8 +381,8 @@ export function replacementsBetween(prev: string, next: string): Replacement[] {
 
 const encoder = new TextEncoder();
 const utf8Length = (text: string) => encoder.encode(text).length;
-const isHighSurrogate = (code: number) => code >= 0xd800 && code <= 0xdbff;
-const isLowSurrogate = (code: number) => code >= 0xdc00 && code <= 0xdfff;
+// A character of a word: not white space and not the edge of a tag.
+const WORD = /[^\s<>]/;
 
 // tagSource gives the source with SOURCE_ATTR on every start tag, right
 // after the tag name, as the server renders it. offsetOf maps the offset of

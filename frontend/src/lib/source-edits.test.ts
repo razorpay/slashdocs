@@ -190,6 +190,12 @@ describe("replacementsBetween", () => {
     ]);
   });
 
+  test("takes whole words, for the version history", () => {
+    expect(
+      replacementsBetween("<p>retry twice now</p>", "<p>retry three times now</p>"),
+    ).toEqual([{ start: 9, end: 14, old_html: "twice", new_html: "three times" }]);
+  });
+
   test("keeps a surrogate pair whole", () => {
     expect(replacementsBetween("<p>😀</p>", "<p>😃</p>")).toEqual([
       { start: 3, end: 7, old_html: "😀", new_html: "😃" },
