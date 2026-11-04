@@ -70,9 +70,9 @@ test("uploads HTML in the UI and renders it only on the render origin", async ({
   const title = uniqueName("Browser upload");
   await page.goto("/app/documents");
   await page.getByRole("button", { name: "More", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Upload HTML (backup)" }).click();
+  await page.getByRole("menuitem", { name: "Upload an HTML file" }).click();
 
-  const dialog = page.getByRole("dialog", { name: "Upload HTML (backup)" });
+  const dialog = page.getByRole("dialog", { name: "Upload an HTML file" });
   await expect(dialog).toBeVisible();
   // The menu must be gone and the dialog must survive the window losing focus,
   // which is what opening the OS file picker does. A dialog rendered inside
@@ -80,7 +80,7 @@ test("uploads HTML in the UI and renders it only on the render origin", async ({
   await expect(page.getByRole("menu")).toHaveCount(0);
   await page.evaluate(() => window.dispatchEvent(new Event("blur")));
   await expect(dialog).toBeVisible();
-  await dialog.getByPlaceholder("Title").fill(title);
+  await dialog.getByLabel("Title").fill(title);
   await expect(dialog.getByRole("button", { name: "Choose HTML file" })).toBeVisible();
   await dialog.locator('input[type="file"]').setInputFiles({
     name: "browser-upload.html",
