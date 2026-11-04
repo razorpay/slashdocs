@@ -156,10 +156,12 @@ function BookReader({
     [href, docId],
   );
   const latest = link.properties?.versionId ?? "";
+  // The chapter whose frame has reported a viewport: reading has started.
+  const [readingDoc, setReadingDoc] = useState("");
   const current = useHeldVersion({
     docId,
     latest,
-    reading: true,
+    reading: readingDoc === docId,
     beforeView: () => {
       versionRestore.current = here().target;
       // The saved place wins over a heading the link named.
@@ -188,11 +190,12 @@ function BookReader({
     (v: ReaderViewport) => {
       saveViewport(v);
       lastView.current = v;
+      setReadingDoc(docId);
       setSection(v.section);
       // A chapter that fits on screen is visible to its end.
       setAtEnd(!!v.fits || v.progression >= END_PROGRESSION);
     },
-    [saveViewport],
+    [saveViewport, docId],
   );
 
   // restorePosition lives in the document context, below this component.

@@ -6,7 +6,12 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 import { api } from "@/api";
-import { booksApi, type ChapterChanges, type ReadingPosition } from "@/lib/books";
+import {
+  booksApi,
+  type ChapterChanges,
+  type Manifest,
+  type ReadingPosition,
+} from "@/lib/books";
 import { deviceIdStore, readerSettingsStore } from "@/lib/reader-store";
 import { DocProvider, type DocContextValue } from "./doc-context";
 import type { DocWorkspace } from "./doc-workspace";
@@ -76,11 +81,15 @@ function renderReader(
   url = "/app/b/b1/c/doc_2",
   state = bookState(),
   changes = NO_CHANGES,
+  cached?: Manifest,
 ) {
   vi.spyOn(api, "me").mockResolvedValue({
     principal: { type: "user", id: "usr_1", email: "a@example.com" },
   });
-  vi.spyOn(booksApi, "manifest").mockResolvedValue(bookManifest());
+  // A test may mock the manifest first.
+  if (!vi.isMockFunction(booksApi.manifest)) {
+    vi.spyOn(booksApi, "manifest").mockResolvedValue(bookManifest());
+  }
   vi.spyOn(booksApi, "state").mockResolvedValue(state);
   vi.spyOn(booksApi, "changes").mockResolvedValue(changes);
   vi.spyOn(booksApi, "headings").mockResolvedValue({
@@ -95,6 +104,7 @@ function renderReader(
   vi.spyOn(booksApi, "savePosition").mockResolvedValue(undefined);
   vi.spyOn(booksApi, "progress").mockResolvedValue(undefined);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  if (cached) client.setQueryData(["book", "b1"], cached);
   render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[url]}>
@@ -432,6 +442,8 @@ describe("BookReader", () => {
     const { client } = renderReader();
     const workspace = await screen.findByTestId("workspace");
     expect(workspace).toHaveAttribute("data-version", "ver_2");
+    // The reader has started reading.
+    act(() => reader().onViewport!({ section: "intro", progression: 0.1 }));
     const newer = bookManifest();
     newer.readingOrder[1].properties!.versionId = "ver_2b";
     vi.mocked(booksApi.manifest).mockResolvedValue(newer);
@@ -444,6 +456,21 @@ describe("BookReader", () => {
     );
     expect(screen.getByTestId("workspace")).toHaveAttribute("data-version", "ver_2");
     expect(h.last!.version).toBe("ver_2");
+  });
+
+  it("opens the newest version when the cached manifest is stale", async () => {
+    const info = vi.spyOn(toast, "info");
+    const newer = bookManifest();
+    newer.readingOrder[1].properties!.versionId = "ver_2b";
+    vi.spyOn(booksApi, "manifest").mockResolvedValue(newer);
+    renderReader("/app/b/b1/c/doc_2", bookState(), NO_CHANGES, bookManifest());
+    await waitFor(() =>
+      expect(screen.getByTestId("workspace")).toHaveAttribute("data-version", "ver_2b"),
+    );
+    expect(info).not.toHaveBeenCalledWith(
+      "A new version of this chapter is available.",
+      expect.anything(),
+    );
   });
 
   it("View moves to the new version and keeps the reader's place", async () => {
