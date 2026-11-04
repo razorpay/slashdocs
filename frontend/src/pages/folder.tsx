@@ -401,6 +401,7 @@ export function FolderPage() {
               }}
             >
               <Input
+                aria-label="Folder name"
                 value={renameTitle}
                 onChange={(e) => setRenameTitle(e.target.value)}
                 autoFocus

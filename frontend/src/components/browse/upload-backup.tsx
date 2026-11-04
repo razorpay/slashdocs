@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Field, Input } from "@/components/ui/input";
 import { DropdownItem } from "@/components/ui/dropdown";
 import {
   Dialog,
@@ -89,16 +89,13 @@ export function UploadBackupDialog({
             if (file) m.mutate();
           }}
         >
-          <label className="block space-y-1">
-            <span className="block text-xs font-medium text-[var(--color-fg-muted)]">
-              Title
-            </span>
+          <Field label="Title">
             <Input
               placeholder={file?.name || "Untitled"}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
             />
-          </label>
+          </Field>
           <HtmlFileInput file={file} onFile={pick} />
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>

@@ -31,14 +31,44 @@ export const Textarea = React.forwardRef<
 ));
 Textarea.displayName = "Textarea";
 
-export const Label = React.forwardRef<
-  HTMLLabelElement,
-  React.LabelHTMLAttributes<HTMLLabelElement>
->(({ className, ...props }, ref) => (
-  <label
-    ref={ref}
-    className={cn("text-xs font-medium text-[var(--color-fg-muted)]", className)}
-    {...props}
-  />
-));
-Label.displayName = "Label";
+// Field names a control with a label above it, and ties its hint and its
+// error to it, so that a screen reader reads them with the control.
+export function Field({
+  label,
+  hint,
+  error,
+  children,
+}: {
+  label: React.ReactNode;
+  hint?: React.ReactNode;
+  error?: React.ReactNode;
+  children: React.ReactElement<React.InputHTMLAttributes<HTMLInputElement>>;
+}) {
+  const id = React.useId();
+  const described = [hint && `${id}-hint`, error && `${id}-error`].filter(Boolean);
+  return (
+    <div className="space-y-1">
+      <label
+        htmlFor={id}
+        className="block text-xs font-medium text-[var(--color-fg-muted)]"
+      >
+        {label}
+      </label>
+      {React.cloneElement(children, {
+        id,
+        "aria-describedby": described.join(" ") || undefined,
+        "aria-invalid": error ? true : undefined,
+      })}
+      {hint && (
+        <p id={`${id}-hint`} className="text-[11px] text-[var(--color-fg-muted)]">
+          {hint}
+        </p>
+      )}
+      {error && (
+        <p id={`${id}-error`} className="text-[11px] text-[var(--color-danger)]">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}

@@ -48,4 +48,27 @@ describe("ServiceAccountsPage", () => {
     expect(await screen.findByRole("textbox")).toHaveValue("");
     expect(screen.queryByText("sd_secret")).not.toBeInTheDocument();
   });
+
+  it("names the bot name field, and ties its hint and error to it", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, "listServiceAccounts").mockResolvedValue({ items: [] });
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <TooltipProvider>
+          <MemoryRouter>
+            <ServiceAccountsPage />
+          </MemoryRouter>
+        </TooltipProvider>
+      </QueryClientProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "New bot" }));
+    const name = screen.getByRole("textbox", { name: "Name" });
+    expect(name).toHaveAccessibleDescription(/Letters, numbers, and hyphens/);
+    expect(name).not.toBeInvalid();
+
+    await user.type(name, "n8n@ops.team");
+    expect(name).toBeInvalid();
+    expect(name).toHaveAccessibleDescription(/Addresses must end in/);
+  });
 });
