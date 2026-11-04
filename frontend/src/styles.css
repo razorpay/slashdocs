@@ -381,6 +381,26 @@
 .sheet-left[data-state="closed"] {
   animation: sheet-out-left 200ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
 }
+/* A top-anchored dialog is a sheet on a narrow screen. It rises from the
+   bottom edge. */
+@keyframes sheet-in-bottom {
+  from {
+    transform: translateY(100%);
+  }
+}
+@keyframes sheet-out-bottom {
+  to {
+    transform: translateY(100%);
+  }
+}
+@media (max-width: 767px) {
+  .dialog-sheet[data-state="open"] {
+    animation: sheet-in-bottom 300ms cubic-bezier(0.32, 0.72, 0, 1);
+  }
+  .dialog-sheet[data-state="closed"] {
+    animation: sheet-out-bottom 200ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
+  }
+}
 
 /* ── Grid card entrance stagger ─────────────────────────── */
 @keyframes card-in {
