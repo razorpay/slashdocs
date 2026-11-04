@@ -257,11 +257,11 @@ export function pinElement(d: Document, a: PinAnchor): Element | null {
 
 // One shape for pins and clusters: a 28px bubble with its tip at the bottom
 // left, a 2px white rim, a 24px face. Glyphs are centred on their cap height
-// (text-box), so initials, digits and "+" sit in the optical middle.
+// (text-box), so initials, digits and "+" sit in the optical middle. Pins sit
+// on the document, not on the app, so they keep this light frame in both app
+// themes.
 const SHADOW =
   "0 0 0 .5px rgba(0,0,0,.14),0 1px 2px rgba(0,0,0,.12),0 3px 8px rgba(0,0,0,.1)";
-const DARK_SHADOW =
-  "0 0 0 .5px rgba(255,255,255,.2),0 1px 2px rgba(0,0,0,.4),0 3px 8px rgba(0,0,0,.4)";
 const CSS = `
 .sd-pins{position:fixed;inset:0;pointer-events:none;z-index:2147483645;overflow:hidden}
 .sd-pin,.sd-cluster{all:unset;position:absolute;left:0;top:0;box-sizing:border-box;width:${PIN_SIZE}px;height:${PIN_SIZE}px;margin-top:-${PIN_SIZE}px;padding:2px;border-radius:${PIN_SIZE / 2}px ${PIN_SIZE / 2}px ${PIN_SIZE / 2}px 3px;background:#fff;box-shadow:${SHADOW};pointer-events:auto;cursor:pointer;will-change:translate;transform-origin:0 100%;transition:box-shadow 150ms ease,scale 150ms cubic-bezier(.23,1,.32,1),opacity 150ms ease}
@@ -269,18 +269,13 @@ const CSS = `
 .sd-pin>b,.sd-cluster>b{display:grid;place-items:center;width:100%;height:100%;border-radius:50%;background:var(--c,#6366f1);color:#fff;font:600 11px/1 system-ui,-apple-system,sans-serif;font-variant-numeric:tabular-nums;text-box:trim-both cap alphabetic}
 .sd-cluster>b{background:#18181b}
 .sd-cluster[data-many]>b{font-size:9.5px;letter-spacing:-.02em}
-.sd-pin[data-active]{box-shadow:0 0 0 2px #fff,0 0 0 3.5px #2563eb,0 3px 10px rgba(37,99,235,.3)}
+.sd-pin[data-active],.sd-cluster[data-active]{box-shadow:0 0 0 2px #fff,0 0 0 3.5px #2563eb,0 3px 10px rgba(37,99,235,.3)}
 .sd-pin[data-draft]>b{background:#fff;color:var(--c,#2563eb);box-shadow:inset 0 0 0 1.5px currentColor}
-[data-theme=dark] .sd-pin[data-draft]>b{background:#27272a}
 .sd-pin>i{position:absolute;right:-5px;top:-4px;display:grid;place-items:center;min-width:14px;height:14px;padding:0 3px;box-sizing:border-box;border-radius:7px;background:#ef4444;color:#fff;font:600 9px/1 system-ui,-apple-system,sans-serif;font-style:normal;font-variant-numeric:tabular-nums;text-box:trim-both cap alphabetic;box-shadow:0 0 0 1.5px #fff}
 .sd-pin[data-pressed],.sd-cluster:active{scale:.96}
 .sd-pin[data-dragging]{cursor:grabbing;scale:1.1;transition:none;box-shadow:0 0 0 2px #fff,0 0 0 3.5px #2563eb,0 10px 22px rgba(0,0,0,.22)}
 @media (hover:hover) and (pointer:fine){.sd-pin:not([data-pressed]):not([data-dragging]):hover,.sd-cluster:hover{scale:1.06}}
-[data-theme=dark] .sd-pin,[data-theme=dark] .sd-cluster{background:#27272a;box-shadow:${DARK_SHADOW}}
-[data-theme=dark] .sd-cluster>b{background:#e4e4e7;color:#18181b}
-[data-theme=dark] .sd-pin[data-active]{box-shadow:0 0 0 2px #27272a,0 0 0 3.5px #60a5fa}
-[data-theme=dark] .sd-pin>i{box-shadow:0 0 0 1.5px #27272a}
-@media (prefers-reduced-motion:no-preference){.sd-pin[data-new]{animation:sd-pin-in 180ms cubic-bezier(.23,1,.32,1)}}
+@media (prefers-reduced-motion:no-preference){.sd-pin[data-new],.sd-cluster[data-new]{animation:sd-pin-in 180ms cubic-bezier(.23,1,.32,1)}}
 @media (prefers-reduced-motion:reduce){.sd-pin,.sd-cluster{transition:none}}
 @keyframes sd-pin-in{from{opacity:0;scale:.9}}
 .sd-place-hint{position:fixed;left:50%;top:12px;z-index:2147483646;translate:-50% 0;padding:6px 12px;border-radius:999px;background:#18181b;color:#fff;font:500 12px/1.4 system-ui,-apple-system,sans-serif;white-space:nowrap;box-shadow:${SHADOW};pointer-events:none}
@@ -361,6 +356,9 @@ export function createPinLayer(host: PinHost) {
   let active: string | undefined;
   let placed: Placed[] = [];
   let shown = new Set<string>();
+  // The button that each pin was in at the last render: its own id, or its
+  // cluster's ids.
+  let drawnIn = new Map<string, string>();
   let frame = 0;
   let stable = 0;
   // What the layer last drew, or null to draw again.
@@ -455,10 +453,9 @@ export function createPinLayer(host: PinHost) {
 
   function render() {
     if (holding) return;
-    // Drafts and the open pin never join a cluster.
-    const keep = new Set(
-      pins.filter((p) => p.draft || p.id === active).map((p) => p.id),
-    );
+    // Drafts never join a cluster. The open pin stays in its cluster, which
+    // it would cover otherwise.
+    const keep = new Set(pins.filter((p) => p.draft).map((p) => p.id));
     const visible = placed.filter((p) => p.shown).map((p) => ({ ...p, id: p.pin.id }));
     const clusters = clusterPins(
       visible.filter((p) => !keep.has(p.id)),
@@ -485,13 +482,26 @@ export function createPinLayer(host: PinHost) {
     const focused = layer.contains(document.activeElement)
       ? (document.activeElement as HTMLElement).dataset.id
       : undefined;
+    // A button pops in when it is new, or when its pins merge into it or
+    // split from it.
+    const regrouped = (id: string, key: string) =>
+      drawnIn.has(id) && drawnIn.get(id) !== key;
+    const drawn = new Map<string, string>();
     layer.replaceChildren(
       ...clusters.map(({ seed, members }) => {
-        if (members.length > 1) return clusterButton(seed.id, members);
+        const key = members.map(({ pin }) => pin.id).join("+");
+        members.forEach(({ pin }) => drawn.set(pin.id, key));
+        if (members.length > 1)
+          return clusterButton(
+            seed.id,
+            members,
+            members.some(({ pin }) => regrouped(pin.id, key)),
+          );
         next.add(seed.id);
-        return pinButton(seed.pin, !shown.has(seed.id));
+        return pinButton(seed.pin, !shown.has(seed.id) || regrouped(seed.id, key));
       }),
     );
+    drawnIn = drawn;
     if (focused)
       (Array.from(layer.children) as HTMLElement[])
         .find((el) => el.dataset.id === focused)
@@ -522,11 +532,13 @@ export function createPinLayer(host: PinHost) {
     return b;
   }
 
-  function clusterButton(id: string, members: { pin: Pin }[]) {
+  function clusterButton(id: string, members: { pin: Pin }[], fresh: boolean) {
     const b = document.createElement("button");
     b.type = "button";
     b.className = "sd-cluster";
     b.dataset.id = id;
+    if (members.some(({ pin }) => pin.id === active)) b.dataset.active = "";
+    if (fresh) b.dataset.new = "";
     const count = document.createElement("b");
     count.textContent = members.length > 99 ? "99+" : String(members.length);
     if (members.length > 99) b.dataset.many = "";
@@ -782,9 +794,6 @@ export function createPinLayer(host: PinHost) {
     // outside the frame.
     releaseOutside() {
       cancelDrag?.();
-    },
-    setTheme(theme: string) {
-      layer.setAttribute("data-theme", theme);
     },
   };
 }
