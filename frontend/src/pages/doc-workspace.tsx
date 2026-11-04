@@ -177,6 +177,20 @@ export function DocWorkspace({
   }, [onDocumentClick]);
 
   const toggleComments = useCallback(() => setListOpen((open) => !open), []);
+  // The list takes the focus when it opens, and gives it back when it
+  // closes, unless the reader moved it on, as into the document.
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const list = listRef.current;
+    if (!listOpen || !list) return;
+    const opener = document.activeElement;
+    list.focus({ preventScroll: true });
+    return () => {
+      const focus = document.activeElement;
+      const lost = focus === document.body || list.contains(focus);
+      if (lost && opener instanceof HTMLElement) opener.focus({ preventScroll: true });
+    };
+  }, [listOpen]);
   const pickComment = useCallback((id: string) => {
     setListOpen(false);
     setActiveComment(id);
@@ -488,7 +502,11 @@ export function DocWorkspace({
           })}
           {banner?.(false)}
           <section className="relative min-w-0 flex-1 overflow-hidden bg-[var(--color-surface-muted)]">
-            {frame}
+            {/* Under the sheet of a narrow screen, the document is out of
+                reach. */}
+            <div inert={listOpen && isMobile} className="relative h-full">
+              {frame}
+            </div>
             <AnimatePresence>
               {listOpen && isMobile ? (
                 <motion.div
@@ -504,6 +522,8 @@ export function DocWorkspace({
                 // right, or a sheet at the bottom of a narrow screen.
                 <motion.div
                   key="comments"
+                  ref={listRef}
+                  tabIndex={-1}
                   {...(isMobile ? sheetUp : slideIn)}
                   role="dialog"
                   aria-label="Comments"
@@ -513,7 +533,7 @@ export function DocWorkspace({
                     setListOpen(false);
                   }}
                   className={cn(
-                    "absolute z-30 flex flex-col overflow-hidden bg-[var(--color-surface)] shadow-xl ring-1 ring-[var(--color-border)]",
+                    "absolute z-30 flex flex-col overflow-hidden bg-[var(--color-surface)] shadow-xl ring-1 ring-[var(--color-border)] outline-none",
                     isMobile
                       ? "inset-x-0 bottom-0 max-h-[70%] rounded-t-2xl"
                       : "right-4 top-3 max-h-[calc(100%-1.5rem)] w-[360px] rounded-xl",
