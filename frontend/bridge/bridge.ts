@@ -1388,6 +1388,31 @@ type Theme = "dark" | "light";
     return range.collapsed ? null : range;
   }
 
+  // snapSelection widens a drag to whole words when the pointer lets go, so
+  // the selection shows the quote that a comment on it takes. A selection
+  // made with keys stays as the keys put it.
+  function snapSelection(d: Document): void {
+    const s = d.getSelection();
+    const range = selectedRange(s);
+    if (!s || !range) return;
+    const words = snapToWords(range);
+    if (s.anchorNode === range.endContainer && s.anchorOffset === range.endOffset) {
+      s.setBaseAndExtent(
+        words.endContainer,
+        words.endOffset,
+        words.startContainer,
+        words.startOffset,
+      );
+    } else {
+      s.setBaseAndExtent(
+        words.startContainer,
+        words.startOffset,
+        words.endContainer,
+        words.endOffset,
+      );
+    }
+  }
+
   function labelIcon(button: HTMLButtonElement, label: string): void {
     button.dataset.slashdocsTooltip = label;
     const align = () => {
@@ -1822,7 +1847,12 @@ type Theme = "dark" | "light";
     d.addEventListener("mouseup", () => {
       selectionGestureActive = false;
     });
-    d.addEventListener("mouseup", () => setTimeout(selection, 0));
+    d.addEventListener("mouseup", () =>
+      setTimeout(() => {
+        snapSelection(d);
+        selection();
+      }, 0),
+    );
     d.addEventListener("keyup", () => setTimeout(selection, 0));
     // Touch devices: while a finger is down the user is still adjusting the
     // selection (long-press then drag the handles), so we must NOT emit yet
