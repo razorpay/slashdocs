@@ -70,3 +70,44 @@ func TestSectionHashIgnoresIDsAndWhitespaceInFigures(t *testing.T) {
 		t.Errorf("words = %d, want 3 (x, =, 1)", a[0].Words)
 	}
 }
+
+func TestSectionsNestedHeadingKeepsIDsAlignedWithHeadings(t *testing.T) {
+	raw := []byte(`<h2>One</h2><p>a</p><h2><span>Two<h3>Nested</h3></span></h2><p>b</p><h2>Three</h2><p>c</p>`)
+	got, err := Sections(raw)
+	if err != nil {
+		t.Fatalf("Sections: %v", err)
+	}
+	hs, err := Headings(raw)
+	if err != nil {
+		t.Fatalf("Headings: %v", err)
+	}
+	if len(got) != len(hs) {
+		t.Fatalf("got %d sections %+v, want one per heading %+v", len(got), got, hs)
+	}
+	for i, h := range hs {
+		if got[i].ID != h.ID || got[i].Title != h.Text || got[i].Level != h.Level {
+			t.Errorf("section %d = %+v, want heading %+v", i, got[i], h)
+		}
+	}
+	last := got[len(got)-1]
+	if last.ID != "three" || last.Words != 1 {
+		t.Errorf("last section = %+v, want three with 1 word", last)
+	}
+}
+
+func TestSectionsIgnoreDocumentHead(t *testing.T) {
+	doc := func(title string) []byte {
+		return []byte(`<!doctype html><html><head><title>` + title + `</title><meta charset="utf-8"></head><body><h2>A</h2><p>body words</p></body></html>`)
+	}
+	a, err := Sections(doc("My Title"))
+	if err != nil {
+		t.Fatalf("Sections: %v", err)
+	}
+	if len(a) != 1 || a[0].ID != "a" || a[0].Words != 2 {
+		t.Fatalf("sections = %+v, want only section a with 2 words", a)
+	}
+	b, _ := Sections(doc("Another Title"))
+	if len(b) != 1 || a[0].Hash != b[0].Hash {
+		t.Errorf("changing only <title> changed sections: %+v vs %+v", a, b)
+	}
+}
