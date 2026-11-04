@@ -32,10 +32,14 @@ test("a signed-out reader reads a shared document and signs in to comment", asyn
 
   await rendered.locator("p").selectText();
   await rendered.getByRole("button", { name: "Comment on selected text" }).click();
-  await expect(page).toHaveURL(`/login?next=${encodeURIComponent(path)}`);
+  await expect(page).toHaveURL(
+    `/login?next=${encodeURIComponent(`${path}?intent=comment`)}`,
+  );
 
+  // After sign-in, the composer opens on the text that the reader selected.
   await continueWithDex(page);
   await expect(page).toHaveURL(path);
+  await expect(page.getByPlaceholder("Add a comment…")).toBeFocused();
   await expect(page.getByRole("button", { name: "Sign in" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Share" })).toBeVisible();
   await page.context().close();
