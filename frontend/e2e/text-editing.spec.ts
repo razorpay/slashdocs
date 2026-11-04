@@ -197,11 +197,22 @@ test("restores an earlier version from the history", async ({ page, slashdocs })
   await selectWord(page, "#retry", "twice");
   await page.keyboard.type("three times");
   await saved;
+  const savedAgain = nextEdit(page, document.id);
+  await selectWord(page, "#retry", "three");
+  await page.keyboard.type("four");
+  await savedAgain;
 
   // The owner created and edited the document in one sitting: one session.
   await page.getByRole("button", { name: "History" }).click();
   const history = page.getByRole("dialog");
-  await history.getByRole("button", { name: "Show all 2 edits" }).click();
+  await history.getByRole("button", { name: "Show all 3 edits" }).click();
+  // The frame holds only the last save, so an earlier save loads again.
+  await history.getByRole("button", { name: /with "three times"/ }).click();
+  await expect(renderedDocument(page).locator("#retry")).toHaveText(
+    "Clients retry three times before giving up.",
+  );
+  await page.getByRole("button", { name: "History" }).click();
+  await history.getByRole("button", { name: "Show all 3 edits" }).click();
   await history.getByRole("button", { name: /Created/ }).click();
   await expect(renderedDocument(page).locator("#retry")).toHaveText(
     "Clients retry twice before giving up.",

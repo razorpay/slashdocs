@@ -67,17 +67,18 @@ export function RenderFrame() {
   const location = useLocation();
   const q = useQueryClient();
 
-  // Versions saved from the frame are already on screen, so moving to one
-  // keeps the frame on the version it loaded: the editor keeps its caret and
-  // scroll. Leaving them loads the frame again, as does a reload.
-  const [kept, setKept] = useState<{ loaded: string; saved: string[] }>();
+  // The last version saved from the frame is already on screen, so moving to
+  // it keeps the frame on the version it loaded: the editor keeps its caret
+  // and scroll. Any other version, an earlier save too, loads the frame
+  // again, as does a reload.
+  const [kept, setKept] = useState<{ loaded: string; saved: string }>();
   const [reloads, setReloads] = useState(0);
-  const frameVersion = kept?.saved.includes(version) ? kept.loaded : version;
+  const frameVersion = kept?.saved === version ? kept.loaded : version;
   const previousVersion = useRef(version);
   useEffect(() => {
     const moved = previousVersion.current !== version;
     previousVersion.current = version;
-    if (!moved || !kept || kept.saved.includes(version)) return;
+    if (!moved || !kept || kept.saved === version) return;
     setKept(undefined);
     // The frame holds edits on top of the version it loaded.
     if (version === kept.loaded) setReloads((n) => n + 1);
@@ -201,10 +202,7 @@ export function RenderFrame() {
     // than on the latest, which may hold changes from elsewhere.
     onSaved: (saved, clean) => {
       if (clean) {
-        setKept((k) => ({
-          loaded: k?.loaded ?? frameVersion,
-          saved: [...(k?.saved ?? []), saved],
-        }));
+        setKept((k) => ({ loaded: k?.loaded ?? frameVersion, saved }));
         stayOnVersion(saved);
       } else stayOnVersion();
       for (const queryKey of [
