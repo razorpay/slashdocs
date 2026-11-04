@@ -141,7 +141,8 @@ func utf16Len(s string) int { return len(utf16.Encode([]rune(s))) }
 //
 // A point is placed while its element is there: by its target, or else by
 // the start of its text, as a quote. A point with neither is placed by its
-// path, which only the viewer can follow, so it counts as placed.
+// path, which only the viewer can follow, or is on the body, so it counts as
+// placed.
 func placedOn(cm repo.Comment, doc *placementDoc) bool {
 	if p := cm.Anchor.Point; p != nil {
 		if p.Target != "" && doc.hasTarget(p.Target) {

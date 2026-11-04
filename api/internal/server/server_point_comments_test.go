@@ -96,10 +96,15 @@ func TestPointCommentRejectsInvalidAnchors(t *testing.T) {
 		{"deep path", `{"point":{"path":"0` + strings.Repeat(".0", 64) + `","x":0.5,"y":0.5}}`},
 		{"label too long", `{"point":{"target":"t","label":"` + strings.Repeat("a", 129) + `","x":0.5,"y":0.5}}`},
 		{"label with a control character", `{"point":{"target":"t","label":"a\u0007","x":0.5,"y":0.5}}`},
-		{"x below zero", `{"point":{"target":"t","x":-0.01,"y":0.5}}`},
-		{"x above one", `{"point":{"target":"t","x":1.01,"y":0.5}}`},
-		{"y below zero", `{"point":{"target":"t","x":0.5,"y":-0.01}}`},
-		{"y above one", `{"point":{"target":"t","x":0.5,"y":1.01}}`},
+		{"x far left", `{"point":{"target":"t","x":-1000.01,"y":0.5}}`},
+		{"x far right", `{"point":{"target":"t","x":1000.01,"y":0.5}}`},
+		{"y far above", `{"point":{"target":"t","x":0.5,"y":-1000.01}}`},
+		{"y far below", `{"point":{"target":"t","x":0.5,"y":1000.01}}`},
+		{"page spot without viewport", `{"point":{"target":"t","x":0.5,"y":0.5,"page_x":10,"page_y":20}}`},
+		{"viewport without page spot", `{"point":{"target":"t","x":0.5,"y":0.5,"viewport_w":1200}}`},
+		{"zero viewport", `{"point":{"target":"t","x":0.5,"y":0.5,"page_x":10,"page_y":20,"viewport_w":0}}`},
+		{"page spot above the page", `{"point":{"target":"t","x":0.5,"y":0.5,"page_x":10,"page_y":-1,"viewport_w":1200}}`},
+		{"page spot past the bound", `{"point":{"target":"t","x":0.5,"y":0.5,"page_x":10000001,"page_y":20,"viewport_w":1200}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rr := postComment(t, e, fixtureCommenter, tc.anchor)
@@ -112,6 +117,25 @@ func TestPointCommentRejectsInvalidAnchors(t *testing.T) {
 	// 128 characters is the longest allowed target.
 	assertStatus(t, postComment(t, e, fixtureCommenter, `{"point":{"target":"`+strings.Repeat("a", 128)+`","x":0.5,"y":0.5}}`), http.StatusCreated)
 	assertStatus(t, postComment(t, e, fixtureCommenter, `{"point":{"target":"a_B.c:d-9","x":0.5,"y":0.5}}`), http.StatusCreated)
+	// A spot beside its element, as in a margin, keeps its place.
+	assertStatus(t, postComment(t, e, fixtureCommenter, `{"point":{"target":"t","x":-0.4,"y":1.5}}`), http.StatusCreated)
+}
+
+func TestPointCommentKeepsItsPageSpot(t *testing.T) {
+	e := newTestEnv(t)
+	rr := postComment(t, e, fixtureCommenter, `{"point":{"target":"t_mob","x":-0.25,"y":1.5,"page_x":120.5,"page_y":0,"viewport_w":1280}}`)
+	assertStatus(t, rr, http.StatusCreated)
+	point, _ := findComment(t, listComments(t, e, ""), jsonField(t, rr.Body.Bytes(), "id"))["anchor"].(map[string]any)["point"].(map[string]any)
+	if point["x"] != -0.25 || point["y"] != 1.5 || point["page_x"] != 120.5 || point["page_y"] != float64(0) || point["viewport_w"] != float64(1280) {
+		t.Fatalf("point = %v, want its fractions and page spot", point)
+	}
+	// A page spot alone puts the point on the body.
+	body := postComment(t, e, fixtureCommenter, `{"point":{"label":"Fixture","x":0.1,"y":0.2,"page_x":40,"page_y":300,"viewport_w":1280}}`)
+	assertStatus(t, body, http.StatusCreated)
+	point, _ = findComment(t, listComments(t, e, ""), jsonField(t, body.Body.Bytes(), "id"))["anchor"].(map[string]any)["point"].(map[string]any)
+	if _, named := point["path"]; named || point["target"] != nil || point["label"] != "Fixture" {
+		t.Fatalf("body point = %v, want no target and no path", point)
+	}
 }
 
 func TestPointCommentNeedsCommenterRole(t *testing.T) {
@@ -163,6 +187,9 @@ func TestPointCommentPlacementAcrossVersions(t *testing.T) {
 	byPath := mk(`{"point":{"path":"0","x":0.5,"y":0.5}}`)
 	// An attribute that only ends in "id" names no element.
 	notAnID := mk(`{"point":{"target":"t_data","x":0.5,"y":0.5}}`)
+	// A gone element with a page spot shows there, marked as moved.
+	moved := mk(`{"point":{"target":"t_gone","x":0.5,"y":0.5,"page_x":40,"page_y":300,"viewport_w":1280}}`)
+	onBody := mk(`{"point":{"x":-0.1,"y":0.5,"page_x":40,"page_y":300,"viewport_w":1280}}`)
 
 	if _, err := e.store.CreateVersion(context.Background(), e.doc.ID, e.ver.ID, "", "points",
 		[]byte(`<html><body><div data-slashdocs-target='t_mob'></div><svg id="chart"></svg><p data-id="t_data">Revenue</p></body></html>`), fixtureOwner); err != nil {
@@ -177,7 +204,7 @@ func TestPointCommentPlacementAcrossVersions(t *testing.T) {
 	items := listComments(t, e, "")
 	for id, want := range map[string]string{
 		byTarget: "attached", byID: "attached", gone: "orphaned", byQuote: "attached",
-		quoteGone: "orphaned", byPath: "attached", notAnID: "orphaned",
+		quoteGone: "orphaned", byPath: "attached", notAnID: "orphaned", moved: "moved", onBody: "attached",
 	} {
 		if got := placement(items, id)["status"]; got != want {
 			t.Errorf("v2 placement of %s = %v, want %s", id, got, want)
@@ -185,7 +212,7 @@ func TestPointCommentPlacementAcrossVersions(t *testing.T) {
 	}
 
 	// Judged against the version they were created on, every point is attached.
-	for _, id := range []string{gone, quoteGone, notAnID} {
+	for _, id := range []string{gone, quoteGone, notAnID, moved} {
 		if got := placement(listComments(t, e, "?version_id="+e.ver.ID), id)["status"]; got != "attached" {
 			t.Errorf("v1 placement of %s = %v, want attached", id, got)
 		}
@@ -233,8 +260,11 @@ func TestMCPCreatePointComment(t *testing.T) {
 	}
 
 	assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "list_comments", map[string]any{"document_id": docID}), "Revenue chart")
+	assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "create_point_comment", map[string]any{
+		"document_id": docID, "version_id": versionID, "body": "Beside the element", "target": "chart", "x": 1.5, "y": 0.2,
+	}), "Beside the element")
 	assertMCPToolError(t, callMCPToolHTTP(t, e, token, "create_point_comment", map[string]any{
-		"document_id": docID, "version_id": versionID, "body": "Off the element", "target": "chart", "x": 1.5, "y": 0.2,
+		"document_id": docID, "version_id": versionID, "body": "Far off the element", "target": "chart", "x": 1001, "y": 0.2,
 	}), "invalid comment")
 	assertMCPToolError(t, callMCPToolHTTP(t, e, token, "create_point_comment", map[string]any{
 		"document_id": docID, "version_id": versionID, "body": "No target", "x": 0.5, "y": 0.5,
@@ -274,7 +304,7 @@ func TestMovePointComment(t *testing.T) {
 		want       int
 	}{
 		{"text anchor", `{"anchor":{"quote":"hello"}}`, fixtureCommenter, http.StatusBadRequest},
-		{"point out of range", `{"anchor":{"point":{"target":"t_mob","x":1.5,"y":0}}}`, fixtureCommenter, http.StatusBadRequest},
+		{"point out of range", `{"anchor":{"point":{"target":"t_mob","x":1001,"y":0}}}`, fixtureCommenter, http.StatusBadRequest},
 		{"bad target", `{"anchor":{"point":{"target":"has space","x":0,"y":0}}}`, fixtureCommenter, http.StatusBadRequest},
 		{"no element", `{"anchor":{"point":{"x":0,"y":0}}}`, fixtureCommenter, http.StatusBadRequest},
 		{"a viewer", `{"anchor":{"point":{"target":"t_mob","x":0,"y":0}}}`, fixtureViewer, http.StatusForbidden},

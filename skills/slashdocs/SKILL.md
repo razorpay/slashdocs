@@ -85,10 +85,13 @@ A comment is on exact text (`docs comments create --quote`, MCP:
 `create_comment`) or on a spot in an element, such as a chart, a diagram or an
 image (`docs comments create --target --x --y`, MCP: `create_point_comment`).
 The target is the element's id or `data-slashdocs-target` value, and x and y
-are fractions of its box from 0 to 1. To keep a point comment when the target
+are fractions of its box: 0 to 1 inside it, and below 0 or above 1 beside it,
+from -1000 to 1000 in all. To keep a point comment when the target
 changes, pass the start of the element's text as `--quote`, and a short
 `--label` for comment lists. `docs comments list` names the element of each
-point comment with `pin=`.
+point comment with `pin=`. A point whose element is gone in a later version
+has the placement status `moved`, and viewers show it at its old spot in the
+page.
 
 ### Searching and labels
 

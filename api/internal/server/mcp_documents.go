@@ -438,8 +438,8 @@ func registerMCPPointCommentTool(server *mcpserver.MCPServer, api mcpAPIAdapter)
 		mcpDocumentID(), mcpVersionID(true),
 		mcp.WithString("body", mcp.Required(), mcp.Description("Comment text.")),
 		mcp.WithString("target", mcp.Required(), mcp.Description("The element's data-slashdocs-target value, or else its id.")),
-		mcp.WithNumber("x", mcp.Required(), mcp.Min(0), mcp.Max(1), mcp.Description("Horizontal position as a fraction of the element's box, 0 (left) to 1 (right).")),
-		mcp.WithNumber("y", mcp.Required(), mcp.Min(0), mcp.Max(1), mcp.Description("Vertical position as a fraction of the element's box, 0 (top) to 1 (bottom).")),
+		mcp.WithNumber("x", mcp.Required(), mcp.Min(-maxViewFraction), mcp.Max(maxViewFraction), mcp.Description("Horizontal position as a fraction of the element's box, 0 (left) to 1 (right). A value below 0 or above 1 is a spot beside the box.")),
+		mcp.WithNumber("y", mcp.Required(), mcp.Min(-maxViewFraction), mcp.Max(maxViewFraction), mcp.Description("Vertical position as a fraction of the element's box, 0 (top) to 1 (bottom). A value below 0 or above 1 is a spot above or below the box.")),
 		mcp.WithString("quote", mcp.Description("The start of the element's text, which finds the element again when its target changes.")),
 		mcp.WithString("label", mcp.Description("A short name for the element in comment lists, such as \"Revenue chart\".")),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
