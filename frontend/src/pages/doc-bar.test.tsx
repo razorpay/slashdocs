@@ -45,7 +45,13 @@ const mockDocContext: DocContextValue = {
   showLatest: vi.fn(),
 };
 
-function renderDocBar(labelsEnabled = true, viewers: Viewer[] = []) {
+const OWNER = { type: "user" as const, id: "usr_owner" };
+
+function renderDocBar(
+  labelsEnabled = true,
+  viewers: Viewer[] = [],
+  requesters: unknown[] = [],
+) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
@@ -55,6 +61,14 @@ function renderDocBar(labelsEnabled = true, viewers: Viewer[] = []) {
           JSON.stringify({
             deployment: "org",
             labels_enabled: labelsEnabled,
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url === "/v1/documents/doc_1/access-requests") {
+        return new Response(
+          JSON.stringify({
+            items: requesters.map((requester) => ({ requester, requested_at: "" })),
           }),
           { headers: { "Content-Type": "application/json" } },
         );
@@ -109,6 +123,8 @@ function renderDocBar(labelsEnabled = true, viewers: Viewer[] = []) {
           <DocBar
             title="Test Document"
             docId="doc_1"
+            owner={OWNER}
+            principal={OWNER}
             current="v_1"
             latest="v_2"
             previewing={false}
@@ -230,5 +246,12 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     await user.keyboard("{Enter}");
     await user.click(await screen.findByRole("menuitem", { name: "Follow Reviewer" }));
     expect(onFollowViewer).toHaveBeenLastCalledWith(viewer, true);
+  });
+
+  it("counts the requests for access on the Share button", async () => {
+    renderDocBar(true, [], [{ type: "user", id: "usr_reader" }]);
+    expect(
+      await screen.findByRole("button", { name: "Share, 1 request for access" }),
+    ).toBeVisible();
   });
 });
