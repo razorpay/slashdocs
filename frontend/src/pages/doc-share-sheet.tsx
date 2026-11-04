@@ -5,7 +5,8 @@ import { errorMessage } from "@/lib/errors";
 import { Check, ChevronDown, Copy, LockKeyhole, UsersRound, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
-import { Skeleton } from "@/components/ui/misc";
+import { Skeleton, useCopy } from "@/components/ui/misc";
+import { RelativeTime } from "@/components/ui/relative-time";
 import {
   Dropdown,
   DropdownContent,
@@ -96,18 +97,13 @@ export function ShareSheet({
   const [selectedGroup, setSelectedGroup] = useState<GoogleGroup | null>(null);
   const [role, setRole] = useState(DEFAULT_ROLE);
   const [pendingChange, setPendingChange] = useState<PendingChange | null>(null);
-  const [copied, setCopied] = useState(false);
+  const link = useCopy<HTMLParagraphElement>();
+  const invite = useCopy();
   const shareURL = `${publicURL()}/app/${isFolder ? "folders" : "d"}/${id}`;
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedAddress(address.trim()), 250);
     return () => window.clearTimeout(t);
   }, [address]);
-  // "Copied" shows on the button for a moment after a copy.
-  useEffect(() => {
-    if (!copied) return;
-    const t = window.setTimeout(() => setCopied(false), 1500);
-    return () => window.clearTimeout(t);
-  }, [copied]);
   const userSearch = useQuery({
     queryKey: queryKeys.userSearch(debouncedAddress),
     queryFn: () => api.searchUsers(debouncedAddress),
@@ -163,6 +159,7 @@ export function ShareSheet({
   const invalidateAccess = () => {
     q.invalidateQueries({ queryKey: accessKey });
     q.invalidateQueries({ queryKey: queryKeys.documentAccessRequests(id) });
+    q.invalidateQueries({ queryKey: queryKeys.managedAccessRequests() });
     q.invalidateQueries({ queryKey: queryKeys.folderAccessAll() });
     q.invalidateQueries({ queryKey: queryKeys.userSearchAll() });
   };
@@ -356,7 +353,7 @@ export function ShareSheet({
             detail: g.email,
             address: g.email,
             group: g,
-            icon: <UsersRound className="h-4 w-4 shrink-0" />,
+            icon: <GrantAvatar principal={{ type: "google_group", id: g.id }} />,
           }))
       : userSuggestions
           .filter((u) => u.email !== address.trim())
@@ -366,6 +363,7 @@ export function ShareSheet({
             detail: u.name ? u.email : undefined,
             address: u.email || "",
             group: null,
+            icon: <GrantAvatar principal={u} />,
           }))
   ).map((s) => ({
     ...s,
@@ -528,14 +526,28 @@ export function ShareSheet({
                     }}
                   />
                   {m.error ? (
-                    <p
-                      role="alert"
-                      className="mt-1.5 text-xs text-[var(--color-danger)]"
-                    >
-                      {errorMessage(m.error, "Couldn't share.")}
+                    <div className="mt-1.5 flex items-start gap-2">
+                      <p role="alert" className="text-xs text-[var(--color-danger)]">
+                        {errorMessage(m.error, "Couldn't share.")}
+                      </p>
+                      {/* With no account to share with, the link is the next step. */}
+                      {noUserMatch ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="shrink-0"
+                          onClick={() => invite.copy(shareURL)}
+                        >
+                          <CopyLabel copied={invite.copied} idle="Copy invite link" />
+                        </Button>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <p className="mt-1.5 text-xs text-[var(--color-fg-muted)]">
+                      {hint}
                     </p>
-                  ) : null}
-                  <p className="mt-1.5 text-xs text-[var(--color-fg-muted)]">{hint}</p>
+                  )}
                   {shareMode === "people" ? null : selectedGroup ? (
                     <div className="mt-2 flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
                       <UsersRound className="h-4 w-4 shrink-0" />
@@ -716,28 +728,25 @@ export function ShareSheet({
             </div>
             <div className="mt-6 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-muted)]/45 p-3">
               <div className="flex items-center justify-between gap-3">
-                <div className="text-sm font-medium">
-                  {isFolder ? "Folder" : "Document"} link
+                <div className="min-w-0">
+                  <div className="text-sm font-medium">
+                    {isFolder ? "Folder" : "Document"} link
+                  </div>
+                  <p
+                    ref={link.ref}
+                    className="select-all truncate text-xs text-[var(--color-fg-muted)]"
+                  >
+                    {shareURL}
+                  </p>
                 </div>
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
                   className="shrink-0"
-                  onClick={async () => {
-                    await navigator.clipboard.writeText(shareURL);
-                    setCopied(true);
-                  }}
+                  onClick={() => link.copy(shareURL)}
                 >
-                  {copied ? (
-                    <>
-                      <Check className="h-4 w-4" /> Copied
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="h-4 w-4" /> Copy link
-                    </>
-                  )}
+                  <CopyLabel copied={link.copied} idle="Copy link" />
                 </Button>
               </div>
             </div>
@@ -745,6 +754,37 @@ export function ShareSheet({
         )}
       </SheetBody>
     </SheetContent>
+  );
+}
+
+// CopyLabel says what the last copy did. After a failed copy, the reader can
+// select the link under "Document link".
+function CopyLabel({
+  copied,
+  idle,
+}: {
+  copied: ReturnType<typeof useCopy>["copied"];
+  idle: string;
+}) {
+  if (copied === "done")
+    return (
+      <>
+        <Check className="h-4 w-4" /> Copied
+      </>
+    );
+  if (copied === "failed")
+    return (
+      <span
+        role="status"
+        className="flex items-center gap-1.5 text-[var(--color-danger)]"
+      >
+        <X className="h-4 w-4" /> Could not copy
+      </span>
+    );
+  return (
+    <>
+      <Copy className="h-4 w-4" /> {idle}
+    </>
   );
 }
 
@@ -764,7 +804,7 @@ function GrantAvatar({ principal }: { principal: Principal }) {
 // role, or decline.
 function AccessRequestRow({
   docId,
-  request: { requester },
+  request: { requester, requested_at },
   onDone,
 }: {
   docId: string;
@@ -794,11 +834,10 @@ function AccessRequestRow({
           {requester.name || requester.email || requester.id}
           {requester.type === "service_account" ? " (bot)" : ""}
         </div>
-        {requester.name && requester.email ? (
-          <div className="truncate text-xs text-[var(--color-fg-muted)]">
-            {requester.email}
-          </div>
-        ) : null}
+        <div className="truncate text-xs text-[var(--color-fg-muted)]">
+          {requester.name && requester.email ? `${requester.email} · ` : null}
+          <RelativeTime iso={requested_at} prefix="Asked" />
+        </div>
       </div>
       <div className="ml-auto flex items-center gap-2">
         <RoleMenu

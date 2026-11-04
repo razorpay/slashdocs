@@ -38,6 +38,25 @@ export function Skeleton({ className, ...p }: React.HTMLAttributes<HTMLDivElemen
 
 const COPY_LABEL = { idle: "Copy", done: "Copied", failed: "Could not copy" };
 
+// useCopy copies text and keeps the result of the last copy for 1.5 s. A
+// failed copy selects the text in ref, so the reader can copy it with the
+// keyboard.
+export function useCopy<T extends HTMLElement>() {
+  const [copied, setCopied] = React.useState<"done" | "failed" | null>(null);
+  const ref = React.useRef<T>(null);
+  const copy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied("done");
+    } catch {
+      setCopied("failed");
+      if (ref.current) window.getSelection()?.selectAllChildren(ref.current);
+    }
+    setTimeout(() => setCopied(null), 1500);
+  };
+  return { copied, copy, ref };
+}
+
 export function CodeBlock({
   children,
   copy = true,
@@ -50,20 +69,7 @@ export function CodeBlock({
   wrap?: boolean;
   className?: string;
 }) {
-  // The result of the last copy, for 1.5 s. A failed copy selects the text, so
-  // the reader can copy it with the keyboard.
-  const [copied, setCopied] = React.useState<"done" | "failed" | null>(null);
-  const pre = React.useRef<HTMLPreElement>(null);
-  const onCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(children);
-      setCopied("done");
-    } catch {
-      setCopied("failed");
-      if (pre.current) window.getSelection()?.selectAllChildren(pre.current);
-    }
-    setTimeout(() => setCopied(null), 1500);
-  };
+  const { copied, copy: copyText, ref: pre } = useCopy<HTMLPreElement>();
   return (
     <div
       className={cn(
@@ -88,7 +94,7 @@ export function CodeBlock({
           <Button
             variant="ghost"
             size="icon"
-            onClick={onCopy}
+            onClick={() => copyText(children)}
             // 32px tall at 6px from the top: centered on the first line, so a
             // one-line block centers it too.
             className={cn(
