@@ -45,6 +45,7 @@ export function useDocumentEvents(
   docId: string,
   handlers: DocumentEventHandlers,
   session?: string,
+  enabled = true,
 ) {
   const handlersRef = useRef(handlers);
   handlersRef.current = handlers;
@@ -52,6 +53,7 @@ export function useDocumentEvents(
   const lastRevision = useRef(0);
 
   useEffect(() => {
+    if (!enabled) return;
     const params = new URLSearchParams(session ? { session } : {});
     // The browser resumes dropped streams itself. Only a stream it gave up on
     // is opened again here, and it continues from the last event it saw.
@@ -87,7 +89,7 @@ export function useDocumentEvents(
       source.close();
       window.clearTimeout(reconnect);
     };
-  }, [docId, session, attempt]);
+  }, [docId, session, attempt, enabled]);
 }
 
 // useDocumentStream is the document page's view of the event stream. It
@@ -95,11 +97,13 @@ export function useDocumentEvents(
 // they change, and reports and tracks who is viewing and where they point.
 export function useDocumentStream({
   docId,
+  enabled,
   version,
   principal,
   onDocumentChange,
 }: {
   docId: string;
+  enabled: boolean;
   version: string;
   principal?: Principal;
   // Called on each change to the document, before it refreshes, with whoever
@@ -188,6 +192,7 @@ export function useDocumentStream({
       },
     },
     session,
+    enabled,
   );
 
   // A cursor goes away with its viewer.
@@ -214,17 +219,17 @@ export function useDocumentStream({
 
   // Report this viewer's place: at once on a version change, at most every
   // REPORT_INTERVAL while scrolling, and as a heartbeat otherwise. Only a
-  // signed-in viewer reports.
+  // signed-in viewer of an open document reports.
   const lastReport = useRef(0);
   const pendingReport = useRef<number | undefined>(undefined);
-  const signedIn = !!principal;
+  const reporting = enabled && !!principal;
   const report = useCallback(() => {
     window.clearTimeout(pendingReport.current);
     pendingReport.current = undefined;
     lastReport.current = Date.now();
-    if (!signedIn) return;
+    if (!reporting) return;
     api.postDocumentPresence(docId, { session, ...place.current }).catch(() => {});
-  }, [docId, session, signedIn]);
+  }, [docId, session, reporting]);
   const scheduleReport = useCallback(() => {
     if (pendingReport.current !== undefined) return;
     const wait = Math.max(0, lastReport.current + REPORT_INTERVAL - Date.now());
@@ -267,9 +272,9 @@ export function useDocumentStream({
   }, [cursorBatch]);
   const moveCursor = useCallback(
     (spot: CursorSpot | null) => {
-      if (signedIn) cursorBatch.add(spot);
+      if (reporting) cursorBatch.add(spot);
     },
-    [cursorBatch, signedIn],
+    [cursorBatch, reporting],
   );
 
   // A new listener gets the newest point of every cursor at once.

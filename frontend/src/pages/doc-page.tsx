@@ -30,10 +30,18 @@ import { cursorsShownStore } from "@/lib/live-cursors";
 import { useDocumentStream, type Viewer } from "./use-document-stream";
 
 function AccessDeniedState({ documentID }: { documentID: string }) {
+  // The server keeps the reader's request, so it stays sent after a reload.
+  const ownRequest = useQuery({
+    queryKey: queryKeys.documentAccessRequests(documentID),
+    queryFn: () => api.documentAccessRequests(documentID),
+    meta: { suppressGlobalError: true },
+  });
   const requestAccess = useMutation({
     mutationFn: () => api.requestDocumentAccess(documentID),
+    // The error shows under the button, not as a toast.
+    onError: () => {},
   });
-  const sent = requestAccess.isSuccess;
+  const sent = requestAccess.isSuccess || !!ownRequest.data?.items.length;
   return (
     <ErrorState
       title="You don't have access to this document"
@@ -46,7 +54,7 @@ function AccessDeniedState({ documentID }: { documentID: string }) {
       action={
         <div className="flex flex-col items-center gap-2">
           <Button
-            disabled={requestAccess.isPending || sent}
+            disabled={ownRequest.isPending || requestAccess.isPending || sent}
             onClick={() => requestAccess.mutate()}
           >
             <AnimatePresence initial={false} mode="wait">
@@ -78,7 +86,15 @@ function AccessDeniedState({ documentID }: { documentID: string }) {
   );
 }
 
-function DocumentError({ error, documentID }: { error: Error; documentID: string }) {
+function DocumentError({
+  error,
+  documentID,
+  onRetry,
+}: {
+  error: Error;
+  documentID: string;
+  onRetry: () => Promise<unknown>;
+}) {
   const apiError = error instanceof APIError ? error : undefined;
   if (apiError?.status === 403) return <AccessDeniedState documentID={documentID} />;
   if (apiError?.status === 404) {
@@ -101,6 +117,7 @@ function DocumentError({ error, documentID }: { error: Error; documentID: string
     <ErrorState
       title="Could not load document"
       description="Something went wrong while loading this document. Please try again."
+      onRetry={onRetry}
     />
   );
 }
@@ -191,6 +208,8 @@ export function DocumentPage() {
 
   const stream = useDocumentStream({
     docId: id,
+    // A document that does not open has no viewers to report to or hear from.
+    enabled: !!doc.data,
     version: current,
     principal: me.data?.principal,
     // Keep the reader on the version they read when someone else edits. An
@@ -274,7 +293,7 @@ export function DocumentPage() {
       <>
         <AppBar />
         <Page lane="focus" backdrop={false}>
-          <DocumentError error={doc.error} documentID={id} />
+          <DocumentError error={doc.error} documentID={id} onRetry={doc.refetch} />
         </Page>
       </>
     );
@@ -310,7 +329,6 @@ export function DocumentPage() {
           latest={latest}
           previewing={previewing}
           canChangeContent={canChangeContent}
-          versions={versionItems}
           labels={doc.data.labels || []}
           onSelectVersion={showVersion}
           onShowLatest={showLatest}
