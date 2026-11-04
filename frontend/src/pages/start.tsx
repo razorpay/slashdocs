@@ -76,7 +76,9 @@ export function StartPage() {
           style={beat(2)}
         >
           slashdocs is meant to be driven by your AI agent — Claude Code, Codex, Cursor,
-          Pi, OpenCode, Aider, or anything else. These steps wire it up.
+          Pi, OpenCode, Aider, or anything else. These steps wire it up. People then
+          comment on what it publishes, and editors fix the words in place: they click
+          the text and type.
         </p>
       </header>
 
@@ -305,10 +307,6 @@ function TryItOut({ path }: { path: SetupPath }) {
         publishes it to slashdocs.
       </p>
       <CodeBlock wrap>{TRY_IT_PROMPT + PUBLISH[path]}</CodeBlock>
-      <p className="mt-3 text-sm text-[var(--color-fg-muted)]">
-        People who can edit the document change its words in place: they click the text
-        and type. Each pause saves a version.
-      </p>
     </div>
   );
 }
