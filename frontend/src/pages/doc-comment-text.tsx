@@ -9,6 +9,8 @@ import {
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { Textarea } from "@/components/ui/input";
+import { Avatar } from "@/components/ui/misc";
+import { principalColor } from "@/lib/principals";
 import { api, type Comment, type UserPrincipal } from "@/api";
 import {
   getMentionTarget,
@@ -156,13 +158,14 @@ export function MentionTextarea({
   }, [target?.query]);
 
   useLayoutEffect(() => {
-    if (caretRestore.current === null) return;
-    const el = ref.current;
-    if (el) {
-      el.focus({ preventScroll: true });
-      el.setSelectionRange(caretRestore.current, caretRestore.current);
-    }
+    const at = caretRestore.current;
+    if (at === null) return;
     caretRestore.current = null;
+    ref.current?.focus({ preventScroll: true });
+    ref.current?.setSelectionRange(at, at);
+    // Only now is the caret behind the mention. The browser reports the
+    // selection of the pick's own key press before this, with the old caret.
+    afterMention.current = at;
   });
 
   const accept = (user: UserPrincipal) => {
@@ -179,7 +182,6 @@ export function MentionTextarea({
     setSuggestions([]);
     setCaret(nextCaret);
     caretRestore.current = nextCaret;
-    afterMention.current = nextCaret;
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -203,7 +205,9 @@ export function MentionTextarea({
         return;
       }
       if (event.key === "Escape") {
+        // It closes the suggestions only, not the popover around the field.
         event.preventDefault();
+        event.stopPropagation();
         setOpen(false);
         return;
       }
@@ -249,32 +253,41 @@ export function MentionTextarea({
               role="listbox"
               aria-label="Mention people"
               style={position}
-              className="fixed z-[100] max-h-60 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-lg"
+              className="fixed z-[100] max-h-60 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-1 shadow-lg"
             >
               {suggestions.map((user, index) => {
-                const active = index === activeIndex;
+                const label = mentionPrincipalLabel(user);
                 return (
+                  // The pointer moves the highlight too, so one option shows
+                  // what Enter picks, as in a menu.
                   <button
                     key={user.id || user.email}
                     id={`${listID}-${index}`}
                     role="option"
-                    aria-selected={active}
+                    aria-selected={index === activeIndex}
                     type="button"
-                    className={`block min-h-10 w-full px-3 py-2 text-left text-sm transition-colors ${active ? "bg-[var(--color-surface-muted)] text-[var(--color-fg)]" : "text-[var(--color-fg)] hover:bg-[var(--color-surface-muted)]"}`}
+                    className="flex min-h-10 w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm transition-[background-color,color] duration-150 ease-out aria-selected:bg-[var(--color-surface-muted)]"
                     onPointerDown={(event) => event.preventDefault()}
+                    onMouseEnter={() => setActiveIndex(index)}
                     onClick={(event) => {
                       event.stopPropagation();
                       accept(user);
                     }}
                   >
-                    <span className="block truncate font-medium">
-                      {mentionPrincipalLabel(user)}
+                    <Avatar
+                      size={24}
+                      name={label}
+                      src={user.picture_url}
+                      color={principalColor(user)}
+                    />
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium">{label}</span>
+                      {user.email && user.email !== label ? (
+                        <span className="block truncate text-xs text-[var(--color-fg-muted)]">
+                          {user.email}
+                        </span>
+                      ) : null}
                     </span>
-                    {user.email && user.email !== mentionPrincipalLabel(user) ? (
-                      <span className="block truncate text-xs text-[var(--color-fg-muted)]">
-                        {user.email}
-                      </span>
-                    ) : null}
                   </button>
                 );
               })}
