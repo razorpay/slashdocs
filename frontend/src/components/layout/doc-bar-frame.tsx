@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 
 // The bar above a document: back, home, the folder, and the title. The meta
-// follows the title, and the children are the actions on the right.
+// follows the title, and the children are the actions on the right. The
+// title is the bar's to fill, so that it can be a field to rename in.
 export function DocBarFrame({
   home,
   folder,
@@ -16,7 +17,7 @@ export function DocBarFrame({
 }: {
   home: string;
   folder?: { to: string; title: string };
-  title: string;
+  title: ReactNode;
   meta?: ReactNode;
   children?: ReactNode;
 }) {
@@ -58,9 +59,7 @@ export function DocBarFrame({
             </span>
           </>
         ) : null}
-        <div title={title} className="truncate text-sm font-semibold">
-          {title}
-        </div>
+        {title}
         {meta}
       </div>
       {children}

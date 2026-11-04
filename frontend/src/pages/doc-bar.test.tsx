@@ -3,7 +3,9 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { api } from "@/api";
 import { DocBar } from "./doc-bar";
+import { EditStatus } from "./doc-edit-status";
 import { DocProvider, type DocContextValue } from "./doc-context";
 import type { Viewer } from "./use-document-stream";
 
@@ -253,5 +255,41 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     expect(
       await screen.findByRole("button", { name: "Share, 1 request for access" }),
     ).toBeVisible();
+  });
+
+  it("renames the document in place, and Esc keeps the old title", async () => {
+    const user = userEvent.setup();
+    const rename = vi
+      .spyOn(api, "renameDocument")
+      .mockResolvedValue({ id: "doc_1", title: "Plan B" });
+    renderDocBar();
+
+    await user.click(screen.getByRole("button", { name: "Rename Test Document" }));
+    const field = screen.getByRole("textbox", { name: "Document title" });
+    expect(field).toHaveFocus();
+    await user.clear(field);
+    await user.type(field, "Plan B{Enter}");
+    expect(rename).toHaveBeenCalledWith("doc_1", "Plan B");
+
+    await user.click(screen.getByRole("button", { name: "More" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Rename" }));
+    const again = await screen.findByRole("textbox", { name: "Document title" });
+    await waitFor(() => expect(again).toHaveFocus());
+    await user.type(again, "Plan C{Escape}");
+    expect(rename).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("textbox", { name: "Document title" })).toBeNull();
+  });
+
+  it("tells a reader who cannot edit what they may do", () => {
+    const status = (access?: "commenter" | "viewer", editable = false) =>
+      render(
+        <DocProvider value={{ ...mockDocContext, editable }}>
+          <EditStatus access={access} />
+        </DocProvider>,
+      ).container.textContent;
+    expect(status("commenter")).toBe("Can comment");
+    expect(status("viewer")).toBe("Can view");
+    expect(status("commenter", true)).toBe("Can edit");
+    expect(status()).toBe("");
   });
 });
