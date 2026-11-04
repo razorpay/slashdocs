@@ -24,6 +24,15 @@ import { useTextAutosave } from "./use-text-autosave";
 import { typingOrInLayer, useCommentPins } from "./use-comment-pins";
 import { CommentPopovers } from "./doc-comment-popover";
 import type { TextEditResult } from "./doc-context";
+import type { Render } from "@/lib/script-literals";
+import type { ProbeResult } from "../../bridge/script-text";
+import type {
+  ChildRef,
+  Locator,
+  Piece,
+  Region,
+  ScriptChange,
+} from "../../bridge/source-pieces";
 
 const FORWARDED_KEYS = new Set<string>([
   "Escape",
@@ -177,8 +186,10 @@ export function RenderFrame() {
     if (ready) postToFrame({ type: "slashdocs:text-editing", on: editable });
   }, [ready, editable, postToFrame]);
 
-  // The frame hands over a burst of text changes on request.
-  const textCollects = useRef(new Map<string, (result: TextEditResult) => void>());
+  // The frame hands over its text changes on request.
+  const textCollects = useRef(
+    new Map<string, (result: TextEditResult | undefined) => void>(),
+  );
   const takeTextEdits = useCallback(
     () =>
       new Promise<TextEditResult>((resolve, reject) => {
@@ -189,13 +200,39 @@ export function RenderFrame() {
         }, 5000);
         textCollects.current.set(requestId, (result) => {
           window.clearTimeout(timer);
-          resolve(result);
+          if (result) resolve(result);
+          else reject(new Error("The document reported changes that cannot be read."));
         });
         postToFrame({ type: "slashdocs:text-collect", requestId });
       }),
     [postToFrame],
   );
-  const textChanged = useTextAutosave({
+  // The frame renders a changed source in a hidden frame on request. A probe
+  // waits for its load for at most five seconds, so this gives it ten.
+  const probes = useRef(new Map<string, (result: ProbeResult | undefined) => void>());
+  const probe = useCallback<Render>(
+    (html, locator, strings) =>
+      new Promise((resolve, reject) => {
+        const requestId = `probe-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const timer = window.setTimeout(() => {
+          probes.current.delete(requestId);
+          reject(new Error("The document did not render the change."));
+        }, 10_000);
+        probes.current.set(requestId, (result) => {
+          window.clearTimeout(timer);
+          if (result) resolve(result);
+          else
+            reject(
+              new Error(
+                "The document rendered the change in a form that cannot be read.",
+              ),
+            );
+        });
+        postToFrame({ type: "slashdocs:probe", requestId, html, locator, strings });
+      }),
+    [postToFrame],
+  );
+  const { changed: textChanged, scriptEditable } = useTextAutosave({
     docId,
     loaded,
     take: takeTextEdits,
@@ -216,11 +253,15 @@ export function RenderFrame() {
         q.invalidateQueries({ queryKey });
       }
     },
-    reload: () => {
-      showLatest();
+    // A load right after a save shows the version that it made: the document
+    // stream must not keep the frame on the version before it.
+    reload: (saved) => {
+      if (saved) stayOnVersion(saved);
+      else showLatest();
       setKept(undefined);
       setReloads((n) => n + 1);
     },
+    probe,
   });
 
   // Vim scrolling works whether focus is inside the rendered document or on
@@ -443,14 +484,44 @@ export function RenderFrame() {
         textCollects.current.delete(e.data.requestId);
         resolve?.(parseTextEditResult(e.data));
       }
+      if (
+        e.data?.type === "slashdocs:probe-result" &&
+        typeof e.data.requestId === "string"
+      ) {
+        const resolve = probes.current.get(e.data.requestId);
+        probes.current.delete(e.data.requestId);
+        resolve?.(parseProbeResult(e.data));
+      }
+      if (
+        e.data?.type === "slashdocs:script-text" &&
+        typeof e.data.requestId === "string" &&
+        typeof e.data.text === "string"
+      ) {
+        const { requestId } = e.data;
+        void scriptEditable(e.data.text)
+          .catch(() => false)
+          .then((editable) =>
+            postToFrame({ type: "slashdocs:script-text-result", requestId, editable }),
+          );
+      }
+      // The reader cannot change this script text here, so a comment asks an
+      // agent to.
+      if (e.data?.type === "slashdocs:ask-agent") {
+        const anchor = e.data.anchor as Partial<Anchor> | undefined;
+        if (anchor?.quote)
+          startDraft({
+            quote: anchor.quote,
+            anchor,
+            body: `Please change “${anchor.quote}” to: `,
+          });
+      }
       if (e.data?.type === "slashdocs:text-dirty" && typeof e.data.count === "number") {
         textChanged(e.data.count);
       }
       if (e.data?.type === "slashdocs:text-refused") {
-        toast.info(
-          "Only words can change here. To add paragraphs or change the layout, upload the document again.",
-          { id: "text-refused" },
-        );
+        toast.info(REFUSALS.get(e.data.reason) ?? "This change does not work here.", {
+          id: "text-refused",
+        });
       }
       if (
         e.data?.type === "slashdocs:paint-result" &&
@@ -537,6 +608,8 @@ export function RenderFrame() {
     setDocumentHeight,
     applyZoom,
     textChanged,
+    scriptEditable,
+    postToFrame,
     onUnfollowCursor,
   ]);
 
@@ -680,17 +753,85 @@ function reloadURL(url: string, reloads: number): string {
   return `${url}${url.includes("?") ? "&" : "?"}slashdocs_reload=${reloads}`;
 }
 
+// Messages for the reasons the frame gives when it refuses an edit.
+const REFUSALS = new Map([
+  ["script", "A script on the page makes this content, so it cannot change here."],
+  [
+    "crosses-script",
+    "The selection includes content that a script makes. Select less text.",
+  ],
+  ["drop", "Dragging content into the document does not work. Copy and paste it."],
+  ["format", "Only bold, italic, links and lists can change here."],
+  ["list", "Only paragraphs can become a list."],
+  ["link", "A link must start with http, https, mailto or #."],
+  ["plain-text", "Text from a script takes plain words only."],
+]);
+
 // parseTextEditResult reads a text-changes message. The frame hosts untrusted
-// HTML on the bridge's origin, so the message is checked, not trusted.
-function parseTextEditResult(data: Record<string, unknown>): TextEditResult {
-  const changes = Array.isArray(data.changes)
-    ? data.changes
-        .slice(0, 10_000)
-        .filter(
-          (c): c is { before: string; after: string } =>
-            !!c && typeof c.before === "string" && typeof c.after === "string",
-        )
-        .map(({ before, after }) => ({ before, after }))
-    : [];
-  return { changes, unsupported: data.unsupported === true };
+// HTML on the bridge's origin, so the message is checked, not trusted: a
+// region that is not made of the numbers and strings that source-pieces.ts
+// describes makes the whole result unreadable.
+function parseTextEditResult(
+  data: Record<string, unknown>,
+): TextEditResult | undefined {
+  const { regions, scripts } = data;
+  return Array.isArray(regions) &&
+    regions.every(isRegion) &&
+    Array.isArray(scripts) &&
+    scripts.every(isScriptChange)
+    ? { regions, scripts }
+    : undefined;
+}
+
+// parseProbeResult reads a probe-result message, checked as the text
+// changes are.
+function parseProbeResult(data: Record<string, unknown>): ProbeResult | undefined {
+  const { text, counts } = data;
+  return (text === null || typeof text === "string") &&
+    Array.isArray(counts) &&
+    counts.every(isOffset)
+    ? { text, counts }
+    : undefined;
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null;
+const isOffset = (v: unknown): v is number => Number.isSafeInteger(v) && Number(v) >= 0;
+const isChildRef = (v: unknown): v is ChildRef =>
+  isObject(v) && isOffset(v.parent) && isOffset(v.index);
+const isPieces = (v: unknown): v is Piece[] => Array.isArray(v) && v.every(isPiece);
+
+const isLocator = (v: unknown): v is Locator =>
+  isObject(v) &&
+  (v.at === null || isOffset(v.at)) &&
+  Array.isArray(v.path) &&
+  v.path.every(isOffset);
+const isScriptChange = (v: unknown): v is ScriptChange =>
+  isObject(v) &&
+  isLocator(v.locator) &&
+  typeof v.before === "string" &&
+  typeof v.after === "string";
+
+function isRegion(v: unknown): v is Region {
+  return (
+    isObject(v) &&
+    isOffset(v.from) &&
+    isOffset(v.to) &&
+    isPieces(v.pieces) &&
+    Array.isArray(v.removed) &&
+    v.removed.every(isOffset)
+  );
+}
+
+function isPiece(p: unknown): boolean {
+  if (!isObject(p)) return false;
+  if ("keep" in p) return isOffset(p.keep);
+  if ("keepChild" in p) return isChildRef(p.keepChild);
+  if ("text" in p) {
+    return typeof p.text === "string" && (p.was === undefined || isChildRef(p.was));
+  }
+  if ("element" in p) return isOffset(p.element) && isPieces(p.children);
+  return (
+    typeof p.open === "string" && typeof p.close === "string" && isPieces(p.children)
+  );
 }

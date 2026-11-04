@@ -1,4 +1,5 @@
 import { dispatchPublicEvent } from "./public-names.ts";
+import { SOURCE_ATTR } from "./source-pieces.ts";
 
 // Snapshot live DOM, rather than reloading the stored HTML and losing its state.
 export async function snapshotForPrint(d: Document): Promise<string> {
@@ -80,5 +81,8 @@ export async function snapshotForPrint(d: Document): Promise<string> {
       ".slashdocs-selection-action,.slashdocs-heading-link,.slashdocs-text-flash,script",
     )
     .forEach((node) => node.remove());
+  // The source positions mean nothing outside the frame.
+  for (const el of [copy, ...copy.querySelectorAll(`[${SOURCE_ATTR}]`)])
+    el.removeAttribute(SOURCE_ATTR);
   return "<!doctype html>" + copy.outerHTML;
 }

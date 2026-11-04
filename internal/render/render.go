@@ -82,7 +82,8 @@ func validSHA256(value string) bool {
 var wrapperTmpl = template.Must(template.New("wrapper").Parse(`<!doctype html><html><head><meta charset="utf-8"><title>slashdocs render</title><style>html,body{margin:0;height:100%;overflow:hidden}#slashdocs-doc{border:0;width:100%;height:100vh}</style><script>try{var u=new URL(location.href),t=u.searchParams.get("slashdocs_theme");window.__slashdocsTheme=t==="dark"||t==="light"?t:null;if(u.searchParams.has("token")){u.searchParams.delete("token");history.replaceState(null,"",u.pathname+(u.search||"")+u.hash)}}catch(e){}</script></head><body><iframe id="slashdocs-doc" sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox" srcdoc="{{.SrcDoc}}"></iframe><script>window.__SLASHDOCS_APP_ORIGIN__={{.AppOriginJS}};{{.BridgeJS}}</script></body></html>`))
 
 type wrapperData struct {
-	// SrcDoc is the raw user HTML. html/template escapes it for the
+	// SrcDoc is the user HTML with source positions and the bridge
+	// prelude. html/template escapes it for the
 	// double-quoted srcdoc attribute context (including </script> inside
 	// inline scripts), so no manual escaping is needed.
 	SrcDoc      string
@@ -155,10 +156,11 @@ func embeddedBridgeScript() template.JS {
 }
 
 // Wrap returns the full wrapper page that embeds userHTML inside a sandboxed
-// iframe. The bridge sends its messages only to appOrigin.
+// iframe. The bridge sends its messages only to appOrigin. The start tags of
+// userHTML carry their source positions, which the prelude does not shift.
 func Wrap(userHTML []byte, appOrigin string) []byte {
 	data := wrapperData{
-		SrcDoc:      userHTMLWithBridgePrelude(userHTML),
+		SrcDoc:      userHTMLWithBridgePrelude(tagSource(userHTML)),
 		AppOriginJS: appOriginScriptValue(appOrigin),
 		BridgeJS:    embeddedBridgeScript(),
 	}

@@ -1,4 +1,5 @@
-// Package textedit applies exact find-and-replace edits to document HTML.
+// Package textedit applies exact edits to document HTML: find-and-replace
+// edits for agents, and replacements by position for the browser editor.
 //
 // An edit names a string that must occur exactly once in the document, or
 // every occurrence of it when ReplaceAll is set, and the string that replaces

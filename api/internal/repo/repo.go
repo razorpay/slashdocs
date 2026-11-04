@@ -572,8 +572,14 @@ type Repository interface {
 	DeleteGrant(ctx context.Context, documentID, grantID string, deletedBy auth.Principal) error
 	// CreateVersion writes a new immutable version. Its creator wrote what is
 	// under review, so when they are an approver of the document, it removes
-	// them (and their decisions) in the same transaction.
-	CreateVersion(ctx context.Context, documentID, baseVersionID, changeSummary string, html []byte, createdBy auth.Principal) (Version, error)
+	// them (and their decisions) in the same transaction. A clientChangeID,
+	// when not empty, names the change that makes the version: ErrConflict
+	// when the change already made a version of the document.
+	CreateVersion(ctx context.Context, documentID, baseVersionID, clientChangeID, changeSummary string, html []byte, createdBy auth.Principal) (Version, error)
+	// VersionByClientChange returns the version that the client change made
+	// in the document, and the version it was made on. Returns ErrNotFound
+	// when the change made no version.
+	VersionByClientChange(ctx context.Context, documentID, clientChangeID string) (Version, string, error)
 	ListVersions(ctx context.Context, documentID string) ([]Version, error)
 	GetVersion(ctx context.Context, id string) (Version, error)
 	GetVersionHTML(ctx context.Context, id string) ([]byte, error)

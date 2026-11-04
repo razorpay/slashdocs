@@ -164,7 +164,7 @@ func TestPointCommentPlacementAcrossVersions(t *testing.T) {
 	// An attribute that only ends in "id" names no element.
 	notAnID := mk(`{"point":{"target":"t_data","x":0.5,"y":0.5}}`)
 
-	if _, err := e.store.CreateVersion(context.Background(), e.doc.ID, e.ver.ID, "points",
+	if _, err := e.store.CreateVersion(context.Background(), e.doc.ID, e.ver.ID, "", "points",
 		[]byte(`<html><body><div data-slashdocs-target='t_mob'></div><svg id="chart"></svg><p data-id="t_data">Revenue</p></body></html>`), fixtureOwner); err != nil {
 		t.Fatal(err)
 	}

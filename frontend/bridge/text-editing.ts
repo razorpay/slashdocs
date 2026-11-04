@@ -1,131 +1,343 @@
-// Text editing lets an editor change the words of a rendered document in
-// place, at any time. Only text may change: new paragraphs, pasted markup and
-// dropped content are refused. The editor tracks a burst of typing from its
-// first input; taking the burst reports each text node of the source as its
-// text before and after, and the app turns those into exact find-and-replace
-// edits on the document source. The DOM is never serialized back into HTML.
-// Only the blocks that the editor's own input reached count: the document's
-// scripts may change other text, such as a clock, while the editor types.
+// Text editing lets an editor change a rendered document in place: its
+// words, and its paragraphs, lists, links, bold and italic. The DOM is never
+// serialized back into HTML. The editor records which original blocks it
+// changed, which nodes it made and which original elements it removed, and
+// the source map turns those into regions that the app writes into the
+// source by position.
+//
+// One MutationObserver sees every change. A change belongs to the editor
+// only while a user operation runs: from a trusted beforeinput to its input,
+// or while the editor changes the DOM itself. Every other change comes from
+// the document's scripts, or from the bridge, and the source map evaluates
+// it again. The records of each user operation also make the undo journal.
 
 import { blockOf } from "./dom.ts";
-
-export type TextChange = { before: string; after: string };
-export type TextChanges = { changes: TextChange[]; unsupported: boolean };
+import { createSourceMap, type SourceMap } from "./source-map.ts";
+import { SOURCE_ATTR, type Region } from "./source-pieces.ts";
+import {
+  createStructure,
+  editable,
+  elementOf,
+  REFUSED,
+  selection,
+  type Change,
+  type Input,
+} from "./structure.ts";
 
 export interface TextEditor {
-  // The changed nodes since the burst started, and whether anything changed
-  // other than text. Taking them ends the burst: the next input starts one.
-  take(): TextChanges;
+  // The regions for every change since editing started. Taking them does
+  // not reset them.
+  take(): { regions: Region[] };
+  // The source map of the document, which script text uses too.
+  map: SourceMap;
   stop(): void;
 }
 
-// Elements whose text is not document text: code, and the bridge's own
-// controls that it adds to the document.
-const NOT_TEXT =
-  "script,style,noscript,template,textarea,.slashdocs-selection-action,.slashdocs-heading-link,.slashdocs-text-flash";
-
-// Input that would change structure rather than text.
-const STRUCTURAL_INPUT =
-  /^(insertParagraph|insertLineBreak|insertOrderedList|insertUnorderedList|insertHorizontalRule|insertLink|insertFromDrop|deleteByDrag|format)/;
-
-// Keys that only move the caret, select or open menus.
-const NO_INPUT_KEY =
-  /^(Arrow|Page|Home$|End$|Shift$|Control$|Alt$|Meta$|Escape$|Tab$|CapsLock$|F\d)/;
-
-const STYLE_ID = "slashdocs-text-editing-style";
-
 type TextEditingCallbacks = {
   // The editor is about to change a block: anything that splits its text
-  // nodes, such as comment highlights, must come off first. It tells
-  // whether it took anything off.
-  beforeTouch(block: Element): boolean;
-  // The number of nodes whose text differs from the start of the burst.
+  // nodes, such as comment highlights, must come off first.
+  beforeTouch(block: Element): void;
+  // The number of blocks that changed since the last take.
   onDirty(count: number): void;
-  // A structural change was refused.
-  onRefused(): void;
+  // An input was refused, for one of the reasons in REFUSED.
+  onRefused(reason: string): void;
+};
+
+// Script text that the reader may change. It takes plain text only, and is
+// not part of the regions: the app writes it into the script.
+const SCRIPT_EDIT = "[data-slashdocs-script-edit]";
+const PLAIN_INPUT =
+  /^(insertText|insertReplacementText|insertCompositionText|insertFromPaste|delete(Content|Word|SoftLine|HardLine)(Backward|Forward)|deleteByCut|historyUndo|historyRedo)$/;
+
+const STYLE_ID = "slashdocs-text-editing-style";
+// Typing that follows within this time undoes as one step.
+const TYPING_MS = 1000;
+const JOURNAL_SIZE = 200;
+
+type Caret = [Node, number, Node, number] | null;
+// A user operation in the journal: its records, the selection before it and
+// the one after it, and the kind of typing that later typing joins.
+type Entry = {
+  records: MutationRecord[];
+  carets: [Caret, Caret];
+  typing?: string;
+  at: number;
 };
 
 export function startTextEditing(
   d: Document,
+  taggedSource: string,
   callbacks: TextEditingCallbacks,
 ): TextEditor | null {
   const body = d.body;
   if (!body) return null;
-  let burst: Burst | null = null;
-
-  // touch marks the block of node, or else of the caret, as one the editor
-  // changes, when the editor and not a script made the input.
-  const touch = (event: Event, node?: Node | null) => {
-    node ??= d.getSelection()?.focusNode;
-    if (event.isTrusted && node) burst?.touch(node);
+  // The nodes that were in the document before the editor's operation that
+  // adds them. Every other node that a user operation adds is made.
+  const seen = new WeakSet<Node>();
+  const see = (root: Node) => {
+    const walker = d.createTreeWalker(root);
+    for (let n: Node | null = root; n; n = walker.nextNode()) seen.add(n);
   };
-  // begin starts a burst, if none runs, at the caret's block.
-  const begin = (event: Event) => {
-    burst ??= trackBurst(d, body, callbacks);
-    touch(event);
-  };
+  see(body);
+  const made = new WeakSet<Node>();
+  const touched = new Set<Element>();
+  // The original elements that the editor took out. Undo can put them back.
+  const removed = new Set<Element>();
+  const map = createSourceMap(d, taggedSource, {
+    touched,
+    made,
+    removed: {
+      *[Symbol.iterator]() {
+        for (const el of removed)
+          if (!el.isConnected) yield Number(el.getAttribute(SOURCE_ATTR));
+      },
+    },
+  });
+  // The blocks that changed, and those with their highlights off, since the
+  // last take.
+  const dirty = new Set<Element>();
+  const held = new Set<Element>();
+  const undos: Entry[] = [];
+  const redos: Entry[] = [];
 
-  // A burst starts before the browser changes anything: on a key that can
-  // type, on paste or cut, or, for input with no key such as a spelling
-  // fix, on the input itself.
-  const onKeyDown = (event: KeyboardEvent) => {
-    const shortcut = event.metaKey || event.ctrlKey;
-    if (shortcut ? /^[vxyz]$/i.test(event.key) : !NO_INPUT_KEY.test(event.key)) {
-      begin(event);
+  // The input that the browser does itself, between its beforeinput and
+  // input events.
+  let native: { records: MutationRecord[]; caret: Caret; typing: string } | null = null;
+  let nativeTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const observer = new MutationObserver((records) => {
+    if (native) native.records.push(...records);
+    else fromScripts(records);
+  });
+
+  // fromScripts takes changes that a script or the bridge made. The source
+  // map evaluates their content again. Attributes do not change content.
+  function fromScripts(records: MutationRecord[]) {
+    const roots = new Set<Node>();
+    for (const record of records) {
+      if (record.type === "attributes") continue;
+      roots.add(record.target);
+      record.addedNodes.forEach(see);
     }
-  };
+    if (roots.size) map.refresh(roots);
+  }
+  const flush = () => fromScripts(observer.takeRecords());
+
+  // fromEditor takes the changes of a user operation. Changes in script
+  // text are not part of the regions.
+  function fromEditor(records: MutationRecord[], touch: boolean) {
+    for (const record of records) {
+      if (elementOf(record.target)?.closest(SCRIPT_EDIT)) continue;
+      if (touch && record.target.isConnected) mark(blockOf(record.target));
+      record.addedNodes.forEach((node) => {
+        const walker = d.createTreeWalker(node);
+        for (let n: Node | null = node; n; n = walker.nextNode()) {
+          if (!seen.has(n)) made.add(n);
+          seen.add(n);
+        }
+      });
+      record.removedNodes.forEach((node) => {
+        if (node.nodeType !== Node.ELEMENT_NODE) return;
+        for (const el of [
+          node as Element,
+          ...(node as Element).querySelectorAll("*"),
+        ]) {
+          if (el.hasAttribute(SOURCE_ATTR) && !made.has(el)) removed.add(el);
+        }
+      });
+    }
+  }
+
+  // mark counts block as changed. An original block is touched: the regions
+  // cover it. A block that the editor made is covered by the region of the
+  // original block next to which the editor made it.
+  function mark(block: Element | null) {
+    if (!block) return;
+    dirty.add(block);
+    if (map.offsetOf(block) !== null) touched.add(block);
+  }
+
+  // hold marks a block that the editor is about to change, and takes its
+  // highlights off. Taking them off is not part of the operation.
+  function hold(block: Element | null) {
+    mark(block);
+    unhighlight(block);
+  }
+  function unhighlight(block: Element | null) {
+    if (!block || held.has(block)) return;
+    held.add(block);
+    flush();
+    callbacks.beforeTouch(block);
+    flush();
+  }
+
+  function caret(): Caret {
+    const s = d.getSelection();
+    return s?.anchorNode && s.focusNode
+      ? [s.anchorNode, s.anchorOffset, s.focusNode, s.focusOffset]
+      : null;
+  }
+  function restore(at: Caret) {
+    if (at && at[0].isConnected && at[2].isConnected)
+      d.getSelection()?.setBaseAndExtent(...at);
+  }
+
+  // commit journals a user operation, unless it changed nothing.
+  function commit(records: MutationRecord[], before: Caret, typing?: string) {
+    if (!records.length) return;
+    redos.length = 0;
+    const last = undos.at(-1);
+    const now = Date.now();
+    if (typing && last?.typing === typing && now - last.at < TYPING_MS) {
+      last.records.push(...records);
+      last.carets[1] = caret();
+      last.at = now;
+    } else {
+      undos.push({ records, carets: [before, caret()], typing, at: now });
+      if (undos.length > JOURNAL_SIZE) undos.shift();
+    }
+    if (dirty.size) callbacks.onDirty(dirty.size);
+  }
+
+  function apply(change: Change) {
+    closeNative();
+    change.blocks.forEach(hold);
+    const before = caret();
+    change.run();
+    const records = observer.takeRecords();
+    fromEditor(records, false);
+    commit(records, before);
+  }
+
+  function openNative(type: string, nodes: Node[]) {
+    closeNative();
+    nodes.forEach((node) => hold(blockOf(node)));
+    native = {
+      records: [],
+      caret: caret(),
+      typing: type.replace(/Backward|Forward/, ""),
+    };
+    // A browser that changes nothing sends no input event.
+    nativeTimer = setTimeout(closeNative, 0);
+  }
+  function closeNative() {
+    clearTimeout(nativeTimer);
+    if (!native) return;
+    const { records, caret: before, typing } = native;
+    records.push(...observer.takeRecords());
+    native = null;
+    fromEditor(records, true);
+    commit(records, before, typing);
+  }
+
+  // revert undoes the newest entry of from, and journals the undo in to, so
+  // that it can be undone in turn. Records are reverted from the last one,
+  // so the siblings that each one names are where they were.
+  function revert(from: Entry[], to: Entry[]) {
+    closeNative();
+    const entry = from.pop();
+    if (!entry) return;
+    // The blocks of the entry were touched when it was journaled.
+    for (const record of entry.records) {
+      const block = record.target.isConnected ? blockOf(record.target) : null;
+      unhighlight(block);
+      if (block) dirty.add(block);
+    }
+    for (const record of [...entry.records].reverse()) {
+      try {
+        undoRecord(record);
+      } catch {
+        // A script changed these nodes since: the rest still reverts.
+      }
+    }
+    const records = observer.takeRecords();
+    fromEditor(records, false);
+    restore(entry.carets[0]);
+    to.push({ records, carets: [entry.carets[1], entry.carets[0]], at: 0 });
+    if (dirty.size) callbacks.onDirty(dirty.size);
+  }
+
+  const editor = { d, map, apply, refuse: callbacks.onRefused };
+  const structure = createStructure(editor);
+
+  // handle routes an input of the editor. It tells whether the browser must
+  // not do the input itself.
+  function handle(input: Input): boolean {
+    closeNative();
+    flush();
+    const { type } = input;
+    if (type === "historyUndo" || type === "historyRedo") {
+      if (type === "historyUndo") revert(undos, redos);
+      else revert(redos, undos);
+      return true;
+    }
+    const r = selection(d);
+    if (!r) return false;
+    const ends = [r.startContainer, r.endContainer];
+    const script = ends.map((n) => elementOf(n)?.closest(SCRIPT_EDIT));
+    if (script[0] || script[1]) {
+      if (script[0] !== script[1] || !PLAIN_INPUT.test(type))
+        return refuse(REFUSED.plainText);
+      if (!type.startsWith("insertFromPaste")) {
+        openNative(type, ends);
+        return false;
+      }
+      // Pasted text in script text stays on one line.
+      apply(structure.plain((input.text ?? "").replace(/\s*\n\s*/g, " ")));
+      return true;
+    }
+    if (ends.some((n) => !editable(editor, n))) return refuse(REFUSED.script);
+    if (type === "insertLink") {
+      structure.link();
+      return true;
+    }
+    const change = structure.input(input);
+    if (typeof change === "string") return refuse(change);
+    if (change) apply(change);
+    else openNative(type, ends);
+    return !!change;
+  }
+  function refuse(reason: string): true {
+    callbacks.onRefused(reason);
+    return true;
+  }
+
   const onBeforeInput = (event: InputEvent) => {
-    if (STRUCTURAL_INPUT.test(event.inputType)) {
-      event.preventDefault();
-      callbacks.onRefused();
-      return;
-    }
-    begin(event);
-    const target = event.inputType.startsWith("history") ? null : targetRange(d, event);
-    touch(event, target?.startContainer);
-    if (target) {
-      const text = trimToText(d, target);
-      // Backspace at the start of a block, a selection over two paragraphs or
-      // select-all would merge or remove blocks rather than change words.
-      const edges = text || target;
-      if (blockOf(edges.startContainer) !== blockOf(edges.endContainer)) {
-        event.preventDefault();
-        callbacks.onRefused();
-        return;
-      }
-      // A triple click selects up to the start of the next block; typing over
-      // it would pull that block in. Keep the selection to the text it shows.
-      if (text && !sameRange(text, target)) {
-        event.preventDefault();
-        const selection = d.getSelection();
-        selection?.removeAllRanges();
-        selection?.addRange(text);
-        const data = event.inputType.startsWith("delete")
-          ? ""
-          : (event.data ?? event.dataTransfer?.getData("text/plain") ?? "");
-        if (data) insertPlainText(d, data);
-        else d.execCommand("delete");
-        return;
-      }
-    }
-    if (event.inputType === "insertFromPaste") {
-      // Paste as plain text on one line, so pasting never adds markup.
-      event.preventDefault();
-      insertPlainText(d, event.dataTransfer?.getData("text/plain") || "");
-    }
+    if (!event.isTrusted || !body.contains(event.target as Node)) return;
+    // Composition stays with the browser and the input method.
+    if (event.isComposing) return openNative("insertCompositionText", []);
+    const handled = handle({
+      type: event.inputType,
+      text: event.data ?? event.dataTransfer?.getData("text/plain") ?? "",
+      html: event.dataTransfer?.getData("text/html") ?? "",
+    });
+    if (handled) event.preventDefault();
   };
-  // Undo and redo change text where they put the caret.
-  const onInput = (event: Event) => touch(event);
+  const onInput = () => closeNative();
+  // A composition starts before it changes text: the highlights come off
+  // then, so that the editor does not change the text under it.
+  const onCompositionStart = () => {
+    const r = selection(d);
+    if (r) hold(blockOf(r.startContainer));
+  };
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (!event.isTrusted || event.altKey || !(event.metaKey || event.ctrlKey)) return;
+    const target = elementOf(event.target as Node);
+    if (!target || !body.contains(target) || target.closest("input,textarea,select"))
+      return;
+    const type = shortcut(event);
+    if (!type) return;
+    event.preventDefault();
+    handle({ type });
+  };
   const onDrop = (event: DragEvent) => {
     event.preventDefault();
-    callbacks.onRefused();
+    callbacks.onRefused(REFUSED.drop);
   };
   d.addEventListener("keydown", onKeyDown, true);
-  d.addEventListener("paste", begin, true);
-  d.addEventListener("cut", begin, true);
-  d.addEventListener("compositionstart", begin, true);
   d.addEventListener("beforeinput", onBeforeInput, true);
   d.addEventListener("input", onInput, true);
+  d.addEventListener("compositionstart", onCompositionStart, true);
   d.addEventListener("drop", onDrop, true);
 
   const previous = body.getAttribute("contenteditable");
@@ -142,23 +354,34 @@ export function startTextEditing(
       "[data-slashdocs-text-editing] a{cursor:text!important}";
     (d.head || d.documentElement).appendChild(style);
   }
+  observer.observe(body, {
+    childList: true,
+    subtree: true,
+    characterData: true,
+    characterDataOldValue: true,
+    attributes: true,
+    attributeOldValue: true,
+  });
 
-  const take = (): TextChanges => {
-    const changes = burst?.diff() || { changes: [], unsupported: false };
-    burst?.stop();
-    burst = null;
-    return changes;
-  };
   return {
-    take,
+    map,
+    take() {
+      closeNative();
+      flush();
+      const regions = map.regions();
+      dirty.clear();
+      held.clear();
+      return { regions };
+    },
     stop() {
-      take();
+      closeNative();
+      observer.disconnect();
+      structure.stop();
+      map.stop();
       d.removeEventListener("keydown", onKeyDown, true);
-      d.removeEventListener("paste", begin, true);
-      d.removeEventListener("cut", begin, true);
-      d.removeEventListener("compositionstart", begin, true);
       d.removeEventListener("beforeinput", onBeforeInput, true);
       d.removeEventListener("input", onInput, true);
+      d.removeEventListener("compositionstart", onCompositionStart, true);
       d.removeEventListener("drop", onDrop, true);
       if (previous === null) body.removeAttribute("contenteditable");
       else body.setAttribute("contenteditable", previous);
@@ -170,191 +393,43 @@ export function startTextEditing(
   };
 }
 
-type Burst = { diff(): TextChanges; touch(node: Node): void; stop(): void };
+// shortcut gives the input type of an editing shortcut with Cmd or Ctrl.
+function shortcut(event: KeyboardEvent): string | null {
+  const key = event.key.toLowerCase();
+  if (key === "z") return event.shiftKey ? "historyRedo" : "historyUndo";
+  if (key === "y" && !event.shiftKey) return "historyRedo";
+  if (event.shiftKey) {
+    if (event.code === "Digit8") return "insertUnorderedList";
+    if (event.code === "Digit7") return "insertOrderedList";
+    return null;
+  }
+  if (key === "b") return "formatBold";
+  if (key === "i") return "formatItalic";
+  if (key === "k") return "insertLink";
+  return null;
+}
 
-// trackBurst records the text of every node of body and watches the changes
-// to the blocks that the editor touches.
-function trackBurst(
-  d: Document,
-  body: HTMLElement,
-  { beforeTouch, onDirty }: TextEditingCallbacks,
-): Burst {
-  const originals = new Map<Text, string>();
-  const parents = new Map<Text, Node | null>();
-  const record = (root: Node) => {
-    const walker = d.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-      acceptNode: (node) =>
-        node.parentElement?.closest(NOT_TEXT)
-          ? NodeFilter.FILTER_REJECT
-          : NodeFilter.FILTER_ACCEPT,
-    });
-    for (
-      let node = walker.nextNode() as Text | null;
-      node;
-      node = walker.nextNode() as Text | null
-    ) {
-      originals.set(node, node.data);
-      parents.set(node, node.parentNode);
-    }
-  };
-  // Join text split in pieces, so that each node is one run of the source.
-  body.normalize();
-  record(body);
-
-  // The blocks the editor touched, and the source nodes in them when they
-  // were first touched, before the browser changed them.
-  const blocks = new Set<Element>();
-  const touched = new Set<Text>();
-  const touch = (node: Node) => {
-    const block = blockOf(node);
-    if (!block || blocks.has(block)) return;
-    // With the highlights off, the text they split is whole again.
-    if (beforeTouch(block)) record(block);
-    blocks.add(block);
-    const nodes = d.createTreeWalker(block, NodeFilter.SHOW_TEXT);
-    for (let n = nodes.nextNode(); n; n = nodes.nextNode()) {
-      if (originals.has(n as Text)) touched.add(n as Text);
-    }
-  };
-  const inBlocks = (node: Node) => [...blocks].some((block) => block.contains(node));
-
-  // Nodes the browser added while editing. Replacing all of a node's text
-  // makes Chrome drop the node and type into a new one, so new text is
-  // attributed to the original it replaced or sits next to; only added
-  // elements are structure.
-  const addedText = new Set<Text>();
-  const addedElements = new Set<Element>();
-  const observer = new MutationObserver((records) => {
-    if (!records.some((record) => inBlocks(record.target))) return;
-    for (const record of records) {
-      for (const node of Array.from(record.addedNodes)) {
-        if (node.nodeType === Node.TEXT_NODE) {
-          if (!originals.has(node as Text)) addedText.add(node as Text);
-        } else if (node.nodeType === Node.ELEMENT_NODE) {
-          if (!(node as Element).matches(NOT_TEXT)) addedElements.add(node as Element);
-        }
-      }
-    }
-    const { changes, unsupported } = diff();
-    onDirty(changes.length + (unsupported ? 1 : 0));
-  });
-
-  // filler is markup the browser adds that the source never had: a <br>
-  // keeping an emptied block open, or an empty text node.
-  const filler = (node: Node) =>
-    (node.nodeName === "BR" && addedElements.has(node as Element)) ||
-    (node.nodeType === Node.TEXT_NODE && !(node as Text).data);
-  const isAdded = (node: Node | null): node is Text =>
-    !!node && addedText.has(node as Text) && !!(node as Text).data;
-
-  function diff(): TextChanges {
-    const claimed = new Set<Text>();
-    // The added text nodes around node on one side, up to the first node that
-    // came from the source.
-    const run = (node: Node, forward: boolean) => {
-      let text = "";
-      for (
-        let n = forward ? node.nextSibling : node.previousSibling;
-        n && (filler(n) || isAdded(n));
-        n = forward ? n.nextSibling : n.previousSibling
-      ) {
-        if (!isAdded(n) || claimed.has(n)) continue;
-        claimed.add(n);
-        text = forward ? text + n.data : n.data + text;
-      }
-      return text;
-    };
-    const changes: TextChange[] = [];
-    for (const node of touched) {
-      const before = originals.get(node)!;
-      let after: string;
-      if (node.isConnected) {
-        after = run(node, false) + node.data + run(node, true);
-      } else {
-        // The node is gone: take the new text typed where it was.
-        const parent = parents.get(node);
-        const first = parent?.isConnected
-          ? Array.from(parent.childNodes).find(
-              (n): n is Text => isAdded(n) && !claimed.has(n),
-            )
-          : undefined;
-        if (first) claimed.add(first);
-        after = first ? first.data + run(first, true) : "";
-        // Browsers drop whitespace between elements as they edit; it was
-        // never text the reader could see.
-        if (!after && !before.trim()) continue;
-      }
-      if (after !== before) changes.push({ before, after });
-    }
-    const unsupported =
-      Array.from(addedElements).some(
-        (el) => el.isConnected && inBlocks(el) && !filler(el),
-      ) ||
-      Array.from(addedText).some(
-        (n) => n.isConnected && n.data && !claimed.has(n) && inBlocks(n),
+// undoRecord reverts one mutation record.
+function undoRecord(record: MutationRecord) {
+  const target = record.target;
+  if (record.type === "characterData") {
+    (target as CharacterData).data = record.oldValue ?? "";
+  } else if (record.type === "attributes") {
+    const el = target as Element;
+    if (record.oldValue === null)
+      el.removeAttributeNS(record.attributeNamespace, record.attributeName!);
+    else
+      el.setAttributeNS(
+        record.attributeNamespace,
+        record.attributeName!,
+        record.oldValue,
       );
-    return { changes, unsupported };
+  } else {
+    record.addedNodes.forEach(
+      (node) => node.parentNode === target && target.removeChild(node),
+    );
+    record.removedNodes.forEach((node) =>
+      target.insertBefore(node, record.nextSibling),
+    );
   }
-  observer.observe(body, { characterData: true, childList: true, subtree: true });
-  onDirty(0);
-  return { diff, touch, stop: () => observer.disconnect() };
-}
-
-function insertPlainText(d: Document, text: string) {
-  if (text) d.execCommand("insertText", false, text.replace(/\s*\n\s*/g, " "));
-}
-
-// The range the input will change: the browser's target range, or the
-// selection when it does not report one.
-function targetRange(d: Document, event: InputEvent): Range | null {
-  const target = event.getTargetRanges?.()[0];
-  if (target) {
-    const range = d.createRange();
-    range.setStart(target.startContainer, target.startOffset);
-    range.setEnd(target.endContainer, target.endOffset);
-    return range;
-  }
-  const selection = d.getSelection();
-  return selection && selection.rangeCount ? selection.getRangeAt(0) : null;
-}
-
-// trimToText narrows a range to the first and last words it covers, dropping
-// block boundaries and whitespace at its edges. It returns a collapsed range
-// as it is, and null when the range covers no words.
-function trimToText(d: Document, range: Range): Range | null {
-  if (range.collapsed) return range;
-  const root =
-    range.commonAncestorContainer.nodeType === Node.TEXT_NODE
-      ? range.commonAncestorContainer.parentNode!
-      : range.commonAncestorContainer;
-  const walker = d.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  let first: { node: Text; offset: number } | null = null;
-  let last: { node: Text; offset: number } | null = null;
-  for (
-    let node = walker.nextNode() as Text | null;
-    node;
-    node = walker.nextNode() as Text | null
-  ) {
-    if (!range.intersectsNode(node)) continue;
-    const start = node === range.startContainer ? range.startOffset : 0;
-    const end = node === range.endContainer ? range.endOffset : node.data.length;
-    // Whitespace between blocks is source formatting, not words.
-    if (!node.data.slice(start, end).trim()) continue;
-    first ??= { node, offset: start };
-    last = { node, offset: end };
-  }
-  if (!first || !last) return null;
-  const text = d.createRange();
-  text.setStart(first.node, first.offset);
-  text.setEnd(last.node, last.offset);
-  return text;
-}
-
-function sameRange(a: Range, b: Range): boolean {
-  return (
-    a.startContainer === b.startContainer &&
-    a.startOffset === b.startOffset &&
-    a.endContainer === b.endContainer &&
-    a.endOffset === b.endOffset
-  );
 }

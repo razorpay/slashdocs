@@ -60,9 +60,14 @@ If the user is iterating on an existing slashdocs document, push a new version
 instead of creating a duplicate. Use the CLI help to find the current push/update
 syntax and include a short summary of what changed. Write one change per line;
 the document's history shows a multi-line summary as a list. People with the
-editor role also change the text in the browser, and their edits save as they
-type, so pull or read the HTML again before you edit a document that people
-work on.
+editor role also edit the document in the browser (words, paragraphs, lists,
+bold, italic and links), and their edits save as they type, so pull or read the
+HTML again before you edit a document that people work on. A browser edit
+changes only the HTML of the element that the person edited. Text that a script
+shows can change in the browser only when it is exactly one string in an inline
+script or in a `<script type="application/json">` block. Thus, keep text that
+people may fix in the HTML or in such one-string values, not in strings that
+code builds.
 
 For changes to existing text, such as a fixed number, a reworded sentence, or
 a few addressed comments, use `slashdocs docs edit` (MCP: `edit_document`)

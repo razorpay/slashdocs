@@ -116,7 +116,7 @@ func TestApprovalEventsReachTheWebhook(t *testing.T) {
 	if queued() != 2 {
 		t.Fatalf("queued = %d, want one event for the request and one for the decision", queued())
 	}
-	if _, err := store.CreateVersion(ctx, doc.ID, v1.ID, "", []byte("<p>two</p>"), owner); err != nil {
+	if _, err := store.CreateVersion(ctx, doc.ID, v1.ID, "", "", []byte("<p>two</p>"), owner); err != nil {
 		t.Fatal(err)
 	}
 

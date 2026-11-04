@@ -78,6 +78,29 @@ func (q *Queries) GetVersionBlobKey(ctx context.Context, id string) (string, err
 	return html_blob_key, err
 }
 
+const getVersionByClientChange = `-- name: GetVersionByClientChange :one
+SELECT id, COALESCE(parent_version_id, '')::text AS parent_version_id
+FROM versions WHERE document_id=$1 AND client_change_id=$2
+`
+
+type GetVersionByClientChangeParams struct {
+	DocumentID     string
+	ClientChangeID pgtype.Text
+}
+
+type GetVersionByClientChangeRow struct {
+	ID              string
+	ParentVersionID string
+}
+
+// The version that a client change made, and the version it was made on.
+func (q *Queries) GetVersionByClientChange(ctx context.Context, arg GetVersionByClientChangeParams) (GetVersionByClientChangeRow, error) {
+	row := q.db.QueryRow(ctx, getVersionByClientChange, arg.DocumentID, arg.ClientChangeID)
+	var i GetVersionByClientChangeRow
+	err := row.Scan(&i.ID, &i.ParentVersionID)
+	return i, err
+}
+
 const getVersionPreview = `-- name: GetVersionPreview :one
 SELECT left(COALESCE(search_text, ''), 2000)::text AS text, created_at
 FROM versions WHERE id=$1
@@ -129,8 +152,8 @@ func (q *Queries) InsertInitialVersion(ctx context.Context, arg InsertInitialVer
 }
 
 const insertVersion = `-- name: InsertVersion :one
-INSERT INTO versions(id,document_id,number,html_blob_key,sha256,parent_version_id,created_by_type,created_by_id,change_summary,search_text)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::text)
+INSERT INTO versions(id,document_id,number,html_blob_key,sha256,parent_version_id,created_by_type,created_by_id,change_summary,client_change_id,search_text)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::text)
 RETURNING created_at
 `
 
@@ -144,6 +167,7 @@ type InsertVersionParams struct {
 	CreatedByType   string
 	CreatedByID     string
 	ChangeSummary   string
+	ClientChangeID  pgtype.Text
 	SearchText      string
 }
 
@@ -158,6 +182,7 @@ func (q *Queries) InsertVersion(ctx context.Context, arg InsertVersionParams) (p
 		arg.CreatedByType,
 		arg.CreatedByID,
 		arg.ChangeSummary,
+		arg.ClientChangeID,
 		arg.SearchText,
 	)
 	var created_at pgtype.Timestamptz

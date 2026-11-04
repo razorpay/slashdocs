@@ -60,9 +60,51 @@ type editFailedDetails struct {
 	CurrentVersionID string `json:"current_version_id"`
 }
 
-// editRebaseAttempts bounds how often an edit without a base version retries
-// when another write lands between reading and saving the current version.
+// editRebaseAttempts bounds how often an edit without a base version, or a
+// source edit, retries when another write lands between reading and saving
+// the current version.
 const editRebaseAttempts = 3
+
+// editSourceRequest is the body of POST /v1/documents/{id}/source-edits.
+type editSourceRequest struct {
+	// BaseVersionID is the version that the replacements were made on.
+	BaseVersionID string `json:"base_version_id"`
+	// ClientChangeID names the change, so that a retry returns the version
+	// that the change made instead of a second one.
+	ClientChangeID string                 `json:"client_change_id"`
+	ChangeSummary  string                 `json:"change_summary,omitempty"`
+	Replacements   []textedit.Replacement `json:"replacements"`
+}
+
+// editSourceResponse is the payload of POST /v1/documents/{id}/source-edits.
+type editSourceResponse struct {
+	ID            string `json:"id"`
+	Number        int    `json:"number"`
+	SHA256        string `json:"sha256"`
+	ChangeSummary string `json:"change_summary,omitempty"`
+	// BaseVersionID is the version the replacements were applied to.
+	BaseVersionID string `json:"base_version_id"`
+	// Rebased is set when that version is newer than the version that the
+	// replacements were made on.
+	Rebased bool `json:"rebased"`
+}
+
+// replacementFailedDetails names the replacement that does not fit its base
+// version, and the current version.
+type replacementFailedDetails struct {
+	textedit.ReplacementError
+	CurrentVersionID string `json:"current_version_id"`
+}
+
+// editConflictDetails names the replacement that a newer version changed,
+// and that version.
+type editConflictDetails struct {
+	CurrentVersionID string `json:"current_version_id"`
+	Index            int    `json:"index"`
+}
+
+// maxClientChangeIDBytes caps the client_change_id of a source edit.
+const maxClientChangeIDBytes = 128
 
 // renderTokenResponse is the payload of POST .../render-token.
 type renderTokenResponse struct {
@@ -97,7 +139,7 @@ func (h handlers) createVersion(c *gin.Context) {
 		return
 	}
 	observeHTML("version_create", len(html))
-	v, err := h.deps.repository.CreateVersion(c.Request.Context(), c.Param("id"), c.PostForm("base_version_id"), c.PostForm("change_summary"), html, *p)
+	v, err := h.deps.repository.CreateVersion(c.Request.Context(), c.Param("id"), c.PostForm("base_version_id"), "", c.PostForm("change_summary"), html, *p)
 	// A conflict means the base version was stale; report the current one.
 	if errors.Is(err, repo.ErrVersionConflict) {
 		versionConflict(c, err, "base_version_id is stale")
@@ -157,14 +199,15 @@ func (h handlers) editDocument(c *gin.Context) {
 	}
 }
 
-// editMismatchError is an edit that did not match the version it was
-// applied to.
+// editMismatchError is an edit or replacement that did not fit the current
+// version, versionID.
 type editMismatchError struct {
-	edit      *textedit.Error
+	err       error
 	versionID string
 }
 
-func (e *editMismatchError) Error() string { return e.edit.Error() }
+func (e *editMismatchError) Error() string { return e.err.Error() }
+func (e *editMismatchError) Unwrap() error { return e.err }
 
 var errEditedTooLarge = errors.New("edited HTML exceeds 50 MiB")
 
@@ -186,33 +229,152 @@ func (h handlers) saveEdits(ctx context.Context, docID string, in editDocumentRe
 		return repo.Version{}, "", err
 	}
 	edited, err := textedit.Apply(html, in.Edits)
-	var mismatch *textedit.Error
-	if errors.As(err, &mismatch) {
-		return repo.Version{}, "", &editMismatchError{edit: mismatch, versionID: base}
-	}
 	if err != nil {
-		return repo.Version{}, "", err
-	}
-	if len(edited) > maxHTMLBytes {
-		return repo.Version{}, "", errEditedTooLarge
+		return repo.Version{}, "", &editMismatchError{err: err, versionID: base}
 	}
 	summary := strings.TrimSpace(in.ChangeSummary)
 	if summary == "" {
 		summary = textedit.Summary(in.Edits)
 	}
-	observeHTML("version_edit", len(edited))
-	v, err := h.deps.repository.CreateVersion(ctx, docID, base, summary, edited, author)
+	v, err := h.saveEdited(ctx, docID, base, "", summary, edited, author)
 	return v, base, err
+}
+
+// saveEdited saves html, the edited content of the version base, as the next
+// version.
+func (h handlers) saveEdited(ctx context.Context, docID, base, clientChangeID, summary string, html []byte, author auth.Principal) (repo.Version, error) {
+	if len(html) > maxHTMLBytes {
+		return repo.Version{}, errEditedTooLarge
+	}
+	observeHTML("version_edit", len(html))
+	return h.deps.repository.CreateVersion(ctx, docID, base, clientChangeID, summary, html, author)
+}
+
+// EditSource godoc
+// @Summary Edit document source by position
+// @Description For the browser editor. Applies replacements by position in the HTML of base_version_id to the current version, and saves the result as a new version. start and end count UTF-8 bytes, end is exclusive, and old_html must be the HTML from start to end of the base version. Replacements are in order and do not overlap. When a newer version exists, each replacement moves to where its HTML is in that version, and a replacement that the newer version changed fails with edit_conflict. A retry with the same client_change_id returns the version that the first attempt made.
+// @Tags versions
+// @Security bearerAuth
+// @Security cookieAuth
+// @Accept json
+// @Param id path string true "Document ID"
+// @Param body body editSourceRequest true "Replacements"
+// @Success 201 {object} editSourceResponse
+// @Failure 400 {object} errorEnvelope
+// @Failure 404 {object} errorEnvelope
+// @Failure 409 {object} errorEnvelope
+// @Failure 413 {object} errorEnvelope
+// @Failure 422 {object} errorEnvelope
+// @Router /v1/documents/{id}/source-edits [post]
+func (h handlers) editSource(c *gin.Context) {
+	docID := c.Param("id")
+	if !h.needDocRole(c, docID, repo.RoleEditor) {
+		return
+	}
+	var in editSourceRequest
+	if err := c.ShouldBindJSON(&in); err != nil || in.BaseVersionID == "" || in.ClientChangeID == "" || len(in.ClientChangeID) > maxClientChangeIDBytes {
+		badRequest(c, fmt.Sprintf("pass base_version_id, a client_change_id of at most %d bytes, and replacements", maxClientChangeIDBytes))
+		return
+	}
+	if len(in.Replacements) == 0 || len(in.Replacements) > textedit.MaxEdits {
+		badRequest(c, fmt.Sprintf("pass between 1 and %d replacements", textedit.MaxEdits))
+		return
+	}
+	for attempt := 1; ; attempt++ {
+		out, created, err := h.saveSourceEdits(c.Request.Context(), docID, in, *current(c))
+		// Another write landed after the read, so the replacements apply
+		// again on top of it. When that write was this change, the next
+		// attempt finds its version.
+		if (errors.Is(err, repo.ErrVersionConflict) || errors.Is(err, repo.ErrConflict)) && attempt < editRebaseAttempts {
+			continue
+		}
+		if err != nil {
+			h.editFailed(c, err, false)
+			return
+		}
+		if created {
+			incVersion("edited", actorType(c))
+			h.announce(c, repo.DocumentEventDocument)
+		}
+		c.JSON(http.StatusCreated, out)
+		return
+	}
+}
+
+// saveSourceEdits applies the replacements to the current version and saves
+// the result as the next one, unless the client change already made a
+// version. It reports whether it made the version.
+func (h handlers) saveSourceEdits(ctx context.Context, docID string, in editSourceRequest, author auth.Principal) (editSourceResponse, bool, error) {
+	r := h.deps.repository
+	d, err := r.GetDocument(ctx, docID)
+	if err != nil {
+		return editSourceResponse{}, false, err
+	}
+	// Look for the change after reading the current version. When that
+	// version is the one the change made, the change is then found, and it
+	// does not apply a second time.
+	v, onto, err := r.VersionByClientChange(ctx, docID, in.ClientChangeID)
+	if err == nil {
+		return sourceEdited(v, onto, in.BaseVersionID), false, nil
+	}
+	if !errors.Is(err, repo.ErrNotFound) {
+		return editSourceResponse{}, false, err
+	}
+	onto = d.CurrentVersionID
+	// The base must be a version of this document, so that the replacements
+	// are only ever matched against it.
+	baseVersion, err := r.GetVersion(ctx, in.BaseVersionID)
+	if err == nil && baseVersion.DocumentID != docID {
+		err = repo.ErrNotFound
+	}
+	if err != nil {
+		return editSourceResponse{}, false, err
+	}
+	base, err := r.GetVersionHTML(ctx, in.BaseVersionID)
+	if err != nil {
+		return editSourceResponse{}, false, err
+	}
+	latest := base
+	if onto != in.BaseVersionID {
+		if latest, err = r.GetVersionHTML(ctx, onto); err != nil {
+			return editSourceResponse{}, false, err
+		}
+	}
+	edited, err := textedit.Replace(base, latest, in.Replacements)
+	if err != nil {
+		return editSourceResponse{}, false, &editMismatchError{err: err, versionID: onto}
+	}
+	summary := strings.TrimSpace(in.ChangeSummary)
+	if summary == "" {
+		summary = textedit.ReplacementSummary(in.Replacements)
+	}
+	v, err = h.saveEdited(ctx, docID, onto, in.ClientChangeID, summary, edited, author)
+	return sourceEdited(v, onto, in.BaseVersionID), true, err
+}
+
+// sourceEdited describes v, the version that replacements made on base saved
+// when they applied to onto.
+func sourceEdited(v repo.Version, onto, base string) editSourceResponse {
+	return editSourceResponse{ID: v.ID, Number: v.Number, SHA256: v.SHA256, ChangeSummary: v.ChangeSummary, BaseVersionID: onto, Rebased: onto != base}
 }
 
 // editFailed writes the response for an edit that saved nothing.
 func (h handlers) editFailed(c *gin.Context, err error, hadBase bool) {
 	var mismatch *editMismatchError
+	var edit *textedit.Error
+	var replacement *textedit.ReplacementError
+	var overlap *textedit.ConflictError
 	var conflict *repo.VersionConflictError
 	switch {
-	case errors.As(err, &mismatch):
+	case errors.As(err, &mismatch) && errors.As(err, &edit):
 		incVersion("edit_failed", actorType(c))
-		c.JSON(http.StatusUnprocessableEntity, errorResponse("edit_failed", mismatch.Error(), editFailedDetails{Error: *mismatch.edit, CurrentVersionID: mismatch.versionID}))
+		c.JSON(http.StatusUnprocessableEntity, errorResponse("edit_failed", mismatch.Error(), editFailedDetails{Error: *edit, CurrentVersionID: mismatch.versionID}))
+	case errors.As(err, &mismatch) && errors.As(err, &replacement):
+		incVersion("edit_failed", actorType(c))
+		c.JSON(http.StatusUnprocessableEntity, errorResponse("edit_failed", mismatch.Error(), replacementFailedDetails{ReplacementError: *replacement, CurrentVersionID: mismatch.versionID}))
+	case errors.As(err, &mismatch) && errors.As(err, &overlap):
+		incVersion("edit_conflict", actorType(c))
+		c.JSON(http.StatusConflict, errorResponse("edit_conflict", mismatch.Error(), editConflictDetails{CurrentVersionID: mismatch.versionID, Index: overlap.Index}))
 	case errors.As(err, &conflict) && hadBase:
 		versionConflict(c, err, "base_version_id is stale")
 	case errors.As(err, &conflict):
@@ -275,7 +437,7 @@ func (h handlers) restoreVersion(c *gin.Context) {
 	if summary == "" {
 		summary = restoredSummary(old)
 	}
-	v, err := h.deps.repository.CreateVersion(ctx, old.DocumentID, d.CurrentVersionID, summary, html, *current(c))
+	v, err := h.deps.repository.CreateVersion(ctx, old.DocumentID, d.CurrentVersionID, "", summary, html, *current(c))
 	if errors.Is(err, repo.ErrVersionConflict) {
 		versionConflict(c, err, "the document changed while it was restored; try again")
 		return

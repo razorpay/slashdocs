@@ -35,6 +35,11 @@ const STATUS: Record<SaveState, Status> = {
     title: "Your edits are not saved yet. Trying again.",
     Icon: AlertCircle,
   },
+  paused: {
+    label: "Not saved",
+    title: "The document changed elsewhere, so your latest edits are not saved.",
+    Icon: AlertCircle,
+  },
 };
 
 // What a reader who cannot change the words may do.
@@ -67,7 +72,7 @@ export function EditStatus({ access }: { access?: keyof typeof ACCESS }) {
       className={cn(
         "shrink-0 items-center gap-1 text-xs text-[var(--color-fg-muted)]",
         !editable || saveState === "idle" ? "hidden sm:inline-flex" : "inline-flex",
-        editable && saveState === "failed" && "text-[var(--color-danger)]",
+        editable && Icon === AlertCircle && "text-[var(--color-danger)]",
       )}
     >
       <Icon

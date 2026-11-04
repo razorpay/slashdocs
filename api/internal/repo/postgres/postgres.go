@@ -509,7 +509,7 @@ func clearGrantedAccessRequests(ctx context.Context, tx pgx.Tx, resourceType, re
 	return err
 }
 
-func (s *Store) CreateVersion(ctx context.Context, documentID, baseVersionID, changeSummary string, html []byte, createdBy auth.Principal) (repo.Version, error) {
+func (s *Store) CreateVersion(ctx context.Context, documentID, baseVersionID, clientChangeID, changeSummary string, html []byte, createdBy auth.Principal) (repo.Version, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return repo.Version{}, err
@@ -538,7 +538,13 @@ func (s *Store) CreateVersion(ctx context.Context, documentID, baseVersionID, ch
 			_ = s.blobs.Delete(context.WithoutCancel(ctx), blobKey)
 		}
 	}()
-	createdAt, err := q.InsertVersion(ctx, dbsqlc.InsertVersionParams{ID: id, DocumentID: documentID, Number: cur.NextNumber, HtmlBlobKey: blobKey, Sha256: sum, ParentVersionID: pgtype.Text{String: cur.CurrentVersionID.String, Valid: cur.CurrentVersionID.Valid}, CreatedByType: string(createdBy.Type), CreatedByID: createdBy.ID, ChangeSummary: changeSummary, SearchText: searchText(html)})
+	createdAt, err := q.InsertVersion(ctx, dbsqlc.InsertVersionParams{ID: id, DocumentID: documentID, Number: cur.NextNumber, HtmlBlobKey: blobKey, Sha256: sum, ParentVersionID: pgtype.Text{String: cur.CurrentVersionID.String, Valid: cur.CurrentVersionID.Valid}, CreatedByType: string(createdBy.Type), CreatedByID: createdBy.ID, ChangeSummary: changeSummary, ClientChangeID: pgtype.Text{String: clientChangeID, Valid: clientChangeID != ""}, SearchText: searchText(html)})
+	// The same change can reach this point twice when a retry read the
+	// version that the first attempt made as the latest one.
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "versions_client_change_uniq" {
+		return repo.Version{}, repo.ErrConflict
+	}
 	if err != nil {
 		return repo.Version{}, err
 	}
@@ -1232,6 +1238,17 @@ func (s *Store) GetVersion(ctx context.Context, id string) (repo.Version, error)
 		return repo.Version{}, err
 	}
 	return repo.Version{ID: r.ID, Number: int(r.Number), DocumentID: r.DocumentID, CreatedBy: auth.Principal{Type: auth.PrincipalType(r.CreatedByType), ID: r.CreatedByID, Email: r.CreatedByEmail, Name: r.CreatedByName, PictureURL: r.CreatedByPictureUrl}, ChangeSummary: r.ChangeSummary, SHA256: r.Sha256, CreatedAt: pgTimeRFC3339(r.CreatedAt)}, nil
+}
+func (s *Store) VersionByClientChange(ctx context.Context, documentID, clientChangeID string) (repo.Version, string, error) {
+	r, err := s.q.GetVersionByClientChange(ctx, dbsqlc.GetVersionByClientChangeParams{DocumentID: documentID, ClientChangeID: pgtype.Text{String: clientChangeID, Valid: true}})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return repo.Version{}, "", repo.ErrNotFound
+	}
+	if err != nil {
+		return repo.Version{}, "", err
+	}
+	v, err := s.GetVersion(ctx, r.ID)
+	return v, r.ParentVersionID, err
 }
 func (s *Store) GetVersionHTML(ctx context.Context, id string) ([]byte, error) {
 	key, err := s.q.GetVersionBlobKey(ctx, id)

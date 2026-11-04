@@ -369,4 +369,5 @@ type Version struct {
 	CreatedAt       pgtype.Timestamptz
 	SearchText      pgtype.Text
 	SearchVector    interface{}
+	ClientChangeID  pgtype.Text
 }
