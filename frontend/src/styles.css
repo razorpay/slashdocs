@@ -62,6 +62,8 @@
 }
 
 .dark {
+  /* Scrollbars and form controls follow the dark theme too. */
+  color-scheme: dark;
   --color-bg: #131415;
   --color-chrome: #131415;
   --color-surface: #1f2124;
@@ -87,10 +89,6 @@
   body,
   #root {
     height: 100%;
-  }
-  /* The header stays still between pages that scroll and pages that do not. */
-  html {
-    scrollbar-gutter: stable;
   }
   body {
     margin: 0;
