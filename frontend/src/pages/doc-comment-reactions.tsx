@@ -32,7 +32,7 @@ const REACTIONS: Record<string, { glyph: string; label: string }> = {
 } satisfies Record<ReactionEmoji, { glyph: string; label: string }>;
 
 const feedback =
-  "transition-[background-color,color,box-shadow,transform] duration-150 ease-out motion-safe:active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]";
+  "transition-[background-color,color,box-shadow,transform] duration-150 ease-out motion-safe:active:scale-[0.96]";
 
 export function ReactionBar({
   c,

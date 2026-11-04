@@ -83,10 +83,6 @@ export function HistoryDialog({
   );
 }
 
-// The focus ring of the Button, drawn inside, as the list clips at its edges.
-const focusRing =
-  "focus-visible:outline-4 focus-visible:-outline-offset-4 focus-visible:outline-[color-mix(in_srgb,var(--color-accent)_24%,transparent)]";
-
 function HistorySessionRow({
   session,
   current,
@@ -112,7 +108,7 @@ function HistorySessionRow({
       <button
         type="button"
         onClick={() => onSelect(newest.id)}
-        className={`flex w-full flex-col gap-1 rounded-xl p-4 text-left transition-colors hover:bg-[var(--color-surface-muted)]/60 ${focusRing}`}
+        className="flex w-full flex-col gap-1 rounded-xl p-4 text-left transition-colors hover:bg-[var(--color-surface-muted)]/60 focus-visible:-outline-offset-2"
         aria-current={newest.id === current ? "true" : undefined}
       >
         <div className="flex flex-wrap items-center gap-2">
@@ -133,7 +129,7 @@ function HistorySessionRow({
             type="button"
             onClick={() => setExpanded((e) => !e)}
             aria-expanded={expanded}
-            className={`flex w-full items-center gap-1 border-t border-[var(--color-border)] px-4 py-2 text-xs text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] ${focusRing}`}
+            className="flex w-full items-center gap-1 border-t border-[var(--color-border)] px-4 py-2 text-xs text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] focus-visible:-outline-offset-2"
           >
             <ChevronDown
               className={`h-3.5 w-3.5 transition-transform duration-200 ease-out motion-reduce:transition-none ${expanded ? "rotate-180" : ""}`}
@@ -150,7 +146,7 @@ function HistorySessionRow({
                     type="button"
                     onClick={() => onSelect(v.id)}
                     aria-current={v.id === current ? "true" : undefined}
-                    className={`flex w-full flex-col gap-0.5 rounded-lg px-2 py-1.5 text-left hover:bg-[var(--color-surface-muted)]/60 ${focusRing}`}
+                    className="flex w-full flex-col gap-0.5 rounded-lg px-2 py-1.5 text-left hover:bg-[var(--color-surface-muted)]/60 focus-visible:-outline-offset-2"
                   >
                     <span className="flex flex-wrap items-center gap-2 text-sm">
                       <RelativeTime iso={v.created_at} />

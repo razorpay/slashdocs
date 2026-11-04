@@ -87,7 +87,7 @@ export function CommentMap({ comments }: { comments: Comment[] }) {
             }
             // On a touch screen, the pseudo-element makes a 40px target that
             // reaches over the edge of the document.
-            className="pointer-events-auto group absolute inset-x-0 h-4 -translate-y-1/2 focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] pointer-coarse:after:absolute pointer-coarse:after:-inset-y-3 pointer-coarse:after:right-0 pointer-coarse:after:-left-7"
+            className="pointer-events-auto group absolute inset-x-0 h-4 -translate-y-1/2 pointer-coarse:after:absolute pointer-coarse:after:-inset-y-3 pointer-coarse:after:right-0 pointer-coarse:after:-left-7"
             style={{ top: `${y * 100}%` }}
           >
             <span

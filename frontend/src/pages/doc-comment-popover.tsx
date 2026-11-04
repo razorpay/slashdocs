@@ -205,7 +205,7 @@ export function CommentPopovers({
                     setCluster(undefined);
                     setActiveComment(c.id);
                   }}
-                  className="flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left hover:bg-[var(--color-surface-muted)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
+                  className="flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left hover:bg-[var(--color-surface-muted)] focus-visible:-outline-offset-2"
                 >
                   <PersonAvatar who={c.author} />
                   <span className="min-w-0">
