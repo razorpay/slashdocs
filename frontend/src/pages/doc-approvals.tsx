@@ -186,6 +186,7 @@ export function ApprovalsDialog({
 function ApprovalsDialogBody({ onClose }: { onClose: () => void }) {
   return (
     <DialogContent
+      anchor="top"
       className="max-w-lg overflow-hidden p-0"
       aria-describedby={undefined}
     >

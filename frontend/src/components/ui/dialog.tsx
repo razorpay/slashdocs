@@ -1,6 +1,7 @@
 import * as React from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
+import { SheetHandle } from "./sheet";
 import { Tooltip } from "./tooltip";
 import { cn } from "@/lib/cn";
 
@@ -8,21 +9,31 @@ export const Dialog = DialogPrimitive.Root;
 export const DialogTrigger = DialogPrimitive.Trigger;
 export const DialogClose = DialogPrimitive.Close;
 
+// A dialog sits in the middle of the screen. With anchor "top", it sits at a
+// fixed top instead, so content that grows, such as a list that loads, makes
+// it longer at the bottom and does not move it. A narrow screen shows such a
+// dialog as a sheet at the bottom, as the comment sheets are.
 export function DialogContent({
   className,
   children,
+  anchor = "center",
   ...p
-}: React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>) {
+}: React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
+  anchor?: "center" | "top";
+}) {
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay className="sheet-overlay fixed inset-0 z-50 bg-[hsl(218_30%_12%/0.24)] backdrop-blur-[2px] dark:bg-black/60" />
       <DialogPrimitive.Content
         className={cn(
           "dialog-content fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-[var(--shadow-pop)] dark:border-transparent focus:outline-none",
+          anchor === "top" &&
+            "dialog-sheet top-[12vh] translate-y-0 max-md:bottom-0 max-md:left-0 max-md:top-auto max-md:max-w-none max-md:translate-x-0 max-md:rounded-b-none max-md:rounded-t-2xl max-md:pb-[calc(1.5rem+env(safe-area-inset-bottom))] max-md:pt-0",
           className,
         )}
         {...p}
       >
+        {anchor === "top" && <SheetHandle className="mb-4 md:hidden" />}
         {children}
         <Tooltip label="Close dialog">
           <DialogPrimitive.Close
