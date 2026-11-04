@@ -20,6 +20,8 @@ import { textLinkFragment } from "../../bridge/text-link";
 import { Skeleton } from "@/components/ui/misc";
 import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/error-state";
+import { AppBar } from "@/components/layout/app-shell";
+import { Page } from "@/components/layout/page";
 import { DocBar } from "./doc-bar";
 import { DocWorkspace } from "./doc-workspace";
 import type { FollowRequest } from "./doc-context";
@@ -72,6 +74,33 @@ function AccessDeniedState({ documentID }: { documentID: string }) {
           ) : null}
         </div>
       }
+    />
+  );
+}
+
+function DocumentError({ error, documentID }: { error: Error; documentID: string }) {
+  const apiError = error instanceof APIError ? error : undefined;
+  if (apiError?.status === 403) return <AccessDeniedState documentID={documentID} />;
+  if (apiError?.status === 404) {
+    return (
+      <ErrorState
+        title="Document not found"
+        description="This document may have been deleted, or the link may be incorrect."
+      />
+    );
+  }
+  if (apiError?.code === "group_membership_unavailable") {
+    return (
+      <ErrorState
+        title="Group access is temporarily unavailable"
+        description="Google Group membership could not be refreshed. Try again shortly; stale group access has not been used."
+      />
+    );
+  }
+  return (
+    <ErrorState
+      title="Could not load document"
+      description="Something went wrong while loading this document. Please try again."
     />
   );
 }
@@ -237,35 +266,17 @@ export function DocumentPage() {
     );
   }
   if (doc.error) {
-    if (doc.error instanceof APIError) {
-      if (doc.error.status === 401) {
-        return <Navigate to={signInPath} replace />;
-      }
-      if (doc.error.status === 403) {
-        return <AccessDeniedState documentID={id} />;
-      }
-      if (doc.error.status === 404) {
-        return (
-          <ErrorState
-            title="Document not found"
-            description="This document may have been deleted, or the link may be incorrect."
-          />
-        );
-      }
-      if (doc.error.code === "group_membership_unavailable") {
-        return (
-          <ErrorState
-            title="Group access is temporarily unavailable"
-            description="Google Group membership could not be refreshed. Try again shortly; stale group access has not been used."
-          />
-        );
-      }
+    if (doc.error instanceof APIError && doc.error.status === 401) {
+      return <Navigate to={signInPath} replace />;
     }
+    // A document that does not open shows the app bar, as a missing page does.
     return (
-      <ErrorState
-        title="Could not load document"
-        description="Something went wrong while loading this document. Please try again."
-      />
+      <>
+        <AppBar />
+        <Page lane="focus" backdrop={false}>
+          <DocumentError error={doc.error} documentID={id} />
+        </Page>
+      </>
     );
   }
   if (!doc.data) return null;
