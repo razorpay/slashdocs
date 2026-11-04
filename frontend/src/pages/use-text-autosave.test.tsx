@@ -131,7 +131,8 @@ it("shows the merged version after a rebased save when nothing more was typed", 
   await type("Try it now.");
 
   expect(onSaved).toHaveBeenCalledWith("ver_3", false);
-  expect(reload).toHaveBeenCalledTimes(1);
+  // The load shows the version that the save made, not the one before it.
+  expect(reload).toHaveBeenCalledExactlyOnceWith("ver_3");
 });
 
 it("keeps the frame after a rebased save when the reader typed during it", async () => {

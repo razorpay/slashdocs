@@ -72,8 +72,8 @@ export function useTextAutosave(options: {
   // A version saved from the frame. It is clean when it holds exactly what
   // is on screen; otherwise it also holds someone else's edits.
   onSaved: (versionID: string, clean: boolean) => void;
-  // Shows the latest version in place of what is on screen.
-  reload: () => void;
+  // Shows a version, or else the latest one, in place of what is on screen.
+  reload: (versionID?: string) => void;
   // Renders a source in a probe frame, to make sure that a script change
   // shows.
   probe: Render;
@@ -221,6 +221,8 @@ export function useTextAutosave(options: {
     saving.current = true;
     let touched = unsaved.current;
     let outcome: "retry" | "refused" | "paused" | "reload" | undefined;
+    // The version that a load after the save shows.
+    let shown: string | undefined;
     try {
       const resent = unsent.current !== undefined;
       const change = (unsent.current ??= await next());
@@ -229,6 +231,7 @@ export function useTextAutosave(options: {
       setState("saving");
       const saved = await api.editSource(docId, change.body);
       unsent.current = undefined;
+      shown = saved.id;
       onSaved(saved.id, !saved.rebased);
       if (change.places) {
         for (const key of change.scripts) savedScripts.current.add(key);
@@ -243,7 +246,7 @@ export function useTextAutosave(options: {
               replacements: change.undo,
             });
             onSaved(undone.id, false);
-            latest.current.reload();
+            latest.current.reload(undone.id);
           } catch (e) {
             toast.error(errorMessage(e, "The change could not be undone."), {
               id: SCRIPT_TOAST,
@@ -315,7 +318,7 @@ export function useTextAutosave(options: {
       if (outcome === "paused") setState("paused");
       else if (outcome === "retry" || outcome === "refused") setState("failed");
       else if (touched) setState("saved");
-      if (outcome === "reload") reload();
+      if (outcome === "reload") reload(shown);
       else if (outcome === "retry") later(timer, save, AUTOSAVE_RETRY_MS);
       else if (again.current) later(timer, save, 0);
       again.current = false;

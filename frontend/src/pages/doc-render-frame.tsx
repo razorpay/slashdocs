@@ -251,8 +251,11 @@ export function RenderFrame() {
         q.invalidateQueries({ queryKey });
       }
     },
-    reload: () => {
-      showLatest();
+    // A load right after a save shows the version that it made: the document
+    // stream must not keep the frame on the version before it.
+    reload: (saved) => {
+      if (saved) stayOnVersion(saved);
+      else showLatest();
       setKept(undefined);
       setReloads((n) => n + 1);
     },
