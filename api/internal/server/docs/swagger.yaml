@@ -1319,6 +1319,10 @@ paths:
           description: Not Found
           schema:
             $ref: '#/definitions/server.errorEnvelope'
+        "503":
+          description: group_membership_unavailable
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
       security:
       - bearerAuth: []
       - cookieAuth: []
@@ -1354,6 +1358,10 @@ paths:
             $ref: '#/definitions/server.errorEnvelope'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "503":
+          description: group_membership_unavailable
           schema:
             $ref: '#/definitions/server.errorEnvelope'
       security:
@@ -1400,6 +1408,10 @@ paths:
           description: Not Found
           schema:
             $ref: '#/definitions/server.errorEnvelope'
+        "503":
+          description: group_membership_unavailable
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
       security:
       - bearerAuth: []
       - cookieAuth: []
@@ -1442,6 +1454,10 @@ paths:
             $ref: '#/definitions/server.errorEnvelope'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "503":
+          description: group_membership_unavailable
           schema:
             $ref: '#/definitions/server.errorEnvelope'
       security:
@@ -1493,6 +1509,10 @@ paths:
           description: rate_limited
           schema:
             $ref: '#/definitions/server.errorEnvelope'
+        "503":
+          description: group_membership_unavailable
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
       security:
       - bearerAuth: []
       - cookieAuth: []
@@ -1536,6 +1556,10 @@ paths:
           description: Not Found
           schema:
             $ref: '#/definitions/server.errorEnvelope'
+        "503":
+          description: group_membership_unavailable
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
       security:
       - bearerAuth: []
       - cookieAuth: []
@@ -1560,6 +1584,10 @@ paths:
             type: string
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "503":
+          description: group_membership_unavailable
           schema:
             $ref: '#/definitions/server.errorEnvelope'
       security:
@@ -1732,6 +1760,10 @@ paths:
           description: rate_limited
           schema:
             $ref: '#/definitions/server.errorEnvelope'
+        "503":
+          description: group_membership_unavailable
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
       security:
       - bearerAuth: []
       - cookieAuth: []
@@ -1777,6 +1809,10 @@ paths:
           description: Not Found
           schema:
             $ref: '#/definitions/server.errorEnvelope'
+        "503":
+          description: group_membership_unavailable
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
       security:
       - bearerAuth: []
       - cookieAuth: []
@@ -1802,6 +1838,10 @@ paths:
             $ref: '#/definitions/server.errorEnvelope'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "503":
+          description: group_membership_unavailable
           schema:
             $ref: '#/definitions/server.errorEnvelope'
       security:
@@ -1834,6 +1874,10 @@ paths:
             $ref: '#/definitions/server.errorEnvelope'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "503":
+          description: group_membership_unavailable
           schema:
             $ref: '#/definitions/server.errorEnvelope'
       security:

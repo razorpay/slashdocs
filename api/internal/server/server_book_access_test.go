@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/server"
 )
 
 // chapterRoute is one of the routes that name a chapter.
@@ -67,4 +70,55 @@ func TestChapterRoutesAnswerNotFoundOutsideTheReadersBook(t *testing.T) {
 	if len(s.Positions) != 0 {
 		t.Fatalf("positions = %+v, want none", s.Positions)
 	}
+}
+
+// groupsDownAuth authenticates like testPrincipalAuth, but as if Google Group
+// membership could not be resolved.
+type groupsDownAuth struct{}
+
+func (groupsDownAuth) Authenticate(r *http.Request) (*auth.Principal, error) {
+	p, err := testPrincipalAuth{}.Authenticate(r)
+	if err != nil {
+		return nil, err
+	}
+	if p.Type == auth.PrincipalUser {
+		p.GoogleGroupMembershipState = auth.GoogleGroupMembershipUnavailable
+	}
+	return p, nil
+}
+
+// While group membership cannot be resolved, a book answers 503 rather than
+// a smaller book or a 404: a group grant may be the one that lets the caller
+// read it.
+func TestBookRoutesAnswer503WhenGroupsAreUnavailable(t *testing.T) {
+	f := newReadingFixture(t)
+	h := server.New(server.Config{Environment: "test", BooksEnabled: true},
+		server.WithRepository(f.e.store), server.WithAuthenticator(groupsDownAuth{})).Handler()
+	stranger := principalHeader(fixtureStranger)
+	check := func(method, path, body, principal string) {
+		t.Helper()
+		rr := do(t, h, method, "/v1/books/"+f.bookID+path, body, bkHeaders(principal))
+		assertStatus(t, rr, http.StatusServiceUnavailable)
+		if got := errorCode(t, rr.Body.Bytes()); got != "group_membership_unavailable" {
+			t.Fatalf("%s %s: error.code = %q, want group_membership_unavailable", method, path, got)
+		}
+	}
+	// The views that list the book's chapters.
+	for _, r := range []struct{ method, path string }{
+		{http.MethodGet, ""}, {http.MethodGet, "/llms.txt"}, {http.MethodGet, "/state"},
+		{http.MethodGet, "/search?q=costs"}, {http.MethodPost, "/seen"},
+	} {
+		check(r.method, r.path, "", f.viewer)
+	}
+	// A chapter the caller has no direct role on.
+	for _, r := range chapterRoutes {
+		check(r.method, r.path(f.ch3), r.body(t, f.ch3, f.ch3v1), f.viewer)
+	}
+	// The editor routes, for a caller with no direct role on the folder.
+	for _, path := range []string{"/outline", "/outline/versions", "/status"} {
+		check(http.MethodGet, path, "", stranger)
+	}
+	// A direct grant still works.
+	rr := do(t, h, http.MethodPost, "/v1/books/"+f.bookID+"/chapters/"+f.ch1+"/open", `{"version_id":"`+f.ch1v1+`"}`, bkHeaders(f.viewer))
+	assertStatus(t, rr, http.StatusNoContent)
 }

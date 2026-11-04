@@ -374,6 +374,12 @@
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
+                    },
+                    "503": {
+                        "description": "group_membership_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
                     }
                 }
             },
@@ -477,6 +483,12 @@
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
+                    },
+                    "503": {
+                        "description": "group_membership_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
                     }
                 }
             }
@@ -545,6 +557,12 @@
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
+                    },
+                    "503": {
+                        "description": "group_membership_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
                     }
                 }
             }
@@ -609,6 +627,12 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "503": {
+                        "description": "group_membership_unavailable",
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
@@ -686,6 +710,12 @@
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
+                    },
+                    "503": {
+                        "description": "group_membership_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
                     }
                 }
             }
@@ -753,6 +783,12 @@
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
+                    },
+                    "503": {
+                        "description": "group_membership_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
                     }
                 }
             }
@@ -793,6 +829,12 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "503": {
+                        "description": "group_membership_unavailable",
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
@@ -1063,6 +1105,12 @@
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
+                    },
+                    "503": {
+                        "description": "group_membership_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
                     }
                 }
             }
@@ -1131,6 +1179,12 @@
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
+                    },
+                    "503": {
+                        "description": "group_membership_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
                     }
                 }
             }
@@ -1171,6 +1225,12 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "503": {
+                        "description": "group_membership_unavailable",
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
@@ -1220,6 +1280,12 @@
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "503": {
+                        "description": "group_membership_unavailable",
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }

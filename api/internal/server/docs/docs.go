@@ -381,6 +381,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
+                    },
+                    "503": {
+                        "description": "group_membership_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
                     }
                 }
             },
@@ -484,6 +490,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
+                    },
+                    "503": {
+                        "description": "group_membership_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
                     }
                 }
             }
@@ -552,6 +564,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
+                    },
+                    "503": {
+                        "description": "group_membership_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
                     }
                 }
             }
@@ -616,6 +634,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "503": {
+                        "description": "group_membership_unavailable",
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
@@ -693,6 +717,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
+                    },
+                    "503": {
+                        "description": "group_membership_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
                     }
                 }
             }
@@ -760,6 +790,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
+                    },
+                    "503": {
+                        "description": "group_membership_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
                     }
                 }
             }
@@ -800,6 +836,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "503": {
+                        "description": "group_membership_unavailable",
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
@@ -1070,6 +1112,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
+                    },
+                    "503": {
+                        "description": "group_membership_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
                     }
                 }
             }
@@ -1138,6 +1186,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
+                    },
+                    "503": {
+                        "description": "group_membership_unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
                     }
                 }
             }
@@ -1178,6 +1232,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "503": {
+                        "description": "group_membership_unavailable",
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
@@ -1227,6 +1287,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "503": {
+                        "description": "group_membership_unavailable",
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }

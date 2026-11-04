@@ -71,7 +71,12 @@ type manifestTOC struct {
 // bookReaderView loads the book named in the path and works out what the
 // caller may read. It answers 404 (never 403) when the book is missing or the
 // caller can open none of its chapters, so a book's existence never leaks.
+// While group membership is unavailable it answers 503: without the group
+// grants the view would silently lose chapters.
 func (h handlers) bookReaderView(c *gin.Context) (view bookView, ok bool) {
+	if !requireResolvedGroupsForAggregate(c) {
+		return bookView{}, false
+	}
 	ctx := c.Request.Context()
 	r := h.deps.repository
 	b, err := r.GetBook(ctx, c.Param("id"))
@@ -227,6 +232,7 @@ func (v bookView) manifest() manifestResponse {
 // @Param id path string true "Book ID"
 // @Success 200 {object} manifestResponse
 // @Failure 404 {object} errorEnvelope
+// @Failure 503 {object} errorEnvelope "group_membership_unavailable"
 // @Router /v1/books/{id} [get]
 func (h handlers) getManifest(c *gin.Context) {
 	if !h.booksOn(c) {
@@ -250,6 +256,7 @@ func (h handlers) getManifest(c *gin.Context) {
 // @Param id path string true "Book ID"
 // @Success 200 {string} string
 // @Failure 404 {object} errorEnvelope
+// @Failure 503 {object} errorEnvelope "group_membership_unavailable"
 // @Router /v1/books/{id}/llms.txt [get]
 func (h handlers) getBookLLMs(c *gin.Context) {
 	if !h.booksOn(c) {
