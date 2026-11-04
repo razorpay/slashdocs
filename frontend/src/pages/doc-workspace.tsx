@@ -59,8 +59,10 @@ const NO_STREAM = {
 const noop = () => {};
 
 // The document's area. A narrow screen keeps a gutter for the tick strip,
-// off the text, in the paper white of the document.
-const FRAME_AREA = "relative h-full max-sm:bg-white max-sm:pr-3";
+// off the text, in the paper white of the document, and the same gutter on
+// the left, so that a document with no margin of its own does not touch the
+// edge.
+const FRAME_AREA = "relative h-full max-sm:bg-white max-sm:px-3";
 
 // The intents in the sign-in path of a reader who asked to comment on a spot,
 // or on the text that they selected.
