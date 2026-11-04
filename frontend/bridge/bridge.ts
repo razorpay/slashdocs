@@ -1355,7 +1355,6 @@ type Theme = "dark" | "light";
     // The prelude in the document reads this before its own scripts run, and
     // a document that reloads itself reads it again on the way back.
     window.__slashdocsTheme = t;
-    pins.setTheme(t);
     const d = doc();
     if (!d || !d.documentElement) return;
     for (const name of PUBLIC_NAMES) {
