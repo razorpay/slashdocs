@@ -193,8 +193,11 @@ test("C is the document's own when the document takes it", async ({
 // pinTip gives the spot that a pin marks: the bottom left of its button.
 // It is null while the pin is hidden.
 async function pinTip(pin: ReturnType<FrameLocator["getByRole"]>) {
-  const box = await pin.boundingBox();
-  return box && { x: box.x, y: box.y + box.height };
+  // The layer draws its buttons again as the document settles, so a button
+  // can be gone for a moment.
+  let box: Awaited<ReturnType<typeof pin.boundingBox>> = null;
+  await expect.poll(async () => (box = await pin.boundingBox())).not.toBeNull();
+  return { x: box!.x, y: box!.y + box!.height };
 }
 
 test("the author drags a pin to a new spot, and it stays there", async ({
@@ -208,7 +211,7 @@ test("the author drags a pin to a new spot, and it stays there", async ({
   });
   await page.goto(`/app/d/${document.id}`);
   const pin = bridge(page).getByRole("button", { name: /^Comment/ });
-  const from = (await pinTip(pin))!;
+  const from = await pinTip(pin);
 
   // Let go outside the frame, the pin goes back and nothing is saved.
   const moves: string[] = [];
@@ -238,7 +241,7 @@ test("the author drags a pin to a new spot, and it stays there", async ({
   await moved;
   await page.reload();
   await expect.poll(async () => (await pinTip(pin))?.x).toBeCloseTo(from.x + 100, 0);
-  expect(Math.abs((await pinTip(pin))!.y - (from.y + 50))).toBeLessThan(3);
+  expect(Math.abs((await pinTip(pin)).y - (from.y + 50))).toBeLessThan(3);
 });
 
 test("a commenter cannot drag someone else's pin", async ({ browser, slashdocs }) => {
@@ -250,7 +253,7 @@ test("a commenter cannot drag someone else's pin", async ({ browser, slashdocs }
   });
   const reviewer = await reviewerOn(browser, `/app/d/${document.id}`);
   const pin = bridge(reviewer).getByRole("button", { name: /^Comment/ });
-  const from = (await pinTip(pin))!;
+  const from = await pinTip(pin);
   const moves: string[] = [];
   reviewer.on("request", (request) => {
     if (request.method() === "PATCH") moves.push(request.postData() ?? "");
