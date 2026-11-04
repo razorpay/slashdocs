@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import serverManifest from "./__fixtures__/manifest.json";
+import { APIError } from "@/api";
 import {
   booksApi,
   chapterByNumber,
+  readingWriteFailure,
   latestPosition,
   minutesLeft,
   neighbours,
@@ -110,6 +112,21 @@ describe("minutesLeft", () => {
   });
 });
 
+describe("readingWriteFailure", () => {
+  it("waits on 429, retries outages and drops refusals", () => {
+    expect(readingWriteFailure(new APIError(429, "rate_limited", ""))).toBe(
+      "rate_limited",
+    );
+    expect(
+      readingWriteFailure(new APIError(503, "group_membership_unavailable", "")),
+    ).toBe("retry");
+    expect(readingWriteFailure(new APIError(500, "internal", ""))).toBe("retry");
+    expect(readingWriteFailure(new TypeError("Failed to fetch"))).toBe("retry");
+    expect(readingWriteFailure(new APIError(404, "not_found", ""))).toBe("drop");
+    expect(readingWriteFailure(new APIError(400, "invalid_request", ""))).toBe("drop");
+  });
+});
+
 describe("booksApi", () => {
   function stubFetch(body: unknown = {}) {
     const fetchMock = vi.fn(
@@ -130,6 +147,20 @@ describe("booksApi", () => {
       body: init.body && JSON.parse(String(init.body)),
     };
   }
+
+  // A position saved as the page closes must survive the unload.
+  it("sends reading writes with keepalive", async () => {
+    let f = stubFetch();
+    await booksApi.savePosition("b1", pos("d1", 0.5, "2026-11-04T10:00:00Z"));
+    expect((f.mock.calls[0] as unknown as [string, RequestInit])[1].keepalive).toBe(
+      true,
+    );
+    f = stubFetch();
+    await booksApi.progress("b1", "doc_a", "ver_1", 0.5, false);
+    expect((f.mock.calls[0] as unknown as [string, RequestInit])[1].keepalive).toBe(
+      true,
+    );
+  });
 
   // The fixture is the Go handler's answer to a reader who holds grants on
   // the front matter and chapter 3 only: chapter 1 and its part are hidden,

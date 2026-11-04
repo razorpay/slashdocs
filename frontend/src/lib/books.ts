@@ -1,5 +1,5 @@
 import type { Anchor } from "@/api";
-import { request } from "@/api";
+import { APIError, request } from "@/api";
 
 // Types mirror the server JSON (api/internal/server/handlers_book*.go and
 // handlers_reading.go) field for field. The manifest is Readium-shaped, so its
@@ -105,12 +105,19 @@ const post = (body?: unknown): RequestInit => ({
   method: "POST",
   body: JSON.stringify(body ?? {}),
 });
+// Reading writes may be the last request a closing page makes; keepalive
+// lets them finish after the page is gone. Their bodies are far below the
+// 64 KB keepalive limit.
+const keepalive = (init: RequestInit): RequestInit => ({ ...init, keepalive: true });
 
 export const booksApi = {
   manifest: (id: string) => request<Manifest>(b(id)),
   state: (id: string) => request<BookState>(`${b(id)}/state`),
   savePosition: (id: string, p: ReadingPosition) =>
-    request<void>(`${b(id)}/position`, { method: "PUT", body: JSON.stringify(p) }),
+    request<void>(
+      `${b(id)}/position`,
+      keepalive({ method: "PUT", body: JSON.stringify(p) }),
+    ),
   open: (id: string, doc: string, versionId: string) =>
     request<void>(`${ch(id, doc)}/open`, post({ version_id: versionId })),
   // versionId is the version being read; reaching its end marks it seen (A7).
@@ -123,7 +130,7 @@ export const booksApi = {
   ) =>
     request<void>(
       `${ch(id, doc)}/progress`,
-      post({ version_id: versionId, progression, reached_end: reachedEnd }),
+      keepalive(post({ version_id: versionId, progression, reached_end: reachedEnd })),
     ),
   done: (id: string, doc: string, done: boolean) =>
     request<void>(`${ch(id, doc)}/done`, {
@@ -151,6 +158,16 @@ export const booksApi = {
       body: JSON.stringify({ base_version_id: base, outline, note }),
     }),
 };
+
+// What to do with a reading write that failed. 429 rate_limited waits for
+// the limiter; 5xx (including 503 group_membership_unavailable) and network
+// errors are worth retrying; any other 4xx will never be accepted.
+export function readingWriteFailure(err: unknown): "rate_limited" | "retry" | "drop" {
+  if (!(err instanceof APIError)) return "retry";
+  if (err.status === 429) return "rate_limited";
+  if (err.status >= 500 || err.status === 408) return "retry";
+  return "drop";
+}
 
 export function chapterByNumber(m: Manifest, n: number): ManifestLink | undefined {
   return m.readingOrder.find(
