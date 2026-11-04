@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, APIError } from "@/api";
 import { findLiterals, type Render } from "@/lib/script-literals";
 import * as sourceEdits from "@/lib/source-edits";
+import { readTextDraft, writeTextDraft } from "@/lib/text-drafts";
 import type { Region, ScriptChange } from "../../bridge/source-pieces";
 import { useTextAutosave } from "./use-text-autosave";
 
@@ -22,6 +23,7 @@ beforeEach(async () => {
   vi.spyOn(api, "getVersionHTML").mockResolvedValue(SOURCE);
 });
 afterEach(() => {
+  localStorage.clear();
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -52,6 +54,7 @@ function setup() {
     setState: vi.fn(),
     onSaved: vi.fn(),
     reload: vi.fn(),
+    undo: vi.fn(),
     probe: vi.fn<Render>(),
     replaceText: vi.fn(),
   };
@@ -259,16 +262,154 @@ it("saves nothing when the edits cannot be written into the source", async () =>
   expect(setState).toHaveBeenLastCalledWith("refused");
 });
 
-it("shows the latest version when the frame no longer matches its source", async () => {
-  vi.spyOn(api, "editSource").mockRejectedValue(
-    new APIError(422, "edit_failed", "old_html does not match"),
-  );
-  const { type, reload, onSaved } = setup();
+// The toast actions that a test clicks.
+type Actions = {
+  action: { label: string; onClick: (e: { preventDefault(): void }) => void };
+  cancel: { label: string; onClick: () => void };
+};
+
+function stubClipboard() {
+  const write = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText: write } });
+  return write;
+}
+
+it.each([
+  [403, "forbidden", "You can no longer edit this document, so your text cannot save."],
+  [
+    422,
+    "edit_failed",
+    "This edit does not fit the latest version of the document, so it cannot save.",
+  ],
+  [400, "bad_request", "The server did not take this change, so it cannot save."],
+])(
+  "keeps the text on screen until the reader chooses when the server refuses a save with %i",
+  async (status, code, message) => {
+    const error = vi.spyOn(toast, "error");
+    const write = stubClipboard();
+    vi.spyOn(api, "editSource").mockRejectedValue(new APIError(status, code, "no"));
+    const { type, reload, onSaved, setState, result } = setup();
+
+    act(() =>
+      result.current.drafted({ regions: [second("Try it now.")], scripts: [] }),
+    );
+    await type("Try it now.");
+    await act(() => vi.advanceTimersByTimeAsync(10_000));
+
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
+    expect(setState).toHaveBeenLastCalledWith("refused");
+    const [shown, options] = error.mock.lastCall!;
+    expect(shown).toBe(message);
+    const { action, cancel, duration } = options as Actions & { duration: number };
+    expect(duration).toBe(Infinity);
+    expect([action.label, cancel.label]).toEqual(["Copy my text", "Discard my change"]);
+    // The text also waits in storage, for a visit after this one.
+    expect(readTextDraft("doc_1")).toMatchObject({ version: "ver_1" });
+    await act(async () => action.onClick({ preventDefault: vi.fn() }));
+    expect(write).toHaveBeenCalledWith("Try it now.");
+    // Discard shows the saved version, which drops the draft.
+    cancel.onClick();
+    expect(reload).toHaveBeenCalledExactlyOnceWith(undefined);
+  },
+);
+
+it("says nothing is saved when the edits went back to the loaded text", async () => {
+  const success = vi.spyOn(toast, "success");
+  const edit = vi.spyOn(api, "editSource");
+  const { pause, setState } = setup();
+
+  await pause();
+
+  expect(edit).not.toHaveBeenCalled();
+  expect(setState).toHaveBeenLastCalledWith("idle");
+  expect(success).not.toHaveBeenCalled();
+});
+
+it("offers Undo once, for eight seconds, after the first save of a visit", async () => {
+  const success = vi.spyOn(toast, "success");
+  vi.spyOn(api, "editSource")
+    .mockResolvedValueOnce(saved("ver_2"))
+    .mockResolvedValueOnce(saved("ver_3"));
+  const { type, undo } = setup();
 
   await type("Try it now.");
+  await type("Try it now!");
 
-  expect(onSaved).not.toHaveBeenCalled();
-  expect(reload).toHaveBeenCalledTimes(1);
+  expect(success).toHaveBeenCalledOnce();
+  const [message, options] = success.mock.lastCall!;
+  expect(message).toBe("Your edit is saved.");
+  const { action, duration } = options as Actions & { duration: number };
+  expect(duration).toBe(8000);
+  expect(action.label).toBe("Undo");
+  action.onClick({ preventDefault: vi.fn() });
+  expect(undo).toHaveBeenCalledOnce();
+});
+
+describe("text that cannot save", () => {
+  const conflict = () =>
+    vi
+      .spyOn(api, "editSource")
+      .mockRejectedValue(new APIError(409, "edit_conflict", "the text changed"));
+
+  it("waits in storage after the page goes, and is offered on the next visit", async () => {
+    conflict();
+    const first = setup();
+    act(() =>
+      first.result.current.drafted({ regions: [second("Try it now.")], scripts: [] }),
+    );
+    await first.type("Try it now.");
+    // The words typed after the conflict wait too.
+    act(() =>
+      first.result.current.drafted({ regions: [second("Keep it.")], scripts: [] }),
+    );
+    const dismiss = vi.spyOn(toast, "dismiss");
+    first.hook.unmount();
+    expect(dismiss).toHaveBeenCalledWith("autosave-paused");
+
+    const error = vi.spyOn(toast, "error");
+    const write = stubClipboard();
+    setup();
+    const [message, options] = error.mock.lastCall!;
+    expect(message).toBe("You have text in this document that was not saved.");
+    const { action, cancel } = options as Actions;
+    await act(async () => action.onClick({ preventDefault: vi.fn() }));
+    // The text is read from the version that the edits were typed on.
+    expect(api.getVersionHTML).toHaveBeenLastCalledWith("doc_1", "ver_1");
+    expect(write).toHaveBeenCalledWith("Keep it.");
+    expect(cancel.label).toBe("Discard my change");
+    cancel.onClick();
+    expect(readTextDraft("doc_1")).toBeUndefined();
+  });
+
+  it("leaves storage when the text saves, or when the reader shows the saved version", async () => {
+    const edit = conflict();
+    const { type, result, hook } = setup();
+    act(() =>
+      result.current.drafted({ regions: [second("Try it now.")], scripts: [] }),
+    );
+    await type("Try it now.");
+    expect(readTextDraft("doc_1")).toBeDefined();
+    hook.rerender({ loaded: { version: "ver_2", load: 1 } });
+    expect(readTextDraft("doc_1")).toBeUndefined();
+
+    edit.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    edit.mockResolvedValueOnce(saved("ver_3"));
+    await type("Try it again.");
+    expect(readTextDraft("doc_1")).toBeDefined();
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(readTextDraft("doc_1")).toBeUndefined();
+  });
+
+  it("keeps the draft of an earlier visit until the reader discards it", async () => {
+    writeTextDraft("doc_1", { version: "ver_0", edits: { regions: [], scripts: [] } });
+    vi.spyOn(api, "editSource").mockResolvedValue(saved("ver_2"));
+    const { type } = setup();
+
+    await type("Try it now.");
+
+    expect(readTextDraft("doc_1")).toMatchObject({ version: "ver_0" });
+  });
 });
 
 describe("script text", () => {

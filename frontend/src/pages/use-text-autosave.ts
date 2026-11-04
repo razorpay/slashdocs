@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { toast, type ExternalToast } from "sonner";
 import { api, APIError } from "@/api";
-import { errorMessage } from "@/lib/errors";
 import {
   checkScriptChange,
   findLiterals,
@@ -14,6 +13,7 @@ import {
   replacementsBetween,
   type SourceTree,
 } from "@/lib/source-edits";
+import { readTextDraft, removeTextDraft, writeTextDraft } from "@/lib/text-drafts";
 import { randomId } from "@/lib/uuid";
 import type { Region, ScriptChange } from "../../bridge/source-pieces";
 import type { SaveState, TextEditResult } from "./doc-context";
@@ -25,12 +25,22 @@ const AUTOSAVE_MAX_DELAY_MS = 10_000;
 // A save that failed for a reason that can pass, such as the network, tries
 // again after this long.
 const AUTOSAVE_RETRY_MS = 5_000;
+// How long Undo shows after the first save of a visit.
+const UNDO_MS = 8_000;
 
 const FAILED_TOAST = "autosave-failed";
 const PAUSED_TOAST = "autosave-paused";
 const REFUSED_TOAST = "autosave-refused";
-const SCRIPT_TOAST = "script-text";
+const UNDO_TOAST = "autosave-undo";
 const COPIED_TOAST = "autosave-copied";
+const EARLIER_TOAST = "autosave-earlier";
+
+// The messages of a save that did not go, by the status of the response.
+const SERVER_REFUSALS: Record<number, string> = {
+  403: "You can no longer edit this document, so your text cannot save.",
+  404: "This document no longer exists, so your text cannot save.",
+  413: "This change is too large to save.",
+};
 
 // The version that the frame loaded: its source, and the parse of it that
 // the regions from the frame refer to.
@@ -76,6 +86,8 @@ export function useTextAutosave(options: {
   onSaved: (versionID: string, clean: boolean) => void;
   // Shows a version, or else the latest one, in place of what is on screen.
   reload: (versionID?: string) => void;
+  // Undoes the last edit in the frame.
+  undo: () => void;
   // Renders a source in a probe frame, to make sure that a script change
   // shows.
   probe: Render;
@@ -90,9 +102,13 @@ export function useTextAutosave(options: {
   // Unset until the first save: then the loaded version is the head.
   const head = useRef<Head | undefined>(undefined);
   const unsent = useRef<Save | undefined>(undefined);
-  // The latest edits that the frame sent by itself. They save when the
-  // frame goes before it could save them.
+  // The latest edits from the frame. They save when the frame goes before
+  // it could save them, and stay in storage while they cannot save.
   const draft = useRef<TextEditResult | undefined>(undefined);
+  // Set while storage holds the draft of this visit.
+  const kept = useRef(false);
+  // Set after the first save of this visit.
+  const savedOnce = useRef(false);
   // Set when the frame went away: saves use the draft, and say nothing.
   const gone = useRef(false);
   // Set when the document changed elsewhere in a way that the edits on
@@ -113,6 +129,19 @@ export function useTextAutosave(options: {
   );
   const shown = useRef(new Map<string, string>());
 
+  // keep puts the draft in storage, so that it outlives the page while it
+  // cannot save. forget removes it when it saved or the reader dropped it.
+  const keep = useCallback(() => {
+    const { docId, loaded } = latest.current;
+    if (!draft.current) return;
+    kept.current = true;
+    writeTextDraft(docId, { version: loaded.version, edits: draft.current });
+  }, []);
+  const forget = useCallback(() => {
+    if (kept.current) removeTextDraft(latest.current.docId);
+    kept.current = false;
+  }, []);
+
   useEffect(() => {
     // A new load drops what the frame showed. When that was not saved, the
     // reader chose to see the saved version.
@@ -126,8 +155,33 @@ export function useTextAutosave(options: {
     refusal.current = undefined;
     checks.current = new Map();
     shown.current = new Map();
+    forget();
     for (const id of [PAUSED_TOAST, REFUSED_TOAST, FAILED_TOAST]) toast.dismiss(id);
-  }, [loaded]);
+  }, [loaded, forget]);
+
+  // Text that did not save on an earlier visit. The reader copies it to add
+  // it again, or discards it.
+  const { docId } = options;
+  useEffect(() => {
+    const earlier = readTextDraft(docId);
+    if (!earlier) return;
+    toast.error("You have text in this document that was not saved.", {
+      id: EARLIER_TOAST,
+      duration: Infinity,
+      action: copyAction(async () =>
+        draftText(await readBase(docId, earlier.version), earlier.edits),
+      ),
+      cancel: {
+        label: "Discard my change",
+        // Storage may hold the draft of this visit by now.
+        onClick: () => {
+          if (readTextDraft(docId)?.updatedAt === earlier.updatedAt)
+            removeTextDraft(docId);
+        },
+      },
+    });
+    return () => void toast.dismiss(EARLIER_TOAST);
+  }, [docId]);
 
   const loadBase = useCallback(async (): Promise<Base> => {
     const { docId, loaded } = latest.current;
@@ -183,10 +237,10 @@ export function useTextAutosave(options: {
   );
 
   // The edits on screen: from the frame, or the last draft without it.
-  const edits = useCallback(
-    async () => (gone.current ? draft.current : await latest.current.take()),
-    [],
-  );
+  const edits = useCallback(async () => {
+    if (!gone.current) draft.current = await latest.current.take();
+    return draft.current;
+  }, []);
 
   // The save for what the frame shows now, or nothing when it shows what the
   // head holds.
@@ -233,29 +287,14 @@ export function useTextAutosave(options: {
     [build],
   );
 
-  // copy puts the text that the reader typed, as it is now, on the
-  // clipboard.
-  const copy = useCallback(async () => {
-    try {
-      const result = await edits();
-      await navigator.clipboard.writeText(
-        result ? draftText(base.current!, result) : "",
-      );
-      toast.success("Your text is copied.", { id: COPIED_TOAST });
-    } catch {
-      toast.error("Could not copy your text.", { id: COPIED_TOAST });
-    }
-  }, [edits]);
-  // The message stays after a copy, so that the reader can still choose.
-  const copyAction = useMemo<ExternalToast["action"]>(
-    () => ({
-      label: "Copy my text",
-      onClick: (event) => {
-        event.preventDefault();
-        void copy();
-      },
-    }),
-    [copy],
+  // Copies the text that the reader typed, as it is now.
+  const copyTyped = useMemo(
+    () =>
+      copyAction(async () => {
+        const result = await edits();
+        return result ? draftText(base.current!, result) : "";
+      }),
+    [edits],
   );
 
   // Keeps the edits on screen and stops saving them, with a message that
@@ -284,8 +323,9 @@ export function useTextAutosave(options: {
       const resent = unsent.current !== undefined;
       const change = (unsent.current ??= await next());
       if (!change) {
+        // The edits went back to what is saved: there is no new version.
         if (refusal.current) state = "refused";
-        else if (unsaved.current) state = "saved";
+        else if (unsaved.current) state = head.current ? "saved" : "idle";
         return;
       }
       setState("saving");
@@ -297,8 +337,8 @@ export function useTextAutosave(options: {
         head.current = { id: saved.id, source: change.html, regions: change.regions };
         // The frame changed while the save waited to go again.
         again.current ||= resent;
-        if (!gone.current) showScripts(change.scripts);
         state = refusal.current ? "refused" : "saved";
+        if (!gone.current) offerUndo(change.scripts, state === "saved");
       } else if (await shows(change.html)) {
         state = "saved";
         load = { version: saved.id };
@@ -319,7 +359,7 @@ export function useTextAutosave(options: {
         pause(
           "Someone else changed the same text. Your text stays on screen and is not saved.",
           {
-            action: copyAction,
+            action: copyTyped,
             cancel: { label: "Show their version", onClick: showLatest },
           },
         );
@@ -328,31 +368,34 @@ export function useTextAutosave(options: {
         attempts.current++;
         toast.error(
           `Your edits are not saved yet. Trying again (attempt ${attempts.current})…`,
-          { id: FAILED_TOAST, action: copyAction },
+          { id: FAILED_TOAST, action: copyTyped },
         );
       } else {
-        state = "idle";
-        load = {};
-        toast.error(
-          e instanceof APIError && e.code === "edit_failed"
-            ? "Your edit could not be saved. The document now shows the latest version."
-            : errorMessage(e, "Your edits could not be saved."),
-          { id: FAILED_TOAST },
-        );
+        // The server refused the save, and saving again cannot help. The
+        // text stays on screen until the reader copies or discards it.
+        const { code, status } = e as APIError;
+        state = "refused";
+        refusal.current =
+          code === "edit_failed"
+            ? "This edit does not fit the latest version of the document, so it cannot save."
+            : (SERVER_REFUSALS[status] ??
+              "The server did not take this change, so it cannot save.");
       }
       if (state !== "failed") unsent.current = undefined;
     } finally {
       saving.current = false;
       if (state) {
-        unsaved.current = state !== "saved" && !load;
+        unsaved.current = state !== "saved" && state !== "idle" && !load;
         setState(state);
+        if (unsaved.current) keep();
+        else forget();
       }
       if (state !== "failed") toast.dismiss(FAILED_TOAST);
       if (state === "refused" && !gone.current)
         toast.error(refusal.current, {
           id: REFUSED_TOAST,
           duration: Infinity,
-          action: copyAction,
+          action: copyTyped,
           // The saved version shows the text before the change.
           cancel: {
             label: "Discard my change",
@@ -366,24 +409,34 @@ export function useTextAutosave(options: {
       else if (again.current) later(timer, save, 0);
       again.current = false;
     }
-    // showScripts changes the other places of the saved script text in
-    // place, and offers to undo the change. An undo puts the text back in
-    // every place, which the next save then saves.
-    function showScripts(scripts: ScriptSave[]) {
-      if (!scripts.length) return;
-      const set = (from: "from" | "to", to: "from" | "to") => {
-        for (const s of scripts) {
-          latest.current.replaceText(s[from], s[to]);
-          shown.current.set(s.key, s[to]);
-        }
-      };
-      set("from", "to");
-      toast.success(describe(scripts), {
-        id: SCRIPT_TOAST,
-        action: { label: "Undo", onClick: () => set("to", "from") },
-      });
+    // offerUndo offers to undo the first save of a visit, so that a key
+    // pressed by accident is easy to take back. A save of script text
+    // changes its other places in place, and always offers to undo it. An
+    // undo puts the text back in every place, which the next save then
+    // saves.
+    function offerUndo(scripts: ScriptSave[], clean: boolean) {
+      const first = !savedOnce.current;
+      savedOnce.current = true;
+      if (scripts.length) {
+        const set = (from: "from" | "to", to: "from" | "to") => {
+          for (const s of scripts) {
+            latest.current.replaceText(s[from], s[to]);
+            shown.current.set(s.key, s[to]);
+          }
+        };
+        set("from", "to");
+        toast.success(describe(scripts), {
+          id: UNDO_TOAST,
+          action: { label: "Undo", onClick: () => set("to", "from") },
+        });
+      } else if (first && clean)
+        toast.success("Your edit is saved.", {
+          id: UNDO_TOAST,
+          duration: UNDO_MS,
+          action: { label: "Undo", onClick: () => latest.current.undo() },
+        });
     }
-  }, [next, shows, pause, copyAction]);
+  }, [next, shows, pause, copyTyped, keep, forget]);
 
   // Each change waits for a pause in typing, but no longer than the longest
   // delay since the first change of the burst.
@@ -403,9 +456,13 @@ export function useTextAutosave(options: {
     [save],
   );
 
-  const drafted = useCallback((result: TextEditResult) => {
-    draft.current = result;
-  }, []);
+  const drafted = useCallback(
+    (result: TextEditResult) => {
+      draft.current = result;
+      if (kept.current) keep();
+    },
+    [keep],
+  );
 
   // Save at once when the reader leaves the frame for the page around it, or
   // leaves the page, and warn before an unload loses unsaved edits. When the
@@ -429,6 +486,9 @@ export function useTextAutosave(options: {
       document.removeEventListener("pointerdown", flush, true);
       document.removeEventListener("visibilitychange", onHidden);
       window.removeEventListener("beforeunload", warn);
+      // The draft in storage outlives the messages about it.
+      if (kept.current)
+        for (const id of [PAUSED_TOAST, REFUSED_TOAST]) toast.dismiss(id);
       const left = pending();
       window.clearTimeout(timer.current);
       timer.current = undefined;
@@ -439,6 +499,27 @@ export function useTextAutosave(options: {
   }, [save]);
 
   return { changed, drafted, scriptEditable };
+}
+
+// copyAction puts text that the reader typed on the clipboard. The message
+// stays after a copy, so that the reader can still choose.
+function copyAction(text: () => Promise<string>): ExternalToast["action"] {
+  return {
+    label: "Copy my text",
+    onClick: (event) => {
+      event.preventDefault();
+      void copy(text);
+    },
+  };
+}
+
+async function copy(text: () => Promise<string>) {
+  try {
+    await navigator.clipboard.writeText(await text());
+    toast.success("Your text is copied.", { id: COPIED_TOAST });
+  } catch {
+    toast.error("Could not copy your text.", { id: COPIED_TOAST });
+  }
 }
 
 async function readBase(docId: string, version: string): Promise<Base> {

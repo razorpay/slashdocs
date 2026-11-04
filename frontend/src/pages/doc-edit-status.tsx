@@ -7,7 +7,6 @@ import {
   Pencil,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { useDoc, type SaveState } from "./doc-context";
@@ -52,8 +51,6 @@ const STATUS: Record<SaveState, Status> = {
 // The longest label of a save, "Not saved", has 9 characters. The label
 // keeps that width, so that the title does not move as the label changes.
 const LABEL_WIDTH = "sm:min-w-[9ch]";
-// How long Undo shows after the first save of a visit.
-const UNDO_MS = 8000;
 
 // What a reader who cannot change the words may do.
 const ACCESS: Record<"commenter" | "viewer", Status> = {
@@ -76,58 +73,52 @@ const ACCESS: Record<"commenter" | "viewer", Status> = {
 // not saved, not each save of a pause.
 export function EditStatus({ access }: { access?: keyof typeof ACCESS }) {
   const { editable, saveState, text } = useDoc();
-  const undo = useFirstSaveUndo(saveState);
   const status = editable ? STATUS[saveState] : access && ACCESS[access];
   if (!status) return null;
   const { label, title, Icon } = status;
   const failed = editable && Icon === AlertCircle;
-  return (
-    <>
-      {editable && text?.focused && (
-        // A phone has no Esc key to leave the text.
-        <Button
-          size="sm"
-          variant="secondary"
-          className="hidden pointer-coarse:inline-flex"
-          onClick={text.leave}
-        >
-          Done
-        </Button>
-      )}
+  if (!editable)
+    return (
       <Status
         label={label}
         title={title}
         Icon={Icon}
         failed={failed}
-        editable={editable}
-        idle={saveState === "idle"}
+        className="hidden sm:inline-flex"
       />
-      {editable && undo && text && saveState === "saved" && (
-        <button
-          type="button"
-          onClick={text.undo}
-          className="motion-safe:animate-[pop-in_150ms_ease-out] text-xs font-medium text-[var(--color-accent)] hover:underline"
-        >
-          Undo
-        </button>
-      )}
-    </>
+    );
+  const fade = "transition-opacity duration-150 ease-out motion-reduce:transition-none";
+  return (
+    // A phone has no Esc key to leave the text, so a touch screen shows Done
+    // while the text has the caret. On a narrow bar Done takes the place of
+    // the status. The place keeps its width in every state, so that the
+    // title does not move.
+    <span className="grid shrink-0 items-center justify-items-center *:col-start-1 *:row-start-1 sm:flex sm:gap-2">
+      <Status
+        label={label}
+        title={title}
+        Icon={Icon}
+        failed={failed}
+        className={cn(
+          "inline-flex",
+          fade,
+          text?.focused && "max-sm:pointer-coarse:opacity-0",
+        )}
+      />
+      <Button
+        size="sm"
+        variant="secondary"
+        className={cn(
+          "hidden max-sm:px-2 max-sm:text-xs pointer-coarse:inline-flex",
+          fade,
+          !text?.focused && "invisible opacity-0",
+        )}
+        onClick={text?.leave}
+      >
+        Done
+      </Button>
+    </span>
   );
-}
-
-// After the first save of a visit, Undo shows for a short time, so that a
-// key pressed by accident is easy to take back.
-function useFirstSaveUndo(state: SaveState): boolean {
-  const [shown, setShown] = useState(false);
-  const saved = useRef(false);
-  useEffect(() => {
-    if (state !== "saved" || saved.current) return;
-    saved.current = true;
-    setShown(true);
-    const timer = window.setTimeout(() => setShown(false), UNDO_MS);
-    return () => window.clearTimeout(timer);
-  }, [state]);
-  return shown;
 }
 
 function Status({
@@ -135,9 +126,8 @@ function Status({
   title,
   Icon,
   failed,
-  editable,
-  idle,
-}: Status & { failed: boolean; editable: boolean; idle: boolean }) {
+  className,
+}: Status & { failed: boolean; className: string }) {
   return (
     <span
       role="status"
@@ -145,7 +135,7 @@ function Status({
       title={title}
       className={cn(
         "shrink-0 items-center gap-1 text-xs text-[var(--color-fg-muted)]",
-        !editable || idle ? "hidden sm:inline-flex" : "inline-flex",
+        className,
         failed && "text-[var(--color-danger)]",
       )}
     >
@@ -153,9 +143,7 @@ function Status({
         className={`h-3.5 w-3.5 ${Icon === LoaderCircle ? "motion-safe:animate-spin" : ""}`}
         aria-hidden="true"
       />
-      <span className={cn("sr-only sm:not-sr-only", editable && LABEL_WIDTH)}>
-        {label}
-      </span>
+      <span className={cn("sr-only sm:not-sr-only", LABEL_WIDTH)}>{label}</span>
     </span>
   );
 }
