@@ -349,6 +349,10 @@ test("a posted comment opens beside its text, and Esc closes it", async ({
 
   await thread.press("Escape");
   await expect(thread).toBeHidden();
+  // The owner edits the text: the first click puts the caret in it, and a
+  // second click opens the thread.
+  await doc.locator("mark.slashdocs-mark").first().click();
+  await expect(thread).toBeHidden();
   await doc.locator("mark.slashdocs-mark").first().click();
   await expect(thread.getByText("Posted in a popover")).toBeVisible();
 });

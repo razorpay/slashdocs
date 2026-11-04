@@ -1281,6 +1281,16 @@ type Theme = "dark" | "light";
     return { left: box.left, top: box.top, width: box.width, height: box.height };
   }
 
+  // An editor's first click in commented text puts the caret there, to
+  // type. A click in the commented text that holds the caret opens it.
+  let caretComment: string | undefined;
+  function noteCaretComment(): void {
+    const node = doc()?.getSelection()?.anchorNode;
+    const el =
+      node?.nodeType === Node.ELEMENT_NODE ? (node as Element) : node?.parentElement;
+    caretComment = el?.closest<HTMLElement>("mark.slashdocs-mark")?.dataset.cid;
+  }
+
   function activate(e: MouseEvent): void {
     const m = (e.target &&
       (e.target as Element).closest &&
@@ -1288,6 +1298,7 @@ type Theme = "dark" | "light";
         "mark.slashdocs-mark,.slashdocs-svg-mark-text,.slashdocs-svg-mark-rect",
       )) as HTMLElement | null;
     if (!m || !m.dataset.cid) return;
+    if (textEditor && m.matches("mark") && caretComment !== m.dataset.cid) return;
     parent.postMessage(
       { type: "slashdocs:activate", id: m.dataset.cid },
       targetOrigin(),
@@ -2245,6 +2256,7 @@ type Theme = "dark" | "light";
       },
       { passive: false },
     );
+    d.addEventListener("pointerdown", noteCaretComment, true);
     d.addEventListener("click", activate);
     d.addEventListener("click", handleLinkClick);
     d.addEventListener(
