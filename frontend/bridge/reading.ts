@@ -39,8 +39,6 @@ const WIDTHS: Record<ReaderSettings["width"], string> = {
   wide: "none",
 };
 const PAPER_CSS = "html{background:#f8f4ea}body{background:transparent}";
-const DOT_CSS =
-  'content:"";display:inline-block;width:.45em;height:.45em;border-radius:50%;background:#d97706;margin-right:.45em;vertical-align:middle';
 
 // The last heading whose top is at or above the probe, or "" before the first.
 export function sectionAt(
@@ -102,22 +100,41 @@ export function documentTheme(
   return setting === "light" || setting === "paper" ? "light" : appTheme;
 }
 
-// A CSS string literal body: quotes and backslashes are escaped, and control
-// characters (which would end the string) become hex escapes.
-function cssString(value: string): string {
-  let out = "";
-  for (const c of value) {
-    const code = c.charCodeAt(0);
-    if (c === '"' || c === "\\") out += `\\${c}`;
-    else if (code < 0x20 || code === 0x7f) out += `\\${code.toString(16)} `;
-    else out += c;
-  }
-  return out;
+// A dot at the start of each heading that changed since the reader last saw
+// it. The dot is an element of its own, so a document's heading ::before
+// (section numbers, icons) is left alone.
+export const CHANGE_DOT_CLASS = "slashdocs-change-dot";
+export const CHANGE_DOT_CSS = `.${CHANGE_DOT_CLASS}{display:inline-block!important;width:.45em!important;height:.45em!important;margin:0 .45em 0 0!important;padding:0!important;border:0!important;border-radius:50%!important;background:#d97706!important;vertical-align:middle!important}@media print{.${CHANGE_DOT_CLASS}{display:none!important}}`;
+const HEADING = /^H[1-6]$/;
+
+// The heading ids from a mark-headings message: at most 1000 non-empty
+// strings of at most 1024 characters.
+export function markedHeadingIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .slice(0, 1000)
+    .filter((id): id is string => typeof id === "string" && !!id && id.length <= 1024);
 }
 
-// A dot before each heading that changed since the reader last saw it.
-export function changedHeadingsCSS(ids: string[]): string {
-  return ids.map((id) => `[id="${cssString(id)}"]::before{${DOT_CSS}}`).join("");
+// Leaves exactly one dot in each listed heading and none elsewhere.
+export function applyChangeDots(d: Document, ids: string[]): void {
+  const want = new Set(ids);
+  d.querySelectorAll(`.${CHANGE_DOT_CLASS}`).forEach((dot) => {
+    // A dot that a document script moved, or a second one, goes too.
+    const heading = dot.parentElement;
+    if (!heading || !want.has(heading.id) || heading.firstElementChild !== dot) {
+      dot.remove();
+    }
+  });
+  for (const id of want) {
+    const heading = d.getElementById(id);
+    if (!heading || !HEADING.test(heading.tagName)) continue;
+    if (heading.firstElementChild?.classList.contains(CHANGE_DOT_CLASS)) continue;
+    const dot = d.createElement("span");
+    dot.className = CHANGE_DOT_CLASS;
+    dot.setAttribute("aria-hidden", "true");
+    heading.prepend(dot);
+  }
 }
 
 // The order position restore tries: the quote, then its section, then the

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  changedHeadingsCSS,
+  applyChangeDots,
+  CHANGE_DOT_CLASS,
+  CHANGE_DOT_CSS,
+  markedHeadingIds,
   DEFAULT_READER_SETTINGS,
   documentTheme,
   progression,
@@ -168,21 +171,54 @@ describe("restoreMethod", () => {
   });
 });
 
-describe("changedHeadingsCSS", () => {
-  it("escapes ids", () =>
-    expect(changedHeadingsCSS(['a"b'])).toContain('[id="a\\"b"]'));
-  it("escapes backslashes", () =>
-    expect(changedHeadingsCSS(["a\\b"])).toContain('[id="a\\\\b"]'));
-  it("escapes newlines so the selector string stays closed", () =>
-    expect(changedHeadingsCSS(["a\nb"])).toContain('[id="a\\a b"]'));
-  it("draws a dot before each heading", () => {
-    const css = changedHeadingsCSS(["x", "y"]);
-    expect(css).toContain(
-      '[id="x"]::before{content:"";display:inline-block;width:.45em;height:.45em;border-radius:50%;background:#d97706;margin-right:.45em;vertical-align:middle}',
+describe("change dots", () => {
+  function page(html: string): Document {
+    const d = document.implementation.createHTMLDocument("t");
+    d.body.innerHTML = html;
+    return d;
+  }
+  const dots = (d: Document) =>
+    Array.from(d.querySelectorAll(`.${CHANGE_DOT_CLASS}`)).map(
+      (x) => x.parentElement!.id,
     );
-    expect(css).toContain('[id="y"]::before');
+
+  it("puts a dot at the start of each listed heading", () => {
+    const d = page('<h2 id="a">One</h2><h2 id="b">Two</h2><p id="p">x</p>');
+    applyChangeDots(d, ["a", "p", "missing"]);
+    expect(dots(d)).toEqual(["a"]);
+    const a = d.getElementById("a")!;
+    expect(a.firstElementChild?.className).toBe(CHANGE_DOT_CLASS);
+    expect(a.firstElementChild?.getAttribute("aria-hidden")).toBe("true");
+    // The heading's text, used by anchors and heading links, is unchanged.
+    expect(a.textContent).toBe("One");
   });
-  it("is empty for no ids", () => expect(changedHeadingsCSS([])).toBe(""));
+
+  it("moves dots when the list changes and never doubles them", () => {
+    const d = page('<h2 id="a">One</h2><h3 id="b">Two</h3>');
+    applyChangeDots(d, ["a"]);
+    applyChangeDots(d, ["a", "b"]);
+    expect(dots(d)).toEqual(["a", "b"]);
+    applyChangeDots(d, ["b"]);
+    expect(dots(d)).toEqual(["b"]);
+    applyChangeDots(d, []);
+    expect(dots(d)).toEqual([]);
+  });
+
+  // Documents number headings with ::before (counter(section) ". "); a
+  // dot drawn with ::before would replace that number.
+  it("styles only its own element, never a heading pseudo-element", () => {
+    expect(CHANGE_DOT_CSS).not.toMatch(/::?(before|after)/);
+    expect(CHANGE_DOT_CSS.startsWith(`.${CHANGE_DOT_CLASS}{`)).toBe(true);
+  });
+
+  it("accepts only bounded string ids", () => {
+    const long = "x".repeat(1025);
+    expect(markedHeadingIds(["a", "", 3, long, "b"])).toEqual(["a", "b"]);
+    expect(markedHeadingIds("a")).toEqual([]);
+    expect(
+      markedHeadingIds(Array.from({ length: 1200 }, (_, i) => `h${i}`)),
+    ).toHaveLength(1000);
+  });
 });
 
 describe("READER_KEYS", () => {

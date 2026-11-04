@@ -15,7 +15,9 @@ import {
 } from "./highlight.ts";
 import { createCursorLayer, trackPointer } from "./cursors.ts";
 import {
-  changedHeadingsCSS,
+  applyChangeDots,
+  CHANGE_DOT_CSS,
+  markedHeadingIds,
   progression,
   READER_KEYS,
   readerSettingsCSS,
@@ -627,10 +629,10 @@ type Theme = "dark" | "light";
     (d.head || d.documentElement).appendChild(s);
   }
 
-  // Book-mode styles from the reader, kept so a newly loaded document gets
-  // them too. Empty CSS removes the style.
+  // Book-mode styles and change dots from the reader, kept so a newly loaded
+  // document gets them too. Empty CSS removes the style.
   let readerCSS = "";
-  let markCSS = "";
+  let markedIds: string[] = [];
   function replaceStyle(id: string, css: string): void {
     const d = doc();
     if (!d) return;
@@ -643,7 +645,7 @@ type Theme = "dark" | "light";
   }
   function applyReaderStyles(): void {
     replaceStyle("slashdocs-reader-style", readerCSS);
-    replaceStyle("slashdocs-mark-style", markCSS);
+    applyMarks();
   }
   function setReaderSettings(value: unknown): void {
     readerCSS =
@@ -653,15 +655,23 @@ type Theme = "dark" | "light";
     replaceStyle("slashdocs-reader-style", readerCSS);
   }
   function setMarkedHeadings(value: unknown): void {
-    const ids = Array.isArray(value)
-      ? value
-          .slice(0, 1000)
-          .filter(
-            (id): id is string => typeof id === "string" && !!id && id.length <= 1024,
-          )
-      : [];
-    markCSS = changedHeadingsCSS(ids);
-    replaceStyle("slashdocs-mark-style", markCSS);
+    markedIds = markedHeadingIds(value);
+    applyMarks();
+  }
+  function applyMarks(): void {
+    replaceStyle("slashdocs-mark-style", markedIds.length ? CHANGE_DOT_CSS : "");
+    refreshChangeDots();
+  }
+  // Our own dots must not look like document changes to the observer.
+  function refreshChangeDots(): void {
+    const d = doc();
+    if (!d) return;
+    suspendMutationObserver();
+    try {
+      applyChangeDots(d, markedIds);
+    } finally {
+      resumeMutationObserver();
+    }
   }
 
   // The last paint payload, kept so document mutations can re-anchor without
@@ -1102,6 +1112,8 @@ type Theme = "dark" | "light";
     if (mutationObserver) mutationObserver.disconnect();
     mutationObserver = new MutationObserver(() => {
       prepareHeadings(d);
+      // A document that re-renders a changed heading gets its dot back.
+      if (markedIds.length) refreshChangeDots();
       scheduleTextNavigation();
       scheduleMutationScan();
       scheduleCommentPositions();

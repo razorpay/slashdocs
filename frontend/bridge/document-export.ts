@@ -77,7 +77,7 @@ export async function snapshotForPrint(d: Document): Promise<string> {
   }
   copy
     .querySelectorAll(
-      ".slashdocs-selection-action,.slashdocs-heading-link,.slashdocs-text-flash,script",
+      ".slashdocs-selection-action,.slashdocs-heading-link,.slashdocs-change-dot,.slashdocs-text-flash,script",
     )
     .forEach((node) => node.remove());
   return "<!doctype html>" + copy.outerHTML;
