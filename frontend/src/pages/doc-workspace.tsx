@@ -58,6 +58,10 @@ const NO_STREAM = {
 
 const noop = () => {};
 
+// The document's area. A narrow screen keeps a gutter for the tick strip,
+// off the text, in the paper white of the document.
+const FRAME_AREA = "relative h-full max-sm:bg-white max-sm:pr-3";
+
 // The intents in the sign-in path of a reader who asked to comment on a spot,
 // or on the text that they selected.
 const PIN_INTENT = "pin";
@@ -516,7 +520,7 @@ export function DocWorkspace({
     <DocProvider value={ctx}>
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
       {fullscreen ? (
-        <div className="relative h-full bg-[var(--color-surface-muted)] max-sm:pr-3">
+        <div className={cn("bg-[var(--color-surface-muted)]", FRAME_AREA)}>
           {showFullscreenHint ? (
             <div className="pointer-events-none absolute left-1/2 top-6 z-20 hidden -translate-x-1/2 rounded-full bg-[var(--color-surface)] px-6 py-3 text-base font-semibold text-[var(--color-fg)] shadow-xl ring-1 ring-[var(--color-border)] sm:block">
               Esc to exit · ? for all shortcuts
@@ -547,11 +551,10 @@ export function DocWorkspace({
             {/* A wide screen makes room for the list beside the document, as
                 Google Docs does. The room opens at once, so the text reflows
                 one time, and only the list slides in. Under the sheet of a
-                narrow one, the document is out of reach. A narrow screen
-                keeps a gutter for the tick strip, off the text. */}
+                narrow one, the document is out of reach. */}
             <div
               inert={listOpen && isMobile}
-              className={cn("relative h-full max-sm:pr-3", listOpen && "lg:mr-[392px]")}
+              className={cn(FRAME_AREA, listOpen && "lg:mr-[392px]")}
             >
               {frame}
             </div>
