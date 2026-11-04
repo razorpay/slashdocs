@@ -59,10 +59,10 @@ export function GetStarted() {
     <Link
       to="/app/start"
       aria-label={`Get started: ${done} of ${total} complete`}
-      className="razorsense-ring hidden h-8 items-center gap-2 rounded-full bg-[var(--color-surface)] px-3 text-sm font-medium sm:inline-flex"
+      className="razorsense-ring inline-flex h-8 items-center gap-2 rounded-full bg-[var(--color-surface)] px-3 text-sm font-medium"
     >
       <Rocket className="h-3.5 w-3.5 text-[var(--color-accent)]" />
-      Get started
+      <span className="max-sm:hidden">Get started</span>
       <span className="font-mono text-xs text-[var(--color-fg-muted)]">
         {done}/{total}
       </span>
@@ -74,7 +74,6 @@ export function AccountMenu({ user }: { user: Principal }) {
   const nav = useNavigate();
   const signOut = useSignOut();
   const { theme, setTheme } = useTheme();
-  const { reset } = useOnboarding();
   // The profile user has no principal type, so the color comes from the
   // principal, as on pins and comments.
   const principal = useMe().data?.principal;
@@ -102,18 +101,13 @@ export function AccountMenu({ user }: { user: Principal }) {
           </div>
         </div>
         <DropdownSeparator />
-        <DropdownItem
-          onSelect={() => {
-            reset();
-            nav("/app/start");
-          }}
-        >
+        <DropdownItem onSelect={() => nav("/app/start")}>
           <Rocket className="h-4 w-4" /> Setup guide
         </DropdownItem>
         <DropdownItem onSelect={() => nav("/app/settings/profile")}>
           <UserIcon className="h-4 w-4" /> Profile
         </DropdownItem>
-        <DropdownItem onSelect={() => nav("/app/developers")}>
+        <DropdownItem onSelect={() => nav("/app/settings/developers")}>
           <Terminal className="h-4 w-4" /> Developers
         </DropdownItem>
         <DropdownItem onSelect={() => nav("/app/settings/service-accounts")}>
