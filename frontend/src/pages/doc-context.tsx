@@ -1,4 +1,5 @@
 import { createContext, useContext } from "react";
+import type { ReaderSettings, RestoreMethod } from "../../bridge/reading";
 import type { Anchor, Comment, CursorSpot, Principal } from "@/api";
 import type { CommentFilter } from "@/lib/constants";
 import type { CommentDraft } from "@/lib/comment-drafts";
@@ -20,6 +21,32 @@ export type CommentPosition = {
 export type CommentViewport = {
   scrollTop: number;
   scrollHeight: number;
+};
+
+// Where the reader is in the rendered document, reported as they scroll.
+export type ReaderViewport = {
+  anchor?: Partial<Anchor>;
+  section: string;
+  progression: number;
+};
+
+// A saved reading position to scroll back to. The bridge tries the quote,
+// then the section heading, then the scroll share.
+export type PositionTarget = {
+  anchor?: Partial<Anchor>;
+  section?: string;
+  progression?: number;
+};
+
+// Book mode. Without it the document page renders as it always has.
+export type ReaderOptions = {
+  onViewport?: (viewport: ReaderViewport) => void;
+  settings?: ReaderSettings;
+  // Heading ids marked as changed since the reader last saw the chapter.
+  markHeadings?: string[];
+  frameTitle?: string;
+  onKey?: (key: string) => void;
+  onRestored?: (method: RestoreMethod) => void;
 };
 
 export type DocContextValue = {
@@ -64,6 +91,13 @@ export type DocContextValue = {
   // The cursor of the viewer the reader asked to go to. Each request is a new
   // object, so the same viewer can be followed again.
   followedCursor?: { session: string };
+  reader?: ReaderOptions;
+  // RenderFrame registers how to restore a position; restorePosition calls it
+  // and waits for the frame to be ready.
+  registerPositionRestorer?: (
+    restore: ((target: PositionTarget) => void) | null,
+  ) => void;
+  restorePosition?: (target: PositionTarget) => void;
 };
 
 const DocContext = createContext<DocContextValue | null>(null);

@@ -14,6 +14,16 @@ import {
   refreshSVGRects,
 } from "./highlight.ts";
 import { createCursorLayer, trackPointer } from "./cursors.ts";
+import {
+  changedHeadingsCSS,
+  progression,
+  READER_KEYS,
+  readerSettingsCSS,
+  restoreMethod,
+  sectionAt,
+  type ReaderSettings,
+  type RestoreMethod,
+} from "./reading.ts";
 import { CHORD_KEYS } from "../src/lib/esc-chord.ts";
 import {
   reduceVimScroll,
@@ -615,6 +625,43 @@ type Theme = "dark" | "light";
     (d.head || d.documentElement).appendChild(s);
   }
 
+  // Book-mode styles from the reader, kept so a newly loaded document gets
+  // them too. Empty CSS removes the style.
+  let readerCSS = "";
+  let markCSS = "";
+  function replaceStyle(id: string, css: string): void {
+    const d = doc();
+    if (!d) return;
+    d.getElementById(id)?.remove();
+    if (!css) return;
+    const s = d.createElement("style");
+    s.id = id;
+    s.textContent = css;
+    (d.head || d.documentElement).appendChild(s);
+  }
+  function applyReaderStyles(): void {
+    replaceStyle("slashdocs-reader-style", readerCSS);
+    replaceStyle("slashdocs-mark-style", markCSS);
+  }
+  function setReaderSettings(value: unknown): void {
+    readerCSS =
+      value && typeof value === "object"
+        ? readerSettingsCSS(value as ReaderSettings)
+        : "";
+    replaceStyle("slashdocs-reader-style", readerCSS);
+  }
+  function setMarkedHeadings(value: unknown): void {
+    const ids = Array.isArray(value)
+      ? value
+          .slice(0, 1000)
+          .filter(
+            (id): id is string => typeof id === "string" && !!id && id.length <= 1024,
+          )
+      : [];
+    markCSS = changedHeadingsCSS(ids);
+    replaceStyle("slashdocs-mark-style", markCSS);
+  }
+
   // The last paint payload, kept so document mutations can re-anchor without
   // a round-trip to the parent (documents that render content with JS after
   // load would otherwise never get their highlights).
@@ -772,10 +819,27 @@ type Theme = "dark" | "light";
     const d = doc();
     const view = d?.defaultView;
     if (!d?.body || !view) return;
+    const root = d.scrollingElement || d.documentElement;
     parent.postMessage(
-      { type: "slashdocs:viewport", anchor: viewportAnchor(d, view) },
+      {
+        type: "slashdocs:viewport",
+        anchor: viewportAnchor(d, view),
+        section: viewportSection(d, view),
+        progression: progression(view.scrollY, root.scrollHeight, root.clientHeight),
+      },
       targetOrigin(),
     );
+  }
+
+  // The section being read: the last heading above a line 20% down the
+  // viewport. Hidden headings have no position, so they are skipped.
+  function viewportSection(d: Document, view: Window): string {
+    const headings: { id: string; top: number }[] = [];
+    d.querySelectorAll("h1,h2,h3,h4,h5,h6").forEach((heading) => {
+      if (!heading.id || !heading.getClientRects().length) return;
+      headings.push({ id: heading.id, top: heading.getBoundingClientRect().top });
+    });
+    return sectionAt(headings, view.innerHeight * 0.2);
   }
 
   // Probe points from the middle of the viewport outward for text. Text
@@ -1629,6 +1693,58 @@ type Theme = "dark" | "light";
       });
   }
 
+  // Restore a saved reading position: the fuzzy-matched quote, else its
+  // section heading, else the scroll share. navigate-text stays exact-match
+  // for deep links; a reading position may point at text that has changed.
+  function navigatePosition(data: {
+    anchor?: unknown;
+    section?: unknown;
+    progression?: unknown;
+  }): void {
+    const d = doc();
+    const view = d?.defaultView;
+    let method: RestoreMethod = "none";
+    if (d?.body && view) {
+      const anchor = textLinkAnchor(data.anchor);
+      const range = anchor ? resolveAnchor(d.body, anchor) : null;
+      const line = range
+        ? Array.from(range.getClientRects()).find((r) => r.width && r.height)
+        : undefined;
+      const section =
+        typeof data.section === "string" && data.section.length <= 1024
+          ? data.section
+          : "";
+      const share =
+        typeof data.progression === "number" && Number.isFinite(data.progression)
+          ? data.progression
+          : null;
+      method = restoreMethod({
+        quoteResolved: !!line,
+        sectionExists: !!section && !!d.getElementById(section),
+        progression: share,
+      });
+      if (method === "section") {
+        navigateHeading(section);
+      } else {
+        pendingHeading = "";
+        pendingText = null;
+        if (method === "quote") {
+          view.scrollBy({
+            top: line!.top + line!.height / 2 - view.innerHeight / 2,
+            behavior: "instant",
+          });
+        } else if (method === "progression") {
+          const root = d.scrollingElement || d.documentElement;
+          view.scrollTo({
+            top: share! * Math.max(0, root.scrollHeight - root.clientHeight),
+            behavior: "instant",
+          });
+        }
+      }
+    }
+    parent.postMessage({ type: "slashdocs:position-restored", method }, targetOrigin());
+  }
+
   function setupFrame(): void {
     const d = doc();
     if (!d || !d.documentElement || !d.body || setupDoc === d) return;
@@ -1655,6 +1771,7 @@ type Theme = "dark" | "light";
     observeMutations(d);
     resetKVHistory();
     injectStyles();
+    applyReaderStyles();
     installSlashdocsAPI();
     dismissSelectionAction();
     actionRange = null;
@@ -1728,6 +1845,7 @@ type Theme = "dark" | "light";
       selTimer = setTimeout(selection, 350);
     });
     const chordKeys: string[] = CHORD_KEYS.map((item) => item.key);
+    const readerKeys: readonly string[] = READER_KEYS;
     let chordArmedAt = 0;
     let vimGArmed = false;
     let vimGTimer = 0;
@@ -1804,6 +1922,7 @@ type Theme = "dark" | "light";
         return;
       }
 
+      let chordRan = false;
       if (ev.key === "Escape") {
         chordArmedAt = modified ? 0 : Date.now();
         parent.postMessage(
@@ -1815,8 +1934,23 @@ type Theme = "dark" | "light";
         chordArmedAt = 0;
         const key = ev.key.toLowerCase();
         if (withinWindow && !modified && chordKeys.includes(key)) {
+          chordRan = true;
           parent.postMessage({ type: "slashdocs:keydown", key }, targetOrigin());
         }
+      }
+      // Book-mode keys are flagged, so the host never mistakes a reader "t"
+      // for the Esc-then-T chord. Held keys do not repeat page turns.
+      if (
+        !chordRan &&
+        !modified &&
+        !ev.repeat &&
+        readerKeys.includes(ev.key) &&
+        !isTextEditingTarget(ev.target)
+      ) {
+        parent.postMessage(
+          { type: "slashdocs:keydown", key: ev.key, reader: true },
+          targetOrigin(),
+        );
       }
       if (ev.key === "?" && !modified) {
         parent.postMessage({ type: "slashdocs:keydown", key: "?" }, targetOrigin());
@@ -1964,6 +2098,12 @@ type Theme = "dark" | "light";
       navigateText(e.data.anchor);
     } else if (e.data.type === "slashdocs:navigate-heading") {
       navigateHeading(String(e.data.id || ""));
+    } else if (e.data.type === "slashdocs:navigate-position") {
+      navigatePosition(e.data);
+    } else if (e.data.type === "slashdocs:reader-settings") {
+      setReaderSettings(e.data.settings);
+    } else if (e.data.type === "slashdocs:mark-headings") {
+      setMarkedHeadings(e.data.ids);
     } else if (e.data.type === "slashdocs:request-comment-positions") {
       scheduleCommentPositions();
     } else if (

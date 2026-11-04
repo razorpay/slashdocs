@@ -31,6 +31,7 @@ import {
   type CommentViewport,
   type DocContextValue,
   type PendingSelection,
+  type PositionTarget,
 } from "./doc-context";
 import { RenderFrame } from "./doc-render-frame";
 import { Comments } from "./doc-comments";
@@ -154,6 +155,16 @@ export function DocWorkspace({
   );
   const scrollDocumentTo = useCallback((top: number) => {
     documentScrollerRef.current?.(top);
+  }, []);
+  const positionRestorerRef = useRef<((target: PositionTarget) => void) | null>(null);
+  const registerPositionRestorer = useCallback(
+    (restore: ((target: PositionTarget) => void) | null) => {
+      positionRestorerRef.current = restore;
+    },
+    [],
+  );
+  const restorePosition = useCallback((target: PositionTarget) => {
+    positionRestorerRef.current?.(target);
   }, []);
   const commentRailSyncRef = useRef<((top: number) => void) | null>(null);
   const registerCommentRailSync = useCallback(
@@ -477,6 +488,8 @@ export function DocWorkspace({
       printDocument,
       registerDocumentScroller,
       scrollDocumentTo,
+      registerPositionRestorer,
+      restorePosition,
       registerCommentRailSync,
       syncCommentRail,
       handleDocCommentClick,
@@ -510,6 +523,8 @@ export function DocWorkspace({
       printDocument,
       registerDocumentScroller,
       scrollDocumentTo,
+      registerPositionRestorer,
+      restorePosition,
       registerCommentRailSync,
       syncCommentRail,
       handleDocCommentClick,
