@@ -147,6 +147,7 @@ export class SlashdocsAPI {
     id: string,
     html: string,
     baseVersionID?: string,
+    changeSummary?: string,
   ): Promise<VersionRecord> {
     const base = baseVersionID ?? (await this.getDocument(id)).current_version_id;
     return responseJSON<VersionRecord>(
@@ -154,6 +155,7 @@ export class SlashdocsAPI {
         headers: this.writeHeaders(),
         multipart: {
           base_version_id: base,
+          ...(changeSummary ? { change_summary: changeSummary } : {}),
           file: {
             name: "browser-e2e-v2.html",
             mimeType: "text/html",
@@ -162,6 +164,39 @@ export class SlashdocsAPI {
         },
       }),
       `push version for ${id}`,
+    );
+  }
+
+  async createFolder(title: string): Promise<{ id: string }> {
+    const result = await responseJSON<{ id: string }>(
+      await this.request.post("/v1/folders", {
+        headers: this.writeHeaders(),
+        data: { title },
+      }),
+      `create folder ${title}`,
+    );
+    this.trackFolder(result.id);
+    return result;
+  }
+
+  async moveToFolder(folderID: string, documentID: string) {
+    await responseJSON(
+      await this.request.post(`/v1/folders/${folderID}/documents`, {
+        headers: this.writeHeaders(),
+        data: { document_id: documentID },
+      }),
+      `move ${documentID} into ${folderID}`,
+    );
+  }
+
+  // Makes the folder a book, as the "Make this a book" button does.
+  async createBook(folderID: string): Promise<{ book_id: string }> {
+    return responseJSON<{ book_id: string }>(
+      await this.request.post(`/v1/folders/${folderID}/book`, {
+        headers: this.writeHeaders(),
+        data: {},
+      }),
+      `make folder ${folderID} a book`,
     );
   }
 
