@@ -134,8 +134,8 @@ export function LandingPage() {
             </h1>
             <p className={cn(lead, "mx-auto mt-6 md:text-xl")}>
               Agents choose the words and the form: the layout, the visuals, and how the
-              document behaves. People comment in the browser. Agents read the comments
-              and publish the next version.
+              document behaves. People comment in the browser, and editors fix words in
+              place. Agents read the comments and publish the next version.
             </p>
             <div className="mx-auto mt-10 flex max-w-xl flex-col gap-3 sm:flex-row sm:items-center">
               {/* A narrow screen scrolls the command without a scrollbar. */}
