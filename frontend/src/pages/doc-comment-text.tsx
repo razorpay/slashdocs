@@ -294,12 +294,22 @@ export function MentionTextarea({
 export function CommentBody({
   text,
   mentions,
+  preview = false,
 }: {
   text: string;
   mentions: Comment["mentions"];
+  // A preview sits in a row that opens the thread: two lines, and no links.
+  preview?: boolean;
 }) {
+  const Text = preview ? "span" : "p";
   return (
-    <p className="min-w-0 flex-1 whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]">
+    <Text
+      className={
+        preview
+          ? "line-clamp-2 block text-sm break-words"
+          : "min-w-0 flex-1 whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]"
+      }
+    >
       {mentionTextSegments(text, mentions || []).map((segment, index) =>
         segment.mention ? (
           <span
@@ -308,11 +318,13 @@ export function CommentBody({
           >
             {segment.text}
           </span>
+        ) : preview ? (
+          segment.text
         ) : (
           <CommentText key={`text-${index}`} text={segment.text} />
         ),
       )}
-    </p>
+    </Text>
   );
 }
 
