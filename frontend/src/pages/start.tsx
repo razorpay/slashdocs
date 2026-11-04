@@ -6,7 +6,7 @@ import { publicURL } from "@/lib/config";
 import { Button } from "@/components/ui/button";
 import { Page } from "@/components/layout/page";
 import { beat } from "@/lib/enter";
-import { CodeBlock } from "@/components/ui/misc";
+import { CodeBlock, Collapse } from "@/components/ui/misc";
 import { cn } from "@/lib/cn";
 import { Segmented } from "@/components/ui/segmented";
 import { McpConnect } from "@/components/mcp-connect";
@@ -230,12 +230,12 @@ function Step({
           </span>
           <ChevronDown
             className={cn(
-              "h-4 w-4 text-[var(--color-fg-muted)] transition-transform",
+              "h-4 w-4 text-[var(--color-fg-muted)] transition-transform duration-200 ease-out",
               expanded && "rotate-180",
             )}
           />
         </button>
-        {expanded && (
+        <Collapse open={expanded}>
           <div className="px-5 pb-5 pl-[60px]">
             {children}
             <div className="mt-4 flex justify-end">
@@ -254,7 +254,7 @@ function Step({
               )}
             </div>
           </div>
-        )}
+        </Collapse>
       </div>
     </li>
   );

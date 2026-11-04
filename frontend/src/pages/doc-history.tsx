@@ -5,6 +5,7 @@ import { Check, ChevronDown, History, RotateCcw } from "lucide-react";
 import { api, type Version } from "@/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Collapse } from "@/components/ui/misc";
 import { RelativeTime } from "@/components/ui/relative-time";
 import {
   Dialog,
@@ -139,35 +140,26 @@ function HistorySessionRow({
               ? "Hide the earlier edits"
               : `Show ${earlier.length} earlier ${earlier.length === 1 ? "edit" : "edits"}`}
           </button>
-          {/* The earlier edits open to their height. Closed, they take no
-              focus. */}
-          <div
-            inert={!expanded}
-            className={`grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none ${
-              expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
-            }`}
-          >
-            <div className="min-h-0 overflow-hidden">
-              <ol className="space-y-1 px-2 pb-2">
-                {earlier.map((v) => (
-                  <li key={v.id}>
-                    <button
-                      type="button"
-                      onClick={() => onSelect(v.id)}
-                      aria-current={v.id === current ? "true" : undefined}
-                      className="flex w-full flex-col gap-0.5 rounded-lg px-2 py-1.5 text-left hover:bg-[var(--color-surface-muted)]/60"
-                    >
-                      <span className="flex flex-wrap items-center gap-2 text-sm">
-                        <RelativeTime iso={v.created_at} />
-                        <EntryBadges version={v} current={current} latest={latest} />
-                      </span>
-                      <ChangeSummary version={v} />
-                    </button>
-                  </li>
-                ))}
-              </ol>
-            </div>
-          </div>
+          <Collapse open={expanded}>
+            <ol className="space-y-1 px-2 pb-2">
+              {earlier.map((v) => (
+                <li key={v.id}>
+                  <button
+                    type="button"
+                    onClick={() => onSelect(v.id)}
+                    aria-current={v.id === current ? "true" : undefined}
+                    className="flex w-full flex-col gap-0.5 rounded-lg px-2 py-1.5 text-left hover:bg-[var(--color-surface-muted)]/60"
+                  >
+                    <span className="flex flex-wrap items-center gap-2 text-sm">
+                      <RelativeTime iso={v.created_at} />
+                      <EntryBadges version={v} current={current} latest={latest} />
+                    </span>
+                    <ChangeSummary version={v} />
+                  </button>
+                </li>
+              ))}
+            </ol>
+          </Collapse>
         </>
       ) : null}
     </div>
