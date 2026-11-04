@@ -77,8 +77,13 @@ var expectedMCPTools = []string{
 	"whoami",
 }
 
+// mcpBookTools are listed only when book mode is on.
+var mcpBookTools = []string{
+	"create_book", "delete_book", "get_book", "get_book_outline", "get_book_status", "get_folder_book", "update_book_outline",
+}
+
 func TestMCPStreamableHTTPInitializeListAndCall(t *testing.T) {
-	e := newMCPOAuthTestEnv(t)
+	e := newMCPOAuthTestEnvConfig(t, func(cfg *server.Config) { cfg.BooksEnabled = true })
 	token := auth.NewMCPAccessToken(fixtureUser.ID, e.resource, oauthTestSigningMaterial, time.Minute)
 
 	initialize := mcpPost(t, e, token, "", map[string]any{
@@ -193,6 +198,49 @@ func TestMCPStreamableHTTPInitializeListAndCall(t *testing.T) {
 	invalid := callMCPToolHTTP(t, e, token, "get_document", map[string]any{})
 	if !invalid.IsError || !strings.Contains(invalid.Text, "document_id") {
 		t.Fatalf("invalid get_document result = %#v, want actionable tool error", invalid)
+	}
+}
+
+func TestMCPListsBookToolsOnlyWithBookMode(t *testing.T) {
+	e := newMCPOAuthTestEnv(t) // book mode is off by default
+	token := auth.NewMCPAccessToken(fixtureUser.ID, e.resource, oauthTestSigningMaterial, time.Minute)
+	listed := mcpPost(t, e, token, "", map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": map[string]any{},
+	})
+	assertStatus(t, listed, http.StatusOK)
+	var response struct {
+		Result struct {
+			Tools []struct {
+				Name string `json:"name"`
+			} `json:"tools"`
+		} `json:"result"`
+	}
+	decodeMCPResponse(t, listed, &response)
+	book := map[string]bool{}
+	for _, name := range mcpBookTools {
+		book[name] = true
+	}
+	var got, want []string
+	for _, tool := range response.Result.Tools {
+		got = append(got, tool.Name)
+	}
+	for _, name := range expectedMCPTools {
+		if !book[name] {
+			want = append(want, name)
+		}
+	}
+	sort.Strings(got)
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("tools/list with book mode off\n got: %v\nwant: %v", got, want)
+	}
+
+	called := mcpPost(t, e, token, "", map[string]any{
+		"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+		"params": map[string]any{"name": "create_book", "arguments": map[string]any{"folder_id": "fld_x"}},
+	})
+	assertStatus(t, called, http.StatusOK)
+	if !strings.Contains(called.Body.String(), "not found") {
+		t.Fatalf("create_book with book mode off = %s, want tool not found", called.Body.String())
 	}
 }
 

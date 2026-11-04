@@ -357,6 +357,11 @@ func registerMCPTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 	registerMCPGeneralTools(server, api)
 	registerMCPDocumentTools(server, api)
 	registerMCPFolderTools(server, api)
-	registerMCPBookTools(server, api)
+	// Book mode is off by default (SLASHDOCS_BOOKS_ENABLED). Its tools are
+	// not listed when it is off, so agents do not pick tools that can only
+	// answer feature_disabled. The flag is fixed for the server's lifetime.
+	if api.handlers.deps.booksEnabled {
+		registerMCPBookTools(server, api)
+	}
 	registerMCPServiceAccountTools(server, api)
 }

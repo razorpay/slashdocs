@@ -12,8 +12,9 @@ func mcpBookID() mcp.ToolOption {
 	return mcp.WithString("book_id", mcp.Required(), mcp.Description("Book ID (book_…)."))
 }
 
-// registerMCPBookTools exposes book mode. The tools call the same handlers as
-// the REST routes, so the books feature flag and access checks still apply.
+// registerMCPBookTools exposes book mode; it is called only when book mode
+// is on. The tools call the same handlers as the REST routes, so the access
+// checks (and the feature flag) still apply.
 func registerMCPBookTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 	server.AddTool(mcp.NewTool("create_book", mutationOptions(false, false,
 		mcp.WithDescription("Make a folder a book. The outline is seeded from the folder's numbered document titles."),
