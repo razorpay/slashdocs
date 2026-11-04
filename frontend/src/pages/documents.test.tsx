@@ -87,4 +87,35 @@ describe("DocumentsPage search", () => {
     ).toHaveValue("plan");
     expect(screen.getByRole("heading", { name: "Results" })).toBeInTheDocument();
   });
+
+  it("keeps every letter of fast typing", async () => {
+    const user = userEvent.setup({ delay: null });
+    renderDocuments("/app/documents");
+    const input = await screen.findByRole("combobox", { name: "Search documents" });
+    await user.type(input, "abcdefghij");
+    expect(input).toHaveValue("abcdefghij");
+    await waitFor(() =>
+      expect(screen.getByTestId("search")).toHaveTextContent("?q=abcdefghij"),
+    );
+    expect(input).toHaveValue("abcdefghij");
+  });
+
+  it("says when the folders do not load, beside the documents", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.listFolders)
+      .mockRejectedValueOnce(new Error("503"))
+      .mockResolvedValue({
+        items: [{ type: "folder", folder: { id: "fld_1", title: "Reports" } }],
+        has_more: false,
+      });
+    renderDocuments("/app/documents");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not load folders",
+    );
+    expect(screen.getByRole("link", { name: /Q3 plan/ })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("link", { name: /Reports/ })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
 });

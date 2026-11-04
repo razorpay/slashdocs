@@ -41,7 +41,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { api, APIError, docID, type FolderEntry } from "@/api";
+import { api, APIError, type FolderEntry } from "@/api";
 import { canManageSharing } from "@/lib/constants";
 import { queryKeys } from "@/lib/queryKeys";
 import { samePrincipal } from "@/lib/principals";
@@ -56,6 +56,7 @@ import { ViewModeToggle } from "@/components/browse/view-mode-toggle";
 import { AccessWarningDialog, NewFolderDialog } from "@/components/browse/dialogs";
 import { MoveDialog } from "@/components/browse/move-dialog";
 import { useMoveResource } from "@/components/browse/use-resource-actions";
+import { sortEntries } from "@/components/browse/sort-entries";
 import { useBridgeHost } from "./use-bridge-host";
 import { useDocumentEvents } from "./use-document-stream";
 import {
@@ -210,11 +211,17 @@ export function FolderPage() {
     const targetFolderId = (over.id as string).replace("drop:", "");
     if (dragType === DRAG_TYPE.folder && dragId === targetFolderId) return;
     if (targetFolderId === id) return;
+    const toRoot = targetFolderId === "__root__";
     move.mutate({
       type: dragType === DRAG_TYPE.folder ? "folder" : "document",
       id: dragId,
       from: id,
-      to: targetFolderId === "__root__" ? null : targetFolderId,
+      to: toRoot ? null : targetFolderId,
+      toTitle: toRoot
+        ? "Documents"
+        : [...breadcrumbs, ...items.flatMap((e) => (e.folder ? [e.folder] : []))].find(
+            (f) => f.id === targetFolderId,
+          )?.title,
     });
   }
 
@@ -271,7 +278,6 @@ export function FolderPage() {
               size="md"
               onClick={() => setNewFolderOpen(true)}
               aria-label="New subfolder"
-              tooltip="New subfolder"
               className="shrink-0 px-3 sm:px-4"
             >
               <Plus className="h-3.5 w-3.5 sm:mr-1.5" />
@@ -283,7 +289,6 @@ export function FolderPage() {
                   variant="outline"
                   size="sm"
                   aria-label="Share folder"
-                  tooltip="Share folder"
                   className="shrink-0 px-2.5 sm:px-3"
                 >
                   <Share2 className="h-3.5 w-3.5 sm:mr-1.5" />
@@ -488,21 +493,7 @@ function FolderContents({
   const me = useQuery({ queryKey: queryKeys.me(), queryFn: api.me });
   const viewMode = viewModeStore.useStore();
 
-  const entries = [...items].sort((a, b) => {
-    const aid = a.folder?.id || (a.document ? docID(a.document) : "");
-    const bid = b.folder?.id || (b.document ? docID(b.document) : "");
-    const ap = pinnedIds.has(aid);
-    const bp = pinnedIds.has(bid);
-    if (ap !== bp) return ap ? -1 : 1;
-    const ta = a.last_active || "";
-    const tb = b.last_active || "";
-    if (ta && tb) return tb.localeCompare(ta);
-    if (tb) return 1;
-    if (ta) return -1;
-    return (a.folder?.title || a.document?.title || "").localeCompare(
-      b.folder?.title || b.document?.title || "",
-    );
-  });
+  const entries = sortEntries(items, pinnedIds);
 
   return viewMode === "list" ? (
     <UnifiedTable
