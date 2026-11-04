@@ -27,7 +27,7 @@ export function DialogContent({
         <Tooltip label="Close dialog">
           <DialogPrimitive.Close
             aria-label="Close dialog"
-            className="absolute right-4 top-4 inline-flex min-h-10 min-w-10 items-center justify-center rounded-md p-1 text-[var(--color-fg-muted)] transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.96] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-fg)]"
+            className="absolute right-3 top-[18px] inline-flex min-h-10 min-w-10 items-center justify-center rounded-md p-1 text-[var(--color-fg-muted)] transition-[background-color,color,transform] duration-150 ease-out active:scale-[0.96] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-fg)]"
           >
             <X className="h-4 w-4" />
           </DialogPrimitive.Close>
@@ -41,7 +41,8 @@ export function DialogHeader({
   className,
   ...p
 }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("mb-4 space-y-1", className)} {...p} />;
+  // The close button sits on the title's line, so the title leaves it room.
+  return <div className={cn("mb-4 space-y-1 pr-8", className)} {...p} />;
 }
 export function DialogTitle({
   className,

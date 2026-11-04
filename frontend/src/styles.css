@@ -88,6 +88,10 @@
   #root {
     height: 100%;
   }
+  /* The header stays still between pages that scroll and pages that do not. */
+  html {
+    scrollbar-gutter: stable;
+  }
   body {
     margin: 0;
     background: var(--color-bg);
