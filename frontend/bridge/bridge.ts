@@ -705,8 +705,10 @@ type Theme = "dark" | "light";
     if (!d || d.getElementById("slashdocs-highlight-style")) return;
     const s = d.createElement("style");
     s.id = "slashdocs-highlight-style";
+    // The app names an unsent comment "draft:…". Its highlight has a dashed
+    // underline, apart from the comments that are sent.
     s.textContent =
-      ".slashdocs-mark{background:#fef3c7!important;color:#111827!important;-webkit-text-fill-color:#111827!important;box-decoration-break:clone;-webkit-box-decoration-break:clone;border-radius:2px 2px 0 0;box-shadow:inset 0 -2px 0 #fbbf24;cursor:pointer;transition:background-color .15s,box-shadow .15s}.slashdocs-mark-active{background:#fde68a!important;box-shadow:inset 0 -2px 0 #f59e0b}.slashdocs-svg-mark-text{fill:#111827!important;-webkit-text-fill-color:#111827!important;cursor:pointer}.slashdocs-svg-mark-rect{fill:#fef3c7;stroke:#fbbf24;stroke-width:1;rx:3;ry:3;pointer-events:auto;opacity:.8}.slashdocs-svg-mark-rect.slashdocs-mark-active{fill:#fde68a;stroke:#f59e0b;stroke-width:2;opacity:.9}@media print{.slashdocs-mark{background:transparent!important;box-shadow:none!important;-webkit-text-fill-color:inherit!important;color:inherit!important}.slashdocs-svg-mark-rect{display:none!important}.slashdocs-svg-mark-text{fill:inherit!important;-webkit-text-fill-color:inherit!important}}";
+      ".slashdocs-mark{background:#fef3c7!important;color:#111827!important;-webkit-text-fill-color:#111827!important;box-decoration-break:clone;-webkit-box-decoration-break:clone;border-radius:2px 2px 0 0;box-shadow:inset 0 -2px 0 #fbbf24;cursor:pointer;transition:background-color .15s,box-shadow .15s}.slashdocs-mark-active{background:#fde68a!important;box-shadow:inset 0 -2px 0 #f59e0b}.slashdocs-svg-mark-text{fill:#111827!important;-webkit-text-fill-color:#111827!important;cursor:pointer}.slashdocs-svg-mark-rect{fill:#fef3c7;stroke:#fbbf24;stroke-width:1;rx:3;ry:3;pointer-events:auto;opacity:.8}.slashdocs-svg-mark-rect.slashdocs-mark-active{fill:#fde68a;stroke:#f59e0b;stroke-width:2;opacity:.9}@media screen{.slashdocs-mark[data-cid^='draft:']{background:#fffbeb!important;box-shadow:none;text-decoration:underline dashed #f59e0b 1.5px!important;text-underline-offset:3px!important}.slashdocs-mark-active[data-cid^='draft:']{background:#fde68a!important}.slashdocs-svg-mark-rect[data-cid^='draft:']{stroke-dasharray:3 2}}@media print{.slashdocs-mark{background:transparent!important;box-shadow:none!important;-webkit-text-fill-color:inherit!important;color:inherit!important}.slashdocs-svg-mark-rect{display:none!important}.slashdocs-svg-mark-text{fill:inherit!important;-webkit-text-fill-color:inherit!important}}";
     (d.head || d.documentElement).appendChild(s);
   }
 
@@ -1491,6 +1493,9 @@ type Theme = "dark" | "light";
     const anchor = describeAnchor(d.body, snapToWords(range));
     if (!anchor) return;
     dismissSelectionAction();
+    // The highlight of the new draft takes the place of the selection, so
+    // the draft stays in view after its popover closes, and a click opens it.
+    d.getSelection()?.removeAllRanges();
     parent.postMessage({ type: "slashdocs:selection", anchor }, targetOrigin());
   }
 
