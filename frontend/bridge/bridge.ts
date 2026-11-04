@@ -23,6 +23,7 @@ import {
   scrollBehavior,
 } from "./dom.ts";
 import { startTextEditing, type TextEditor } from "./text-editing.ts";
+import { probe, startScriptText, type ScriptText } from "./script-text.ts";
 import { CHORD_KEYS } from "../src/lib/esc-chord.ts";
 import {
   reduceVimScroll,
@@ -517,42 +518,53 @@ type Theme = "dark" | "light";
 
   let printPreparing = false;
   let textEditor: TextEditor | null = null;
-  // Highlights split the text nodes the editor tracks, so they come off each
-  // block that a burst of typing reaches, and go back when the app takes the
-  // burst. The others stay. Paints and repairs wait meanwhile, and the
+  let scriptText: ScriptText | null = null;
+  // Highlights split the text nodes that the editor changes, so they come
+  // off each block that the editor changes, and go back when the app takes
+  // the changes. The others stay. Paints and repairs wait meanwhile, and the
   // comment rail keeps its positions.
   let highlightsHeld = false;
 
-  // Text editing makes the words of the document editable.
+  // Text editing makes the document editable in place. The frame's srcdoc
+  // is the source as the server tagged it, before any script ran.
   function setTextEditing(on: boolean): void {
     const d = doc();
     if (!on) {
+      // Script text gives back the contenteditable values that the source
+      // map gave it, so it stops first.
+      scriptText?.stop();
+      scriptText = null;
       textEditor?.stop();
       textEditor = null;
       releaseHighlights();
       return;
     }
     if (textEditor || !d) return;
-    textEditor = startTextEditing(d, {
+    const post = (message: object) => parent.postMessage(message, targetOrigin());
+    const onDirty = (count: number) => post({ type: "slashdocs:text-dirty", count });
+    textEditor = startTextEditing(d, frame.srcdoc, {
       beforeTouch: holdHighlights,
-      onDirty: (count) =>
-        parent.postMessage({ type: "slashdocs:text-dirty", count }, targetOrigin()),
-      onRefused: () =>
-        parent.postMessage({ type: "slashdocs:text-refused" }, targetOrigin()),
+      onDirty,
+      onRefused: (reason) => post({ type: "slashdocs:text-refused", reason }),
     });
+    if (textEditor)
+      scriptText = startScriptText(d, {
+        source: textEditor.map,
+        post,
+        onChange: () => onDirty(1),
+      });
   }
 
-  function holdHighlights(block: Element): boolean {
+  function holdHighlights(block: Element): void {
     const d = doc();
-    if (!d || !d.body) return false;
+    if (!d || !d.body) return;
     highlightsHeld = true;
-    if (!block.querySelector("mark.slashdocs-mark")) return false;
+    if (!block.querySelector("mark.slashdocs-mark")) return;
     suspendMutationObserver();
     const caret = saveSelection(d, d.body, true);
     clearHighlights(block);
     if (caret) restoreSelection(d, d.body, caret);
     resumeMutationObserver();
-    return true;
   }
 
   function releaseHighlights(): void {
@@ -2110,6 +2122,7 @@ type Theme = "dark" | "light";
     // A document that reloads by itself while being edited stays editable.
     if (textEditor) {
       textEditor = null;
+      scriptText = null;
       setTextEditing(true);
     }
     parent.postMessage({ type: "slashdocs:ready" }, targetOrigin());
@@ -2177,12 +2190,43 @@ type Theme = "dark" | "light";
       e.data.type === "slashdocs:text-collect" &&
       typeof e.data.requestId === "string"
     ) {
-      const result = textEditor?.take() || { changes: [], unsupported: false };
+      const { regions } = textEditor?.take() ?? { regions: [] };
       releaseHighlights();
       parent.postMessage(
-        { type: "slashdocs:text-changes", requestId: e.data.requestId, ...result },
+        {
+          type: "slashdocs:text-changes",
+          requestId: e.data.requestId,
+          regions,
+          scripts: scriptText?.take() ?? [],
+        },
         targetOrigin(),
       );
+      return;
+    }
+    if (
+      e.data.type === "slashdocs:script-text-result" &&
+      typeof e.data.requestId === "string"
+    ) {
+      scriptText?.answer(e.data.requestId, e.data.editable === true);
+      return;
+    }
+    // The app renders a changed source in a hidden frame here, beside the
+    // document, to make sure that a script change shows before it saves.
+    if (
+      e.data.type === "slashdocs:probe" &&
+      typeof e.data.requestId === "string" &&
+      typeof e.data.html === "string" &&
+      Array.isArray(e.data.strings)
+    ) {
+      const { requestId, html, locator, strings } = e.data;
+      void probe(frame, html, locator, strings.map(String))
+        .catch(() => ({ text: null, counts: strings.map(() => 0) }))
+        .then((result) =>
+          parent.postMessage(
+            { type: "slashdocs:probe-result", requestId, ...result },
+            targetOrigin(),
+          ),
+        );
       return;
     }
     if (e.data.type === "slashdocs:paint") paint(e.data.comments, e.data.active);
