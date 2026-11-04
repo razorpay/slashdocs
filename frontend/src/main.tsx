@@ -62,7 +62,11 @@ function App() {
                   element={<ServiceAccountsPage />}
                 />
                 <Route path="settings/profile" element={<ProfilePage />} />
-                <Route path="developers" element={<DevelopersPage />} />
+                <Route path="settings/developers" element={<DevelopersPage />} />
+                <Route
+                  path="developers"
+                  element={<Navigate to="/app/settings/developers" replace />}
+                />
               </Route>
               {/* legacy redirects */}
               <Route path="/documents/:id" element={<LegacyDocRedirect />} />

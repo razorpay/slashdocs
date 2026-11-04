@@ -81,7 +81,7 @@ export function PageHeader({
 
 const SETTINGS = [
   { value: "/app/settings/profile", label: "Profile" },
-  { value: "/app/developers", label: "Developers" },
+  { value: "/app/settings/developers", label: "Developers" },
   { value: "/app/settings/service-accounts", label: "Bots" },
 ];
 
