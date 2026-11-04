@@ -163,10 +163,10 @@ test("creates a structured mention with a clean API body", async ({
     ),
   ).toBe("@admin");
 
+  // The posted thread opens in its popover.
   const commentCard = page
-    .getByRole("button")
-    .filter({ hasText: "Please review" })
-    .filter({ hasText: "@admin" });
+    .getByRole("dialog", { name: "Comment thread" })
+    .filter({ hasText: "Please review" });
   const renderedMention = commentCard.getByText("@admin", { exact: true });
   await expect(renderedMention).toBeVisible();
   await expect(renderedMention).toHaveClass(/bg-\[var\(--color-accent-muted\)\]/);

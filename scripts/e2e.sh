@@ -141,7 +141,7 @@ cat >"$TMP/report.html" <<EOF
   <body>
     <h1>Quarterly revenue report</h1>
     <p>Total revenue grew 42 percent.</p>
-    <img alt="chart" src="data:image/png;base64,$PNG">
+    <img id="chart" alt="chart" src="data:image/png;base64,$PNG">
   </body>
 </html>
 EOF
@@ -222,6 +222,13 @@ pass "comment replied"
 cli docs comments resolve "$DOC" "$CMT" >/dev/null
 cli docs comments list "$DOC" --status resolved | grep -q "$CMT" || fail "comment not resolved"
 pass "comment resolved"
+
+PIN="$(cli docs comments create "$DOC" --version "$V2" --target chart --x 0.5 --y 0.25 \
+  --label "Revenue chart" --body "Label the axis." | jsonget id)"
+[[ "$PIN" == cmt_* ]] || fail "point comment create ($PIN)"
+"$TMP/slashdocs" --server "$APP" --token "$SA_TOKEN" docs comments list "$DOC" \
+  | grep -Fq "pin=Revenue chart" || fail "CLI point comment label"
+pass "point comment pinned to the chart ($PIN)"
 
 # --- Share / grants ----------------------------------------------------------
 

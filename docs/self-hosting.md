@@ -656,7 +656,11 @@ events. Open viewers refresh comments, hear about new versions, and see who
 else is viewing, whichever replica served each request. Presence rows expire
 after ten minutes, so the event table does not grow with viewing time.
 
-Live cursors use the same stream but are never stored. In `notify` mode, each
+Live cursors use the same stream but are never stored. Each cursor also
+carries the center of its viewer's view, so another viewer can follow them, and
+a cursor chat message of at most 100 characters, which the viewer types after /.
+A signed-out reader of a public document sees the cursors and their chat, but
+sends neither. In `notify` mode, each
 batch of pointer positions goes to every replica as a notification. In `poll`
 mode, a viewer sees only the cursors of viewers that the same replica serves.
 Thus, use `notify` when you run more than one replica.

@@ -36,3 +36,9 @@ staticPasswords:
     hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
     username: admin
     userID: 08a8684b-db88-4b73-90a9-3cd1661f5466
+  # A second reader, for live cursors, follow and cursor chat between people.
+  - email: reviewer@example.com
+    # bcrypt of "password"
+    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+    username: reviewer
+    userID: 5b0d2c1e-7f4a-4c39-9a8e-2f6d1b3c4e5a

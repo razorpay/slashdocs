@@ -1,13 +1,26 @@
 # Comment notifications and links
 
-Comments stay beside their highlighted text. The sidebar shows the total thread
-count, including threads whose text is currently hidden or missing, with All,
-Open, and Resolved filters. Opening a comment link selects its thread even if it
-is resolved. Each comment and reply has a **Copy comment link** action.
+A comment is on selected text, or on a spot in the document: press C with
+nothing selected, or use **Comment on a spot** in the comments list, and click
+the spot. A thread opens in a popover next to its highlight or its pin. On a
+narrow screen, the popover is a sheet at the bottom of the screen.
+
+Open threads always show their highlight or pin. Pins that are near each other
+merge into a cluster, and a click on the cluster lists its threads. The author
+of a pin, or an editor, can drag it to a new spot. Resolved threads leave the
+document.
+
+The **Comments** button in the document bar opens the comments list: every
+thread, with All, Open, Resolved, and For you filters. For you shows the threads
+that mention you. The list also shows the threads whose text or element is not
+in the version on screen. A click on a thread opens it in place, also when it is
+resolved, so that you can read it or reopen it. Opening a comment link opens its
+thread in the same way. Each comment and reply has a **Copy comment link**
+action.
 
 ## Personal notification controls
 
-Use the bell beside the comment count to mute or enable notifications from that
+Use the bell in the comments list to mute or enable notifications from that
 document. In **Profile → Chat notifications**, switch notifications off globally.
 The global switch overrides document settings. Muting affects only your account;
 it does not change document access or anyone else's preferences. Re-enabling
@@ -48,6 +61,12 @@ slashdocs docs notifications enable doc_123
 slashdocs docs comments create doc_123 --version ver_123 \
   --quote 'Launch checklist' --body 'Please review' \
   --mention reviewer@example.com --mention owner@example.com
+
+# A point comment pins to a spot in an element: its id or
+# data-slashdocs-target value, and x and y as fractions of its box.
+slashdocs docs comments create doc_123 --version ver_123 \
+  --target revenue-chart --x 0.4 --y 0.2 --label 'Revenue chart' \
+  --body 'Label this axis'
 
 # File and stdin input avoid shell escaping for longer comments.
 slashdocs docs comments reply doc_123 cmt_123 --body-file - \
