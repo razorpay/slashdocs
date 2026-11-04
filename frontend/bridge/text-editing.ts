@@ -127,7 +127,8 @@ export function startTextEditing(
   const previous = body.getAttribute("contenteditable");
   const previousSpellcheck = body.getAttribute("spellcheck");
   body.setAttribute("contenteditable", "true");
-  body.setAttribute("spellcheck", "true");
+  // Squiggles over every rendered word would bury the document.
+  body.setAttribute("spellcheck", "false");
   d.documentElement.setAttribute("data-slashdocs-text-editing", "");
   if (!d.getElementById(STYLE_ID)) {
     const style = d.createElement("style");
