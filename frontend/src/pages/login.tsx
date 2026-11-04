@@ -31,46 +31,49 @@ export function LoginPage() {
   }, []);
   if (me.data) return <Navigate to={next} replace />;
   return (
-    <div className="relative isolate flex min-h-full flex-col overflow-x-clip bg-[var(--color-bg)]">
-      <RazorSenseBackdrop framing="halo" className="h-[760px]" />
-      <SiteHeader />
-      <main className="flex flex-1 items-center justify-center px-6 py-16">
-        <div className="glass-card enter w-full max-w-sm rounded-lg p-8 text-center">
-          <h1 className="text-2xl font-normal tracking-[-0.02em]">
-            Sign in to slashdocs
-          </h1>
-          <p className="mt-2 font-mono text-xs text-[var(--color-fg-muted)]">
-            {new URL(publicURL()).host}
-          </p>
-          <Button
-            asChild
-            variant="outline"
-            size="lg"
-            className="mt-8 w-full aria-disabled:pointer-events-none aria-disabled:opacity-70"
-          >
-            {/* nosemgrep: typescript.react.react-href-url.react-href-url - api.loginURL always returns a same-origin relative path and URL-encodes next as a query parameter. */}
-            <a
-              href={api.loginURL(next)}
-              aria-disabled={redirecting}
-              onClick={() => setRedirecting(true)}
+    <div className="flex min-h-full flex-col overflow-x-clip bg-[var(--color-bg)]">
+      {/* The backdrop fills the space above the footer and fades out at it. */}
+      <div className="relative isolate flex flex-1 flex-col">
+        <RazorSenseBackdrop framing="halo" className="h-full" />
+        <SiteHeader />
+        <main className="flex flex-1 items-center justify-center px-6 py-16">
+          <div className="glass-card enter w-full max-w-sm rounded-lg p-8 text-center">
+            <h1 className="text-2xl font-normal tracking-[-0.02em]">
+              Sign in to slashdocs
+            </h1>
+            <p className="mt-2 font-mono text-xs text-[var(--color-fg-muted)]">
+              {new URL(publicURL()).host}
+            </p>
+            <Button
+              asChild
+              variant="outline"
+              size="lg"
+              className="mt-8 w-full aria-disabled:pointer-events-none aria-disabled:opacity-70"
             >
-              {redirecting ? (
-                <LoaderCircle className="h-4 w-4 animate-spin" />
-              ) : (
-                provider === "Google" && <GoogleIcon />
-              )}
-              {redirecting ? `Opening ${provider}…` : `Continue with ${provider}`}
-            </a>
-          </Button>
-          <p className="mt-6 text-sm text-[var(--color-fg-muted)]">
-            Agents sign in from the terminal with{" "}
-            <code className="whitespace-nowrap font-mono text-[var(--color-fg)]">
-              slashdocs auth login
-            </code>
-            .
-          </p>
-        </div>
-      </main>
+              {/* nosemgrep: typescript.react.react-href-url.react-href-url - api.loginURL always returns a same-origin relative path and URL-encodes next as a query parameter. */}
+              <a
+                href={api.loginURL(next)}
+                aria-disabled={redirecting}
+                onClick={() => setRedirecting(true)}
+              >
+                {redirecting ? (
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                ) : (
+                  provider === "Google" && <GoogleIcon />
+                )}
+                {redirecting ? `Opening ${provider}…` : `Continue with ${provider}`}
+              </a>
+            </Button>
+            <p className="mt-6 text-sm text-[var(--color-fg-muted)]">
+              Agents sign in from the terminal with{" "}
+              <code className="whitespace-nowrap font-mono text-[var(--color-fg)]">
+                slashdocs auth login
+              </code>
+              .
+            </p>
+          </div>
+        </main>
+      </div>
       <SiteFooter />
     </div>
   );
