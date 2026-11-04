@@ -130,6 +130,7 @@ type Theme = "dark" | "light";
   const pins = createPinLayer({
     doc,
     post: (message) => parent.postMessage(message, targetOrigin()),
+    laidOut: () => scheduleCommentPositions(),
   });
   // This reader's cursor color, which the app gives only to a reader who can
   // chat at their cursor.
@@ -920,6 +921,7 @@ type Theme = "dark" | "light";
         positions.push({ id, top: top + scrollTop, bottom: bottom + scrollTop });
       }
     }
+    for (const { id, top } of pins.tops()) positions.push({ id, top, bottom: top });
     parent.postMessage(
       {
         type: "slashdocs:comment-positions",
