@@ -196,7 +196,7 @@ func TestReplacementSummaryNamesWhatAReaderSeesChange(t *testing.T) {
 		r    Replacement
 		want string
 	}{
-		{"words", at(base, "twice", "three times"), "Replaced “twice” with “three times”"},
+		{"words", at(base, "twice", "three times"), "Changed “twice” to “three times”"},
 		{"added words", at(base, "The end.", "The end. More words."), "Added “More words.”"},
 		{"removed words", at(base, " The end.", ""), "Removed “The end.”"},
 		// The editor saves the bytes that changed, which can start inside a tag.
@@ -215,7 +215,9 @@ func TestReplacementSummaryNamesWhatAReaderSeesChange(t *testing.T) {
 <script>const LABEL = "Green";`, `>Amber</b></p>
 <script>const LABEL = "G";`), "Added “Amber”"},
 		{"style", at(base, "red", "blue"), "Changed the styles"},
-		{"attribute", at(base, `id="health"`, `id="health" class="note"`), "Changed the formatting"},
+		{"attribute", at(base, `id="health"`, `id="health" class="note"`), "Changed the formatting of “Build health:”"},
+		{"bold moved", at(base, "<b>twice</b> before", "<b>twice before</b>"), "Made “twice before” bold"},
+		{"link target", at(base, "owner.", `<a href="https://a.example">owner.</a>`), "Linked “owner.”"},
 	} {
 		if got := ReplacementSummary([]byte(base), []Replacement{c.r}); got != c.want {
 			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
@@ -229,8 +231,53 @@ func TestReplacementSummaryHasALinePerReplacement(t *testing.T) {
 		{Start: 3, End: 6, OldHTML: "Try", NewHTML: "Run"},
 		{Start: len(base), End: len(base), NewHTML: "<p>" + strings.Repeat("word ", 20) + "</p>"},
 	})
-	want := "Replaced “Try” with “Run”\nAdded a paragraph: “" + strings.TrimSpace(strings.Repeat("word ", 11)) + "…”"
+	want := "Changed “Try” to “Run”\nAdded a paragraph: “" + strings.TrimSpace(strings.Repeat("word ", 11)) + "…”"
 	if got != want {
 		t.Fatalf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// The editor sends a new bold of part of a sentence as two replacements: its
+// start tag and its end tag. One line names the words between them.
+func TestReplacementSummaryNamesAFormatFromItsStartTagToItsEndTag(t *testing.T) {
+	base := `<p>Select only these words today.</p><p>Clients retry twice before giving up.</p>`
+	tags := func(word, start, end string) []Replacement {
+		r := at(base, word, "")
+		return []Replacement{
+			{Start: r.Start, End: r.Start, NewHTML: start},
+			{Start: r.End, End: r.End, NewHTML: end},
+		}
+	}
+	for _, c := range []struct {
+		name string
+		rs   []Replacement
+		want string
+	}{
+		{"bold", tags("these words", "<strong>", "</strong>"), "Made “these words” bold"},
+		{"one word", tags("twice", "<strong>", "</strong>"), "Made “twice” bold"},
+		{"italic", tags("these words", "<em>", "</em>"), "Made “these words” italic"},
+		{"link", tags("these words", `<a href="https://example.com">`, "</a>"), "Linked “these words”"},
+		{"two edits", append(tags("these words", "<b>", "</b>"), at(base, "twice", "three times")),
+			"Made “these words” bold\nChanged “twice” to “three times”"},
+	} {
+		if got := ReplacementSummary([]byte(base), c.rs); got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
+	}
+
+	linked := `<p>Read <a href="https://a.example">the notes</a> first.</p>`
+	for _, c := range []struct {
+		name string
+		rs   []Replacement
+		want string
+	}{
+		{"unlink", []Replacement{at(linked, `<a href="https://a.example">`, ""), at(linked, "</a>", "")},
+			"Removed the link from “the notes”"},
+		{"link target", []Replacement{at(linked, "a.example", "b.example")}, "Changed the link on “the notes”"},
+		{"markup", []Replacement{at(linked, "<p>", "<p >")}, "Changed the HTML only"},
+	} {
+		if got := ReplacementSummary([]byte(linked), c.rs); got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
 	}
 }

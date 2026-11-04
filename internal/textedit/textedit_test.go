@@ -88,19 +88,19 @@ func TestSummaryShowsTheChangedWords(t *testing.T) {
 		want string
 	}{
 		{"short", Edit{OldString: "TTL of 10 minutes", NewString: "TTL of 5 minutes"},
-			`Replaced “TTL of 10 minutes” with “TTL of 5 minutes”`},
+			`Changed “TTL of 10 minutes” to “TTL of 5 minutes”`},
 		{"insertion at the end", Edit{OldString: para, NewString: para + " R3"},
-			`Replaced “…and add comments.” with “…and add comments. R3”`},
+			`Changed “…and add comments.” to “…and add comments. R3”`},
 		{"deletion at the start", Edit{OldString: para, NewString: strings.TrimPrefix(para, "6. ")},
-			`Replaced “6. The retry worker…” with “The retry worker…”`},
+			`Changed “6. The retry worker…” to “The retry worker…”`},
 		{"replacement in the middle", Edit{OldString: para, NewString: strings.Replace(para, "failed", "dead", 1)},
-			`Replaced “…retry worker reads failed webhooks from the…” with “…retry worker reads dead webhooks from the…”`},
+			`Changed “…retry worker reads failed webhooks from the…” to “…retry worker reads dead webhooks from the…”`},
 		{"part of a word", Edit{OldString: para, NewString: strings.Replace(para, "add", "adds", 1)},
-			`Replaced “…the queue and add comments.” with “…the queue and adds comments.”`},
+			`Changed “…the queue and add comments.” to “…the queue and adds comments.”`},
 		{"replace all", Edit{OldString: "draft", NewString: "final", ReplaceAll: true},
-			`Replaced “draft” with “final” everywhere`},
+			`Changed “draft” to “final” everywhere`},
 		{"unicode", Edit{OldString: "Le café est très bon ce matin", NewString: "Le café est très chaud ce matin"},
-			`Replaced “…café est très bon ce matin” with “…café est très chaud ce matin”`},
+			`Changed “…café est très bon ce matin” to “…café est très chaud ce matin”`},
 	} {
 		if got := Summary([]Edit{c.edit}); got != c.want {
 			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
@@ -114,10 +114,10 @@ func TestSummaryClipsLongChanges(t *testing.T) {
 		{OldString: strings.Repeat("word ", 30), NewString: "short\n\n  text"},
 	})
 	lines := strings.Split(s, "\n")
-	if len(lines) != 2 || lines[0] != "Replaced “10 minutes” with “5 minutes”" {
+	if len(lines) != 2 || lines[0] != "Changed “10 minutes” to “5 minutes”" {
 		t.Fatalf("got %q", s)
 	}
-	if !strings.Contains(lines[1], "…") || !strings.HasSuffix(lines[1], "word…” with “short text”") {
+	if !strings.Contains(lines[1], "…") || !strings.HasSuffix(lines[1], "word…” to “short text”") {
 		t.Fatalf("got %q", lines[1])
 	}
 }
