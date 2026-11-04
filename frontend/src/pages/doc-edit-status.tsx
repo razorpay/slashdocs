@@ -1,14 +1,18 @@
 import {
   AlertCircle,
   Check,
+  Eye,
   LoaderCircle,
+  MessageSquare,
   Pencil,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useDoc, type SaveState } from "./doc-context";
 
-const STATUS: Record<SaveState, { label: string; title: string; Icon: LucideIcon }> = {
+type Status = { label: string; title: string; Icon: LucideIcon };
+
+const STATUS: Record<SaveState, Status> = {
   idle: {
     label: "Can edit",
     title:
@@ -33,21 +37,37 @@ const STATUS: Record<SaveState, { label: string; title: string; Icon: LucideIcon
   },
 };
 
+// What a reader who cannot change the words may do.
+const ACCESS: Record<"commenter" | "viewer", Status> = {
+  commenter: {
+    label: "Can comment",
+    title: "Select text to comment on it. Only editors change the words.",
+    Icon: MessageSquare,
+  },
+  viewer: {
+    label: "Can view",
+    title: "You can read this document. Ask its owner for access to comment.",
+    Icon: Eye,
+  },
+};
+
 // EditStatus tells an editor that the document is theirs to edit, and whether
-// their edits are saved. There is no edit mode to enter: they type. A narrow
-// bar, short of room for the title, shows only the icon of a save.
-export function EditStatus() {
+// their edits are saved. There is no edit mode to enter: they type. Other
+// readers see what they may do. A narrow bar, short of room for the title,
+// shows only the icon of a save.
+export function EditStatus({ access }: { access?: keyof typeof ACCESS }) {
   const { editable, saveState } = useDoc();
-  if (!editable) return null;
-  const { label, title, Icon } = STATUS[saveState];
+  const status = editable ? STATUS[saveState] : access && ACCESS[access];
+  if (!status) return null;
+  const { label, title, Icon } = status;
   return (
     <span
       role="status"
       title={title}
       className={cn(
         "shrink-0 items-center gap-1 text-xs text-[var(--color-fg-muted)]",
-        saveState === "idle" ? "hidden sm:inline-flex" : "inline-flex",
-        saveState === "failed" && "text-[var(--color-danger)]",
+        !editable || saveState === "idle" ? "hidden sm:inline-flex" : "inline-flex",
+        editable && saveState === "failed" && "text-[var(--color-danger)]",
       )}
     >
       <Icon

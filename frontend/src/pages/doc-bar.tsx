@@ -1,9 +1,10 @@
 import { Tooltip } from "@/components/ui/tooltip";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { errorMessage } from "@/lib/errors";
+import { cn } from "@/lib/cn";
 import {
   ExternalLink,
   Eye,
@@ -18,6 +19,7 @@ import {
   MoreHorizontal,
   MousePointer2,
   MousePointer2Off,
+  Pencil,
   Share2,
   Tag,
   Trash2,
@@ -48,8 +50,14 @@ import { Input } from "@/components/ui/input";
 import { Sheet, SheetTrigger } from "@/components/ui/sheet";
 import { DeleteDocumentDialog } from "@/components/delete-document-dialog";
 import { MoveDialog } from "@/components/browse/move-dialog";
-import { api, type Principal, type ApprovalStatus, type ApprovalSummary } from "@/api";
-import { canManageSharing } from "@/lib/constants";
+import {
+  api,
+  type ApprovalStatus,
+  type ApprovalSummary,
+  type Document,
+  type Principal,
+} from "@/api";
+import { canManageSharing, ROLE_RANK } from "@/lib/constants";
 import { useDocumentRole } from "@/lib/hooks";
 import { queryKeys } from "@/lib/queryKeys";
 import { cursorsShownStore } from "@/lib/live-cursors";
@@ -144,6 +152,18 @@ export function DocBar({
   } = useDocumentRole(docId, owner, principal);
   const { printDocument: exportPDF, signIn } = useDoc();
   const canManageAccess = canManageSharing(role);
+  // What a reader who cannot change the words may do. A signed-in reader's
+  // role shows once it loads.
+  const access =
+    (ROLE_RANK[role || ""] || 0) >= ROLE_RANK.commenter
+      ? "commenter"
+      : role || signIn
+        ? "viewer"
+        : undefined;
+  const [renaming, setRenaming] = useState(false);
+  // Rename in the menu waits until the menu closes, so the menu does not
+  // take the focus back from the title field.
+  const renameOnClose = useRef(false);
   // The share sheet lists the requests. Their count waits on its button.
   const accessRequests = useQuery({
     queryKey: queryKeys.documentAccessRequests(docId),
@@ -171,8 +191,16 @@ export function DocBar({
           title: parentFolder.title,
         }
       }
-      title={title}
-      meta={previewing ? null : <EditStatus />}
+      title={
+        <DocTitle
+          docId={docId}
+          title={title}
+          canRename={canManage}
+          renaming={renaming}
+          onRenamingChange={setRenaming}
+        />
+      }
+      meta={previewing ? null : <EditStatus access={access} />}
     >
       <ApprovalsDialog
         status={approvalStatus}
@@ -300,7 +328,14 @@ export function DocBar({
             <MoreHorizontal className="h-4 w-4" />
           </Button>
         </DropdownTrigger>
-        <DropdownContent>
+        <DropdownContent
+          onCloseAutoFocus={(event) => {
+            if (!renameOnClose.current) return;
+            renameOnClose.current = false;
+            event.preventDefault();
+            setRenaming(true);
+          }}
+        >
           <DropdownItem
             className="sm:hidden"
             onSelect={() => nav(`/app/d/${docId}?fullscreen=1&version=${current}`)}
@@ -337,6 +372,9 @@ export function DocBar({
           </DropdownItem>
           {canManage ? (
             <>
+              <DropdownItem onSelect={() => (renameOnClose.current = true)}>
+                <Pencil className="h-4 w-4" /> Rename
+              </DropdownItem>
               {canChangeContent ? (
                 <UploadVersionMenuItem onSelect={() => setUploadOpen(true)} />
               ) : null}
@@ -390,6 +428,100 @@ export function DocBar({
         </Button>
       )}
     </DocBarFrame>
+  );
+}
+
+// The title of the document. Its owner renames it in place, as in Google
+// Docs: a click on it, or Rename in the More menu, makes it a field. Enter or
+// a click away saves, and Esc keeps the old title. The bar shows the new
+// title at once, and the old one again if the save fails.
+function DocTitle({
+  docId,
+  title,
+  canRename,
+  renaming,
+  onRenamingChange,
+}: {
+  docId: string;
+  title: string;
+  canRename: boolean;
+  renaming: boolean;
+  onRenamingChange: (renaming: boolean) => void;
+}) {
+  const q = useQueryClient();
+  const cancelled = useRef(false);
+  // Enter and Esc give the focus back to the title, as a click away does not.
+  const refocus = useRef(false);
+  const button = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (renaming || !refocus.current) return;
+    refocus.current = false;
+    button.current?.focus();
+  }, [renaming]);
+  const key = queryKeys.document(docId);
+  const rename = useMutation({
+    mutationFn: (next: string) => api.renameDocument(docId, next),
+    onMutate: async (next) => {
+      await q.cancelQueries({ queryKey: key });
+      const before = q.getQueryData<Document>(key);
+      q.setQueryData<Document>(key, (doc) => doc && { ...doc, title: next });
+      return { before };
+    },
+    onError: (e, _, context) => {
+      q.setQueryData(key, context?.before);
+      toast.error(errorMessage(e, "Rename failed"));
+    },
+    onSettled: () => {
+      q.invalidateQueries({ queryKey: key });
+      q.invalidateQueries({ queryKey: queryKeys.documents() });
+    },
+  });
+  if (renaming) {
+    return (
+      <Input
+        aria-label="Document title"
+        defaultValue={title}
+        autoFocus
+        onFocus={(e) => e.currentTarget.select()}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter" && e.key !== "Escape") return;
+          // Esc leaves the field and does not reach the page's shortcuts.
+          e.preventDefault();
+          e.stopPropagation();
+          cancelled.current = e.key === "Escape";
+          refocus.current = true;
+          e.currentTarget.blur();
+        }}
+        onBlur={(e) => {
+          const next = e.currentTarget.value.trim();
+          if (!cancelled.current && next && next !== title) rename.mutate(next);
+          cancelled.current = false;
+          onRenamingChange(false);
+        }}
+        className="h-8 w-full max-w-sm px-1.5 font-semibold"
+      />
+    );
+  }
+  const text =
+    "truncate rounded-sm border border-transparent px-1.5 text-sm font-semibold";
+  return canRename ? (
+    <button
+      ref={button}
+      type="button"
+      title={title}
+      aria-label={`Rename ${title}`}
+      onClick={() => onRenamingChange(true)}
+      className={cn(
+        text,
+        "h-8 min-w-0 cursor-text text-left transition-[border-color] duration-150 ease-out hover:border-[var(--color-border)]",
+      )}
+    >
+      {title}
+    </button>
+  ) : (
+    <div title={title} className={cn(text, "min-w-0")}>
+      {title}
+    </div>
   );
 }
 

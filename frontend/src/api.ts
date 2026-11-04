@@ -648,6 +648,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(domain ? { label, domain } : { label }),
     }),
+  renameDocument: (id: string, title: string) =>
+    request<Document>(`/v1/documents/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    }),
   deleteDocument: (id: string) =>
     request<void>(`/v1/documents/${id}`, { method: "DELETE" }),
   updateServiceAccount: (id: string, name: string, disabled: boolean) =>
