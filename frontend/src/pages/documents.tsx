@@ -9,7 +9,7 @@ import { MoreHorizontal, Plus, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Page } from "@/components/layout/page";
 import { beat } from "@/lib/enter";
-import { Skeleton, EmptyState } from "@/components/ui/misc";
+import { Skeleton, EmptyState, RetryButton } from "@/components/ui/misc";
 import { Dropdown, DropdownContent, DropdownTrigger } from "@/components/ui/dropdown";
 import { api, APIError, docID, docTitle, type Folder, type FolderEntry } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
@@ -259,11 +259,7 @@ export function DocumentsPage() {
               searching ? "Could not search documents" : "Could not load documents"
             }
             description="Something went wrong. Please try again."
-            action={
-              <Button variant="outline" onClick={() => docs.refetch()}>
-                Retry
-              </Button>
-            }
+            action={<RetryButton query={docs} variant="outline" />}
           />
         )
       ) : empty ? (

@@ -172,6 +172,7 @@ export function FolderPage() {
           <ErrorState
             title="Could not load folder"
             description="Something went wrong while loading this folder. Please try again."
+            retry={folder.error ? folder : contents}
           />
         )}
       </Page>

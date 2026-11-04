@@ -579,7 +579,7 @@ export function DocWorkspace({
                     showsLatest={showsLatest}
                     onPick={pickComment}
                     onPlacePin={placePin}
-                    onRetry={comments.refetch}
+                    retry={comments}
                     onClose={() => setListOpen(false)}
                   />
                 </motion.div>
