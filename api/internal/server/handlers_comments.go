@@ -80,17 +80,22 @@ var pointTargetPattern = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,128}$`)
 // maxPointLabel bounds the name of a point's element.
 const maxPointLabel = 128
 
+// maxPagePixels bounds the page spot and the viewport width of a point.
+const maxPagePixels = 10_000_000
+
 // validCommentAnchor checks the anchor of a new thread: a text anchor needs a
-// quote, and a point needs an element, by target or path, and a spot inside
-// its box. A point never names the body, whose box moves when its text
-// reflows. It rounds the fractions of a point to four decimals in place.
+// quote, and a point needs an element, by target or path, or else a page spot,
+// which puts it on the body. Its fractions may lie outside the element's box,
+// as far as live cursor views do. It rounds the fractions of a point to four
+// decimals in place.
 func validCommentAnchor(a *repo.Anchor) bool {
 	p := a.Point
 	if p == nil {
 		return a.Quote != ""
 	}
-	if (p.Target == "" && p.Path == "") || (p.Target != "" && !pointTargetPattern.MatchString(p.Target)) || !cursorPathPattern.MatchString(p.Path) ||
-		!plainText(p.Label, maxPointLabel) || !unitFraction(p.X) || !unitFraction(p.Y) {
+	if (p.Target == "" && p.Path == "" && p.ViewportW == nil) || (p.Target != "" && !pointTargetPattern.MatchString(p.Target)) ||
+		!cursorPathPattern.MatchString(p.Path) || !plainText(p.Label, maxPointLabel) ||
+		!viewFraction(p.X) || !viewFraction(p.Y) || !validPageSpot(p) {
 		return false
 	}
 	p.X = math.Round(p.X*1e4) / 1e4
@@ -98,8 +103,18 @@ func validCommentAnchor(a *repo.Anchor) bool {
 	return true
 }
 
-func unitFraction(v float64) bool {
-	return v >= 0 && v <= 1
+func viewFraction(v float64) bool {
+	return v >= -maxViewFraction && v <= maxViewFraction
+}
+
+// validPageSpot accepts a point with no page spot, or with all of page_x,
+// page_y and viewport_w, inside the page.
+func validPageSpot(p *repo.AnchorPoint) bool {
+	if p.PageX == nil && p.PageY == nil && p.ViewportW == nil {
+		return true
+	}
+	within := func(v *float64) bool { return v != nil && *v >= 0 && *v <= maxPagePixels }
+	return within(p.PageX) && within(p.PageY) && within(p.ViewportW) && *p.ViewportW > 0
 }
 
 // blankCommentBody reports whether body has nothing but white space, which
@@ -111,7 +126,7 @@ func blankCommentBody(body string) bool {
 // CreateComment godoc
 // @Summary Create comment
 // @Description Requests with non-empty mentions must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed instead of dropping metadata.
-// @Description The anchor is a text anchor with a non-empty quote, or a point: anchor.point names an element by target (its data-slashdocs-target value or id), path (its child-index path under the body), or both, and x and y are fractions of its box from 0 to 1. The text fields of a point hold the start of the element's text, which finds the element again after the document changes.
+// @Description The anchor is a text anchor with a non-empty quote, or a point: anchor.point names an element by target (its data-slashdocs-target value or id), path (its child-index path under the body), or both, and x and y are fractions of its box, from 0 to 1 inside it and from -1000 to 1000 in all. A point may also give page_x and page_y, the spot in CSS pixels from the top left of the page, with viewport_w, the viewport width: they place the pin when a later version no longer has the element, and they alone put a point on the body. The text fields of a point hold the start of the element's text, which finds the element again after the document changes.
 // @Tags comments
 // @Security bearerAuth
 // @Security cookieAuth

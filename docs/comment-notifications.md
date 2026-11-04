@@ -2,8 +2,11 @@
 
 A comment is on selected text, or on a spot in the document: press C with
 nothing selected, or use **Comment on a spot** in the comments list, and click
-the spot. A pin always stays on an element: a click in a margin pins to the
-edge of the nearest element. If the document uses C itself, or the caret is in
+the spot. A pin stays exactly where you click. It goes on the innermost
+element under the click, such as a chart, a card, a section, or the page
+itself in a margin, and moves with that element. If a later version no longer
+has the element, the pin shows at the same spot in the page, marked as
+moved. If the document uses C itself, or the caret is in
 text that you can edit, C types and places no pin. A thread opens in a
 popover next to its highlight or its pin. On a
 narrow screen, the popover is a sheet at the bottom of the screen.
@@ -66,7 +69,8 @@ slashdocs docs comments create doc_123 --version ver_123 \
   --mention reviewer@example.com --mention owner@example.com
 
 # A point comment pins to a spot in an element: its id or
-# data-slashdocs-target value, and x and y as fractions of its box.
+# data-slashdocs-target value, and x and y as fractions of its box. A value
+# below 0 or above 1 is a spot beside the box.
 slashdocs docs comments create doc_123 --version ver_123 \
   --target revenue-chart --x 0.4 --y 0.2 --label 'Revenue chart' \
   --body 'Label this axis'

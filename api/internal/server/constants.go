@@ -39,6 +39,9 @@ const (
 const (
 	placementAttached = "attached"
 	placementOrphaned = "orphaned"
+	// placementMoved is a point whose element is gone, which the viewer shows
+	// at its page spot.
+	placementMoved = "moved"
 )
 
 // Render audience prefix used in render tokens.

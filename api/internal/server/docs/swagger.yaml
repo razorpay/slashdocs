@@ -60,10 +60,16 @@ definitions:
     properties:
       label:
         type: string
+      page_x:
+        type: number
+      page_y:
+        type: number
       path:
         type: string
       target:
         type: string
+      viewport_w:
+        type: number
       x:
         type: number
       "y":
@@ -385,6 +391,10 @@ definitions:
       matched_text:
         type: string
       status:
+        enum:
+        - attached
+        - orphaned
+        - moved
         type: string
       version_id:
         type: string
@@ -1587,7 +1597,7 @@ paths:
       - application/vnd.slashdocs.comment-mentions+json
       description: |-
         Requests with non-empty mentions must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed instead of dropping metadata.
-        The anchor is a text anchor with a non-empty quote, or a point: anchor.point names an element by target (its data-slashdocs-target value or id), path (its child-index path under the body), or both, and x and y are fractions of its box from 0 to 1. The text fields of a point hold the start of the element's text, which finds the element again after the document changes.
+        The anchor is a text anchor with a non-empty quote, or a point: anchor.point names an element by target (its data-slashdocs-target value or id), path (its child-index path under the body), or both, and x and y are fractions of its box, from 0 to 1 inside it and from -1000 to 1000 in all. A point may also give page_x and page_y, the spot in CSS pixels from the top left of the page, with viewport_w, the viewport width: they place the pin when a later version no longer has the element, and they alone put a point on the body. The text fields of a point hold the start of the element's text, which finds the element again after the document changes.
       parameters:
       - description: Document ID
         in: path

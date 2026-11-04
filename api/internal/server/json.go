@@ -24,9 +24,11 @@ type userResponse struct {
 }
 
 // commentPlacementResponse locates a comment's anchor within a version.
+// Status is attached, orphaned when the version no longer has the anchor, or
+// moved for a point that then shows at its page spot.
 type commentPlacementResponse struct {
 	VersionID   string      `json:"version_id"`
-	Status      string      `json:"status"`
+	Status      string      `json:"status" enums:"attached,orphaned,moved"`
 	Anchor      repo.Anchor `json:"anchor"`
 	MatchedText string      `json:"matched_text"`
 	Confidence  float64     `json:"confidence"`
@@ -118,16 +120,15 @@ func commentsJSON(items []repo.Comment, placementVersionID string, placementHTML
 // commentPlacement reports whether a comment's selected text or point can
 // still be placed on the given version, returning its placement status, a confidence
 // score, and the matched text. doc is the version body, or nil when unknown.
+// A point that is not placed has moved when it has a page spot to show at.
 func commentPlacement(cm repo.Comment, placementVersionID string, doc *placementDoc) (status string, confidence float64, matched string) {
-	status = placementAttached
-	confidence = 1.0
-	matched = cm.SelectedText
-	if placementVersionID != cm.VersionID && doc != nil && !placedOn(cm, doc) {
-		status = placementOrphaned
-		confidence = 0
-		matched = ""
+	if placementVersionID == cm.VersionID || doc == nil || placedOn(cm, doc) {
+		return placementAttached, 1.0, cm.SelectedText
 	}
-	return
+	if p := cm.Anchor.Point; p != nil && p.ViewportW != nil {
+		return placementMoved, 0, ""
+	}
+	return placementOrphaned, 0, ""
 }
 
 func userJSON(p auth.Principal) userResponse {
