@@ -1496,6 +1496,9 @@ type Theme = "dark" | "light";
   }
 
   const SELECTION_ACTION_GAP = 6;
+  const COMMENT_CHORD = /Mac|iPhone|iPad/.test(navigator.userAgent)
+    ? "⌘⌥M"
+    : "Ctrl+Alt+M";
   let selectionAction: HTMLDivElement | null = null;
   let actionRange: Range | null = null;
   let selectionDismissed = false;
@@ -1590,9 +1593,7 @@ type Theme = "dark" | "light";
       // The main action says its name and its key, as a menu item does.
       const name = d.createElement("span");
       name.textContent = "Comment";
-      const key = d.createElement("kbd");
-      key.textContent = "C";
-      comment.append(name, key);
+      comment.append(name, d.createElement("kbd"));
       const copy = addAction(
         "Copy link to selected text",
         "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71",
@@ -1626,6 +1627,9 @@ type Theme = "dark" | "light";
       }
       d.body.appendChild(selectionAction);
     }
+    // In text that the reader edits, C types, so the chip shows the chord.
+    const typing = isEditableTarget(d, d.activeElement);
+    selectionAction.querySelector("kbd")!.textContent = typing ? COMMENT_CHORD : "C";
     // The actions sit centered above the selection, clear of its first line,
     // or below its last line when there is no room above.
     const rect = range.getBoundingClientRect();
