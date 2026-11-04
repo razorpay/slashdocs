@@ -105,10 +105,17 @@ describe("checkScriptChange", () => {
 
   // A render that stands for the probe frame: the script shows its string
   // in the two paragraphs.
-  function render(show = shown, places = 2) {
+  function render(
+    show = shown,
+    places = 2,
+    more: (html: string) => object = () => ({}),
+  ) {
     return vi.fn<Render>(async (html, _locator, strings) => ({
       text: show(html),
       counts: strings.map((s) => (shown(html) === s ? places : 0)),
+      texts: 4,
+      errors: 0,
+      ...more(html),
     }));
   }
 
@@ -136,8 +143,21 @@ describe("checkScriptChange", () => {
     const uneven = vi.fn<Render>(async (html) => ({
       text: shown(html),
       counts: shown(html) === "Try it." ? [2, 0] : [1, 2],
+      texts: 4,
+      errors: 0,
     }));
     expect(await check(uneven)).toEqual(refused);
+  });
+
+  test("refuses a change after which a script throws, or other text goes", async () => {
+    const stops = { refused: "This change stops a script on the page." };
+    const changed = (html: string) => shown(html) !== "Try it.";
+    expect(
+      await check(render(shown, 2, (html) => ({ errors: changed(html) ? 1 : 0 }))),
+    ).toEqual(stops);
+    expect(
+      await check(render(shown, 2, (html) => ({ texts: changed(html) ? 2 : 4 }))),
+    ).toEqual(stops);
   });
 
   test("refuses text that no one string holds, and empty text", async () => {

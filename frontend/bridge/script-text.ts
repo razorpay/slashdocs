@@ -1,4 +1,5 @@
 import { describeAnchor, snapToWords } from "./anchoring/index.ts";
+import { reducedMotion } from "./dom.ts";
 import type { SourceMap } from "./source-map.ts";
 import { SOURCE_ATTR, type Locator, type ScriptChange } from "./source-pieces.ts";
 
@@ -12,8 +13,14 @@ import { SOURCE_ATTR, type Locator, type ScriptChange } from "./source-pieces.ts
 export type ScriptSource = Pick<SourceMap, "offsetOf" | "scriptOwned">;
 
 export interface ScriptText {
-  // Takes the app's answer to a slashdocs:script-text request.
-  answer(requestId: string, editable: boolean): void;
+  // Takes the app's answer to a slashdocs:script-text request: whether the
+  // reader may type in the text, and whether the app could not check it.
+  answer(requestId: string, editable: boolean, failed?: boolean): void;
+  // Draws the eye to the hint that shows, and tells whether one shows.
+  pulse(): boolean;
+  // Shows to in every place of the page that shows from, as a load of the
+  // saved source would, and gives the texts that changed.
+  replace(from: string, to: string): Text[];
   // The script text that the reader changed since editing started. A
   // change of white space at the ends only does not count.
   take(): ScriptChange[];
@@ -25,6 +32,14 @@ export interface ScriptText {
 export const EDIT_ATTR = "data-slashdocs-script-edit";
 
 const HINT_GAP = 6;
+const HINT_ID = "slashdocs-script-hint";
+// The highlight that marks the other places of a string.
+const SAME_TEXT = "slashdocs-same-text";
+// Text in these elements does not show on the page.
+const NOT_SHOWN = "script,style,template,noscript,title";
+// The sentence for script text that cannot change here. The app says the
+// same when there is no hint.
+const SCRIPT_WRITES = "A script on the page writes this text.";
 
 // The bridge's own elements carry a slashdocs- class or id, or are marked as
 // injected. A locator skips them, so that it finds the same element in a page
@@ -85,14 +100,15 @@ export function startScriptText(
     Element,
     { locator: Locator; before: string; was: string | null }
   >();
-  let hint: HTMLElement | null = null;
+  // The hint or note that shows at script text, and that text.
+  let hint: { box: HTMLElement; el: Element } | null = null;
   const typing = new MutationObserver(onChange);
 
   // ask starts at the element of the clicked or focused text. The bridge's
   // own wrappers, such as comment highlights, are not that element.
   function ask(ev: Event): void {
     const target = ev.target as Node;
-    if (hint?.contains(target)) return;
+    if (hint?.box.contains(target)) return;
     let el =
       target.nodeType === Node.ELEMENT_NODE
         ? (target as Element)
@@ -100,12 +116,17 @@ export function startScriptText(
     while (el && bridgeOwned(el)) el = el.parentElement;
     if (!el || el.closest(`[${EDIT_ATTR}]`)) return;
     if (!source.scriptOwned(el) || !el.textContent?.trim()) return;
+    if (hint?.el === el) return;
+    askAbout(el);
+  }
+
+  function askAbout(el: Element): void {
     const locator = locate(el, source.offsetOf);
     if (!locator) return;
     dismissHint();
     // Plain text replaces all of an element's children, so an element with
     // elements in it gets the hint without a question.
-    if (children(el).length) return showHint(el);
+    if (children(el).length) return readOnlyHint(el);
     asked = { requestId: `script-${++requests}`, el, locator };
     post({
       type: "slashdocs:script-text",
@@ -115,12 +136,18 @@ export function startScriptText(
     });
   }
 
-  function answer(requestId: string, editable: boolean): void {
+  // answer takes the app's answer: the reader may type in the text, may
+  // not, or the app could not check it.
+  function answer(requestId: string, editable: boolean, failed = false): void {
     if (asked?.requestId !== requestId) return;
     const { el, locator } = asked;
     asked = null;
     if (!el.isConnected) return;
-    if (!editable) return showHint(el);
+    if (failed)
+      return showHint(el, "Could not check this text.", "Try again", () =>
+        askAbout(el),
+      );
+    if (!editable) return readOnlyHint(el);
     edits.set(el, {
       locator,
       before: el.textContent ?? "",
@@ -131,48 +158,122 @@ export function startScriptText(
     typing.observe(el, { characterData: true, childList: true, subtree: true });
     (el as HTMLElement).focus();
     d.getSelection()?.collapse(el, el.childNodes.length);
+    // A change goes to every place that shows the same string, so the note
+    // says so before the first key, and marks the other places.
+    const others = textsShowing(el.textContent ?? "").filter((t) => !el.contains(t));
+    if (!others.length) return;
+    showHint(
+      el,
+      `This text shows in ${others.length + 1} places. Your change goes to all of them.`,
+    );
+    mark(others);
   }
 
-  function showHint(el: Element): void {
+  function readOnlyHint(el: Element): void {
     const range = d.createRange();
     range.selectNodeContents(el);
     const anchor = describeAnchor(d.body, snapToWords(range));
-    hint = d.createElement("div");
-    hint.className = "slashdocs-script-hint";
-    hint.setAttribute("contenteditable", "false");
-    hint.setAttribute("data-slashdocs-injected", "");
-    hint.setAttribute("role", "note");
+    showHint(
+      el,
+      SCRIPT_WRITES,
+      anchor ? "Ask an agent to change this" : undefined,
+      () => post({ type: "slashdocs:ask-agent", anchor }),
+    );
+  }
+
+  // showHint puts a note at the text, with a button when action is given.
+  // The text names the note, and Tab from the text goes to the button.
+  function showHint(
+    el: Element,
+    message: string,
+    action?: string,
+    onAction?: () => void,
+  ) {
+    dismissHint();
+    const box = d.createElement("div");
+    box.className = "slashdocs-script-hint";
+    box.id = HINT_ID;
+    box.setAttribute("contenteditable", "false");
+    box.setAttribute("data-slashdocs-injected", "");
+    box.setAttribute("role", "note");
     const text = d.createElement("span");
-    text.textContent = "This text comes from a script.";
-    hint.append(text);
-    if (anchor) {
+    text.textContent = message;
+    box.append(text);
+    if (action) {
       const button = d.createElement("button");
       button.type = "button";
-      button.textContent = "Ask an agent to change this";
+      button.textContent = action;
       button.addEventListener("click", () => {
-        post({ type: "slashdocs:ask-agent", anchor });
         dismissHint();
+        onAction?.();
       });
-      hint.append(button);
+      box.append(button);
     }
     injectStyle();
-    d.body.append(hint);
-    // The hint sits below the text, or above it when there is no room below.
-    const rect = el.getBoundingClientRect();
-    const view = d.defaultView!;
-    const below = rect.bottom + HINT_GAP;
-    const top =
-      below + hint.offsetHeight <= view.innerHeight
-        ? below
-        : rect.top - HINT_GAP - hint.offsetHeight;
-    const left = Math.min(rect.left, view.innerWidth - hint.offsetWidth - 8);
-    hint.style.setProperty("top", `${Math.max(8, top)}px`, "important");
-    hint.style.setProperty("left", `${Math.max(8, left)}px`, "important");
+    d.body.append(box);
+    el.setAttribute("aria-describedby", HINT_ID);
+    hint = { box, el };
+    place(box, el);
   }
 
   function dismissHint(): void {
-    hint?.remove();
+    if (!hint) return;
+    const { box, el } = hint;
     hint = null;
+    el.removeAttribute("aria-describedby");
+    unmark();
+    const out = box.animate?.([{ opacity: 0, transform: "scale(.97)" }], {
+      duration: reducedMotion(d) ? 0 : 100,
+      easing: "ease-in",
+    });
+    if (out) out.onfinish = () => box.remove();
+    else box.remove();
+  }
+
+  // pulse draws the eye to the hint of the text that the reader tried to
+  // change, and tells whether one shows.
+  function pulse(): boolean {
+    if (!hint) return false;
+    if (!reducedMotion(d))
+      hint.box.animate?.(
+        [
+          { transform: "scale(1)" },
+          { transform: "scale(1.04)" },
+          { transform: "scale(1)" },
+        ],
+        { duration: 240, easing: "ease-out" },
+      );
+    return true;
+  }
+
+  // textsShowing gives the texts of the page that show text, trimmed, as a
+  // probe counts them.
+  function textsShowing(text: string): Text[] {
+    const wanted = text.trim();
+    const found: Text[] = [];
+    if (!wanted) return found;
+    const walker = d.createTreeWalker(d.body, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const parent = node.parentElement;
+      if (parent && !parent.closest(NOT_SHOWN) && node.nodeValue!.trim() === wanted)
+        found.push(node as Text);
+    }
+    return found;
+  }
+
+  // The other places of a string are marked with a highlight, which does
+  // not change the DOM. Browsers without highlights show the note only.
+  function mark(texts: Text[]): void {
+    if (typeof CSS === "undefined" || !CSS.highlights) return;
+    const ranges = texts.map((t) => {
+      const range = d.createRange();
+      range.selectNodeContents(t);
+      return range;
+    });
+    CSS.highlights.set(SAME_TEXT, new Highlight(...ranges));
+  }
+  function unmark(): void {
+    if (typeof CSS !== "undefined") CSS.highlights?.delete(SAME_TEXT);
   }
 
   function injectStyle(): void {
@@ -180,22 +281,35 @@ export function startScriptText(
     const style = d.createElement("style");
     style.id = "slashdocs-script-hint-style";
     style.textContent = `
-      .slashdocs-script-hint{all:initial!important;position:fixed!important;z-index:2147483647!important;display:flex!important;align-items:center!important;gap:8px!important;padding:6px 6px 6px 12px!important;border-radius:10px!important;background:#fff!important;color:#52525b!important;box-shadow:0 0 0 1px #0001,0 4px 16px #0002!important;font:13px/1.4 system-ui,sans-serif!important}
+      .slashdocs-script-hint{all:initial!important;position:fixed!important;z-index:2147483647!important;display:flex!important;align-items:center!important;gap:8px!important;max-width:min(360px,calc(100vw - 16px))!important;box-sizing:border-box!important;padding:6px 6px 6px 12px!important;border-radius:10px!important;background:#fff!important;color:#52525b!important;box-shadow:0 0 0 1px #0001,0 4px 16px #0002!important;font:13px/1.4 system-ui,sans-serif!important;transform-origin:var(--slashdocs-hint-origin,top left)!important;animation:slashdocs-hint-in .15s ease-out!important}
+      @keyframes slashdocs-hint-in{from{opacity:0;transform:scale(.97)}}
       .slashdocs-script-hint span{all:initial!important;color:inherit!important;font:inherit!important}
-      .slashdocs-script-hint button{all:initial!important;padding:6px 10px!important;border-radius:8px!important;background:#f4f4f5!important;color:#18181b!important;font:500 13px/1 system-ui,sans-serif!important;cursor:pointer!important}
+      .slashdocs-script-hint button{all:initial!important;flex:none!important;padding:6px 10px!important;border-radius:8px!important;background:#f4f4f5!important;color:#18181b!important;font:500 13px/1 system-ui,sans-serif!important;cursor:pointer!important}
       .slashdocs-script-hint button:hover{background:#e4e4e7!important}
       .slashdocs-script-hint button:focus-visible{outline:2px solid #6366f1!important;outline-offset:-2px!important}
-      [data-slashdocs-theme=dark] .slashdocs-script-hint{background:#27272a!important;color:#d4d4d8!important;box-shadow:0 0 0 1px #fff2,0 4px 16px #0004!important}
-      [data-slashdocs-theme=dark] .slashdocs-script-hint button{background:#3f3f46!important;color:#fff!important}
+      ::highlight(${SAME_TEXT}){background-color:rgba(250,204,21,.4)}
+      [data-slashdocs-surface=dark] .slashdocs-script-hint{background:#27272a!important;color:#d4d4d8!important;box-shadow:0 0 0 1px #fff2,0 4px 16px #0004!important}
+      [data-slashdocs-surface=dark] .slashdocs-script-hint button{background:#3f3f46!important;color:#fff!important}
+      @media(prefers-reduced-motion:reduce){.slashdocs-script-hint{animation:none!important}}
       @media print{.slashdocs-script-hint{display:none!important}}`;
     d.head.append(style);
   }
 
   const onPointerDown = (ev: Event) => {
-    if (!hint?.contains(ev.target as Node)) dismissHint();
+    if (!hint?.box.contains(ev.target as Node)) dismissHint();
   };
   const onKey = (ev: KeyboardEvent) => {
     if (ev.key === "Escape") dismissHint();
+    const button = hint?.box.querySelector("button");
+    if (
+      ev.key === "Tab" &&
+      !ev.shiftKey &&
+      button &&
+      hint?.el.contains(d.activeElement)
+    ) {
+      ev.preventDefault();
+      button.focus();
+    }
   };
   d.addEventListener("click", ask, true);
   d.addEventListener("focusin", ask, true);
@@ -205,8 +319,20 @@ export function startScriptText(
 
   return {
     answer,
+    pulse,
+    replace(from, to) {
+      const texts = textsShowing(from);
+      for (const t of texts) {
+        const data = t.data;
+        const lead = data.slice(0, data.length - data.trimStart().length);
+        t.data = lead + to.trim() + data.slice(data.trimEnd().length);
+      }
+      return texts;
+    },
     take: () =>
       [...edits]
+        // A script can replace the element: its text is then not the reader's.
+        .filter(([el]) => el.isConnected)
         .map(([el, { locator, before }]) => ({
           locator,
           before,
@@ -229,17 +355,55 @@ export function startScriptText(
       }
     },
   };
+
+  // place puts the hint beside the text when there is room, else above it,
+  // else below it, so that it covers the text of the line least.
+  function place(box: HTMLElement, el: Element): void {
+    const rects = Array.from(el.getClientRects());
+    const first = rects[0] ?? el.getBoundingClientRect();
+    const last = rects.at(-1) ?? first;
+    const view = d.defaultView!;
+    const { offsetWidth: width, offsetHeight: height } = box;
+    let left = last.right + HINT_GAP;
+    let top = last.top + (last.height - height) / 2;
+    let origin = "left center";
+    if (left + width > view.innerWidth - 8) {
+      left = first.left;
+      top = first.top - HINT_GAP - height;
+      origin = "bottom left";
+      if (top < 8) {
+        top = last.bottom + HINT_GAP;
+        origin = "top left";
+      }
+    }
+    left = Math.min(left, view.innerWidth - width - 8);
+    box.style.setProperty("top", `${Math.max(8, top)}px`, "important");
+    box.style.setProperty("left", `${Math.max(8, left)}px`, "important");
+    box.style.setProperty("--slashdocs-hint-origin", origin);
+  }
 }
 
-// What a probe frame shows at a locator, and how many of its text nodes,
-// trimmed, equal each of the given strings.
-export type ProbeResult = { text: string | null; counts: number[] };
+// What a probe frame shows at a locator, how many of its text nodes, trimmed,
+// equal each of the given strings, how many text nodes show text, and how
+// many errors its scripts threw.
+export type ProbeResult = {
+  text: string | null;
+  counts: number[];
+  texts: number;
+  errors: number;
+};
 
 // The prelude is the first script of every render. The server puts it in
 // before any document script runs, so document code that calls
 // window.slashdocs finds it. [/] keeps the end of a script element out of
 // the bridge, which the wrapper page holds in a script element.
 const PRELUDE = /<script id="slashdocs-bootstrap">[\s\S]*?<[/]script>/;
+// The probe counts the errors of the document's scripts from the start of
+// the prelude.
+const COUNT_ERRORS =
+  "var slashdocsProbeErrors=0;" +
+  "addEventListener('error',function(){slashdocsProbeErrors++});" +
+  "addEventListener('unhandledrejection',function(){slashdocsProbeErrors++});";
 
 // A document can render text in a timer or after a promise once it loads.
 // 100 ms takes in that work and keeps a save quick.
@@ -265,7 +429,11 @@ export async function probe(
   frame.setAttribute("aria-hidden", "true");
   frame.tabIndex = -1;
   frame.style.cssText = `position:fixed;left:0;top:0;width:${live.clientWidth}px;height:${live.clientHeight}px;border:0;visibility:hidden;pointer-events:none`;
-  frame.srcdoc = withPrelude(html, live.srcdoc.match(PRELUDE)?.[0] ?? "");
+  const prelude = live.srcdoc.match(PRELUDE)?.[0] ?? "";
+  frame.srcdoc = withPrelude(
+    html,
+    prelude.replace(/^<script[^>]*>/, `$&${COUNT_ERRORS}`),
+  );
   const wait = (ms: number) => new Promise((resolve) => view.setTimeout(resolve, ms));
   const loaded = new Promise((resolve) => frame.addEventListener("load", resolve));
   wrapper.body.append(frame);
@@ -282,13 +450,18 @@ export async function probe(
 
 function measure(d: Document | null, locator: Locator, strings: string[]): ProbeResult {
   const counts = strings.map(() => 0);
-  if (!d?.body) return { text: null, counts };
+  const errors =
+    (d?.defaultView as { slashdocsProbeErrors?: number } | null)
+      ?.slashdocsProbeErrors ?? 0;
+  if (!d?.body) return { text: null, counts, texts: 0, errors };
+  let texts = 0;
   const walker = d.createTreeWalker(d.body, NodeFilter.SHOW_TEXT);
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     const text = node.nodeValue!.trim();
+    if (text) texts++;
     for (const [i, s] of strings.entries()) if (s.trim() === text) counts[i]++;
   }
-  return { text: find(d, locator)?.textContent ?? null, counts };
+  return { text: find(d, locator)?.textContent ?? null, counts, texts, errors };
 }
 
 // withPrelude puts prelude into html where the server puts it: right after
