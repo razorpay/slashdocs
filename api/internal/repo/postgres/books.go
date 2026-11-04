@@ -22,10 +22,13 @@ import (
 var systemActor = auth.Principal{Type: auth.PrincipalUser, ID: "system"}
 
 // Lock order for every outline writer (A8): the folder-tree advisory lock
-// first, where the path takes it, then the documents row, then the books row
-// (GetBookForUpdate). The book row lock is taken before the outline is read,
-// so that writers never build on a stale outline. Section indexing for fills
-// and CreateBook runs after commit, outside all of these locks.
+// first, where the path takes it (every move path and CreateBook; not
+// DeleteDocument), then the documents row, then the books row
+// (GetBookForUpdate, FOR NO KEY UPDATE so foreign-key checks on book_id are
+// not blocked). CreateBook takes no document locks. The book row lock is
+// taken before the outline is read, so that writers never build on a stale
+// outline. Section indexing for fills and CreateBook runs after commit,
+// outside all of these locks.
 
 func (s *Store) CreateBook(ctx context.Context, folderID string, outline books.Outline, actor auth.Principal) (repo.Book, error) {
 	tx, err := s.db.Begin(ctx)

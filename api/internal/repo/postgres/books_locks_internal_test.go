@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 
@@ -85,5 +86,79 @@ func TestBookAndVersionLocksAllowForeignKeyChecks(t *testing.T) {
 				t.Errorf("a second writer (NO KEY UPDATE) on %s = %v, want lock_not_available while %s holds the row", c.table, err, c.name)
 			}
 		})
+	}
+}
+
+// TestMoveDocumentToRootTakesTreeLockFirst checks A8 on the root-move path:
+// the folder-tree lock comes first, before any document or book row lock,
+// so the move serializes with CreateBook and the other move paths.
+func TestMoveDocumentToRootTakesTreeLockFirst(t *testing.T) {
+	s, _, owner := newFailingBlobStore(t)
+	ctx := context.Background()
+	f, err := s.CreateFolder(ctx, owner, "Book", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, _, err := s.CreateDocument(ctx, owner, "One", []byte(`<p>a</p>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.MoveDocumentToFolder(ctx, owner, f.ID, doc.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	holder, err := s.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = holder.Rollback(ctx) }()
+	if err := s.q.WithTx(holder).AcquireFolderTreeLock(ctx, folderTreeLockID); err != nil {
+		t.Fatal(err)
+	}
+	moved := make(chan error, 1)
+	go func() { moved <- s.MoveDocumentToRoot(ctx, f.ID, doc.ID) }()
+
+	waiting := false
+	for deadline := time.Now().Add(5 * time.Second); !waiting && time.Now().Before(deadline); {
+		select {
+		case err := <-moved:
+			t.Fatalf("MoveDocumentToRoot finished (%v) while another transaction held the folder-tree lock", err)
+		case <-time.After(10 * time.Millisecond):
+		}
+		var n int
+		if err := s.Pool().QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND pid <> pg_backend_pid() AND wait_event = 'advisory'`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		waiting = n > 0
+	}
+	if !waiting {
+		t.Fatal("MoveDocumentToRoot never waited on the folder-tree lock")
+	}
+	// It waits before touching the document row.
+	probe, err := s.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var id string
+	probeErr := probe.QueryRow(ctx, `SELECT id FROM documents WHERE id=$1 FOR UPDATE NOWAIT`, doc.ID).Scan(&id)
+	_ = probe.Rollback(ctx)
+	if probeErr != nil {
+		t.Errorf("document row locked before the folder-tree lock: %v", probeErr)
+	}
+	if err := holder.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-moved:
+		if err != nil {
+			t.Fatalf("MoveDocumentToRoot: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("MoveDocumentToRoot did not finish after the tree lock was released")
+	}
+	d, err := s.q.GetDocument(ctx, doc.ID)
+	if err != nil || d.ParentFolderID != "" {
+		t.Fatalf("document parent = %q, %v; want root", d.ParentFolderID, err)
 	}
 }

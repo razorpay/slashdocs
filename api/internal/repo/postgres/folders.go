@@ -484,6 +484,11 @@ func (s *Store) MoveDocumentToRoot(ctx context.Context, folderID, docID string) 
 	}
 	defer rollback(ctx, tx)
 	q := s.q.WithTx(tx)
+	// A8: the tree lock first, as in every move path, so the move serializes
+	// with CreateBook and the book row lock always comes after it.
+	if err := q.AcquireFolderTreeLock(ctx, folderTreeLockID); err != nil {
+		return err
+	}
 	moved, err := q.MoveDocumentToRoot(ctx, dbsqlc.MoveDocumentToRootParams{DocumentID: docID, FolderID: folderID})
 	if err != nil {
 		return err
