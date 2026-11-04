@@ -350,6 +350,24 @@ function NewBotDialog({
   onOpenChange: (v: boolean) => void;
   onCreated: (sa: { id: string; name: string }) => void;
 }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <NewBotForm onCreated={onCreated} onClose={() => onOpenChange(false)} />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// The form mounts each time the dialog opens, however it closed, so a new bot
+// starts from an empty name and does not show the key of the last one.
+function NewBotForm({
+  onCreated,
+  onClose,
+}: {
+  onCreated: (sa: { id: string; name: string }) => void;
+  onClose: () => void;
+}) {
   const [value, setValue] = useState("");
   const [result, setResult] = useState<{ name: string; token: string } | null>(null);
   const trimmed = value.trim();
@@ -368,105 +386,85 @@ function NewBotDialog({
     },
     onError: (e) => toast.error(errorMessage(e, "Failed")),
   });
-  function reset() {
-    setValue("");
-    setResult(null);
-  }
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(o) => {
-        onOpenChange(o);
-        if (!o) reset();
-      }}
-    >
-      <DialogContent>
-        {!result ? (
-          <>
-            <DialogHeader>
-              <DialogTitle>New bot</DialogTitle>
-              <DialogDescription>
-                Bots are their own identities — share docs with them just like you would
-                with a person.
-              </DialogDescription>
-            </DialogHeader>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (label) create.mutate();
-              }}
-              className="space-y-4"
-            >
-              <div>
-                <label className="mb-1 block text-xs font-medium text-[var(--color-fg-muted)]">
-                  Name
-                </label>
-                <Input
-                  placeholder="n8n-prod   or   n8n-prod@ops.team.bot"
-                  value={value}
-                  onChange={(e) => setValue(e.target.value)}
-                  autoCapitalize="off"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  autoFocus
-                />
-                <p className="mt-1 text-[11px] text-[var(--color-fg-muted)]">
-                  Letters, numbers, and hyphens. Add{" "}
-                  <code className="font-mono">@something.bot</code> to pick your bot's
-                  address, or skip it and we'll pick one for you.
-                </p>
-                {hasDomain && !domainLooksValid && (
-                  <p className="mt-1 text-[11px] text-[var(--color-danger)]">
-                    Addresses must end in {BOT_DOMAIN_SUFFIX}.
-                  </p>
-                )}
-              </div>
+  return !result ? (
+    <>
+      <DialogHeader>
+        <DialogTitle>New bot</DialogTitle>
+        <DialogDescription>
+          Bots are their own identities — share docs with them just like you would with
+          a person.
+        </DialogDescription>
+      </DialogHeader>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (label) create.mutate();
+        }}
+        className="space-y-4"
+      >
+        <div>
+          <label className="mb-1 block text-xs font-medium text-[var(--color-fg-muted)]">
+            Name
+          </label>
+          <Input
+            placeholder="n8n-prod   or   n8n-prod@ops.team.bot"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+            autoFocus
+          />
+          <p className="mt-1 text-[11px] text-[var(--color-fg-muted)]">
+            Letters, numbers, and hyphens. Add{" "}
+            <code className="font-mono">@something.bot</code> to pick your bot's
+            address, or skip it and we'll pick one for you.
+          </p>
+          {hasDomain && !domainLooksValid && (
+            <p className="mt-1 text-[11px] text-[var(--color-danger)]">
+              Addresses must end in {BOT_DOMAIN_SUFFIX}.
+            </p>
+          )}
+        </div>
 
-              <DialogFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => onOpenChange(false)}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="submit"
-                  disabled={!label || !domainLooksValid || create.isPending}
-                >
-                  Create bot
-                </Button>
-              </DialogFooter>
-            </form>
-          </>
-        ) : (
-          <>
-            <DialogHeader>
-              <DialogTitle>Meet {result.name}</DialogTitle>
-              <DialogDescription>
-                Share docs with this address to let your bot read or edit them.
-              </DialogDescription>
-            </DialogHeader>
-            <CodeBlock>{result.name}</CodeBlock>
-            <div className="mt-5 rounded-sm border border-[var(--color-warning)]/40 bg-[var(--color-warning)]/10 p-3">
-              <div className="mb-1 text-xs font-medium uppercase tracking-wide text-[var(--color-fg-muted)]">
-                Bot key
-              </div>
-              <div className="mb-2 text-sm font-semibold text-[var(--color-warning)]">
-                Copy this key now — you won't see it again.
-              </div>
-              <CodeBlock>{result.token}</CodeBlock>
-            </div>
-            <div className="mb-1 mt-4 text-xs text-[var(--color-fg-muted)]">
-              Use it with the CLI:
-            </div>
-            <CodeBlock>{headlessCLI(publicURL(), result.token)}</CodeBlock>
-            <DialogFooter>
-              <Button onClick={() => onOpenChange(false)}>Done</Button>
-            </DialogFooter>
-          </>
-        )}
-      </DialogContent>
-    </Dialog>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            disabled={!label || !domainLooksValid || create.isPending}
+          >
+            Create bot
+          </Button>
+        </DialogFooter>
+      </form>
+    </>
+  ) : (
+    <>
+      <DialogHeader>
+        <DialogTitle>Meet {result.name}</DialogTitle>
+        <DialogDescription>
+          Share docs with this address to let your bot read or edit them.
+        </DialogDescription>
+      </DialogHeader>
+      <CodeBlock>{result.name}</CodeBlock>
+      <div className="mt-5 rounded-sm border border-[var(--color-warning)]/40 bg-[var(--color-warning)]/10 p-3">
+        <div className="mb-1 text-xs font-medium uppercase tracking-wide text-[var(--color-fg-muted)]">
+          Bot key
+        </div>
+        <div className="mb-2 text-sm font-semibold text-[var(--color-warning)]">
+          Copy this key now — you won't see it again.
+        </div>
+        <CodeBlock>{result.token}</CodeBlock>
+      </div>
+      <div className="mb-1 mt-4 text-xs text-[var(--color-fg-muted)]">
+        Use it with the CLI:
+      </div>
+      <CodeBlock>{headlessCLI(publicURL(), result.token)}</CodeBlock>
+      <DialogFooter>
+        <Button onClick={onClose}>Done</Button>
+      </DialogFooter>
+    </>
   );
 }
