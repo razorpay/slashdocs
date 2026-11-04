@@ -713,7 +713,7 @@ function insertText(d: Document, at: Range, text: string, preformatted = false) 
   d.getSelection()!.collapse(node, offset + text.length);
 }
 
-export function normalizeHref(value: string): string | null {
+function normalizeHref(value: string): string | null {
   let href = value.trim();
   if (!href) return "";
   if (!/^[a-z][a-z\d+.-]*:/i.test(href) && !href.startsWith("#"))

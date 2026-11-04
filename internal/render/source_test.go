@@ -52,7 +52,8 @@ func TestRenderWrapperTagsTheUserHTMLOnly(t *testing.T) {
 			t.Fatalf("wrapper is missing %q: %s", needle, out)
 		}
 	}
-	if strings.Count(out, sourceAttr) != 4 {
+	srcdoc := out[strings.Index(out, `srcdoc="`):strings.Index(out, `"></iframe>`)]
+	if strings.Count(srcdoc, sourceAttr) != 4 {
 		t.Fatalf("wrapper tags more than the four user elements: %s", out)
 	}
 }

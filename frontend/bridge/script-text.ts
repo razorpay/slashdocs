@@ -237,8 +237,9 @@ export type ProbeResult = { text: string | null; counts: number[] };
 
 // The prelude is the first script of every render. The server puts it in
 // before any document script runs, so document code that calls
-// window.slashdocs finds it.
-const PRELUDE = /<script id="slashdocs-bootstrap">[\s\S]*?<\/script>/;
+// window.slashdocs finds it. [/] keeps the end of a script element out of
+// the bridge, which the wrapper page holds in a script element.
+const PRELUDE = /<script id="slashdocs-bootstrap">[\s\S]*?<[/]script>/;
 
 // A document can render text in a timer or after a promise once it loads.
 // 100 ms takes in that work and keeps a save quick.
