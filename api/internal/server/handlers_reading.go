@@ -155,7 +155,8 @@ func readingUser(c *gin.Context) bool {
 
 // bookChapterAccess loads the book in the path and one of its chapters. It
 // makes three lookups and never scans the book (A5). A document outside the
-// book's folder, or one the caller cannot open, is not found (R24).
+// book's folder, one the outline does not place, or one the caller cannot
+// open, is not found (R24).
 func (h handlers) bookChapterAccess(c *gin.Context, docID string) (repo.Book, repo.Document, bool) {
 	ctx := c.Request.Context()
 	r := h.deps.repository
@@ -173,7 +174,7 @@ func (h handlers) bookChapterAccess(c *gin.Context, docID string) (repo.Book, re
 		lookupFailed(c, err)
 		return repo.Book{}, repo.Document{}, false
 	}
-	if d.ParentFolderID != b.FolderID {
+	if d.ParentFolderID != b.FolderID || !inOutline(b.Outline, d.ID) {
 		notFound(c)
 		return repo.Book{}, repo.Document{}, false
 	}
@@ -765,10 +766,6 @@ func (h handlers) searchBook(c *gin.Context) {
 	if docID := c.Query("document_id"); docID != "" {
 		b, d, ok := h.bookChapterAccess(c, docID)
 		if !ok {
-			return
-		}
-		if !inOutline(b.Outline, d.ID) {
-			notFound(c)
 			return
 		}
 		book, search.DocumentIDs = b, []string{d.ID}
