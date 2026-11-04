@@ -1682,7 +1682,7 @@ type Theme = "dark" | "light";
       // The link button is out of flow, in the gutter before the heading's
       // first line. Headings keep the height that the author gave them, so
       // readers, editors and previews lay out the document in the same way.
-      style.textContent = `.slashdocs-heading-link{position:absolute!important;box-sizing:border-box!important;width:1.2em!important;margin:0!important;margin-inline-start:-1.2em!important;padding:0!important;border:0!important;border-radius:4px;background:transparent!important;color:inherit;font:inherit;text-align:center;cursor:pointer}.slashdocs-heading-link::before{content:"#";opacity:0;transition:opacity .15s ease-out}:is(h1,h2,h3,h4,h5,h6):hover>.slashdocs-heading-link::before,.slashdocs-heading-link:focus-visible::before{opacity:.5}.slashdocs-heading-link:hover::before{opacity:.85}.slashdocs-heading-link:focus-visible{outline:2px solid currentColor}@media print{.slashdocs-heading-link{display:none!important}}`;
+      style.textContent = `.slashdocs-heading-link{position:absolute!important;box-sizing:border-box!important;width:1.2em!important;margin:0!important;margin-inline-start:-1.2em!important;padding:0!important;border:0!important;border-radius:4px;background:transparent!important;color:inherit;font:inherit;text-align:center;cursor:pointer}.slashdocs-heading-link.slashdocs-heading-link-end{margin-inline-start:.25em!important}.slashdocs-heading-link::before{content:"#";opacity:0;transition:opacity .15s ease-out}:is(h1,h2,h3,h4,h5,h6):hover>.slashdocs-heading-link::before,.slashdocs-heading-link:focus-visible::before{opacity:.5}.slashdocs-heading-link:hover::before{opacity:.85}.slashdocs-heading-link:focus-visible{outline:2px solid currentColor}@media print{.slashdocs-heading-link{display:none!important}}`;
       d.head.appendChild(style);
     }
     Array.from(d.querySelectorAll("h1,h2,h3,h4,h5,h6")).forEach((heading) => {
@@ -1698,8 +1698,11 @@ type Theme = "dark" | "light";
         heading.id = id;
         used.add(id);
       }
-      if (!heading.querySelector(":scope > .slashdocs-heading-link")) {
-        const button = d.createElement("button");
+      let button = heading.querySelector<HTMLButtonElement>(
+        ":scope > .slashdocs-heading-link",
+      );
+      if (!button) {
+        button = d.createElement("button");
         button.type = "button";
         button.className = "slashdocs-heading-link";
         // The editor's caret and typing stay in the heading's text.
@@ -1718,8 +1721,17 @@ type Theme = "dark" | "light";
             targetOrigin(),
           );
         });
-        heading.prepend(button);
       }
+      // The button sits in the gutter when the heading has room on its left.
+      // Else it follows the heading's text, so that it stays in the frame.
+      const fits =
+        heading.getBoundingClientRect().left >=
+        parseFloat(d.defaultView!.getComputedStyle(heading).fontSize) * 1.2;
+      if (button !== (fits ? heading.firstChild : heading.lastChild)) {
+        if (fits) heading.prepend(button);
+        else heading.append(button);
+      }
+      button.classList.toggle("slashdocs-heading-link-end", !fits);
     });
     if (pendingHeading) navigateHeading(pendingHeading);
   }
