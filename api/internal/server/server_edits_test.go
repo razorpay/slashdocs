@@ -80,6 +80,29 @@ func TestEditDocumentReplacesTextAndKeepsTheRest(t *testing.T) {
 	}
 }
 
+// The agent endpoint keeps its response exactly, beside the browser's
+// source edits.
+func TestEditDocumentResponseKeepsItsFields(t *testing.T) {
+	e := newTestEnv(t)
+	docID, verID := e.createDocument("Edits", editFixtureHTML, fixtureOwner)
+	status, body := postEdits(t, e, docID, fixtureOwner, map[string]any{
+		"base_version_id": verID,
+		"change_summary":  "Shorter TTL",
+		"edits":           []map[string]string{{"old_string": "10 minutes", "new_string": "5 minutes"}},
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("status = %d; body=%s", status, body)
+	}
+	assertJSON(t, body, fmt.Sprintf(`{
+	  "id": %q,
+	  "number": 2,
+	  "sha256": %q,
+	  "change_summary": "Shorter TTL",
+	  "base_version_id": %q,
+	  "edits_applied": 1
+	}`, jsonField(t, body, "id"), jsonField(t, body, "sha256"), verID))
+}
+
 func TestEditDocumentReplaceAllChangesEveryOccurrence(t *testing.T) {
 	e := newTestEnv(t)
 	docID, _ := e.createDocument("Edits", editFixtureHTML, fixtureOwner)

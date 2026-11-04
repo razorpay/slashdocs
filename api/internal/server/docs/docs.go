@@ -1582,6 +1582,82 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/documents/{id}/source-edits": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "For the browser editor. Applies replacements by position in the HTML of base_version_id to the current version, and saves the result as a new version. start and end count UTF-8 bytes, end is exclusive, and old_html must be the HTML from start to end of the base version. Replacements are in order and do not overlap. When a newer version exists, each replacement moves to where its HTML is in that version, and a replacement that the newer version changed fails with edit_conflict. A retry with the same client_change_id returns the version that the first attempt made.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "versions"
+                ],
+                "summary": "Edit document source by position",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Replacements",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/server.editSourceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/server.editSourceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "413": {
+                        "description": "Request Entity Too Large",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/documents/{id}/versions": {
             "get": {
                 "security": [
@@ -3244,6 +3320,53 @@ const docTemplate = `{
                 }
             }
         },
+        "server.editSourceRequest": {
+            "type": "object",
+            "properties": {
+                "base_version_id": {
+                    "description": "BaseVersionID is the version that the replacements were made on.",
+                    "type": "string"
+                },
+                "change_summary": {
+                    "type": "string"
+                },
+                "client_change_id": {
+                    "description": "ClientChangeID names the change, so that a retry returns the version\nthat the change made instead of a second one.",
+                    "type": "string"
+                },
+                "replacements": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/textedit.Replacement"
+                    }
+                }
+            }
+        },
+        "server.editSourceResponse": {
+            "type": "object",
+            "properties": {
+                "base_version_id": {
+                    "description": "BaseVersionID is the version the replacements were applied to.",
+                    "type": "string"
+                },
+                "change_summary": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "number": {
+                    "type": "integer"
+                },
+                "rebased": {
+                    "description": "Rebased is set when that version is newer than the version that the\nreplacements were made on.",
+                    "type": "boolean"
+                },
+                "sha256": {
+                    "type": "string"
+                }
+            }
+        },
         "server.errorBody": {
             "type": "object",
             "properties": {
@@ -3694,6 +3817,23 @@ const docTemplate = `{
                 },
                 "replace_all": {
                     "type": "boolean"
+                }
+            }
+        },
+        "textedit.Replacement": {
+            "type": "object",
+            "properties": {
+                "end": {
+                    "type": "integer"
+                },
+                "new_html": {
+                    "type": "string"
+                },
+                "old_html": {
+                    "type": "string"
+                },
+                "start": {
+                    "type": "integer"
                 }
             }
         }
