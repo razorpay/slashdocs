@@ -77,8 +77,10 @@ export function onboardingProgress(s: OnboardingState) {
   return { done, total: required.length };
 }
 
+// Setup asks for attention until the reader skips it, completes it, or has
+// documents, which tells that their agent publishes already.
 export function onboardingActive(s: OnboardingState) {
-  return s.status === "active";
+  return s.status === "active" && !s.steps.first_doc_seen;
 }
 
 // Marks the first-document step from the start page once documents exist.

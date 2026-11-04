@@ -201,7 +201,9 @@ function Step({
   optional?: boolean;
   children: React.ReactNode;
 }) {
-  const done = state.steps[stepKey];
+  // An optional step is a thing to try, not a step to finish: it shows no
+  // check, so it cannot look done before the required steps are.
+  const done = !optional && state.steps[stepKey];
   const [forced, setForced] = useState<boolean | null>(null);
   const expanded = forced ?? open === stepKey;
   return (
@@ -251,21 +253,23 @@ function Step({
         <Collapse open={expanded}>
           <div className="px-5 pb-5 pl-[60px]">
             {children}
-            <div className="mt-4 flex justify-end">
-              {done ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setStep(stepKey, false)}
-                >
-                  <Circle className="h-3.5 w-3.5" /> Mark incomplete
-                </Button>
-              ) : (
-                <Button size="sm" onClick={() => setStep(stepKey, true)}>
-                  <Check className="h-3.5 w-3.5" /> Mark done
-                </Button>
-              )}
-            </div>
+            {optional ? null : (
+              <div className="mt-4 flex justify-end">
+                {done ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setStep(stepKey, false)}
+                  >
+                    <Circle className="h-3.5 w-3.5" /> Mark incomplete
+                  </Button>
+                ) : (
+                  <Button size="sm" onClick={() => setStep(stepKey, true)}>
+                    <Check className="h-3.5 w-3.5" /> Mark done
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
         </Collapse>
       </div>
