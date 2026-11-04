@@ -118,6 +118,7 @@ type chapterProgressRequest struct {
 	Progression float64 `json:"progression"`
 	ReachedEnd  bool    `json:"reached_end"`
 	// VersionID is the version read; reaching its end marks it seen (A7).
+	// Required when ReachedEnd is true.
 	VersionID string `json:"version_id"`
 }
 
@@ -491,7 +492,7 @@ func (h handlers) openChapter(c *gin.Context) {
 
 // ChapterProgress godoc
 // @Summary Record how far you read a chapter
-// @Description Raises the furthest progression. reached_end marks the chapter read and the given version (default current) seen; seen never moves backwards (A7). Does nothing for a chapter never opened. Users only.
+// @Description Raises the furthest progression. reached_end marks the chapter read and the given version seen, so version_id is required with it; seen never moves backwards (A7). Does nothing for a chapter never opened. Users only.
 // @Tags books
 // @Security bearerAuth
 // @Security cookieAuth
@@ -517,8 +518,10 @@ func (h handlers) chapterProgress(c *gin.Context) {
 	if !bindReadingJSON(c, &in, "invalid_request", false) {
 		return
 	}
-	if math.IsNaN(in.Progression) {
-		c.JSON(http.StatusBadRequest, errorResponse("invalid_request", "progression must be a number from 0 to 1.", nil))
+	if in.ReachedEnd && in.VersionID == "" {
+		// Defaulting to the current version would clear an update the
+		// reader has not seen (A7).
+		c.JSON(http.StatusBadRequest, errorResponse("invalid_request", "Send the version_id you read when reached_end is true.", nil))
 		return
 	}
 	v, ok := h.chapterVersion(c, d, in.VersionID, "invalid_request")
@@ -532,7 +535,7 @@ func (h handlers) chapterProgress(c *gin.Context) {
 		internalErr(c, err)
 		return
 	}
-	if in.ReachedEnd && v != "" {
+	if in.ReachedEnd {
 		if err := h.deps.repository.MarkChapterSeen(ctx, userID, d.ID, v); err != nil {
 			internalErr(c, err)
 			return

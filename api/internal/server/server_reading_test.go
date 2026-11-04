@@ -351,6 +351,23 @@ func TestFinishingOldVersionKeepsNewUpdate(t *testing.T) {
 	}
 }
 
+// Reaching the end must name the version read: defaulting to the current
+// version would clear an update the reader has not seen (A7).
+func TestReachedEndRequiresVersionID(t *testing.T) {
+	f := newReadingFixture(t)
+	f.open(t, f.ch1, f.ch1v1, f.viewer)
+	f.publish(t, f.ch1, f.ch1v1, "Second", readingV2)
+	body := f.expect(t, http.MethodPost, "/chapters/"+f.ch1+"/progress", `{"progression":1,"reached_end":true}`, f.viewer, http.StatusBadRequest)
+	if got := errorCode(t, body); got != "invalid_request" {
+		t.Fatalf("error.code = %q, want invalid_request", got)
+	}
+	if c := f.state(t, f.viewer).Chapters[f.ch1]; !c.Updated || c.SeenVersionID != f.ch1v1 || c.State != "reading" {
+		t.Fatalf("reached_end without version_id changed the chapter: %+v", c)
+	}
+	// Progress without reached_end needs no version.
+	f.expect(t, http.MethodPost, "/chapters/"+f.ch1+"/progress", `{"progression":0.5}`, f.viewer, http.StatusNoContent)
+}
+
 func TestChapterRoutesRejectVersionOfAnotherDocument(t *testing.T) {
 	f := newReadingFixture(t)
 	f.open(t, f.ch1, f.ch1v1, f.viewer)
@@ -407,7 +424,7 @@ func TestSeenAllAndDone(t *testing.T) {
 	if c := f.state(t, f.viewer).Chapters[f.ch1]; c.State != "reading" {
 		t.Fatalf("undone without reaching the end: state = %q, want reading", c.State)
 	}
-	f.expect(t, http.MethodPost, "/chapters/"+f.ch2+"/progress", `{"progression":1,"reached_end":true}`, f.viewer, http.StatusNoContent)
+	f.expect(t, http.MethodPost, "/chapters/"+f.ch2+"/progress", `{"progression":1,"reached_end":true,"version_id":"`+v2b+`"}`, f.viewer, http.StatusNoContent)
 	done(f.ch2, true)
 	done(f.ch2, false)
 	if c := f.state(t, f.viewer).Chapters[f.ch2]; c.State != "read" {
@@ -427,7 +444,7 @@ func TestStateProgressCountsChaptersTheReaderCanOpen(t *testing.T) {
 		t.Fatalf("fresh progress = %+v, want 0 of 2", s.Progress)
 	}
 	f.open(t, f.ch1, f.ch1v1, stranger)
-	f.expect(t, http.MethodPost, "/chapters/"+f.ch1+"/progress", `{"progression":1,"reached_end":true}`, stranger, http.StatusNoContent)
+	f.expect(t, http.MethodPost, "/chapters/"+f.ch1+"/progress", `{"progression":1,"reached_end":true,"version_id":"`+f.ch1v1+`"}`, stranger, http.StatusNoContent)
 	f.open(t, f.ch3, f.ch3v1, stranger)
 	f.expect(t, http.MethodPut, "/position", positionBody(t, position(f.ch3, f.ch3v1, "", time.Now())), stranger, http.StatusNoContent)
 	s = f.state(t, stranger)

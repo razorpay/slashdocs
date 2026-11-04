@@ -615,7 +615,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "Raises the furthest progression. reached_end marks the chapter read and the given version (default current) seen; seen never moves backwards (A7). Does nothing for a chapter never opened. Users only.",
+                "description": "Raises the furthest progression. reached_end marks the chapter read and the given version seen, so version_id is required with it; seen never moves backwards (A7). Does nothing for a chapter never opened. Users only.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3261,7 +3261,7 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "version_id": {
-                    "description": "VersionID is the version read; reaching its end marks it seen (A7).",
+                    "description": "VersionID is the version read; reaching its end marks it seen (A7).\nRequired when ReachedEnd is true.",
                     "type": "string"
                 }
             }
