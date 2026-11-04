@@ -1,7 +1,15 @@
 import { useTitle } from "@/lib/use-title";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowRight, Check, ChevronDown, Circle, PartyPopper, X } from "lucide-react";
+import {
+  ArrowRight,
+  Check,
+  ChevronDown,
+  Circle,
+  PartyPopper,
+  RotateCcw,
+  X,
+} from "lucide-react";
 import { publicURL } from "@/lib/config";
 import { Button } from "@/components/ui/button";
 import { Page } from "@/components/layout/page";
@@ -26,7 +34,7 @@ const PATHS: { value: SetupPath; label: string }[] = [
 
 export function StartPage() {
   useTitle("Get started");
-  const { state, setStep, setPath, skip } = useOnboarding();
+  const { state, setStep, setPath, skip, reset } = useOnboarding();
   const loginCmd = `slashdocs auth login ${publicURL()}`;
   const { done, total } = onboardingProgress(state);
   const nav = useNavigate();
@@ -43,7 +51,12 @@ export function StartPage() {
 
   return (
     <Page lane="focus" backdrop="halo">
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-1">
+        {Object.values(state.steps).some(Boolean) && (
+          <Button variant="ghost" size="sm" onClick={reset}>
+            <RotateCcw className="h-3.5 w-3.5" /> Start again
+          </Button>
+        )}
         <Button variant="ghost" size="sm" onClick={skipTutorial}>
           Skip tutorial <X className="h-3.5 w-3.5" />
         </Button>
