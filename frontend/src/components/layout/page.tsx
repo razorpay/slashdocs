@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { beat } from "@/lib/enter";
+import { Segmented } from "@/components/ui/segmented";
 import { RazorSenseBackdrop } from "@/components/razorsense-backdrop";
 import { cn } from "@/lib/cn";
 
@@ -74,5 +76,27 @@ export function PageHeader({
         </div>
       )}
     </header>
+  );
+}
+
+const SETTINGS = [
+  { value: "/app/settings/profile", label: "Profile" },
+  { value: "/app/developers", label: "Developers" },
+  { value: "/app/settings/service-accounts", label: "Bots" },
+];
+
+// The settings pages, above their titles, so each is one click from the
+// others.
+export function SettingsNav() {
+  const { pathname } = useLocation();
+  const nav = useNavigate();
+  return (
+    <Segmented
+      label="Settings"
+      value={pathname}
+      options={SETTINGS}
+      onChange={nav}
+      className="enter mb-6 w-fit"
+    />
   );
 }

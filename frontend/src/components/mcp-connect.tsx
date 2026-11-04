@@ -16,9 +16,10 @@ const MARK_COLOR: Partial<Record<Brand, string>> = {
 
 export function McpConnect() {
   const url = `${publicURL()}/mcp`;
+  // The columns follow the width of the step or card, not of the screen.
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+    <div className="@container space-y-4">
+      <div className="grid gap-2 @sm:grid-cols-2 @xl:grid-cols-3">
         {mcpApps(url).map((app) => (
           <Button key={app.id} asChild variant="secondary" className="h-11">
             {/* An app link (cursor:, vscode:, ...) opens the app, not a page. */}
