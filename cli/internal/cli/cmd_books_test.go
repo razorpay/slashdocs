@@ -259,3 +259,68 @@ func TestBooksCreateOnABookNamesIt(t *testing.T) {
 		t.Fatalf("err = %v, exit %d", err, ExitCode(err))
 	}
 }
+
+// bookManifestBody has the shape of the server's manifestResponse
+// (handlers_book_manifest.go): front matter and one chapter the reader can
+// open, and a placeholder in the toc.
+const bookManifestBody = `{"@context":"https://readium.org/webpub-manifest/context.jsonld",` +
+	`"metadata":{"identifier":"book_1","title":"Guide","numberOfChapters":2,"folderId":"fld_1","outlineVersionId":"bov_1","canEdit":true},` +
+	`"links":[{"href":"/v1/books/book_1","type":"application/json","title":"Manifest","rel":"self"}],` +
+	`"readingOrder":[` +
+	`{"href":"/app/b/book_1/c/doc_r","type":"text/html","title":"Roadmap","properties":{"documentId":"doc_r","kind":"front","part":-1,"versionId":"ver_r1"}},` +
+	`{"href":"/app/b/book_1/c/doc_a","type":"text/html","title":"Intro","properties":{"documentId":"doc_a","kind":"chapter","number":1,"part":0,"versionId":"ver_a2","wordCount":120}}],` +
+	`"toc":[{"title":"Basics","children":[{"href":"/app/b/book_1/c/doc_a","type":"text/html","title":"Intro","properties":{"documentId":"doc_a","kind":"chapter","number":1,"part":0}},` +
+	`{"title":"Pricing","properties":{"kind":"planned","number":2,"part":0}}]}]}`
+
+func TestBooksShowFindsTheBookOfAFolder(t *testing.T) {
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Method+" "+r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/folders/fld_1/book":
+			_, _ = w.Write([]byte(`{"book_id":"book_1"}`))
+		case "/v1/books/book_1":
+			_, _ = w.Write([]byte(bookManifestBody))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	booksEnv(t, srv)
+	out, err := Execute([]string{"books", "show", "--folder", "fld_1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(seen, ",") != "GET /v1/folders/fld_1/book,GET /v1/books/book_1" {
+		t.Fatalf("requests = %v", seen)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	want := [][]string{
+		{"Guide", "(book_1,", "2", "chapters)"},
+		{"front", "Roadmap", "doc_r"},
+		{"1", "Intro", "doc_a"},
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("got %d lines, want %d:\n%s", len(lines), len(want), out)
+	}
+	for i, fields := range want {
+		if got := strings.Fields(lines[i]); strings.Join(got, " ") != strings.Join(fields, " ") {
+			t.Errorf("line %d = %q, want fields %v", i, lines[i], fields)
+		}
+	}
+	if out, err := Execute([]string{"books", "show", "--folder", "fld_1", "--json"}); err != nil || !strings.Contains(out, `"identifier": "book_1"`) {
+		t.Fatalf("--json show = %q, %v", out, err)
+	}
+}
+
+func TestBooksShowNeedsABookOrAFolder(t *testing.T) {
+	for _, args := range [][]string{
+		{"books", "show"},
+		{"books", "show", "book_1", "--folder", "fld_1"},
+	} {
+		if _, err := Execute(args); ExitCode(err) != 2 {
+			t.Errorf("%v: err = %v, exit %d, want usage error", args, err, ExitCode(err))
+		}
+	}
+}

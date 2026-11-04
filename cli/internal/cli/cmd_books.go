@@ -43,9 +43,38 @@ func booksCmd(g *globals, out io.Writer) *cobra.Command {
 		}})
 	}}
 
-	show := &cobra.Command{Use: "show <book_id>", Short: "Show a book's chapters", Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		return getBook(g, out, apiPath("/v1/books/%s", args[0]), renderBookSummary)
+	var folder string
+	show := &cobra.Command{Use: "show <book_id> | --folder <folder_id>", Short: "Show a book's chapters", Long: "Show the book's ID, title and the chapters you can open.\nWith --folder, find the book made from that folder.", Args: wrapArgs(cobra.MaximumNArgs(1)), RunE: func(cmd *cobra.Command, args []string) error {
+		if (len(args) == 1) == (folder != "") {
+			return usageError{errors.New("give either a book ID or --folder <folder_id>")}
+		}
+		cl, err := client(g)
+		if err != nil {
+			return err
+		}
+		book := ""
+		if len(args) == 1 {
+			book = args[0]
+		} else {
+			b, err := cl.do("GET", apiPath("/v1/folders/%s/book", folder), nil, "")
+			if err != nil {
+				return err
+			}
+			var found struct {
+				BookID string `json:"book_id"`
+			}
+			if err := json.Unmarshal(b, &found); err != nil {
+				return err
+			}
+			book = found.BookID
+		}
+		b, err := cl.do("GET", apiPath("/v1/books/%s", book), nil, "")
+		if err != nil {
+			return err
+		}
+		return renderBook(out, g, b, renderBookSummary)
 	}}
+	show.Flags().StringVar(&folder, "folder", "", "show the book made from this folder")
 
 	status := &cobra.Command{Use: "status <book_id>", Short: "Show each outline entry, placeholders and documents not in the outline", Long: "Show each outline entry with its number, title, document ID and current version,\nthen the placeholders, the folder documents the outline does not place,\nand any chapters removed from the outline.\nNeeds editor access to the book's folder.", Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return getBook(g, out, apiPath("/v1/books/%s/status", args[0]), renderBookStatus)
@@ -138,6 +167,7 @@ func renderBookStatus(out io.Writer, b []byte) error {
 func renderBookSummary(out io.Writer, b []byte) error {
 	var m struct {
 		Metadata struct {
+			Identifier       string `json:"identifier"`
 			Title            string `json:"title"`
 			NumberOfChapters int    `json:"numberOfChapters"`
 		} `json:"metadata"`
@@ -153,21 +183,20 @@ func renderBookSummary(out io.Writer, b []byte) error {
 	if err := json.Unmarshal(b, &m); err != nil {
 		return err
 	}
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "%s (%d chapters)\n", m.Metadata.Title, m.Metadata.NumberOfChapters)
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintf(tw, "%s (%s, %d chapters)\n", m.Metadata.Title, m.Metadata.Identifier, m.Metadata.NumberOfChapters)
 	for _, item := range m.ReadingOrder {
 		if item.Properties == nil {
-			fmt.Fprintf(&sb, "  %s\n", item.Title)
+			fmt.Fprintf(tw, "  %s\n", item.Title)
 			continue
 		}
-		num := "-"
+		slot := item.Properties.Kind
 		if item.Properties.Number > 0 {
-			num = fmt.Sprint(item.Properties.Number)
+			slot = fmt.Sprint(item.Properties.Number)
 		}
-		fmt.Fprintf(&sb, "  %s\t%s\t%s\n", num, item.Title, item.Properties.DocumentID)
+		fmt.Fprintf(tw, "  %s\t%s\t%s\n", slot, item.Title, item.Properties.DocumentID)
 	}
-	_, err := io.WriteString(out, sb.String())
-	return err
+	return tw.Flush()
 }
 
 func booksOutlineCmd(g *globals, out io.Writer) *cobra.Command {
