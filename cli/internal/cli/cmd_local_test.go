@@ -242,8 +242,12 @@ func TestLocalPointComments(t *testing.T) {
 		target, body string
 		status       int
 	}{
-		{base, `{"version_id":"v1","body":"Off","anchor":{"point":{"target":"chart","x":1.5,"y":0}}}`, http.StatusBadRequest},
+		{base, `{"version_id":"v1","body":"Beside","anchor":{"point":{"target":"chart","x":1.5,"y":-0.2}}}`, http.StatusOK},
+		{base, `{"version_id":"v1","body":"Off","anchor":{"point":{"target":"chart","x":1001,"y":0}}}`, http.StatusBadRequest},
 		{base, `{"version_id":"v1","body":"Nowhere","anchor":{"point":{"x":0.5,"y":0}}}`, http.StatusBadRequest},
+		{base, `{"version_id":"v1","body":"Margin","anchor":{"point":{"x":-0.1,"y":0.5,"page_x":40,"page_y":300,"viewport_w":1280}}}`, http.StatusOK},
+		{base, `{"version_id":"v1","body":"Half","anchor":{"point":{"target":"chart","x":0.5,"y":0,"page_x":40,"page_y":300}}}`, http.StatusBadRequest},
+		{base, `{"version_id":"v1","body":"Narrow","anchor":{"point":{"target":"chart","x":0.5,"y":0,"page_x":40,"page_y":300,"viewport_w":0}}}`, http.StatusBadRequest},
 		{base + "/" + pin.ID, `{"anchor":{"point":{"target":"chart","x":0.25,"y":1}}}`, http.StatusOK},
 		{base + "/" + pin.ID, `{"anchor":{"quote":"Release"}}`, http.StatusBadRequest},
 		{base + "/" + text.ID, `{"anchor":{"point":{"target":"chart","x":0.25,"y":1}}}`, http.StatusBadRequest},
@@ -259,6 +263,9 @@ func TestLocalPointComments(t *testing.T) {
 	got := decodeTest[struct{ Items []localComment }](t, l.do(http.MethodGet, testApp, base, "")).Items
 	if p := got[0].Anchor.Point; p == nil || p.Target != "chart" || p.X != 0.25 || got[1].Anchor.Point != nil {
 		t.Fatalf("comments after the move = %+v, %+v", got[0].Anchor, got[1].Anchor)
+	}
+	if p := got[3].Anchor.Point; p == nil || p.Path != "" || p.X != -0.1 || *p.PageX != 40 || *p.PageY != 300 || *p.ViewportW != 1280 {
+		t.Fatalf("body point = %+v, want its page spot", got[3].Anchor.Point)
 	}
 }
 

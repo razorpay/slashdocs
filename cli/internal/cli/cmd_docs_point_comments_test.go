@@ -34,6 +34,7 @@ func pointCommentServer(t *testing.T) func() []map[string]any {
 			map[string]any{"id": "cmt_label", "status": "open", "selected_text": "Q3 revenue", "anchor": map[string]any{"quote": "Q3 revenue", "point": map[string]any{"target": "chart", "label": "Revenue chart", "x": 0.42, "y": 0.18}}},
 			map[string]any{"id": "cmt_target", "status": "open", "anchor": map[string]any{"point": map[string]any{"target": "chart", "x": 0, "y": 1}}},
 			map[string]any{"id": "cmt_path", "status": "open", "anchor": map[string]any{"point": map[string]any{"path": "0.3", "x": 0, "y": 1}}},
+			map[string]any{"id": "cmt_body", "status": "open", "anchor": map[string]any{"point": map[string]any{"x": -0.1, "y": 0.5, "page_x": 40, "page_y": 300, "viewport_w": 1280}}},
 		}})
 	})
 	srv := httptest.NewServer(mux)
@@ -71,8 +72,8 @@ func TestCommentsCreateRejectsAnIncompletePoint(t *testing.T) {
 		"target only":    {"--target", "chart"},
 		"no target":      {"--x", "0.5", "--y", "0.5"},
 		"label only":     {"--quote", "x", "--label", "Chart"},
-		"y out of range": {"--target", "chart", "--x", "0.5", "--y", "1.5"},
-		"x negative":     {"--target", "chart", "--x", "-0.1", "--y", "0.5"},
+		"y out of range": {"--target", "chart", "--x", "0.5", "--y", "1000.5"},
+		"x out of range": {"--target", "chart", "--x", "-1001", "--y", "0.5"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := Execute(append(append([]string{}, base...), extra...)); err == nil {
@@ -103,10 +104,10 @@ func TestCommentsListNamesThePinnedElement(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(got), "\n")
-	if len(lines) != 4 {
-		t.Fatalf("output = %q, want four rows", got)
+	if len(lines) != 5 {
+		t.Fatalf("output = %q, want five rows", got)
 	}
-	for i, want := range []string{"", "selected_text=Q3 revenue  pin=Revenue chart", "pin=chart", "pin=element"} {
+	for i, want := range []string{"", "selected_text=Q3 revenue  pin=Revenue chart", "pin=chart", "pin=element", "pin=page"} {
 		if want == "" && strings.Contains(lines[i], "pin=") {
 			t.Errorf("text comment shows a pin: %q", lines[i])
 		}

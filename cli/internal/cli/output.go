@@ -314,8 +314,9 @@ func compactRow(m map[string]any) string {
 }
 
 // pinLabel names the element of a point comment by its label, or else by its
-// target, or "element"; it is "" for a text comment. The row shows the start
-// of the element's text as selected_text.
+// target, or "element", or "page" for a point on the body; it is "" for a
+// text comment. The row shows the start of the element's text as
+// selected_text.
 func pinLabel(anchor any) string {
 	a, _ := anchor.(map[string]any)
 	p, ok := value(a, "point").(map[string]any)
@@ -326,6 +327,9 @@ func pinLabel(anchor any) string {
 		if s, _ := value(p, key).(string); s != "" {
 			return s
 		}
+	}
+	if path, _ := value(p, "path").(string); path == "" {
+		return "page"
 	}
 	return "element"
 }

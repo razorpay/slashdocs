@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/url"
 	"os"
 	"strconv"
@@ -709,8 +710,8 @@ func commentPoint(cmd *cobra.Command, target, label string, x, y float64) (map[s
 	if target == "" || !f.Changed("x") || !f.Changed("y") {
 		return nil, usageError{errors.New("a point comment needs --target, --x and --y")}
 	}
-	if x < 0 || x > 1 || y < 0 || y > 1 {
-		return nil, usageError{errors.New("--x and --y must be between 0 and 1")}
+	if math.Abs(x) > maxPointFraction || math.Abs(y) > maxPointFraction {
+		return nil, usageError{errors.New("--x and --y must be between -1000 and 1000")}
 	}
 	return map[string]any{"target": target, "label": label, "x": x, "y": y}, nil
 }
@@ -775,8 +776,8 @@ func commentsCmd(g *globals, out io.Writer) *cobra.Command {
 	create.Flags().StringVar(&createSuffix, "suffix", "", "anchor: text immediately after the quote")
 	create.Flags().StringVar(&createTarget, "target", "", "point anchor: data-slashdocs-target value or id of the element to pin on; needs --x and --y, and --quote may give the start of its text")
 	create.Flags().StringVar(&createLabel, "label", "", "point anchor: a short name for the element in comment lists")
-	create.Flags().Float64Var(&createX, "x", 0, "point anchor: horizontal position as a fraction of the element's box, 0 to 1")
-	create.Flags().Float64Var(&createY, "y", 0, "point anchor: vertical position as a fraction of the element's box, 0 to 1")
+	create.Flags().Float64Var(&createX, "x", 0, "point anchor: horizontal position as a fraction of the element's box, 0 (left) to 1 (right); a value outside 0 to 1 is beside the box")
+	create.Flags().Float64Var(&createY, "y", 0, "point anchor: vertical position as a fraction of the element's box, 0 (top) to 1 (bottom); a value outside 0 to 1 is above or below the box")
 	create.Flags().StringVar(&createVersion, "version", "", "version ID the comment anchors to")
 
 	var replyBody string
