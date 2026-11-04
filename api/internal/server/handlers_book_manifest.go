@@ -107,13 +107,10 @@ func (h handlers) bookReaderView(c *gin.Context) (view bookView, ok bool) {
 	view = bookView{
 		Book:       b,
 		Entries:    books.Number(outline),
-		Docs:       make(map[string]repo.Document, len(docs)),
+		Docs:       docsByID(docs),
 		Visible:    map[string]bool{},
 		FolderRole: role,
 		Words:      map[string]int{},
-	}
-	for _, d := range docs {
-		view.Docs[d.ID] = d
 	}
 	folderViewer := atLeast(role, repo.RoleViewer)
 	var versions []string

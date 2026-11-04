@@ -141,12 +141,28 @@ func (h handlers) folderDocs(c *gin.Context, folderID string) ([]repo.Document, 
 	return docs, true
 }
 
+// outlineDocSet is the set of documents that outline places.
+func outlineDocSet(o books.Outline) map[string]bool {
+	ids := books.DocIDs(o)
+	m := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		m[id] = true
+	}
+	return m
+}
+
+// docsByID indexes docs by id.
+func docsByID(docs []repo.Document) map[string]repo.Document {
+	m := make(map[string]repo.Document, len(docs))
+	for _, d := range docs {
+		m[d.ID] = d
+	}
+	return m
+}
+
 // notInOutline returns the documents that outline does not place.
 func notInOutline(o books.Outline, docs []repo.Document) []bookDoc {
-	placed := map[string]bool{}
-	for _, id := range books.DocIDs(o) {
-		placed[id] = true
-	}
+	placed := outlineDocSet(o)
 	out := []bookDoc{}
 	for _, d := range docs {
 		if !placed[d.ID] {
@@ -234,13 +250,10 @@ func (h handlers) createBook(c *gin.Context) {
 		return
 	}
 	incBook("created")
-	titleOf := make(map[string]string, len(docs))
-	for _, d := range docs {
-		titleOf[d.ID] = d.Title
-	}
+	byID := docsByID(docs)
 	rest := make([]bookDoc, 0, len(unplaced))
 	for _, id := range unplaced {
-		rest = append(rest, bookDoc{ID: id, Title: titleOf[id]})
+		rest = append(rest, bookDoc{ID: id, Title: byID[id].Title})
 	}
 	c.JSON(http.StatusCreated, createBookResponse{
 		BookID:           b.ID,
@@ -374,17 +387,8 @@ func (h handlers) putOutline(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !requireJSON(c) {
-		return
-	}
 	var in putOutlineRequest
-	if err := c.ShouldBindJSON(&in); err != nil {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			c.JSON(http.StatusRequestEntityTooLarge, errorResponse("payload_too_large", "request body is too large", nil))
-			return
-		}
-		badRequest(c, "invalid outline request")
+	if !bindJSON(c, &in, "bad_request", false) {
 		return
 	}
 	if in.BaseVersionID == "" {
@@ -476,10 +480,7 @@ func (h handlers) bookStatus(c *gin.Context) {
 	if !ok {
 		return
 	}
-	byID := make(map[string]repo.Document, len(docs))
-	for _, d := range docs {
-		byID[d.ID] = d
-	}
+	byID := docsByID(docs)
 	outline, removed := books.Prune(b.Outline, presentSet(docs))
 	if removed == nil {
 		removed = []string{}

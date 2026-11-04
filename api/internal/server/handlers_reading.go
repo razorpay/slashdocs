@@ -42,6 +42,14 @@ type positionAnchor struct {
 	EndOffset   int    `json:"end_offset"`
 }
 
+func (a positionAnchor) toRepo() repo.Anchor {
+	return repo.Anchor{Quote: a.Quote, Prefix: a.Prefix, Suffix: a.Suffix, StartOffset: a.StartOffset, EndOffset: a.EndOffset}
+}
+
+func fromRepoAnchor(a repo.Anchor) positionAnchor {
+	return positionAnchor{Quote: a.Quote, Prefix: a.Prefix, Suffix: a.Suffix, StartOffset: a.StartOffset, EndOffset: a.EndOffset}
+}
+
 // positionRequest is the body of PUT /v1/books/{id}/position.
 type positionRequest struct {
 	DeviceID    string         `json:"device_id"`
@@ -204,9 +212,9 @@ func lookupFailed(c *gin.Context, err error) {
 	internalErr(c, err)
 }
 
-// bindReadingJSON decodes the request body into dst. With optional set, an
+// bindJSON decodes the request body into dst. With optional set, an
 // empty body leaves dst as it is. A bad body answers 400 with code.
-func bindReadingJSON(c *gin.Context, dst any, code string, optional bool) bool {
+func bindJSON(c *gin.Context, dst any, code string, optional bool) bool {
 	if optional && c.Request.ContentLength == 0 {
 		return true
 	}
@@ -342,8 +350,7 @@ func (h handlers) getReadingState(c *gin.Context) {
 		}
 		out.Positions = append(out.Positions, positionResponse{
 			DeviceID: p.DeviceID, DocumentID: p.DocumentID, VersionID: p.VersionID, SectionID: p.SectionID,
-			Anchor: positionAnchor{Quote: p.Anchor.Quote, Prefix: p.Anchor.Prefix, Suffix: p.Anchor.Suffix,
-				StartOffset: p.Anchor.StartOffset, EndOffset: p.Anchor.EndOffset},
+			Anchor:      fromRepoAnchor(p.Anchor),
 			Progression: p.Progression,
 			ClientTS:    p.ClientTS.UTC().Format(time.RFC3339Nano),
 		})
@@ -411,7 +418,7 @@ func (h handlers) putReadingPosition(c *gin.Context) {
 		}
 	}()
 	var in positionRequest
-	if !bindReadingJSON(c, &in, "invalid_position", false) {
+	if !bindJSON(c, &in, "invalid_position", false) {
 		return
 	}
 	if !in.valid(time.Now()) {
@@ -445,10 +452,9 @@ func (h handlers) putReadingPosition(c *gin.Context) {
 			in.SectionID = ""
 		}
 	}
-	a := in.Anchor
 	saved, err := h.deps.repository.SaveReadingPosition(c.Request.Context(), current(c).ID, b.ID, repo.ReadingPosition{
 		DeviceID: in.DeviceID, DocumentID: d.ID, VersionID: v, SectionID: in.SectionID,
-		Anchor:      repo.Anchor{Quote: a.Quote, Prefix: a.Prefix, Suffix: a.Suffix, StartOffset: a.StartOffset, EndOffset: a.EndOffset},
+		Anchor:      in.Anchor.toRepo(),
 		Progression: in.Progression,
 		ClientTS:    in.ClientTS,
 	})
@@ -496,7 +502,7 @@ func (h handlers) openChapter(c *gin.Context) {
 		return
 	}
 	var in chapterVersionRequest
-	if !bindReadingJSON(c, &in, "invalid_request", true) {
+	if !bindJSON(c, &in, "invalid_request", true) {
 		return
 	}
 	v, ok := h.chapterVersion(c, d, in.VersionID, "invalid_request")
@@ -536,7 +542,7 @@ func (h handlers) chapterProgress(c *gin.Context) {
 		return
 	}
 	var in chapterProgressRequest
-	if !bindReadingJSON(c, &in, "invalid_request", false) {
+	if !bindJSON(c, &in, "invalid_request", false) {
 		return
 	}
 	if in.ReachedEnd && in.VersionID == "" {
@@ -591,7 +597,7 @@ func (h handlers) setChapterDone(c *gin.Context) {
 		return
 	}
 	var in chapterDoneRequest
-	if !bindReadingJSON(c, &in, "invalid_request", false) {
+	if !bindJSON(c, &in, "invalid_request", false) {
 		return
 	}
 	if in.Done == nil {
@@ -631,7 +637,7 @@ func (h handlers) markChapterSeen(c *gin.Context) {
 		return
 	}
 	var in chapterVersionRequest
-	if !bindReadingJSON(c, &in, "invalid_request", true) {
+	if !bindJSON(c, &in, "invalid_request", true) {
 		return
 	}
 	v, ok := h.chapterVersion(c, d, in.VersionID, "invalid_request")
@@ -827,10 +833,5 @@ func (h handlers) searchBook(c *gin.Context) {
 }
 
 func inOutline(o books.Outline, docID string) bool {
-	for _, id := range books.DocIDs(o) {
-		if id == docID {
-			return true
-		}
-	}
-	return false
+	return outlineDocSet(o)[docID]
 }
