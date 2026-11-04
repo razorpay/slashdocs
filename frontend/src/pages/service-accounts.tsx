@@ -1,4 +1,4 @@
-import { Page, PageHeader } from "@/components/layout/page";
+import { Page, PageHeader, SettingsNav } from "@/components/layout/page";
 import { useTitle } from "@/lib/use-title";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -47,6 +47,7 @@ export function ServiceAccountsPage() {
 
   return (
     <Page lane="focus">
+      <SettingsNav />
       <PageHeader
         title="Bots"
         description="Bots (service accounts in the API) are their own identities — share docs with them just like you would with a person. Use them for n8n workflows, scheduled jobs, or anything that runs without you."

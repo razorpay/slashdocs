@@ -1,7 +1,7 @@
-import { Page, PageHeader } from "@/components/layout/page";
+import { Page, PageHeader, SettingsNav } from "@/components/layout/page";
 import { beat } from "@/lib/enter";
 import { useTitle } from "@/lib/use-title";
-import { Bot, Cable, ExternalLink, KeyRound, Rocket } from "lucide-react";
+import { ArrowRight, Bot, Cable, ExternalLink, KeyRound, Rocket } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,6 +20,7 @@ export function DevelopersPage() {
   const url = publicURL();
   return (
     <Page lane="focus">
+      <SettingsNav />
       <PageHeader
         title="Developers"
         description="Connect an agent over MCP, use slashdocs from a terminal, or build directly against the API."
@@ -58,7 +59,7 @@ export function DevelopersPage() {
           <CardContent>
             <Button asChild>
               <Link to="/app/start">
-                Open CLI setup guide <ExternalLink className="h-3.5 w-3.5" />
+                Open CLI setup guide <ArrowRight className="h-3.5 w-3.5" />
               </Link>
             </Button>
           </CardContent>
