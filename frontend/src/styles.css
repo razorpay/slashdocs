@@ -276,6 +276,13 @@
 .dark .input-glow:focus-visible {
   box-shadow: 0 0 0 3px rgba(129, 140, 255, 0.16);
 }
+/* A field with an error keeps a red border, also with the focus. */
+.input-glow[aria-invalid="true"] {
+  border-color: var(--color-danger);
+}
+.input-glow[aria-invalid="true"]:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-danger) 16%, transparent);
+}
 
 /* ── Skeleton shimmer ───────────────────────────────────── */
 @keyframes shimmer {
