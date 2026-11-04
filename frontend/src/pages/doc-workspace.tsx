@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
 import { api, type CommentMention, type Principal } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
@@ -20,6 +20,7 @@ import { cursorsShownStore } from "@/lib/live-cursors";
 import { isChordBlocked, type ChordKey } from "@/lib/esc-chord";
 import { randomId } from "@/lib/uuid";
 import { cn } from "@/lib/cn";
+import { fade, sheetUp, slideIn } from "@/lib/motion";
 import { COMMENT_STATUS } from "@/lib/constants";
 import {
   DocProvider,
@@ -37,26 +38,6 @@ import { ShortcutsDialog } from "./doc-shortcuts";
 import { useCommentLink } from "./use-comment-link";
 
 const THEME_LABELS = { light: "Light", dark: "Dark", system: "System" } as const;
-
-const pageStagger = {
-  hidden: {},
-  visible: { transition: { staggerChildren: 0.1, delayChildren: 0.05 } },
-};
-const barSlide = {
-  hidden: { opacity: 0, y: -8 },
-  visible: {
-    opacity: 1,
-    y: 0,
-    transition: { duration: 0.35, ease: [0.25, 0.4, 0.25, 1] as const },
-  },
-};
-const contentFade = {
-  hidden: { opacity: 0 },
-  visible: {
-    opacity: 1,
-    transition: { duration: 0.4, ease: [0.25, 0.4, 0.25, 1] as const },
-  },
-};
 
 // A document without a live event stream, such as a `slashdocs local` file,
 // has no KV events and no other viewers to tell.
@@ -499,27 +480,31 @@ export function DocWorkspace({
           {banner?.(true)}
         </div>
       ) : (
-        <motion.div
-          className="flex h-full flex-col"
-          initial="hidden"
-          animate="visible"
-          variants={pageStagger}
-        >
-          <motion.div variants={barSlide}>
-            {bar({
-              commentsOpen: listOpen,
-              onToggleComments: toggleComments,
-              onShowShortcuts: () => setShortcutsOpen(true),
-            })}
-            {banner?.(false)}
-          </motion.div>
-          <motion.div variants={contentFade} className="flex flex-1 overflow-hidden">
-            <section className="relative min-w-0 flex-1 bg-[var(--color-surface-muted)]">
-              {frame}
+        <div className="flex h-full flex-col">
+          {bar({
+            commentsOpen: listOpen,
+            onToggleComments: toggleComments,
+            onShowShortcuts: () => setShortcutsOpen(true),
+          })}
+          {banner?.(false)}
+          <section className="relative min-w-0 flex-1 overflow-hidden bg-[var(--color-surface-muted)]">
+            {frame}
+            <AnimatePresence>
+              {listOpen && isMobile ? (
+                <motion.div
+                  key="backdrop"
+                  {...fade}
+                  aria-hidden="true"
+                  onClick={() => setListOpen(false)}
+                  className="absolute inset-0 z-30 bg-[hsl(218_30%_12%/0.24)] dark:bg-black/60"
+                />
+              ) : null}
               {listOpen ? (
                 // The comment history, as in Google Docs: under the bar on the
                 // right, or a sheet at the bottom of a narrow screen.
-                <div
+                <motion.div
+                  key="comments"
+                  {...(isMobile ? sheetUp : slideIn)}
                   role="dialog"
                   aria-label="Comments"
                   onKeyDown={(e) => {
@@ -540,11 +525,11 @@ export function DocWorkspace({
                     onPlacePin={placePin}
                     onClose={() => setListOpen(false)}
                   />
-                </div>
+                </motion.div>
               ) : null}
-            </section>
-          </motion.div>
-        </motion.div>
+            </AnimatePresence>
+          </section>
+        </div>
       )}
     </DocProvider>
   );
