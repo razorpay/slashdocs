@@ -1563,6 +1563,14 @@ type Theme = "dark" | "light";
     if (pendingHeading) navigateHeading(pendingHeading);
   }
 
+  // Open the <details> around a heading; true when it then has a layout box.
+  function revealHeading(target: Element): boolean {
+    for (let el = target.parentElement; el; el = el.parentElement) {
+      if (el.tagName === "DETAILS") (el as HTMLDetailsElement).open = true;
+    }
+    return target.getClientRects().length > 0;
+  }
+
   function navigateHeading(id: string): void {
     pendingText = null;
     textVisibilityObserver?.disconnect();
@@ -1571,11 +1579,7 @@ type Theme = "dark" | "light";
     const d = doc();
     if (!d || !id) return;
     const target = d.getElementById(id);
-    if (!target) return;
-    for (let el = target.parentElement; el; el = el.parentElement) {
-      if (el.tagName === "DETAILS") (el as HTMLDetailsElement).open = true;
-    }
-    if (!(target as HTMLElement).getClientRects().length) return;
+    if (!target || !revealHeading(target)) return;
     pendingHeading = "";
     target.scrollIntoView({ block: "start", behavior: "instant" });
     headingFlash?.cancel();
@@ -1718,9 +1722,12 @@ type Theme = "dark" | "light";
         typeof data.progression === "number" && Number.isFinite(data.progression)
           ? data.progression
           : null;
+      // A heading still hidden after opening its <details> cannot be
+      // scrolled to, so the restore falls through to progression.
+      const heading = !line && section ? d.getElementById(section) : null;
       method = restoreMethod({
         quoteResolved: !!line,
-        sectionExists: !!section && !!d.getElementById(section),
+        sectionExists: !!heading && revealHeading(heading),
         progression: share,
       });
       if (method === "section") {
@@ -1728,6 +1735,8 @@ type Theme = "dark" | "light";
       } else {
         pendingHeading = "";
         pendingText = null;
+        textVisibilityObserver?.disconnect();
+        clearTimeout(textNoticeTimer);
         if (method === "quote") {
           view.scrollBy({
             top: line!.top + line!.height / 2 - view.innerHeight / 2,

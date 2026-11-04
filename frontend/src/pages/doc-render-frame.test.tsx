@@ -13,7 +13,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function setup(extra: Partial<DocContextValue> = {}) {
+function setup(extra: Partial<DocContextValue> = {}, url = "/app/d/doc_1") {
   vi.spyOn(api, "renderToken").mockResolvedValue({
     token: "t",
     url: `${ORIGIN}/render/doc_1`,
@@ -27,7 +27,7 @@ function setup(extra: Partial<DocContextValue> = {}) {
     })),
   );
   const reportViewport = vi.fn();
-  const ctx = {
+  const base = {
     docId: "doc_1",
     version: "ver_1",
     comments: [],
@@ -46,19 +46,21 @@ function setup(extra: Partial<DocContextValue> = {}) {
     reportViewport,
     moveCursor: vi.fn(),
     subscribeCursors: () => () => {},
-    ...extra,
-  } as unknown as DocContextValue;
+  };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
+  const tree = (more: Partial<DocContextValue>) => (
     <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <DocProvider value={ctx}>
+      <MemoryRouter initialEntries={[url]}>
+        <DocProvider value={{ ...base, ...more } as unknown as DocContextValue}>
           <RenderFrame />
         </DocProvider>
       </MemoryRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
-  return { reportViewport };
+  const { rerender } = render(tree(extra));
+  // Re-render with new context fields, as a reader settings change would.
+  const update = (more: Partial<DocContextValue>) => rerender(tree(more));
+  return { reportViewport, update };
 }
 
 async function frame(title: string) {
@@ -161,6 +163,72 @@ describe("RenderFrame in book mode", () => {
       type: "slashdocs:navigate-position",
       section: "intro",
       progression: 0.4,
+    });
+  });
+});
+
+describe("RenderFrame reader updates", () => {
+  it("clears reader styles once the reader options go away", async () => {
+    const { update } = setup({
+      reader: {
+        settings: { size: "s", width: "wide", theme: "system" },
+        markHeadings: ["a"],
+      },
+    });
+    const { posted, send } = await frame("Rendered document");
+    send({ type: "slashdocs:ready" });
+    posted.mockClear();
+    act(() => update({ reader: {} }));
+    const messages = posted.mock.calls.map(([message]) => message);
+    expect(messages).toContainEqual({
+      type: "slashdocs:reader-settings",
+      settings: null,
+    });
+    expect(messages).toContainEqual({ type: "slashdocs:mark-headings", ids: [] });
+  });
+
+  it("does not resend marks for a new array with the same ids", async () => {
+    const { update } = setup({ reader: { markHeadings: ["a"] } });
+    const { posted, send, types } = await frame("Rendered document");
+    send({ type: "slashdocs:ready" });
+    posted.mockClear();
+    act(() => update({ reader: { markHeadings: ["a"] } }));
+    expect(types()).not.toContain("slashdocs:mark-headings");
+  });
+
+  it("restores at once when the frame is already ready", async () => {
+    let restore: ((target: { progression?: number }) => void) | null = null;
+    setup({
+      reader: {},
+      registerPositionRestorer: (fn) => {
+        restore = fn;
+      },
+    });
+    const { posted, send } = await frame("Rendered document");
+    send({ type: "slashdocs:ready" });
+    posted.mockClear();
+    act(() => restore!({ progression: 0.7 }));
+    expect(posted.mock.calls.map(([message]) => message)).toEqual([
+      { type: "slashdocs:navigate-position", progression: 0.7 },
+    ]);
+  });
+});
+
+describe("RenderFrame hash navigation", () => {
+  it("sends no empty heading navigation without a hash", async () => {
+    setup();
+    const { send, types } = await frame("Rendered document");
+    send({ type: "slashdocs:ready" });
+    expect(types()).not.toContain("slashdocs:navigate-heading");
+  });
+
+  it("still navigates to a heading in the hash", async () => {
+    setup({}, "/app/d/doc_1#intro");
+    const { posted, send } = await frame("Rendered document");
+    send({ type: "slashdocs:ready" });
+    expect(posted.mock.calls.map(([message]) => message)).toContainEqual({
+      type: "slashdocs:navigate-heading",
+      id: "intro",
     });
   });
 });

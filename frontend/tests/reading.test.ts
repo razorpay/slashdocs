@@ -64,6 +64,14 @@ describe("readerSettingsCSS", () => {
       readerSettingsCSS({ size: "m", width: "comfortable", theme: "system" }),
     ).not.toContain("#f8f4ea");
   });
+  it("ignores inherited keys", () => {
+    const css = readerSettingsCSS({
+      size: "constructor",
+      width: "toString",
+      theme: "system",
+    } as unknown as typeof DEFAULT_READER_SETTINGS);
+    expect(css).toBe(readerSettingsCSS(DEFAULT_READER_SETTINGS));
+  });
   it("falls back to defaults for unknown values", () => {
     const css = readerSettingsCSS({
       size: "xl",

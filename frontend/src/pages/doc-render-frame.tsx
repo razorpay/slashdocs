@@ -175,10 +175,15 @@ export function RenderFrame() {
     });
   }, [ready, markKey, postToFrame]);
 
+  // An empty hash only cancels an earlier link navigation, so it is sent
+  // only once one was. Sending it otherwise would cancel a restore waiting
+  // for its heading.
+  const linkNavigated = useRef(false);
   useEffect(() => {
     if (!ready) return;
     if (location.hash.startsWith(TEXT_LINK_PREFIX)) {
       const anchor = parseTextLink(location.hash);
+      linkNavigated.current = true;
       if (anchor) postToFrame({ type: "slashdocs:navigate-text", anchor });
       else toast.error("This text link is invalid.");
       return;
@@ -189,6 +194,8 @@ export function RenderFrame() {
     } catch {
       /* Keep literal malformed fragments. */
     }
+    if (!heading && !linkNavigated.current) return;
+    linkNavigated.current = true;
     postToFrame({ type: "slashdocs:navigate-heading", id: heading });
   }, [location.hash, ready, postToFrame]);
 

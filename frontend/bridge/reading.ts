@@ -62,8 +62,11 @@ export function progression(
 }
 
 export function readerSettingsCSS(s: ReaderSettings): string {
-  const size = SIZES[s.size] ?? SIZES[DEFAULT_READER_SETTINGS.size];
-  const width = WIDTHS[s.width] ?? WIDTHS[DEFAULT_READER_SETTINGS.width];
+  // Own keys only: settings arrive by message, and "constructor" is not a size.
+  const size =
+    SIZES[Object.hasOwn(SIZES, s.size) ? s.size : DEFAULT_READER_SETTINGS.size];
+  const width =
+    WIDTHS[Object.hasOwn(WIDTHS, s.width) ? s.width : DEFAULT_READER_SETTINGS.width];
   const body = `body{zoom:${size};max-width:${width};margin-inline:auto}`;
   return s.theme === "paper" ? body + PAPER_CSS : body;
 }
