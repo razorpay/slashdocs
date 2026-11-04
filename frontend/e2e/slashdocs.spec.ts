@@ -182,6 +182,7 @@ test("shows more documents after the first page", async ({ page, slashdocs }) =>
 
   await page.goto("/app/documents");
   await page.getByRole("combobox", { name: "Search documents" }).fill(word);
+  await expect(page.getByRole("heading", { name: "Results" })).toBeVisible();
   const rows = page.locator("tbody tr");
   const more = page.getByRole("button", { name: "Show more documents" });
   await expect(rows).toHaveCount(25);
