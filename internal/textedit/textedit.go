@@ -119,7 +119,7 @@ func Summary(edits []Edit) string {
 	lines := make([]string, 0, len(edits))
 	for _, e := range edits {
 		before, after := excerpts(e.OldString, e.NewString)
-		line := fmt.Sprintf("Replaced %q with %q", before, after)
+		line := "Replaced " + quote(before) + " with " + quote(after)
 		if e.ReplaceAll {
 			line += " everywhere"
 		}
@@ -138,15 +138,7 @@ const (
 // string stays visible. An ellipsis marks the text that is cut.
 func excerpts(oldString, newString string) (string, string) {
 	a, b := strings.Fields(oldString), strings.Fields(newString)
-	// head and tail count the words that both strings start and end with.
-	head := 0
-	for head < len(a) && head < len(b) && a[head] == b[head] {
-		head++
-	}
-	tail := 0
-	for tail < len(a)-head && tail < len(b)-head && a[len(a)-1-tail] == b[len(b)-1-tail] {
-		tail++
-	}
+	head, tail := shared(a, b)
 	from, cut := max(head-contextWords, 0), max(tail-contextWords, 0)
 	excerpt := func(words []string) string {
 		s := strings.Join(words[from:len(words)-cut], " ")
@@ -156,16 +148,40 @@ func excerpts(oldString, newString string) (string, string) {
 		if cut > 0 {
 			s += "…"
 		}
-		return clip(s)
+		return s
 	}
 	return excerpt(a), excerpt(b)
 }
 
-// clip shortens a very long change to summaryRunes runes.
-func clip(s string) string {
-	if utf8.RuneCountInString(s) <= summaryRunes {
-		return s
+// differing returns only the words that differ between the old and new
+// strings.
+func differing(oldString, newString string) (string, string) {
+	a, b := strings.Fields(oldString), strings.Fields(newString)
+	head, tail := shared(a, b)
+	return strings.Join(a[head:len(a)-tail], " "), strings.Join(b[head:len(b)-tail], " ")
+}
+
+// shared counts the words that a and b both start with, and then the words
+// that they both end with.
+func shared(a, b []string) (head, tail int) {
+	for head < len(a) && head < len(b) && a[head] == b[head] {
+		head++
 	}
-	r := []rune(s)
-	return string(r[:summaryRunes-1]) + "…"
+	for tail < len(a)-head && tail < len(b)-head && a[len(a)-1-tail] == b[len(b)-1-tail] {
+		tail++
+	}
+	return head, tail
+}
+
+// quote puts a change in curly quotes, shortened at a word edge to at most
+// summaryRunes runes.
+func quote(s string) string {
+	if r := []rune(s); len(r) > summaryRunes {
+		s = string(r[:summaryRunes-1])
+		if space := strings.LastIndexByte(s, ' '); space > 0 {
+			s = s[:space]
+		}
+		s += "…"
+	}
+	return "“" + s + "”"
 }

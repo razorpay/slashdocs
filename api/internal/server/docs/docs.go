@@ -3370,6 +3370,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "change_summary": {
+                    "description": "ChangeSummary, when set, is what History shows for the change. When it\nis empty, the server names what a reader sees change.",
                     "type": "string"
                 },
                 "client_change_id": {
