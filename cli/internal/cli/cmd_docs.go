@@ -299,8 +299,9 @@ func renderCreatedDocument(out io.Writer, g *globals, cl *Client, title, request
 		return renderCreatedDocumentJSON(out, g, id, requestedPermission, documentURL, role, grantID, payload)
 	}
 	msg := fmt.Sprintf("Created document %q (%s). Review it at %s", title, id, documentURL)
+	// The URL ends the line, so the warning goes on a line of its own.
 	if w, ok := payload["permission_warning"].(map[string]any); ok {
-		msg += " Warning: " + fmt.Sprint(value(w, "message"))
+		msg += "\nWarning: " + fmt.Sprint(value(w, "message"))
 	}
 	if err := confirm(out, g, msg); err != nil {
 		return err
