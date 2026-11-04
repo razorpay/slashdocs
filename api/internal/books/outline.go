@@ -65,7 +65,10 @@ const (
 	MaxTitle   = 200
 )
 
-var titleNumberRe = regexp.MustCompile(`^\s*(\d{1,3})\s*(?:·|\.|:|-|–|—)\s*(\S.*)$`)
+// titleNumberRe needs whitespace after an ASCII separator, so numbers that are
+// part of the title ("1.5 Migration guide", "3-D Printing", "1:1 meetings",
+// "24-hour support") are not read as chapter numbers.
+var titleNumberRe = regexp.MustCompile(`^\s*(\d{1,3})\s*(?:·|–|—|[.:\-]\s)\s*(\S.*)$`)
 
 // TitleNumber splits a leading chapter number such as "24 · Title".
 func TitleNumber(title string) (int, string, bool) {

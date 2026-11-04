@@ -18,6 +18,11 @@ func TestTitleNumber(t *testing.T) {
 		{"24 · Document Processing", 24, "Document Processing", true}, {"00 · Roadmap", 0, "Roadmap", true},
 		{"3. Python", 3, "Python", true}, {"7 - Evals", 7, "Evals", true}, {"12: Agents", 12, "Agents", true},
 		{"Intro", 0, "Intro", false}, {"2026 roadmap", 0, "2026 roadmap", false},
+		{"3.Python", 0, "3.Python", false}, {"4 — Serving", 4, "Serving", true}, {"5–Tools", 5, "Tools", true},
+		// Numbers that are part of the title, not a chapter number.
+		{"1.5 Migration guide", 0, "1.5 Migration guide", false}, {"2.0 Release notes", 0, "2.0 Release notes", false},
+		{"3-D Printing", 0, "3-D Printing", false}, {"1:1 meetings", 0, "1:1 meetings", false},
+		{"24-hour support", 0, "24-hour support", false}, {"3.5 Overview", 0, "3.5 Overview", false},
 	} {
 		n, r, ok := TitleNumber(c.in)
 		if n != c.n || r != c.rest || ok != c.ok {
