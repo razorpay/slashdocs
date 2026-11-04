@@ -130,3 +130,25 @@ it("says when a filter has no threads", async () => {
   await userEvent.click(screen.getByRole("button", { name: "resolved" }));
   expect(screen.getByText("No resolved comments yet")).toBeInTheDocument();
 });
+
+it("marks the open thread and scrolls it into view", () => {
+  const scrollIntoView = vi.fn();
+  Element.prototype.scrollIntoView = scrollIntoView;
+  renderList({ activeComment: "pin" });
+  const row = screen.getByText("Thread pin").closest("button")!;
+  expect(row).toHaveAttribute("aria-current", "true");
+  expect(scrollIntoView).toHaveBeenCalledOnce();
+  expect(scrollIntoView.mock.contexts[0]).toBe(row);
+});
+
+it("shows a mention as a chip, as the thread does", () => {
+  renderList({
+    comments: [
+      thread("open", "open", {
+        body: "Thread @Reader please",
+        mentions: [{ principal: reader, offset: 7, length: 7 }],
+      }),
+    ],
+  });
+  expect(screen.getByText("@Reader")).toHaveClass("rounded");
+});

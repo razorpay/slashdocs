@@ -35,6 +35,7 @@ import {
   Replies,
   ResolveButton,
 } from "./doc-comment-parts";
+import { CommentBody } from "./doc-comment-text";
 
 const QUOTE_PREVIEW = 160;
 
@@ -248,8 +249,14 @@ export function CommentsList({
     notifications,
     principal,
     unanchoredComments,
+    activeComment,
   } = useDoc();
   const [filter, setFilter] = useState<ListFilter>("all");
+  // The open thread is marked in the list, and scrolls into view.
+  const activeRow = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    activeRow.current?.scrollIntoView({ block: "nearest" });
+  }, [activeComment, filter]);
   // The document shows open threads, so the bridge knows which of those it
   // could not place. The server knows it for the rest, but on the latest
   // version only, so on an earlier one only the bridge tells.
@@ -330,9 +337,11 @@ export function CommentsList({
             {items.map((c) => (
               <li key={c.id}>
                 <button
+                  ref={c.id === activeComment ? activeRow : undefined}
                   type="button"
                   onClick={() => onPick(c.id)}
-                  className="w-full rounded-lg px-2 py-2 text-left transition-colors hover:bg-[var(--color-surface-muted)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
+                  aria-current={c.id === activeComment ? "true" : undefined}
+                  className="w-full rounded-lg px-2 py-2 text-left transition-colors hover:bg-[var(--color-surface-muted)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] aria-[current]:bg-[var(--color-accent-muted)]"
                 >
                   <span className="flex items-center gap-2">
                     <PersonAvatar who={c.author} />
@@ -352,8 +361,8 @@ export function CommentsList({
                   </span>
                   <span className="ml-7 block">
                     <Quote text={anchorLabel(c)} />
-                    <span className="mt-1 line-clamp-2 block text-sm break-words">
-                      {c.body}
+                    <span className="mt-1 block">
+                      <CommentBody text={c.body} mentions={c.mentions} preview />
                     </span>
                     {lost(c) ? (
                       <Badge variant="warning" className="mt-1">
