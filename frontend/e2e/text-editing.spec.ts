@@ -66,7 +66,7 @@ test("saves edited words as the editor pauses, and only the changed text", async
   const document = await slashdocs.createDocument(title, html);
 
   await openEditable(page, document.id);
-  await expect(page.getByText("Editing", { exact: true })).toBeVisible();
+  await expect(page.getByText("Can edit", { exact: true })).toBeVisible();
   await expect(renderedDocument(page).locator(".slashdocs-heading-link")).toBeHidden();
 
   const saved = nextEdit(page, document.id);
@@ -205,14 +205,14 @@ test("restores an earlier version from the history", async ({ page, slashdocs })
   // The owner created and edited the document in one sitting: one session.
   await page.getByRole("button", { name: "History" }).click();
   const history = page.getByRole("dialog");
-  await history.getByRole("button", { name: "Show all 3 edits" }).click();
+  await history.getByRole("button", { name: "Show 2 earlier edits" }).click();
   // The frame holds only the last save, so an earlier save loads again.
   await history.getByRole("button", { name: /with "three times"/ }).click();
   await expect(renderedDocument(page).locator("#retry")).toHaveText(
     "Clients retry three times before giving up.",
   );
   await page.getByRole("button", { name: "History" }).click();
-  await history.getByRole("button", { name: "Show all 3 edits" }).click();
+  await history.getByRole("button", { name: "Show 2 earlier edits" }).click();
   await history.getByRole("button", { name: /Created/ }).click();
   await expect(renderedDocument(page).locator("#retry")).toHaveText(
     "Clients retry twice before giving up.",
