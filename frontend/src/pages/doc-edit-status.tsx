@@ -3,7 +3,7 @@ import { useDoc, type SaveState } from "./doc-context";
 
 const STATUS: Record<SaveState, { label: string; title: string; Icon?: LucideIcon }> = {
   idle: {
-    label: "Editing",
+    label: "Can edit",
     title: "Type in the document to change its words. Edits save as you type.",
     Icon: Pencil,
   },
