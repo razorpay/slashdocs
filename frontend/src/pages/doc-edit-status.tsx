@@ -5,6 +5,7 @@ import {
   Pencil,
   type LucideIcon,
 } from "lucide-react";
+import { cn } from "@/lib/cn";
 import { useDoc, type SaveState } from "./doc-context";
 
 const STATUS: Record<SaveState, { label: string; title: string; Icon: LucideIcon }> = {
@@ -34,7 +35,7 @@ const STATUS: Record<SaveState, { label: string; title: string; Icon: LucideIcon
 
 // EditStatus tells an editor that the document is theirs to edit, and whether
 // their edits are saved. There is no edit mode to enter: they type. A narrow
-// bar shows only the icon.
+// bar, short of room for the title, shows only the icon of a save.
 export function EditStatus() {
   const { editable, saveState } = useDoc();
   if (!editable) return null;
@@ -43,11 +44,11 @@ export function EditStatus() {
     <span
       role="status"
       title={title}
-      className={`inline-flex shrink-0 items-center gap-1 text-xs ${
-        saveState === "failed"
-          ? "text-[var(--color-danger)]"
-          : "text-[var(--color-fg-muted)]"
-      }`}
+      className={cn(
+        "shrink-0 items-center gap-1 text-xs text-[var(--color-fg-muted)]",
+        saveState === "idle" ? "hidden sm:inline-flex" : "inline-flex",
+        saveState === "failed" && "text-[var(--color-danger)]",
+      )}
     >
       <Icon
         className={`h-3.5 w-3.5 ${Icon === LoaderCircle ? "motion-safe:animate-spin" : ""}`}
