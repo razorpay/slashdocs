@@ -18,6 +18,8 @@ import { ServiceAccountsPage } from "@/pages/service-accounts";
 import { DevelopersPage } from "@/pages/developers";
 import { ProfilePage } from "@/pages/profile";
 import { StartPage } from "@/pages/start";
+import { NotFoundPage } from "@/pages/not-found";
+import { retryQuery } from "@/lib/query-retry";
 import { migrateLegacyStorage } from "@/lib/legacy-storage";
 import { finishLegacySignOut } from "@/lib/auth-state";
 
@@ -25,7 +27,7 @@ import { finishLegacySignOut } from "@/lib/auth-state";
 // without its own onError surface as a toast.
 const qc = new QueryClient({
   defaultOptions: {
-    queries: { refetchOnWindowFocus: false },
+    queries: { refetchOnWindowFocus: false, retry: retryQuery },
     mutations: {
       onError: (e) => toast.error(errorMessage(e)),
     },
@@ -67,7 +69,9 @@ function App() {
                 path="/service-accounts"
                 element={<Navigate to="/app/settings/service-accounts" replace />}
               />
-              <Route path="*" element={<Navigate to="/" replace />} />
+              <Route element={<AppShell />}>
+                <Route path="*" element={<NotFoundPage />} />
+              </Route>
             </Routes>
             <Toaster position="bottom-right" theme="system" richColors />
           </BrowserRouter>
