@@ -89,6 +89,16 @@ describe("parseCursorSpot of a pointer that left", () => {
     expect(parseCursorSpot({ hidden: true })).toBeNull();
     expect(parseCursorSpot({ hidden: true, v: { path: "x", x: 0, y: 0 } })).toBeNull();
   });
+
+  it("keeps the block that the viewer edits", () => {
+    expect(parseCursorSpot({ hidden: true, e: "0.3" })).toEqual({
+      path: "",
+      x: 0,
+      y: 0,
+      hidden: true,
+      e: "0.3",
+    });
+  });
 });
 
 describe("createCursorBatch views", () => {
@@ -162,6 +172,12 @@ describe("parseCursorSpot", () => {
     });
     for (const m of ["a".repeat(101), "bell\u0007", 5, ""])
       expect(parseCursorSpot({ ...spot(1), m })).toEqual(spot(1));
+  });
+
+  it("keeps a valid edited block and drops any other", () => {
+    expect(parseCursorSpot({ ...spot(1), e: "0.3" })).toEqual({ ...spot(1), e: "0.3" });
+    for (const e of ["0..3", "", 3, "x"])
+      expect(parseCursorSpot({ ...spot(1), e })).toEqual(spot(1));
   });
 
   it("keeps a valid zoom and drops any other", () => {

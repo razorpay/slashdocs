@@ -37,29 +37,23 @@ function parsePlace(value: unknown, limit = { min: 0, max: 1 }): CursorPlace | n
 
 // parseCursorSpot accepts a spot from the render frame, which also runs the
 // document's own scripts. Anything else means that the pointer left. An
-// invalid view or message is dropped. A spot for a pointer that left keeps
-// only its view, and is null without one.
+// invalid view, message or edited block is dropped. A spot for a pointer that
+// left keeps only its view and edited block, and is null without both.
 export function parseCursorSpot(value: unknown): CursorSpot | null {
-  if ((value as { hidden?: unknown } | null)?.hidden === true) {
-    const view = parsePlace((value as { v?: unknown }).v, {
-      min: -MAX_VIEW_FRACTION,
-      max: MAX_VIEW_FRACTION,
-    });
-    return view && { ...HIDDEN, v: view };
-  }
+  const { m, e, v, hidden } = (value ?? {}) as Record<string, unknown>;
+  const view = parsePlace(v, {
+    min: -MAX_VIEW_FRACTION,
+    max: MAX_VIEW_FRACTION,
+  });
+  const edit = typeof e === "string" && e && SPOT_PATH.test(e) ? e : undefined;
+  const extras = { ...(view && { v: view }), ...(edit && { e: edit }) };
+  if (hidden === true) return view || edit ? { ...HIDDEN, ...extras } : null;
   const spot = parsePlace(value);
-  const { m } = (value ?? {}) as { m?: unknown };
   const message =
     typeof m === "string" && m && [...m].length <= MAX_MESSAGE && !CONTROL.test(m)
       ? m
       : undefined;
-  const view =
-    spot &&
-    parsePlace((value as { v?: unknown }).v, {
-      min: -MAX_VIEW_FRACTION,
-      max: MAX_VIEW_FRACTION,
-    });
-  return spot && { ...spot, ...(view && { v: view }), ...(message && { m: message }) };
+  return spot && { ...spot, ...extras, ...(message && { m: message }) };
 }
 
 // createCursorBatch collects this reader's pointer points and sends them in
@@ -67,7 +61,6 @@ export function parseCursorSpot(value: unknown): CursorSpot | null {
 // next batch gets larger. A full batch drops its oldest points.
 export function createCursorBatch(send: (points: CursorPoint[]) => Promise<unknown>) {
   let queue: CursorPoint[] = [];
-  let hidden = true;
   let last: CursorSpot | null = null;
   let lastPoint = -Infinity;
   let lastSend = -Infinity;
@@ -105,11 +98,10 @@ export function createCursorBatch(send: (points: CursorPoint[]) => Promise<unkno
   }
 
   // add records where the pointer is now. Null means that the pointer left;
-  // a hidden spot means the same but still names the view.
+  // a hidden spot means the same but still names the view or the edited block.
   function add(spot: CursorSpot | null) {
-    if (!spot && hidden) return;
+    if (!spot && !last) return;
     last = spot;
-    hidden = !spot || !!spot.hidden;
     lastPoint = Math.max(lastPoint + 1, Math.round(performance.now()));
     queue = [...queue, { t: lastPoint, ...(spot ?? HIDDEN) }].slice(-MAX_BATCH_POINTS);
     schedule();
