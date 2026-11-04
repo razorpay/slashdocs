@@ -6,12 +6,40 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { CHORD_KEYS } from "@/lib/esc-chord";
+import { useDoc } from "./doc-context";
 
-const MOD = /Mac|iPhone|iPad/.test(navigator.userAgent) ? "⌘" : "Ctrl";
+const MAC = /Mac|iPhone|iPad/.test(navigator.userAgent);
+const MAC_KEYS: Record<string, string> = { Mod: "⌘", Ctrl: "⌃", Alt: "⌥", Shift: "⇧" };
 
-// Every document-page shortcut. The Esc chords come from CHORD_KEYS, so a new
-// chord shows here without an edit.
-const SECTIONS: { title: string; rows: [keys: string[], label: string][] }[] = [
+// chord names keys that are held together, as the comment chip in the
+// document does: ⌘⌥M on a Mac, and Ctrl+Alt+M elsewhere.
+const chord = (...keys: string[]) =>
+  MAC
+    ? keys.map((key) => MAC_KEYS[key] ?? key).join("")
+    : keys.map((key) => (key === "Mod" ? "Ctrl" : key)).join("+");
+
+type Section = { title: string; rows: [keys: string[], label: string][] };
+
+// The keys of text that the reader can edit. They show only to editors.
+const EDITING: Section = {
+  title: "Editing",
+  rows: [
+    [[chord("Mod", "B")], "Bold"],
+    [[chord("Mod", "I")], "Italic"],
+    [[chord("Mod", "K")], "Link"],
+    [[chord("Mod", "Shift", "8")], "Bulleted list"],
+    [[chord("Mod", "Shift", "7")], "Numbered list"],
+    [[chord("Mod", "Z")], "Undo"],
+    [[chord("Mod", "Shift", "Z")], "Redo"],
+    [[chord("Shift", "Enter")], "Line break"],
+    [["Esc"], "Leave the text"],
+  ],
+};
+
+// Every document-page shortcut. Each kbd is one key, or keys held together.
+// Keys in a row of kbds are pressed in turn. The Esc chords come from
+// CHORD_KEYS, so a new chord shows here without an edit.
+const SECTIONS: Section[] = [
   {
     title: "Esc, then a letter",
     rows: CHORD_KEYS.map(({ key, hint }) => [
@@ -24,10 +52,10 @@ const SECTIONS: { title: string; rows: [keys: string[], label: string][] }[] = [
     rows: [
       [["J"], "Scroll down"],
       [["K"], "Scroll up"],
-      [["Ctrl", "D"], "Half a page down"],
-      [["Ctrl", "U"], "Half a page up"],
+      [[chord("Ctrl", "D")], "Half a page down"],
+      [[chord("Ctrl", "U")], "Half a page up"],
       [["G", "G"], "Top"],
-      [["Shift", "G"], "Bottom"],
+      [[chord("Shift", "G")], "Bottom"],
     ],
   },
   {
@@ -35,8 +63,8 @@ const SECTIONS: { title: string; rows: [keys: string[], label: string][] }[] = [
     rows: [
       [["C"], "Comment on the selected text, or on a spot you click"],
       [["Esc"], "Stop placing a comment"],
-      [[MOD, "Alt", "M"], "Comment on the text you edit"],
-      [[MOD, "Enter"], "Post a comment"],
+      [[chord("Mod", "Alt", "M")], "Comment on the text you edit"],
+      [[chord("Mod", "Enter")], "Post a comment"],
     ],
   },
   {
@@ -52,9 +80,10 @@ export function ShortcutsDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const { editable } = useDoc();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-h-[85vh] max-w-md overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Keyboard shortcuts</DialogTitle>
           <DialogDescription>
@@ -63,7 +92,7 @@ export function ShortcutsDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-5">
-          {SECTIONS.map((section) => (
+          {(editable ? [EDITING, ...SECTIONS] : SECTIONS).map((section) => (
             <section key={section.title}>
               <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-[var(--color-fg-muted)]">
                 {section.title}
