@@ -52,6 +52,7 @@ function renderList(over: Partial<DocContextValue> = {}, showsLatest = true) {
     notifications: false,
     principal: reader,
     unanchoredComments: new Set<string>(),
+    movedPins: new Set<string>(),
     drafts: [],
     discardDraft: vi.fn(),
     ...over,
@@ -118,6 +119,21 @@ it("trusts the server's placement on the latest version only", () => {
   cleanup();
   renderList({ comments: [gone] }, false);
   expect(screen.queryByText("Not found in this version")).not.toBeInTheDocument();
+});
+
+it("marks a pin whose element is gone as moved, not as lost", () => {
+  const moved = thread("moved", "open", {
+    anchor: { quote: "", point: { label: "Pricing", x: -0.2, y: 0.5 } },
+    current_placement: { status: "moved", confidence: 0, matched_text: "" },
+  });
+  renderList({ comments: [moved] });
+  expect(screen.getByText("Pricing")).toBeInTheDocument();
+  expect(screen.getByText("Moved: its element is gone")).toBeInTheDocument();
+  expect(screen.queryByText("Not found in this version")).not.toBeInTheDocument();
+  cleanup();
+  // On an earlier version, the bridge tells.
+  renderList({ comments: [moved], movedPins: new Set(["moved"]) }, false);
+  expect(screen.getByText("Moved: its element is gone")).toBeInTheDocument();
 });
 
 it("opens a picked thread, and starts placing a pin", async () => {
