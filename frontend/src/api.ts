@@ -744,8 +744,14 @@ export const api = {
       items: EffectiveAccessItem[];
       current_role: string;
     }>(`/v1/documents/${id}/access`),
+  // An editor gets every request. Anyone else gets only their own.
   documentAccessRequests: (id: string) =>
     request<{ items: AccessRequest[] }>(`/v1/documents/${id}/access-requests`),
+  declineAccessRequest: (doc: string, requester: Principal) =>
+    request<void>(
+      `/v1/documents/${doc}/access-requests/${requester.type}/${encodeURIComponent(requester.id)}`,
+      { method: "DELETE" },
+    ),
   // Pins
   listPins: () => request<{ items: Pin[] }>("/v1/pins"),
   putPin: (resourceType: string, resourceId: string) =>

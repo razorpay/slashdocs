@@ -64,14 +64,69 @@ func TestAccessRequestsAreRecordedWithoutNotifications(t *testing.T) {
 			t.Fatalf("%s: access requests = %+v, want the stranger's request", p.ID, got.Items)
 		}
 	}
+	// Others see only their own request.
 	rr = do(t, e.h, http.MethodGet, path, "", as(fixtureViewer))
-	assertStatus(t, rr, http.StatusForbidden)
+	assertStatus(t, rr, http.StatusOK)
+	assertJSON(t, rr.Body.Bytes(), `{"items":[]}`)
+	rr = do(t, e.h, http.MethodGet, path, "", as(fixtureStranger))
+	assertStatus(t, rr, http.StatusOK)
+	var own struct{ Items []repo.AccessRequest }
+	if err := json.Unmarshal(rr.Body.Bytes(), &own); err != nil {
+		t.Fatal(err)
+	}
+	if len(own.Items) != 1 || own.Items[0].Requester.ID != fixtureStranger.ID {
+		t.Fatalf("own access requests = %+v, want the stranger's request", own.Items)
+	}
 
 	rr = do(t, e.h, http.MethodPost, "/v1/documents/"+e.doc.ID+"/grants", `{"address":"`+fixtureStranger.Email+`","role":"viewer"}`, as(fixtureOwner))
 	assertStatus(t, rr, http.StatusCreated)
 	rr = do(t, e.h, http.MethodGet, path, "", as(fixtureOwner))
 	assertStatus(t, rr, http.StatusOK)
 	assertJSON(t, rr.Body.Bytes(), `{"items":[]}`)
+}
+
+// A person who manages access can decline a request. The request goes away
+// with its notification, and the requester can ask again.
+func TestAccessRequestDecline(t *testing.T) {
+	e := newTestEnv(t)
+	e.store.SetNotificationsEnabled(true)
+	path := "/v1/documents/" + e.doc.ID + "/access-requests"
+	declinePath := path + "/user/" + fixtureStranger.ID
+	as := func(p auth.Principal) map[string]string {
+		return map[string]string{"X-Test-Principal": principalHeader(p), "Content-Type": "application/json"}
+	}
+	queued := func() (n int) {
+		if err := e.store.Pool().QueryRow(context.Background(), "SELECT count(*) FROM document_access_request_notification_outbox").Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	assertStatus(t, do(t, e.h, http.MethodPost, path, `{}`, as(fixtureStranger)), http.StatusAccepted)
+	if n := queued(); n != 1 {
+		t.Fatalf("queued=%d, want the owner's notification", n)
+	}
+
+	assertStatus(t, do(t, e.h, http.MethodDelete, declinePath, "", as(fixtureViewer)), http.StatusForbidden)
+	assertStatus(t, do(t, e.h, http.MethodDelete, path+"/anyone/x", "", as(fixtureOwner)), http.StatusBadRequest)
+	assertStatus(t, do(t, e.h, http.MethodDelete, declinePath, "", as(fixtureEditor)), http.StatusNoContent)
+	if n := queued(); n != 0 {
+		t.Fatalf("queued=%d after decline, want none", n)
+	}
+	for _, p := range []auth.Principal{fixtureOwner, fixtureStranger} {
+		rr := do(t, e.h, http.MethodGet, path, "", as(p))
+		assertStatus(t, rr, http.StatusOK)
+		assertJSON(t, rr.Body.Bytes(), `{"items":[]}`)
+	}
+
+	assertStatus(t, do(t, e.h, http.MethodPost, path, `{}`, as(fixtureStranger)), http.StatusAccepted)
+	rr := do(t, e.h, http.MethodGet, path, "", as(fixtureStranger))
+	var got struct{ Items []repo.AccessRequest }
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Items) != 1 {
+		t.Fatalf("access requests after a new request = %+v, want one", got.Items)
+	}
 }
 
 func TestDocumentLinksEnforceAccessAndDocumentMembership(t *testing.T) {

@@ -487,7 +487,8 @@ type Repository interface {
 	NotificationPreferences(ctx context.Context, principal auth.Principal, documentID string) (NotificationPreferences, error)
 	SetNotificationPreferences(ctx context.Context, principal auth.Principal, documentID string, enabled bool) (NotificationPreferences, error)
 	RequestDocumentAccess(ctx context.Context, principal auth.Principal, documentID string) error
-	ListAccessRequests(ctx context.Context, documentID string) ([]AccessRequest, error)
+	ListAccessRequests(ctx context.Context, documentID string, requester *auth.Principal) ([]AccessRequest, error)
+	DeclineAccessRequest(ctx context.Context, documentID string, requester auth.Principal) error
 	ResolveBearerToken(ctx context.Context, tokenHash string) (auth.Principal, error)
 	ResolveUser(ctx context.Context, id string) (auth.Principal, error)
 	// UpsertGoogleUser returns *EmailIdentityConflictError when the email

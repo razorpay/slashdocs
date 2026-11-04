@@ -578,7 +578,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "The newest first. A grant on the document to the requester removes the request.",
+                "description": "The newest first. People who manage access see every request. Other callers see only their own request, so that they know it waits. A grant on the document to the requester removes the request.",
                 "tags": [
                     "documents"
                 ],
@@ -633,6 +633,55 @@ const docTemplate = `{
                                 "type": "string"
                             }
                         }
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}/access-requests/{requester_type}/{requester_id}": {
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Removes the request without a grant. The requester can ask again.",
+                "tags": [
+                    "documents"
+                ],
+                "summary": "Decline a request for access to a document",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "enum": [
+                            "user",
+                            "service_account"
+                        ],
+                        "type": "string",
+                        "description": "Requester type",
+                        "name": "requester_type",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Requester ID",
+                        "name": "requester_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
                     }
                 }
             }
