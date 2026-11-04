@@ -31,3 +31,14 @@ export function caretRange(d: Document, x: number, y: number): Range | null {
   range.setStart(position.offsetNode, position.offset);
   return range;
 }
+
+// reducedMotion tells whether the reader of document d asks for less motion.
+export function reducedMotion(d: Document | null | undefined): boolean {
+  return !!d?.defaultView?.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+// scrollBehavior gives a smooth scroll, or an instant one for a reader who
+// asks for less motion.
+export function scrollBehavior(d: Document | null | undefined): ScrollBehavior {
+  return reducedMotion(d) ? "instant" : "smooth";
+}

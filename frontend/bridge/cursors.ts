@@ -1,5 +1,5 @@
 import type { CursorPlace, CursorPoint, CursorSpot } from "../src/api.ts";
-import { isEditableTarget } from "./dom.ts";
+import { isEditableTarget, reducedMotion, scrollBehavior } from "./dom.ts";
 
 // Live cursors of other viewers. A cursor names the element under the pointer
 // and a place in that element's box, so it lands on the same content in every
@@ -640,7 +640,7 @@ export function createCursorLayer(
     // ends; a quick settle from slightly smaller hides the jump in size.
     // Keystrokes within a message change the text only.
     const chatting = cursor.label.style.whiteSpace === "normal";
-    if (!!message !== chatting && cursor.label.textContent && !reducedMotion())
+    if (!!message !== chatting && cursor.label.textContent && !reducedMotion(doc()))
       cursor.label.animate(
         [
           { transform: "scale(.94)", opacity: 0.6 },
@@ -715,17 +715,13 @@ export function createCursorLayer(
       scroller.scrollBy({
         left: dx,
         top: dy,
-        behavior: reducedMotion() ? "instant" : "smooth",
+        behavior: scrollBehavior(doc()),
       });
     followMoved = now;
     // A document that moves itself sends no scroll events, so redraw while
     // it settles.
     settleUntil = now + SETTLE;
     refresh();
-  }
-
-  function reducedMotion() {
-    return !!doc()?.defaultView?.matchMedia("(prefers-reduced-motion: reduce)").matches;
   }
 
   // scheduleFollow moves to the followed viewer's newest view once the last
@@ -766,7 +762,7 @@ export function createCursorLayer(
     }
     moveTo(target, performance.now());
     // One short pulse as the view lands says whose cursor this is.
-    if (cursor && !reducedMotion())
+    if (cursor && !reducedMotion(doc()))
       cursor.label.animate(
         [
           { transform: "scale(1)" },
