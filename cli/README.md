@@ -53,7 +53,7 @@ A book is a folder of chapters with an outline. Book mode must be enabled on the
 ```bash
 slashdocs books create fld_123                    # seed an outline from the folder's numbered titles
 slashdocs books show book_123                     # chapter number, title and document ID
-slashdocs books status book_123                   # missing, removed and unplaced chapters
+slashdocs books status book_123                   # each entry: number, title, document, version; then unplaced docs
 slashdocs books outline pull book_123 outline.json   # omit the file or use - for stdout
 # edit outline.json
 slashdocs books outline push book_123 outline.json --note "Add the testing chapter"

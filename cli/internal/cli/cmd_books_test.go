@@ -128,7 +128,7 @@ func TestBooksOutlinePullWritesFileOrStdout(t *testing.T) {
 	}
 }
 
-func TestBooksCreateShowStatusDelete(t *testing.T) {
+func TestBooksCreateShowDelete(t *testing.T) {
 	var seen []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen = append(seen, r.Method+" "+r.URL.Path)
@@ -138,8 +138,6 @@ func TestBooksCreateShowStatusDelete(t *testing.T) {
 			writeTestJSON(t, w, map[string]any{"book_id": "book_1", "outline_version_id": "bov_1"})
 		case "GET /v1/books/book_1":
 			writeTestJSON(t, w, map[string]any{"metadata": map[string]any{"title": "Guide", "numberOfChapters": 1}, "readingOrder": []any{map[string]any{"title": "Intro", "properties": map[string]any{"documentId": "doc_a", "number": 1}}}})
-		case "GET /v1/books/book_1/status":
-			writeTestJSON(t, w, map[string]any{"ok": true})
 		case "DELETE /v1/books/book_1":
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -155,13 +153,75 @@ func TestBooksCreateShowStatusDelete(t *testing.T) {
 	if err != nil || !strings.Contains(out, "Guide") || !strings.Contains(out, "doc_a") || !strings.Contains(out, "Intro") {
 		t.Fatalf("show = %q, %v", out, err)
 	}
-	if _, err := Execute([]string{"books", "status", "book_1"}); err != nil {
-		t.Fatal(err)
-	}
 	if out, err := Execute([]string{"books", "delete", "book_1"}); err != nil || !strings.Contains(out, "book_1") {
 		t.Fatalf("delete = %q, %v", out, err)
 	}
-	if len(seen) != 4 {
+	if len(seen) != 3 {
 		t.Fatalf("requests = %v", seen)
+	}
+}
+
+// bookStatusBody has the shape of the server's bookStatusResponse
+// (handlers_books.go bookStatus): a front-matter doc, a chapter, a placeholder,
+// a document the outline does not place and a removed id.
+const bookStatusBody = `{"entries":[` +
+	`{"kind":"front","number":0,"document_id":"doc_r","title":"Roadmap","current_version_id":"ver_r1","planned":false},` +
+	`{"kind":"chapter","number":1,"document_id":"doc_a","title":"Intro","current_version_id":"ver_a2","planned":false},` +
+	`{"kind":"planned","number":2,"title":"Pricing","planned":true}],` +
+	`"not_in_outline":[{"id":"doc_n","title":"Notes"}],"removed":["doc_gone"]}`
+
+func TestBooksStatusRendersChaptersAndLeftovers(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" || r.URL.Path != "/v1/books/book_1/status" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(bookStatusBody))
+	}))
+	defer srv.Close()
+	booksEnv(t, srv)
+	out, err := Execute([]string{"books", "status", "book_1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "map[") {
+		t.Fatalf("status printed a Go map:\n%s", out)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	want := [][]string{
+		{"Outline:"},
+		{"front", "Roadmap", "doc_r", "ver_r1"},
+		{"1", "Intro", "doc_a", "ver_a2"},
+		{"2", "Pricing", "planned"},
+		{"Not in outline:"},
+		{"doc_n", "Notes"},
+		{"Removed from the outline:"},
+		{"doc_gone"},
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("got %d lines, want %d:\n%s", len(lines), len(want), out)
+	}
+	for i, fields := range want {
+		if got := strings.Fields(lines[i]); strings.Join(got, " ") != strings.Join(fields, " ") {
+			t.Errorf("line %d = %q, want fields %v", i, lines[i], fields)
+		}
+	}
+
+	out, err = Execute([]string{"books", "status", "book_1", "--json"})
+	if err != nil || !strings.Contains(out, `"not_in_outline"`) || !strings.Contains(out, `"current_version_id": "ver_a2"`) {
+		t.Fatalf("--json status = %q, %v", out, err)
+	}
+}
+
+func TestBooksStatusOfAnEmptyBook(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"entries":[],"not_in_outline":[],"removed":[]}`))
+	}))
+	defer srv.Close()
+	booksEnv(t, srv)
+	out, err := Execute([]string{"books", "status", "book_1"})
+	if err != nil || strings.TrimSpace(out) != "The outline is empty." {
+		t.Fatalf("status = %q, %v", out, err)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 )
@@ -23,30 +24,95 @@ func booksCmd(g *globals, out io.Writer) *cobra.Command {
 	}}
 
 	show := &cobra.Command{Use: "show <book_id>", Short: "Show a book's chapters", Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		cl, err := client(g)
-		if err != nil {
-			return err
-		}
-		b, err := cl.do("GET", apiPath("/v1/books/%s", args[0]), nil, "")
-		if err != nil {
-			return err
-		}
-		if g.json {
-			return render(out, g, b)
-		}
-		if g.quiet {
-			return nil
-		}
-		return renderBookSummary(out, b)
+		return getBook(g, out, apiPath("/v1/books/%s", args[0]), renderBookSummary)
 	}}
 
-	status := simplePath(g, out, "status", "GET", "/v1/books/%s/status")
-	status.Short = "Show chapters that are missing, removed or not in the outline"
+	status := &cobra.Command{Use: "status <book_id>", Short: "Show each outline entry, placeholders and documents not in the outline", Long: "Show each outline entry with its number, title, document ID and current version,\nthen the placeholders, the folder documents the outline does not place,\nand any chapters removed from the outline.\nNeeds editor access to the book's folder.", Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		return getBook(g, out, apiPath("/v1/books/%s/status", args[0]), renderBookStatus)
+	}}
 
 	del := mutate(g, out, "delete <book_id>", "Delete a book's outline (the documents stay)", "DELETE", "/v1/books/%s", 1, func(a []string) string { return "Deleted book " + a[0] + "." })
 
 	c.AddCommand(create, show, status, del, booksOutlineCmd(g, out))
 	return c
+}
+
+// getBook GETs path and prints it with render, or raw with --json.
+func getBook(g *globals, out io.Writer, path string, render func(io.Writer, []byte) error) error {
+	cl, err := client(g)
+	if err != nil {
+		return err
+	}
+	b, err := cl.do("GET", path, nil, "")
+	if err != nil {
+		return err
+	}
+	return renderBook(out, g, b, render)
+}
+
+func renderBook(out io.Writer, g *globals, b []byte, renderText func(io.Writer, []byte) error) error {
+	if g.json {
+		return render(out, g, b)
+	}
+	if g.quiet {
+		return nil
+	}
+	return renderText(out, b)
+}
+
+// renderBookStatus prints GET /v1/books/{id}/status: one line per outline
+// entry (number or front/back, title, document and current version, or
+// "planned"), then the folder documents the outline leaves out and the
+// chapters removed from it.
+func renderBookStatus(out io.Writer, b []byte) error {
+	var m struct {
+		Entries []struct {
+			Kind             string `json:"kind"`
+			Number           int    `json:"number"`
+			DocumentID       string `json:"document_id"`
+			Title            string `json:"title"`
+			CurrentVersionID string `json:"current_version_id"`
+			Planned          bool   `json:"planned"`
+		} `json:"entries"`
+		NotInOutline []struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+		} `json:"not_in_outline"`
+		Removed []string `json:"removed"`
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return err
+	}
+	if len(m.Entries) == 0 && len(m.NotInOutline) == 0 && len(m.Removed) == 0 {
+		_, err := fmt.Fprintln(out, "The outline is empty.")
+		return err
+	}
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "Outline:")
+	for _, e := range m.Entries {
+		slot := fmt.Sprint(e.Number)
+		if e.Number == 0 {
+			slot = e.Kind
+		}
+		if e.Planned || e.DocumentID == "" {
+			fmt.Fprintf(tw, "  %s\t%s\tplanned\n", slot, e.Title)
+			continue
+		}
+		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", slot, e.Title, e.DocumentID, e.CurrentVersionID)
+	}
+	if len(m.NotInOutline) > 0 {
+		fmt.Fprintln(tw, "Not in outline:")
+		for _, d := range m.NotInOutline {
+			fmt.Fprintf(tw, "  %s\t%s\n", d.ID, d.Title)
+		}
+	}
+	if len(m.Removed) > 0 {
+		fmt.Fprintln(tw, "Removed from the outline:")
+		for _, id := range m.Removed {
+			fmt.Fprintf(tw, "  %s\n", id)
+		}
+	}
+	return tw.Flush()
 }
 
 func renderBookSummary(out io.Writer, b []byte) error {
