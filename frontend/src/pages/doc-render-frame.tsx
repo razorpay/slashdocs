@@ -117,6 +117,11 @@ export function RenderFrame() {
   // A position asked for before the frame is ready waits for it. It goes
   // before the hash navigation below, so an explicit link still wins.
   const pendingRestore = useRef<PositionTarget | null>(null);
+  const sendRestore = useCallback(
+    (target: PositionTarget) =>
+      postToFrame({ ...target, type: "slashdocs:navigate-position" }),
+    [postToFrame],
+  );
   const restorePosition = useCallback(
     (target: PositionTarget) => {
       if (!readyRef.current) {
@@ -124,9 +129,9 @@ export function RenderFrame() {
         return;
       }
       pendingRestore.current = null;
-      postToFrame({ ...target, type: "slashdocs:navigate-position" });
+      sendRestore(target);
     },
-    [postToFrame],
+    [sendRestore],
   );
   useEffect(() => {
     if (!registerPositionRestorer) return;
@@ -137,8 +142,8 @@ export function RenderFrame() {
     if (!ready || !pendingRestore.current) return;
     const target = pendingRestore.current;
     pendingRestore.current = null;
-    postToFrame({ ...target, type: "slashdocs:navigate-position" });
-  }, [ready, postToFrame]);
+    sendRestore(target);
+  }, [ready, sendRestore]);
 
   // Reader styles go to the frame only in book mode. Once sent, clearing
   // them sends an empty value so the frame drops the style.
@@ -175,15 +180,12 @@ export function RenderFrame() {
     });
   }, [ready, markKey, postToFrame]);
 
-  // An empty hash only cancels an earlier link navigation, so it is sent
-  // only once one was. Sending it otherwise would cancel a restore waiting
-  // for its heading.
-  const linkNavigated = useRef(false);
+  // An empty hash cancels an earlier link navigation; the bridge does not
+  // let it cancel a waiting position restore.
   useEffect(() => {
     if (!ready) return;
     if (location.hash.startsWith(TEXT_LINK_PREFIX)) {
       const anchor = parseTextLink(location.hash);
-      linkNavigated.current = true;
       if (anchor) postToFrame({ type: "slashdocs:navigate-text", anchor });
       else toast.error("This text link is invalid.");
       return;
@@ -194,8 +196,6 @@ export function RenderFrame() {
     } catch {
       /* Keep literal malformed fragments. */
     }
-    if (!heading && !linkNavigated.current) return;
-    linkNavigated.current = true;
     postToFrame({ type: "slashdocs:navigate-heading", id: heading });
   }, [location.hash, ready, postToFrame]);
 

@@ -225,11 +225,36 @@ describe("RenderFrame reader updates", () => {
 });
 
 describe("RenderFrame hash navigation", () => {
-  it("sends no empty heading navigation without a hash", async () => {
+  // As before book mode: an empty heading cancels any earlier link
+  // navigation in the frame.
+  it("sends an empty heading navigation on ready without a hash", async () => {
     setup();
-    const { send, types } = await frame("Rendered document");
+    const { posted, send } = await frame("Rendered document");
     send({ type: "slashdocs:ready" });
-    expect(types()).not.toContain("slashdocs:navigate-heading");
+    expect(posted.mock.calls.map(([message]) => message)).toContainEqual({
+      type: "slashdocs:navigate-heading",
+      id: "",
+    });
+  });
+
+  // The bridge ignores an empty heading for a waiting restore, and the
+  // restore goes first so a real link still wins.
+  it("posts a waiting restore before the hash navigation", async () => {
+    let restore: ((target: { progression?: number }) => void) | null = null;
+    setup({
+      reader: {},
+      registerPositionRestorer: (fn) => {
+        restore = fn;
+      },
+    });
+    const { send, types } = await frame("Rendered document");
+    act(() => restore!({ progression: 0.4 }));
+    send({ type: "slashdocs:ready" });
+    const order = types().filter((t) => t.startsWith("slashdocs:navigate-"));
+    expect(order).toEqual([
+      "slashdocs:navigate-position",
+      "slashdocs:navigate-heading",
+    ]);
   });
 
   it("still navigates to a heading in the hash", async () => {
