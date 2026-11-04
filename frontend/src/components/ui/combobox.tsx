@@ -119,7 +119,7 @@ export function Combobox<T extends ComboboxOption>({
               "flex items-center gap-2 px-3 py-2 text-sm",
               option.disabledNote
                 ? "cursor-default text-[var(--color-fg-muted)]"
-                : "cursor-pointer hover:bg-[var(--color-surface-muted)] aria-selected:bg-[var(--color-surface-muted)]",
+                : "cursor-pointer hover:bg-[var(--color-highlight)] aria-selected:bg-[var(--color-highlight)]",
             )}
           >
             {option.icon}

@@ -43,7 +43,7 @@ export function DropdownItem({
   return (
     <DM.Item
       className={cn(
-        "flex min-h-10 cursor-pointer select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-[background-color,color] duration-150 ease-out data-[highlighted]:bg-[var(--color-surface-muted)]",
+        "flex min-h-10 cursor-pointer select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-[background-color,color] duration-150 ease-out data-[highlighted]:bg-[var(--color-highlight)]",
         className,
       )}
       {...p}
