@@ -517,6 +517,31 @@ func (q *Queries) SetCurrentOutline(ctx context.Context, arg SetCurrentOutlinePa
 	return err
 }
 
+const unindexedVersions = `-- name: UnindexedVersions :many
+SELECT id FROM versions WHERE id = ANY($1::text[]) AND NOT sections_indexed
+`
+
+// Plain read, no lock: lists which of the versions still need indexing.
+func (q *Queries) UnindexedVersions(ctx context.Context, versionIds []string) ([]string, error) {
+	rows, err := q.db.Query(ctx, unindexedVersions, versionIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateChapterProgress = `-- name: UpdateChapterProgress :exec
 UPDATE chapter_reads SET furthest_progression=GREATEST(furthest_progression, $1::real),
   reached_end_at=CASE WHEN $2::bool AND reached_end_at IS NULL THEN now() ELSE reached_end_at END

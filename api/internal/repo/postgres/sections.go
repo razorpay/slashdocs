@@ -205,6 +205,17 @@ func (s *Store) ListVersionSections(ctx context.Context, versionID string) ([]re
 	return out, nil
 }
 
+func (s *Store) UnindexedVersions(ctx context.Context, versionIDs []string) ([]string, error) {
+	ids, err := s.q.UnindexedVersions(ctx, versionIDs)
+	if err != nil {
+		return nil, err
+	}
+	if ids == nil {
+		ids = []string{}
+	}
+	return ids, nil
+}
+
 func (s *Store) VersionWords(ctx context.Context, versionIDs []string) (map[string]int, error) {
 	rows, err := s.q.VersionWords(ctx, versionIDs)
 	if err != nil {

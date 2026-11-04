@@ -1,10 +1,12 @@
 package server_test
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"testing"
 
+	"github.com/razorpay/slashdocs/api/internal/repo"
 	"github.com/razorpay/slashdocs/api/internal/server"
 )
 
@@ -26,7 +28,7 @@ func newManifestFixture(t *testing.T) manifestFixture {
 		bkMoveIn(t, e, f.folderID, id, f.owner)
 		return id
 	}
-	f.a, f.b, f.c = mk("01 · A"), mk("02 · B"), mk("03 · C")
+	f.a, f.b, f.c = mk("01 · A"), mk("02 · Zebra"), mk("03 · C")
 	rr := do(t, e.h, http.MethodPost, "/v1/folders/"+f.folderID+"/book", `{}`, bkHeaders(f.owner))
 	assertStatus(t, rr, http.StatusCreated)
 	f.bookID = bkString(t, rr.Body.Bytes(), "book_id")
@@ -62,8 +64,19 @@ func TestManifestHidesChaptersReaderCannotOpen(t *testing.T) {
 	if !strings.Contains(bkString(t, body, "readingOrder.0.href"), "/c/doc_") {
 		t.Fatalf("href is not canonical: %s", body)
 	}
-	if strings.Contains(string(body), f.b) || strings.Contains(string(body), "02 · B") {
+	if strings.Contains(string(body), f.b) || strings.Contains(string(body), "Zebra") {
 		t.Fatalf("body leaks the hidden chapter: %s", body)
+	}
+	for path, want := range map[string]float64{
+		"readingOrder.0.properties.number": 1, "readingOrder.1.properties.number": 3,
+		"toc.0.children.0.properties.number": 1, "toc.0.children.1.properties.number": 3,
+	} {
+		if got := bkPath(t, body, path); got != want {
+			t.Fatalf("%s = %v, want %v: %s", path, got, want, body)
+		}
+	}
+	if bkLen(t, body, "toc.0.children") != 2 {
+		t.Fatalf("toc should hold only the visible chapters: %s", body)
 	}
 	if n := bkPath(t, body, "metadata.numberOfChapters"); n != float64(3) {
 		t.Fatalf("numberOfChapters = %v, want 3", n)
@@ -80,6 +93,11 @@ func TestManifestHidesChaptersReaderCannotOpen(t *testing.T) {
 	assertStatus(t, rr, http.StatusNotFound)
 	rr = do(t, f.e.h, http.MethodGet, "/v1/books/"+f.bookID+"/llms.txt", "", stranger)
 	assertStatus(t, rr, http.StatusNotFound)
+	rr = do(t, f.e.h, http.MethodGet, "/v1/books/"+f.bookID+"/llms.txt", "", bkHeaders(viewer))
+	assertStatus(t, rr, http.StatusOK)
+	if strings.Contains(rr.Body.String(), f.b) || strings.Contains(rr.Body.String(), "Zebra") {
+		t.Fatalf("llms.txt leaks the hidden chapter:\n%s", rr.Body.String())
+	}
 
 	// The owner sees all three and can edit.
 	rr = do(t, f.e.h, http.MethodGet, "/v1/books/"+f.bookID, "", bkHeaders(f.owner))
@@ -139,6 +157,9 @@ func TestLLMsTxtListsVisibleChapters(t *testing.T) {
 		t.Fatalf("Content-Type = %q, want text/plain", ct)
 	}
 	text := rr.Body.String()
+	if !strings.HasPrefix(text, "# Guide\n\n- [1 · A]") || strings.Contains(text, ">") {
+		t.Fatalf("llms.txt should be a title, a blank line, then chapters only:\n%s", text)
+	}
 	for _, want := range []string{
 		"# Guide\n",
 		"- [1 · A](/app/b/" + f.bookID + "/c/" + f.a + ")",
@@ -148,7 +169,7 @@ func TestLLMsTxtListsVisibleChapters(t *testing.T) {
 			t.Fatalf("llms.txt missing %q:\n%s", want, text)
 		}
 	}
-	if strings.Contains(text, f.b) || strings.Contains(text, "B]") {
+	if strings.Contains(text, f.b) || strings.Contains(text, "Zebra") {
 		t.Fatalf("llms.txt leaks the hidden chapter:\n%s", text)
 	}
 }
@@ -173,5 +194,80 @@ func TestManifestJSONShape(t *testing.T) {
 	}
 	if got := bkString(t, body, "@context"); got != "https://readium.org/webpub-manifest/context.jsonld" {
 		t.Fatalf("@context = %q", got)
+	}
+}
+
+func TestManifestFolderViewerSeesBookWithOnlyPlannedEntries(t *testing.T) {
+	e := newConfiguredTestEnv(t, server.Config{Environment: "test", BooksEnabled: true})
+	owner := principalHeader(fixtureOwner)
+	folderID := createFolder(t, e, `{"title":"Plans"}`, owner)
+	rr := do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/book", `{}`, bkHeaders(owner))
+	assertStatus(t, rr, http.StatusCreated)
+	bookID := bkString(t, rr.Body.Bytes(), "book_id")
+	rr = do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/grants",
+		`{"address":"`+fixtureViewer.Email+`","role":"viewer"}`, bkHeaders(owner))
+	assertStatus(t, rr, http.StatusCreated)
+	rr = do(t, e.h, http.MethodGet, "/v1/books/"+bookID+"/outline", "", bkHeaders(owner))
+	base := bkString(t, rr.Body.Bytes(), "version_id")
+	rr = do(t, e.h, http.MethodPut, "/v1/books/"+bookID+"/outline",
+		`{"base_version_id":"`+base+`","outline":{"title":"Plans","front":[],"parts":[{"title":"","chapters":[{"planned":"Soon"}]}],"back":[]}}`, bkHeaders(owner))
+	assertStatus(t, rr, http.StatusOK)
+
+	for _, path := range []string{"", "/llms.txt"} {
+		rr = do(t, e.h, http.MethodGet, "/v1/books/"+bookID+path, "", bkHeaders(principalHeader(fixtureViewer)))
+		assertStatus(t, rr, http.StatusOK)
+	}
+	rr = do(t, e.h, http.MethodGet, "/v1/books/"+bookID, "", bkHeaders(principalHeader(fixtureViewer)))
+	if bkPath(t, rr.Body.Bytes(), "metadata.numberOfChapters") != float64(1) || bkLen(t, rr.Body.Bytes(), "readingOrder") != 0 {
+		t.Fatalf("unexpected manifest: %s", rr.Body.Bytes())
+	}
+}
+
+// ensureCounter counts EnsureVersionSections calls.
+type ensureCounter struct {
+	repo.Repository
+	calls []string
+}
+
+func (r *ensureCounter) EnsureVersionSections(ctx context.Context, id string) error {
+	r.calls = append(r.calls, id)
+	return r.Repository.EnsureVersionSections(ctx, id)
+}
+
+func TestManifestOnlyIndexesUnindexedVersions(t *testing.T) {
+	f := newManifestFixture(t)
+	counter := &ensureCounter{Repository: f.e.store}
+	h := server.New(server.Config{Environment: "test", BooksEnabled: true},
+		server.WithRepository(counter), server.WithAuthenticator(testPrincipalAuth{})).Handler()
+
+	// Everything is indexed already: the manifest must not call Ensure.
+	if _, err := f.e.store.IndexVersionSections(context.Background()); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+	rr := do(t, h, http.MethodGet, "/v1/books/"+f.bookID, "", bkHeaders(f.owner))
+	assertStatus(t, rr, http.StatusOK)
+	if len(counter.calls) != 0 {
+		t.Fatalf("Ensure called for indexed versions: %v", counter.calls)
+	}
+
+	// Un-index one chapter: only that version is indexed again.
+	doc, err := f.e.store.GetDocument(context.Background(), f.c)
+	if err != nil {
+		t.Fatalf("get document: %v", err)
+	}
+	pool := f.e.store.Pool()
+	if _, err := pool.Exec(context.Background(), `DELETE FROM version_sections WHERE version_id = $1`, doc.CurrentVersionID); err != nil {
+		t.Fatalf("delete sections: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `UPDATE versions SET sections_indexed = false WHERE id = $1`, doc.CurrentVersionID); err != nil {
+		t.Fatalf("unindex: %v", err)
+	}
+	rr = do(t, h, http.MethodGet, "/v1/books/"+f.bookID, "", bkHeaders(f.owner))
+	assertStatus(t, rr, http.StatusOK)
+	if len(counter.calls) != 1 || counter.calls[0] != doc.CurrentVersionID {
+		t.Fatalf("Ensure calls = %v, want only %s", counter.calls, doc.CurrentVersionID)
+	}
+	if got := bkPath(t, rr.Body.Bytes(), "readingOrder.2.properties.wordCount"); got == nil || got == float64(0) {
+		t.Fatalf("re-indexed chapter has no word count: %s", rr.Body.Bytes())
 	}
 }

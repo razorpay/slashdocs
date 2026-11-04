@@ -130,23 +130,30 @@ func (h handlers) bookReaderView(c *gin.Context) (view bookView, ok bool) {
 			}
 		}
 	}
-	if len(view.Visible) == 0 {
+	if len(view.Visible) == 0 && !folderViewer {
 		notFound(c)
 		return bookView{}, false
 	}
 	log := requestLogger(c)
-	for _, v := range versions {
+	if len(versions) == 0 {
+		return view, true
+	}
+	stale, err := r.UnindexedVersions(ctx, versions)
+	if err != nil {
+		// Fall back to asking Ensure about every version.
+		log.WarnContext(ctx, "check indexed chapters failed", slog.Any("error", err))
+		stale = versions
+	}
+	for _, v := range stale {
 		if err := r.EnsureVersionSections(ctx, v); err != nil {
 			log.WarnContext(ctx, "index chapter sections failed", slog.String("version_id", v), slog.Any("error", err))
 		}
 	}
-	if len(versions) > 0 {
-		words, err := r.VersionWords(ctx, versions)
-		if err != nil {
-			log.WarnContext(ctx, "chapter word counts failed", slog.Any("error", err))
-		} else {
-			view.Words = words
-		}
+	words, err := r.VersionWords(ctx, versions)
+	if err != nil {
+		log.WarnContext(ctx, "chapter word counts failed", slog.Any("error", err))
+	} else {
+		view.Words = words
 	}
 	return view, true
 }
@@ -264,21 +271,19 @@ func (h handlers) getBookLLMs(c *gin.Context) {
 		return
 	}
 	var sb strings.Builder
-	sb.WriteString("# " + view.Book.Outline.Title + "\n\n")
-	if s := view.Book.Outline.Subtitle; s != "" {
-		sb.WriteString("> " + s + "\n\n")
-	}
+	sb.WriteString("# " + oneLine(view.Book.Outline.Title) + "\n\n")
 	for _, e := range view.Entries {
-		if e.Kind == books.KindPlanned || !view.Visible[e.Doc] {
+		if e.Kind != books.KindChapter || !view.Visible[e.Doc] {
 			continue
 		}
 		l := view.link(e)
-		label := l.Title
-		if e.Kind == books.KindChapter {
-			label = fmt.Sprintf("%d · %s", e.Number, l.Title)
-		}
-		sb.WriteString("- [" + label + "](" + l.Href + ")\n")
+		sb.WriteString(fmt.Sprintf("- [%d · %s](%s)\n", e.Number, oneLine(l.Title), l.Href))
 	}
 	c.Header("Cache-Control", "private, no-cache")
 	c.Data(http.StatusOK, "text/plain; charset=utf-8", []byte(sb.String()))
+}
+
+// oneLine folds line breaks into spaces so a title cannot start a new line.
+func oneLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }

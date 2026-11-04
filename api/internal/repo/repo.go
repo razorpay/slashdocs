@@ -473,6 +473,9 @@ type Repository interface {
 	// EnsureVersionSections indexes the version's sections now when it is
 	// not indexed yet, and does nothing otherwise.
 	EnsureVersionSections(ctx context.Context, versionID string) error
+	// UnindexedVersions returns those of versionIDs that EnsureVersionSections
+	// would still have to index. It reads without taking locks.
+	UnindexedVersions(ctx context.Context, versionIDs []string) ([]string, error)
 	// VersionWords returns the indexed word count of each version.
 	VersionWords(ctx context.Context, versionIDs []string) (map[string]int, error)
 	// ListVersionsAfter lists the document's versions newer than

@@ -40,6 +40,9 @@ ORDER BY v.created_at LIMIT @row_limit FOR NO KEY UPDATE OF v SKIP LOCKED;
 -- Locks the version so that concurrent on-demand indexing inserts its sections
 -- once, without blocking foreign-key checks such as CreateVersion's parent.
 SELECT sections_indexed, html_blob_key FROM versions WHERE id = @id FOR NO KEY UPDATE;
+-- name: UnindexedVersions :many
+-- Plain read, no lock: lists which of the versions still need indexing.
+SELECT id FROM versions WHERE id = ANY(@version_ids::text[]) AND NOT sections_indexed;
 -- name: DocumentInBook :one
 SELECT EXISTS(SELECT 1 FROM documents d JOIN books b ON b.folder_id = d.parent_folder_id WHERE d.id = @document_id);
 -- name: VersionWords :many
