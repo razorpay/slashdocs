@@ -34,6 +34,18 @@ definitions:
       planned:
         type: string
     type: object
+  books.Kind:
+    enum:
+    - front
+    - chapter
+    - planned
+    - back
+    type: string
+    x-enum-varnames:
+    - KindFront
+    - KindChapter
+    - KindPlanned
+    - KindBack
   books.Outline:
     properties:
       back:
@@ -239,6 +251,21 @@ definitions:
         items:
           type: string
         type: array
+    type: object
+  server.chapterProps:
+    properties:
+      documentId:
+        type: string
+      kind:
+        $ref: '#/definitions/books.Kind'
+      number:
+        type: integer
+      part:
+        type: integer
+      versionId:
+        type: string
+      wordCount:
+        type: integer
     type: object
   server.cliExchangePrincipal:
     properties:
@@ -679,6 +706,64 @@ definitions:
           $ref: '#/definitions/server.outlineVersionResponse'
         type: array
     type: object
+  server.manifestLink:
+    properties:
+      href:
+        type: string
+      properties:
+        $ref: '#/definitions/server.chapterProps'
+      rel:
+        type: string
+      title:
+        type: string
+      type:
+        type: string
+    type: object
+  server.manifestMetadata:
+    properties:
+      canEdit:
+        type: boolean
+      folderId:
+        type: string
+      identifier:
+        type: string
+      numberOfChapters:
+        type: integer
+      outlineVersionId:
+        type: string
+      subtitle:
+        type: string
+      title:
+        type: string
+    type: object
+  server.manifestResponse:
+    properties:
+      '@context':
+        type: string
+      links:
+        items:
+          $ref: '#/definitions/server.manifestLink'
+        type: array
+      metadata:
+        $ref: '#/definitions/server.manifestMetadata'
+      readingOrder:
+        items:
+          $ref: '#/definitions/server.manifestLink'
+        type: array
+      toc:
+        items:
+          $ref: '#/definitions/server.manifestTOC'
+        type: array
+    type: object
+  server.manifestTOC:
+    properties:
+      children:
+        items:
+          $ref: '#/definitions/server.manifestLink'
+        type: array
+      title:
+        type: string
+    type: object
   server.meResponse:
     properties:
       principal:
@@ -1054,6 +1139,59 @@ paths:
       - bearerAuth: []
       - cookieAuth: []
       summary: Delete a book
+      tags:
+      - books
+    get:
+      description: A Readium-style manifest of the chapters this caller can open.
+        Numbering is the same for every reader. Answers 404 when the caller can open
+        no chapter.
+      parameters:
+      - description: Book ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/server.manifestResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Get a book's manifest
+      tags:
+      - books
+  /v1/books/{id}/llms.txt:
+    get:
+      description: A plain-text index of the chapters this caller can open.
+      parameters:
+      - description: Book ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: string
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Get a book's llms.txt
       tags:
       - books
   /v1/books/{id}/outline:

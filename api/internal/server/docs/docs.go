@@ -343,6 +343,47 @@ const docTemplate = `{
             }
         },
         "/v1/books/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "A Readium-style manifest of the chapters this caller can open. Numbering is the same for every reader. Answers 404 when the caller can open no chapter.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "books"
+                ],
+                "summary": "Get a book's manifest",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Book ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server.manifestResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    }
+                }
+            },
             "delete": {
                 "security": [
                     {
@@ -369,6 +410,49 @@ const docTemplate = `{
                 "responses": {
                     "204": {
                         "description": "No Content"
+                    }
+                }
+            }
+        },
+        "/v1/books/{id}/llms.txt": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "A plain-text index of the chapters this caller can open.",
+                "produces": [
+                    "text/plain"
+                ],
+                "tags": [
+                    "books"
+                ],
+                "summary": "Get a book's llms.txt",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Book ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
                     }
                 }
             }
@@ -2221,6 +2305,21 @@ const docTemplate = `{
                 }
             }
         },
+        "books.Kind": {
+            "type": "string",
+            "enum": [
+                "front",
+                "chapter",
+                "planned",
+                "back"
+            ],
+            "x-enum-varnames": [
+                "KindFront",
+                "KindChapter",
+                "KindPlanned",
+                "KindBack"
+            ]
+        },
         "books.Outline": {
             "type": "object",
             "properties": {
@@ -2527,6 +2626,29 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "server.chapterProps": {
+            "type": "object",
+            "properties": {
+                "documentId": {
+                    "type": "string"
+                },
+                "kind": {
+                    "$ref": "#/definitions/books.Kind"
+                },
+                "number": {
+                    "type": "integer"
+                },
+                "part": {
+                    "type": "integer"
+                },
+                "versionId": {
+                    "type": "string"
+                },
+                "wordCount": {
+                    "type": "integer"
                 }
             }
         },
@@ -3205,6 +3327,95 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/server.outlineVersionResponse"
                     }
+                }
+            }
+        },
+        "server.manifestLink": {
+            "type": "object",
+            "properties": {
+                "href": {
+                    "type": "string"
+                },
+                "properties": {
+                    "$ref": "#/definitions/server.chapterProps"
+                },
+                "rel": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "server.manifestMetadata": {
+            "type": "object",
+            "properties": {
+                "canEdit": {
+                    "type": "boolean"
+                },
+                "folderId": {
+                    "type": "string"
+                },
+                "identifier": {
+                    "type": "string"
+                },
+                "numberOfChapters": {
+                    "type": "integer"
+                },
+                "outlineVersionId": {
+                    "type": "string"
+                },
+                "subtitle": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "server.manifestResponse": {
+            "type": "object",
+            "properties": {
+                "@context": {
+                    "type": "string"
+                },
+                "links": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/server.manifestLink"
+                    }
+                },
+                "metadata": {
+                    "$ref": "#/definitions/server.manifestMetadata"
+                },
+                "readingOrder": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/server.manifestLink"
+                    }
+                },
+                "toc": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/server.manifestTOC"
+                    }
+                }
+            }
+        },
+        "server.manifestTOC": {
+            "type": "object",
+            "properties": {
+                "children": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/server.manifestLink"
+                    }
+                },
+                "title": {
+                    "type": "string"
                 }
             }
         },

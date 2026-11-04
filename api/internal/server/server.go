@@ -348,6 +348,8 @@ func (s *Server) routes(deps dependencies) {
 	authed.DELETE("/folders/:id/documents/:doc_id", h.moveDocToRoot)
 	authed.POST("/folders/:id/book", h.createBook)
 	authed.GET("/folders/:id/book", h.folderBook)
+	authed.GET("/books/:id", h.getManifest)
+	authed.GET("/books/:id/llms.txt", h.getBookLLMs)
 	authed.DELETE("/books/:id", h.deleteBook)
 	authed.GET("/books/:id/outline", h.getOutline)
 	authed.PUT("/books/:id/outline", h.putOutline)

@@ -119,6 +119,8 @@ func TestEveryBookRouteHonoursTheFlag(t *testing.T) {
 		{http.MethodPut, "/v1/books/book_x/outline", `{"base_version_id":"x","outline":{"title":"T"}}`},
 		{http.MethodGet, "/v1/books/book_x/outline/versions", ""},
 		{http.MethodGet, "/v1/books/book_x/status", ""},
+		{http.MethodGet, "/v1/books/book_x", ""},
+		{http.MethodGet, "/v1/books/book_x/llms.txt", ""},
 	}
 	for _, r := range routes {
 		t.Run(r.method+" "+r.path, func(t *testing.T) {
