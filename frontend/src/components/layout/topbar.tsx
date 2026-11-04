@@ -24,7 +24,9 @@ import {
 import { Button } from "@/components/ui/button";
 import { Avatar } from "@/components/ui/misc";
 import { useSignOut } from "@/lib/auth-state";
+import { useMe } from "@/lib/hooks";
 import { useTheme } from "@/lib/theme";
+import { principalColor } from "@/lib/principals";
 import type { Principal } from "@/api";
 
 // The app bar sits on the page, as the landing header does, so the
@@ -73,16 +75,23 @@ export function AccountMenu({ user }: { user: Principal }) {
   const signOut = useSignOut();
   const { theme, setTheme } = useTheme();
   const { reset } = useOnboarding();
+  // The profile user has no principal type, so the color comes from the
+  // principal, as on pins and comments.
+  const principal = useMe().data?.principal;
   return (
     <Dropdown>
       <DropdownTrigger asChild>
         <Button
           variant="ghost"
           size="icon"
-          className="min-h-10 min-w-10 rounded-full transition-transform duration-150 ease-out active:scale-[0.96] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+          className="min-h-10 min-w-10 rounded-full transition-transform duration-150 ease-out active:scale-[0.96]"
           aria-label="Account menu"
         >
-          <Avatar src={user.picture_url} name={user.name || user.email || user.id} />
+          <Avatar
+            src={user.picture_url}
+            name={user.name || user.email || user.id}
+            color={principal && principalColor(principal)}
+          />
         </Button>
       </DropdownTrigger>
       <DropdownContent>

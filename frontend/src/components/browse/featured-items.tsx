@@ -50,7 +50,7 @@ function FeaturedRow({ section }: { section: FeaturedSection }) {
           aria-expanded={!collapsed}
           aria-controls={contentID}
           onClick={toggle}
-          className="-ml-1 flex cursor-pointer items-center gap-1 rounded-sm py-1 pl-1 pr-1.5 hover:bg-[var(--color-surface-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+          className="-ml-1 flex cursor-pointer items-center gap-1 rounded-sm py-1 pl-1 pr-1.5 hover:bg-[var(--color-surface-muted)]"
         >
           <ChevronRight
             aria-hidden

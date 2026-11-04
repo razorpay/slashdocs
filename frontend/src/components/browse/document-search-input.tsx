@@ -11,6 +11,7 @@ import {
 import { api } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Avatar } from "@/components/ui/misc";
+import { principalColor } from "@/lib/principals";
 import { queryKeys } from "@/lib/queryKeys";
 import {
   DATE_KEYS,
@@ -69,7 +70,12 @@ export function DocumentSearchInput({
       label: person.name || person.email || person.id,
       detail: person.name ? person.email : undefined,
       icon: (
-        <Avatar src={person.picture_url} name={person.name || person.email} size={20} />
+        <Avatar
+          src={person.picture_url}
+          name={person.name || person.email}
+          size={20}
+          color={principalColor(person)}
+        />
       ),
       replacement: `from:${person.email || person.id}`,
     })),
