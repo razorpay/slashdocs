@@ -298,3 +298,29 @@ test("saves only the editor's words while a script changes other text", async ({
     page.getByText("Only words can change here.", { exact: false }),
   ).toBeHidden();
 });
+
+test("keeps the highlights of other paragraphs while the editor types", async ({
+  page,
+  slashdocs,
+}) => {
+  const title = uniqueName("Text editing highlights");
+  const document = await slashdocs.createDocument(title, documentHTML());
+  await slashdocs.createComment(document.id, "Too short", { quote: "TTL of 10" });
+  await slashdocs.createComment(document.id, "Why twice?", { quote: "retry twice" });
+
+  await openEditable(page, document.id);
+  const marks = renderedDocument(page).locator("mark.slashdocs-mark");
+  await expect(marks).toHaveCount(2);
+  const saved = nextEdit(page, document.id);
+  await selectWord(page, "#ttl", "Redis");
+  await page.keyboard.type("Valkey");
+  // Only the paragraph that takes the typing loses its highlight, until the
+  // save.
+  expect(
+    await renderedDocument(page).locator("#retry mark.slashdocs-mark").count(),
+  ).toBe(1);
+  expect((await saved).request().postDataJSON()).toEqual({
+    edits: [{ old_string: "Redis", new_string: "Valkey" }],
+  });
+  await expect(marks).toHaveCount(2);
+});

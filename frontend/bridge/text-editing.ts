@@ -32,32 +32,35 @@ const NO_INPUT_KEY =
 
 const STYLE_ID = "slashdocs-text-editing-style";
 
+type TextEditingCallbacks = {
+  // The editor is about to change a block: anything that splits its text
+  // nodes, such as comment highlights, must come off first. It tells
+  // whether it took anything off.
+  beforeTouch(block: Element): boolean;
+  // The number of nodes whose text differs from the start of the burst.
+  onDirty(count: number): void;
+  // A structural change was refused.
+  onRefused(): void;
+};
+
 export function startTextEditing(
   d: Document,
-  callbacks: {
-    // A burst starts: anything that splits text nodes, such as comment
-    // highlights, must come off first.
-    beforeBurst(): void;
-    // The number of nodes whose text differs from the start of the burst.
-    onDirty(count: number): void;
-    // A structural change was refused.
-    onRefused(): void;
-  },
+  callbacks: TextEditingCallbacks,
 ): TextEditor | null {
   const body = d.body;
   if (!body) return null;
   let burst: Burst | null = null;
-  const begin = () => {
-    if (burst) return;
-    callbacks.beforeBurst();
-    burst = trackBurst(d, body, callbacks.onDirty);
-  };
 
   // touch marks the block of node, or else of the caret, as one the editor
   // changes, when the editor and not a script made the input.
   const touch = (event: Event, node?: Node | null) => {
     node ??= d.getSelection()?.focusNode;
     if (event.isTrusted && node) burst?.touch(node);
+  };
+  // begin starts a burst, if none runs, at the caret's block.
+  const begin = (event: Event) => {
+    burst ??= trackBurst(d, body, callbacks);
+    touch(event);
   };
 
   // A burst starts before the browser changes anything: on a key that can
@@ -66,7 +69,7 @@ export function startTextEditing(
   const onKeyDown = (event: KeyboardEvent) => {
     const shortcut = event.metaKey || event.ctrlKey;
     if (shortcut ? /^[vxyz]$/i.test(event.key) : !NO_INPUT_KEY.test(event.key)) {
-      begin();
+      begin(event);
     }
   };
   const onBeforeInput = (event: InputEvent) => {
@@ -75,7 +78,7 @@ export function startTextEditing(
       callbacks.onRefused();
       return;
     }
-    begin();
+    begin(event);
     const target = event.inputType.startsWith("history") ? null : targetRange(d, event);
     touch(event, target?.startContainer);
     if (target) {
@@ -111,14 +114,13 @@ export function startTextEditing(
   };
   // Undo and redo change text where they put the caret.
   const onInput = (event: Event) => touch(event);
-  const onPasteOrCut = () => begin();
   const onDrop = (event: DragEvent) => {
     event.preventDefault();
     callbacks.onRefused();
   };
   d.addEventListener("keydown", onKeyDown, true);
-  d.addEventListener("paste", onPasteOrCut, true);
-  d.addEventListener("cut", onPasteOrCut, true);
+  d.addEventListener("paste", begin, true);
+  d.addEventListener("cut", begin, true);
   d.addEventListener("compositionstart", begin, true);
   d.addEventListener("beforeinput", onBeforeInput, true);
   d.addEventListener("input", onInput, true);
@@ -153,8 +155,8 @@ export function startTextEditing(
     stop() {
       take();
       d.removeEventListener("keydown", onKeyDown, true);
-      d.removeEventListener("paste", onPasteOrCut, true);
-      d.removeEventListener("cut", onPasteOrCut, true);
+      d.removeEventListener("paste", begin, true);
+      d.removeEventListener("cut", begin, true);
       d.removeEventListener("compositionstart", begin, true);
       d.removeEventListener("beforeinput", onBeforeInput, true);
       d.removeEventListener("input", onInput, true);
@@ -176,27 +178,29 @@ type Burst = { diff(): TextChanges; touch(node: Node): void; stop(): void };
 function trackBurst(
   d: Document,
   body: HTMLElement,
-  onDirty: (count: number) => void,
+  { beforeTouch, onDirty }: TextEditingCallbacks,
 ): Burst {
-  // Removing highlights leaves the text they split in pieces; join them so
-  // each node is one run of the source again.
-  body.normalize();
   const originals = new Map<Text, string>();
-  const walker = d.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
-    acceptNode: (node) =>
-      node.parentElement?.closest(NOT_TEXT)
-        ? NodeFilter.FILTER_REJECT
-        : NodeFilter.FILTER_ACCEPT,
-  });
   const parents = new Map<Text, Node | null>();
-  for (
-    let node = walker.nextNode() as Text | null;
-    node;
-    node = walker.nextNode() as Text | null
-  ) {
-    originals.set(node, node.data);
-    parents.set(node, node.parentNode);
-  }
+  const record = (root: Node) => {
+    const walker = d.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: (node) =>
+        node.parentElement?.closest(NOT_TEXT)
+          ? NodeFilter.FILTER_REJECT
+          : NodeFilter.FILTER_ACCEPT,
+    });
+    for (
+      let node = walker.nextNode() as Text | null;
+      node;
+      node = walker.nextNode() as Text | null
+    ) {
+      originals.set(node, node.data);
+      parents.set(node, node.parentNode);
+    }
+  };
+  // Join text split in pieces, so that each node is one run of the source.
+  body.normalize();
+  record(body);
 
   // The blocks the editor touched, and the source nodes in them when they
   // were first touched, before the browser changed them.
@@ -205,6 +209,8 @@ function trackBurst(
   const touch = (node: Node) => {
     const block = blockOf(node);
     if (!block || blocks.has(block)) return;
+    // With the highlights off, the text they split is whole again.
+    if (beforeTouch(block)) record(block);
     blocks.add(block);
     const nodes = d.createTreeWalker(block, NodeFilter.SHOW_TEXT);
     for (let n = nodes.nextNode(); n; n = nodes.nextNode()) {

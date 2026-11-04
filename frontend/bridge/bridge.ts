@@ -511,9 +511,10 @@ type Theme = "dark" | "light";
 
   let printPreparing = false;
   let textEditor: TextEditor | null = null;
-  // Highlights split the text nodes the editor tracks, so they come off when
-  // a burst of typing starts and go back when the app takes the burst. Paints
-  // and repairs wait meanwhile, and the comment rail keeps its positions.
+  // Highlights split the text nodes the editor tracks, so they come off each
+  // block that a burst of typing reaches, and go back when the app takes the
+  // burst. The others stay. Paints and repairs wait meanwhile, and the
+  // comment rail keeps its positions.
   let highlightsHeld = false;
 
   // Text editing makes the words of the document editable.
@@ -527,7 +528,7 @@ type Theme = "dark" | "light";
     }
     if (textEditor || !d) return;
     textEditor = startTextEditing(d, {
-      beforeBurst: holdHighlights,
+      beforeTouch: holdHighlights,
       onDirty: (count) =>
         parent.postMessage({ type: "slashdocs:text-dirty", count }, targetOrigin()),
       onRefused: () =>
@@ -535,22 +536,24 @@ type Theme = "dark" | "light";
     });
   }
 
-  function holdHighlights(): void {
+  function holdHighlights(block: Element): boolean {
     const d = doc();
-    if (highlightsHeld || !d || !d.body) return;
+    if (!d || !d.body) return false;
     highlightsHeld = true;
+    if (!block.querySelector("mark.slashdocs-mark")) return false;
     suspendMutationObserver();
     const caret = saveSelection(d, d.body, true);
-    clearHighlights(d);
+    clearHighlights(block);
     if (caret) restoreSelection(d, d.body, caret);
     resumeMutationObserver();
+    return true;
   }
 
   function releaseHighlights(): void {
     const d = doc();
     if (!highlightsHeld || !d || !d.body) return;
     highlightsHeld = false;
-    // The marks are gone, so the same comments must be anchored again.
+    // Some marks are gone, so the same comments must be anchored again.
     // Wrapping text in marks moves the caret, so it goes back after.
     lastPaintKey = null;
     const caret = saveSelection(d, d.body, true);
