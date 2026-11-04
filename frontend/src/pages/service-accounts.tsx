@@ -138,12 +138,12 @@ function ServiceAccountDetail({ sa }: { sa: ServiceAccount }) {
     token: string;
     keyName: string;
   } | null>(null);
-  const [keyName, setKeyName] = useState("default");
+  const [keyName, setKeyName] = useState("");
   const createKey = useMutation({
-    mutationFn: () => api.createServiceAccountKey(id, keyName),
+    mutationFn: () => api.createServiceAccountKey(id, keyName.trim()),
     onSuccess: (r) => {
-      setRevealToken({ token: r.token, keyName });
-      setKeyName("default");
+      setRevealToken({ token: r.token, keyName: keyName.trim() });
+      setKeyName("");
       q.invalidateQueries({ queryKey: queryKeys.serviceAccountKeys(id) });
     },
     onError: (e) => toast.error(errorMessage(e, "Failed")),
@@ -224,7 +224,7 @@ function ServiceAccountDetail({ sa }: { sa: ServiceAccount }) {
               placeholder="Key name"
               className="min-w-0 flex-1 basis-40"
             />
-            <Button type="submit" disabled={!keyName || createKey.isPending}>
+            <Button type="submit" disabled={!keyName.trim() || createKey.isPending}>
               <Plus className="h-4 w-4" /> New key
             </Button>
           </form>
@@ -251,8 +251,13 @@ function ServiceAccountDetail({ sa }: { sa: ServiceAccount }) {
                   </span>
                   <AlertDialog>
                     <AlertDialogTrigger asChild>
-                      <Button variant="ghost" size="icon" aria-label="Revoke">
-                        <Trash2 className="h-3.5 w-3.5 text-[var(--color-danger)]" />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label="Revoke"
+                        className="text-[var(--color-fg-muted)] hover:text-[var(--color-danger)]"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </AlertDialogTrigger>
                     <AlertDialogContent>
@@ -288,11 +293,10 @@ function ServiceAccountDetail({ sa }: { sa: ServiceAccount }) {
         </CardHeader>
         <CardContent>
           <p className="mb-2 text-xs text-[var(--color-fg-muted)]">
-            Use the minted key as a bearer token from any HTTP client, or with the CLI
-            in non-interactive mode:
+            The CLI reads the server and the key from the environment, so it needs no
+            login:
           </p>
-          <CodeBlock>{`slashdocs auth login --token <YOUR_KEY>
-slashdocs docs create report.html`}</CodeBlock>
+          <CodeBlock>{headlessCLI(url, "<YOUR_KEY>")}</CodeBlock>
           <p className="mt-3 text-xs text-[var(--color-fg-muted)]">For raw HTTP:</p>
           <CodeBlock>{`curl -H "Authorization: Bearer <YOUR_KEY>" \\
   ${url}/v1/documents`}</CodeBlock>
@@ -314,10 +318,10 @@ slashdocs docs create report.html`}</CodeBlock>
                 {revealToken.keyName}
               </div>
               <CodeBlock>{revealToken.token}</CodeBlock>
-              <div className="mt-4 text-xs text-[var(--color-fg-muted)]">
-                Use it as a bearer token from your headless agent, or:
+              <div className="mb-1 mt-4 text-xs text-[var(--color-fg-muted)]">
+                Use it as a bearer token from your headless agent, or with the CLI:
               </div>
-              <CodeBlock>{`slashdocs auth login ${url} --token ${revealToken.token}`}</CodeBlock>
+              <CodeBlock>{headlessCLI(url, revealToken.token)}</CodeBlock>
             </>
           )}
           <DialogFooter>
@@ -327,6 +331,14 @@ slashdocs docs create report.html`}</CodeBlock>
       </Dialog>
     </div>
   );
+}
+
+// The CLI takes its server and token from SLASHDOCS_SERVER and SLASHDOCS_TOKEN,
+// so a headless agent needs no browser login.
+function headlessCLI(url: string, token: string) {
+  return `export SLASHDOCS_SERVER=${url}
+export SLASHDOCS_TOKEN=${token}
+slashdocs docs create report.html`;
 }
 
 function NewBotDialog({
@@ -445,6 +457,10 @@ function NewBotDialog({
               </div>
               <CodeBlock>{result.token}</CodeBlock>
             </div>
+            <div className="mb-1 mt-4 text-xs text-[var(--color-fg-muted)]">
+              Use it with the CLI:
+            </div>
+            <CodeBlock>{headlessCLI(publicURL(), result.token)}</CodeBlock>
             <DialogFooter>
               <Button onClick={() => onOpenChange(false)}>Done</Button>
             </DialogFooter>
