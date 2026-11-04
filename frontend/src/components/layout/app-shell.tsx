@@ -1,5 +1,5 @@
 import { Navigate, Outlet, useLocation } from "react-router-dom";
-import { AccountMenu, GetStarted, TopBar } from "./topbar";
+import { AccessRequestsMenu, AccountMenu, GetStarted, TopBar } from "./topbar";
 import { useMe } from "@/lib/hooks";
 import { useSignInPath } from "@/lib/auth-state";
 import { Center } from "@/components/ui/misc";
@@ -15,6 +15,7 @@ export function AppBar() {
       {user && (
         <>
           <GetStarted />
+          <AccessRequestsMenu />
           <AccountMenu user={user} />
         </>
       )}

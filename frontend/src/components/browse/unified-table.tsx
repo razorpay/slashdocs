@@ -9,6 +9,7 @@ import { cn } from "@/lib/cn";
 import { principalColor, principalLabel, samePrincipal } from "@/lib/principals";
 import { DRAG_TYPE } from "./drag";
 import { ENTRY_ROW, EntryName, EntryTable, WIDE_ONLY } from "./entry-table";
+import { AccessRequestMark } from "./access-request-mark";
 import { PinButton, PinnedMark } from "./pin-button";
 import { SearchSnippet } from "./search-snippet";
 import {
@@ -121,6 +122,7 @@ function DraggableEntryRow({
           title={title}
         >
           {pinned && <PinnedMark />}
+          {isFolder ? null : <AccessRequestMark documentId={id} />}
         </EntryName>
         {/* Narrow screens hide the owner and time columns and show them here. */}
         <div className="mt-0.5 truncate pl-6 text-xs text-[var(--color-fg-muted)] sm:hidden">

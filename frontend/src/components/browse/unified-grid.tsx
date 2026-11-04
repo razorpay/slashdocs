@@ -11,6 +11,7 @@ import { cn } from "@/lib/cn";
 import { queryKeys } from "@/lib/queryKeys";
 import { principalLabel, samePrincipal } from "@/lib/principals";
 import { DRAG_TYPE } from "./drag";
+import { AccessRequestMark } from "./access-request-mark";
 import { PinButton, PinnedMark } from "./pin-button";
 import { SearchSnippet } from "./search-snippet";
 import {
@@ -124,6 +125,7 @@ function DraggableEntryCard({
             )}
           </span>
           {pinned && <PinnedMark />}
+          {isFolder ? null : <AccessRequestMark documentId={id} />}
         </span>
         <div className="mt-auto min-w-0 pt-3">
           <span className="line-clamp-2 font-heading text-[15px] font-medium leading-snug">

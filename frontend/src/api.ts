@@ -299,6 +299,10 @@ export type AccessRequest = {
   requester: Principal;
   requested_at: string;
 };
+export type DocumentAccessRequest = AccessRequest & {
+  document_id: string;
+  document_title: string;
+};
 export type ServiceAccount = {
   id: string;
   name: string;
@@ -747,6 +751,9 @@ export const api = {
   // An editor gets every request. Anyone else gets only their own.
   documentAccessRequests: (id: string) =>
     request<{ items: AccessRequest[] }>(`/v1/documents/${id}/access-requests`),
+  // The requests on every document on which the reader manages access.
+  managedAccessRequests: () =>
+    request<{ items: DocumentAccessRequest[] }>("/v1/access-requests"),
   declineAccessRequest: (doc: string, requester: Principal) =>
     request<void>(
       `/v1/documents/${doc}/access-requests/${requester.type}/${encodeURIComponent(requester.id)}`,
