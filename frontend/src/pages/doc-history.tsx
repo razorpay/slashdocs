@@ -18,14 +18,15 @@ import {
 import { changeSummaryLines } from "@/lib/change-summary";
 import { errorMessage } from "@/lib/errors";
 import { formatTimestamp } from "@/lib/format-date";
-import { historySessions, type HistorySession } from "@/lib/history";
+import { historySessions, withoutUndone, type HistorySession } from "@/lib/history";
 import { principalLabel } from "@/lib/principals";
 import { queryKeys } from "@/lib/queryKeys";
 import { useShowSaved } from "./use-show-saved";
 import { useVersions } from "./use-versions";
 
-// HistoryDialog lists every saved state of the document, in sessions of one
-// person's edits. Opening an entry previews the document as it was then.
+// HistoryDialog lists the saved states of the document, in sessions of one
+// person's edits, without the edits that their author undid. Opening an
+// entry previews the document as it was then.
 export function HistoryDialog({
   open,
   onOpenChange,
@@ -45,8 +46,11 @@ export function HistoryDialog({
 }) {
   const versions = useVersions(docId);
   const sessions = useMemo(
-    () => historySessions(versions.data?.items ?? []),
-    [versions.data],
+    () =>
+      historySessions(
+        withoutUndone(versions.data?.items ?? [], new Set([current, latest])),
+      ),
+    [versions.data, current, latest],
   );
   const select = (versionID: string) => {
     if (versionID !== current) onSelectVersion(versionID);
