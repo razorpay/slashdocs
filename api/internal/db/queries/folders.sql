@@ -237,7 +237,8 @@ LIMIT 51;
 -- name: ListChildFolders :many
 SELECT f.id, f.title, f.owner_type, f.owner_id,
        COALESCE(f.parent_folder_id,'') AS parent_folder_id,
-       COALESCE(u.name,sa.name,'') AS owner_name, COALESCE(u.email,'') AS owner_email
+       COALESCE(u.name,sa.name,'') AS owner_name, COALESCE(u.email,'') AS owner_email,
+       f.updated_at
 FROM folders f
 LEFT JOIN users u ON f.owner_type='user' AND f.owner_id=u.id
 -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.

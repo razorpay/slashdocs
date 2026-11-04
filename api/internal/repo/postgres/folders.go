@@ -145,20 +145,30 @@ func (s *Store) getFolder(ctx context.Context, q *dbsqlc.Queries, id string) (re
 		ParentFolderID: r.ParentFolderID,
 		Owner:          auth.Principal{Type: auth.PrincipalType(r.OwnerType), ID: r.OwnerID, Name: r.OwnerName, Email: r.OwnerEmail},
 	}
-	if f.ParentFolderID != "" {
-		anc, err := q.ListFolderAncestors(ctx, dbsqlc.ListFolderAncestorsParams{
-			FolderID: f.ParentFolderID,
-			MaxDepth: folderMaxDepth,
-		})
-		if err != nil {
-			return repo.Folder{}, err
-		}
-		f.Ancestors = make([]repo.FolderBreadcrumb, 0, len(anc))
-		for _, a := range anc {
-			f.Ancestors = append(f.Ancestors, repo.FolderBreadcrumb{ID: a.ID, Title: a.Title})
-		}
+	if f.Ancestors, err = ancestors(ctx, q, f.ParentFolderID); err != nil {
+		return repo.Folder{}, err
 	}
 	return f, nil
+}
+
+// ancestors gives the breadcrumbs of a folder in the folder parent, root
+// first. A folder at the top level has none.
+func ancestors(ctx context.Context, q *dbsqlc.Queries, parent string) ([]repo.FolderBreadcrumb, error) {
+	if parent == "" {
+		return nil, nil
+	}
+	anc, err := q.ListFolderAncestors(ctx, dbsqlc.ListFolderAncestorsParams{
+		FolderID: parent,
+		MaxDepth: folderMaxDepth,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]repo.FolderBreadcrumb, 0, len(anc))
+	for _, a := range anc {
+		out = append(out, repo.FolderBreadcrumb{ID: a.ID, Title: a.Title})
+	}
+	return out, nil
 }
 
 func (s *Store) UpdateFolder(ctx context.Context, id, title string, parent *string) (repo.Folder, error) {
@@ -329,7 +339,7 @@ func (s *Store) ListFolder(ctx context.Context, p auth.Principal, folderID, path
 				break
 			}
 			f := repo.Folder{ID: r.ID, Title: r.Title, ParentFolderID: r.ParentFolderID, Owner: auth.Principal{Type: auth.PrincipalType(r.OwnerType), ID: r.OwnerID, Name: r.OwnerName, Email: r.OwnerEmail}}
-			out = append(out, repo.FolderEntry{Type: "folder", Folder: &f})
+			out = append(out, repo.FolderEntry{Type: "folder", Folder: &f, LastActive: r.UpdatedAt.Time.Format(time.RFC3339)})
 		}
 	}
 	hasMore := len(out) == 50
@@ -342,7 +352,7 @@ func (s *Store) ListFolder(ctx context.Context, p auth.Principal, folderID, path
 		}
 		for _, r := range docs {
 			d := docFromFolderListing(r)
-			out = append(out, repo.FolderEntry{Type: "document", Document: &d})
+			out = append(out, repo.FolderEntry{Type: "document", Document: &d, LastActive: d.UpdatedAt})
 		}
 		f, err := s.GetFolder(ctx, parent)
 		if err != nil {
@@ -403,9 +413,15 @@ func (s *Store) SearchFoldersByTitle(ctx context.Context, p auth.Principal, quer
 	if err != nil {
 		return nil, err
 	}
+	// Each result has its breadcrumbs, which tell apart folders with the
+	// same title.
 	var out []repo.Folder
 	for _, r := range rows {
-		out = append(out, repo.Folder{ID: r.ID, Title: r.Title, ParentFolderID: r.ParentFolderID, Owner: auth.Principal{Type: auth.PrincipalType(r.OwnerType), ID: r.OwnerID, Name: r.OwnerName, Email: r.OwnerEmail}})
+		f := repo.Folder{ID: r.ID, Title: r.Title, ParentFolderID: r.ParentFolderID, Owner: auth.Principal{Type: auth.PrincipalType(r.OwnerType), ID: r.OwnerID, Name: r.OwnerName, Email: r.OwnerEmail}}
+		if f.Ancestors, err = ancestors(ctx, s.q, f.ParentFolderID); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
 	}
 	return out, nil
 }
@@ -469,5 +485,6 @@ func docFromFolderListing(r dbsqlc.ListFolderDocumentsRow) repo.Document {
 		CurrentVersionID: r.CurrentVersionID,
 		ParentFolderID:   r.ParentFolderID,
 		Owner:            auth.Principal{Type: auth.PrincipalType(r.OwnerType), ID: r.OwnerID, Name: r.OwnerName, Email: r.OwnerEmail},
+		UpdatedAt:        r.UpdatedAt.Time.Format(time.RFC3339),
 	}
 }
