@@ -125,6 +125,9 @@ export function MoreMenu({
   const q = useQueryClient();
   const { principal } = useDoc();
   const [confirming, setConfirming] = useState(false);
+  // The field opens after the menu gives back the focus, or the menu takes
+  // the focus from it as it closes.
+  const editOnClose = useRef(false);
   const del = useMutation({
     mutationFn: () => api.deleteComment(docId, c.id),
     onSuccess: () => {
@@ -147,12 +150,20 @@ export function MoreMenu({
             <MoreHorizontal className="h-4 w-4" />
           </Button>
         </DropdownTrigger>
-        <DropdownContent className="min-w-[180px]">
+        <DropdownContent
+          className="min-w-[180px]"
+          onCloseAutoFocus={(event) => {
+            if (!editOnClose.current) return;
+            editOnClose.current = false;
+            event.preventDefault();
+            setEditing(c.id, true);
+          }}
+        >
           <DropdownItem onSelect={() => copyLink(c.id)}>
             <Link2 className="h-4 w-4" /> Copy link
           </DropdownItem>
           {mine ? (
-            <DropdownItem onSelect={() => setEditing(c.id, true)}>
+            <DropdownItem onSelect={() => (editOnClose.current = true)}>
               <Pencil className="h-4 w-4" /> Edit
             </DropdownItem>
           ) : null}
