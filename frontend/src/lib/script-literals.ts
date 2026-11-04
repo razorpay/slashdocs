@@ -183,8 +183,8 @@ export type Render = (
 // text goes into the one string of the loaded source that holds its old
 // text. Both sources render in probe frames. The locator must show the new
 // text, and as many places must stop showing the old text as start showing
-// the new text. It gives that number of places, or why the change cannot
-// save.
+// the new text. The scripts must throw no new errors, and no other text may
+// go. It gives that number of places, or why the change cannot save.
 export async function checkScriptChange(
   loaded: { source: string; tree: SourceTree },
   { locator, before, after }: ScriptChange,
@@ -209,6 +209,8 @@ export async function checkScriptChange(
     now.text?.trim() === after.trim() &&
     places >= 1 &&
     was.counts[0] - now.counts[0] === places;
+  if (now.errors > was.errors || now.texts < was.texts)
+    return { refused: "This change stops a script on the page." };
   return shows
     ? { places }
     : { refused: "The page does not show the new text where you typed it." };

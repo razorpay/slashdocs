@@ -22,6 +22,7 @@ const source = {
 
 let scriptText: ScriptText | null = null;
 afterEach(() => {
+  vi.unstubAllGlobals();
   scriptText?.stop();
   scriptText = null;
   document.body.innerHTML = "";
@@ -105,7 +106,7 @@ test("script text that no one string holds shows a hint that asks an agent", () 
   scriptText!.answer("script-1", false);
   const hint = document.querySelector(".slashdocs-script-hint")!;
   expect(hint.getAttribute("contenteditable")).toBe("false");
-  expect(hint.textContent).toContain("This text comes from a script.");
+  expect(hint.textContent).toContain("A script on the page writes this text.");
   hint.querySelector("button")!.click();
   expect(post).toHaveBeenLastCalledWith({
     type: "slashdocs:ask-agent",
@@ -134,6 +135,50 @@ test("the hint goes on Esc, on scroll and on a click elsewhere", () => {
   showHint(3);
   el("p").dispatchEvent(new Event("pointerdown", { bubbles: true }));
   expect(document.querySelector(".slashdocs-script-hint")).toBeNull();
+});
+
+test("script text that shows in several places says so before the first key", () => {
+  const el = render(
+    `<div ${SOURCE_ATTR}="0" contenteditable="false"><b id="t">Needs review</b><b>Needs review</b><b> Needs review </b><b>Done</b></div>`,
+  );
+  start();
+  el("t").click();
+  scriptText!.answer("script-1", true);
+  const note = document.querySelector(".slashdocs-script-hint")!;
+  expect(note.textContent).toBe(
+    "This text shows in 3 places. Your change goes to all of them.",
+  );
+  expect(el("t").getAttribute("aria-describedby")).toBe(note.id);
+});
+
+test("a failed check offers to try again", () => {
+  const el = render(
+    `<div ${SOURCE_ATTR}="0" contenteditable="false"><span id="t">Total: 7</span></div>`,
+  );
+  const post = start();
+  el("t").click();
+  scriptText!.answer("script-1", false, true);
+  const hint = document.querySelector(".slashdocs-script-hint")!;
+  expect(hint.textContent).toContain("Could not check this text.");
+  hint.querySelector("button")!.click();
+  expect(post).toHaveBeenLastCalledWith(
+    expect.objectContaining({ type: "slashdocs:script-text", requestId: "script-2" }),
+  );
+});
+
+test("a saved string shows its new text in every place, and a hint pulses in place of a message", () => {
+  const el = render(
+    `<div ${SOURCE_ATTR}="0" contenteditable="false"><b id="t">Ready</b><b> Ready </b><b>Done</b></div>`,
+  );
+  start();
+  vi.stubGlobal("matchMedia", () => ({ matches: true }));
+  expect(scriptText!.pulse()).toBe(false);
+  const texts = scriptText!.replace("Ready", "Set");
+  expect(texts).toHaveLength(2);
+  expect(document.querySelector("div")!.textContent).toBe("Set Set Done");
+  el("t").click();
+  scriptText!.answer("script-1", false);
+  expect(scriptText!.pulse()).toBe(true);
 });
 
 test("script text with elements in it shows the hint without a question", () => {
@@ -179,18 +224,17 @@ test("a probe renders the html with the live prelude, measures it, and removes t
     const label = window.slashdocs ? "Run it." : "No prelude";
     for (let i = 0; i < 2; i++) document.querySelector("ul").append(Object.assign(document.createElement("li"), { textContent: label }));
     setTimeout(() => document.body.append(" Later "), 10);
-  </script></body></html>`;
+  </script><script>missing.call();</script></body></html>`;
   const result = await probe(live, html, { at: 40, path: [1] }, [
     "Run it.",
     "Later",
     "Try it.",
   ]);
   observer.disconnect();
-  expect(result).toEqual({ text: "Run it.", counts: [2, 1, 0] });
+  // The texts are the two items, the late text and the code of the scripts.
+  expect(result).toEqual({ text: "Run it.", counts: [2, 1, 0], texts: 5, errors: 1 });
   expect(frames).toHaveLength(1);
   expect(frames[0].getAttribute("sandbox")).toBe("allow-scripts allow-same-origin");
-  expect(frames[0].srcdoc).toContain(
-    `<head><script id="slashdocs-bootstrap">window.slashdocs={kv:{}}</script></head>`,
-  );
+  expect(frames[0].srcdoc).toContain(`window.slashdocs={kv:{}}</script></head>`);
   expect(frames[0].isConnected).toBe(false);
 });

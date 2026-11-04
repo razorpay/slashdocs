@@ -303,10 +303,14 @@ export function createSourceMap(
       );
     const name = el.localName;
     if (name === "br") {
-      // A new <br> that only keeps an emptied block open is not content.
+      // A new <br> at the end of a block shows no line: it only keeps an
+      // emptied block open. After another <br>, it shows the line that the
+      // one before it starts.
       const items = v.children(v.parentOf(el)!);
       const last = items.at(-1);
-      return last?.kind === "element" && last.element === el
+      const before = items.at(-2);
+      const breaks = before?.kind === "element" && before.element.localName === "br";
+      return last?.kind === "element" && last.element === el && !breaks
         ? []
         : [{ open: "<br>", close: "", children: [] }];
     }
