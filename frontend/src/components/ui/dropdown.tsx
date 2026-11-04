@@ -4,6 +4,7 @@ import { cn } from "@/lib/cn";
 
 export const Dropdown = DM.Root;
 export const DropdownTrigger = DM.Trigger;
+export const DropdownGroup = DM.Group;
 
 export function DropdownContent({
   className,
