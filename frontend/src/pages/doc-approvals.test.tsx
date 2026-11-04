@@ -137,6 +137,8 @@ describe("ApprovalsDialog", () => {
     installFetch();
     renderDialog({ status: "pending", approved: 1, total: 3 });
     expect(await screen.findByText("1 of 3 approved")).toBeTruthy();
+    // Below the sm breakpoint the chip shows only the count.
+    expect(screen.getByText("1/3")).toHaveClass("sm:hidden");
     // Spelled out for screen readers, since the visible text is only the count.
     expect(
       screen.getByRole("button", {
