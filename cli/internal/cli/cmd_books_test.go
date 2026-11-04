@@ -100,8 +100,50 @@ func TestBooksOutlinePushConflictExitsFive(t *testing.T) {
 	booksEnv(t, srv)
 	f := bookFile(t, "outline.json", `{"title":"B"}`)
 	_, err := Execute([]string{"books", "outline", "push", "book_1", f, "--base-version", "bov_1"})
-	if err == nil || ExitCode(err) != 5 || !strings.Contains(err.Error(), "Pull again and re-apply your changes.") {
+	if err == nil || ExitCode(err) != 5 {
 		t.Fatalf("err = %v, exit %d", err, ExitCode(err))
+	}
+	for _, want := range []string{"changed since version bov_1", "now bov_9", "slashdocs books outline pull book_1"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("conflict message lacks %q: %v", want, err)
+		}
+	}
+}
+
+func TestBooksOutlinePushTwiceExplainsYourOwnPush(t *testing.T) {
+	current := "bov_1"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Base string `json:"base_version_id"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		w.Header().Set("Content-Type", "application/json")
+		if in.Base != current {
+			// The server's 409 outline_conflict envelope.
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"error":{"code":"outline_conflict","message":"Someone saved a newer outline. Reload it and apply your changes again.","details":{"current_version_id":"` + current + `"}}}`))
+			return
+		}
+		current = "bov_2"
+		_, _ = w.Write([]byte(`{"version_id":"bov_2","number":2}`))
+	}))
+	defer srv.Close()
+	booksEnv(t, srv)
+	f := bookFile(t, "pulled.json", `{"version_id":"bov_1","number":1,"outline":{"title":"B","parts":[]},"not_in_outline":[],"removed":[]}`)
+	if _, err := Execute([]string{"books", "outline", "push", "book_1", f}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Execute([]string{"books", "outline", "push", "book_1", f})
+	if err == nil || ExitCode(err) != 5 {
+		t.Fatalf("second push err = %v, exit %d, want conflict", err, ExitCode(err))
+	}
+	for _, want := range []string{"bov_2, which you pushed", "still based on bov_1", "--base-version bov_2", "slashdocs books outline pull book_1"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("second push message lacks %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "Someone") {
+		t.Errorf("second push blames someone else: %v", err)
 	}
 }
 

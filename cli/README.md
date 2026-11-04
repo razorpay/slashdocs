@@ -61,7 +61,7 @@ slashdocs books outline push book_123 outline.json --note "Add the testing chapt
 slashdocs books delete book_123                   # removes the outline; documents stay
 ```
 
-`push` accepts the pulled file or a bare outline. For a pulled file, `--base-version` defaults to its `version_id`; for a bare outline it is required. If someone saved a newer outline, `push` exits with code 5; pull again and re-apply your change. If the outline has problems, `push` prints each one as `path: message`.
+`push` accepts the pulled file or a bare outline. For a pulled file, `--base-version` defaults to its `version_id`; for a bare outline it is required. If the outline changed since that version, `push` exits with code 5 and names the current version. When the newer version is your own earlier push (for example, you pushed the same pulled file twice), it says so: push again with `--base-version <that version>` if the file holds every change, or pull into a new file and re-apply your changes. Pulling into the file you edited overwrites your edits. If the outline has problems, `push` prints each one as `path: message`.
 
 ## Local documents
 

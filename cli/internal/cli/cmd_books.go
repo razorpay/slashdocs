@@ -254,9 +254,24 @@ func booksOutlineCmd(g *globals, out io.Writer) *cobra.Command {
 		if note != "" {
 			body["note"] = note
 		}
+		book := args[0]
+		_, cx, _ := currentContext(g)
+		lastPushed := cx.Pulled[book]
 		return action(g, out, func(cl *Client) ([]byte, error) {
-			b, err := cl.doJSON("PUT", apiPath("/v1/books/%s/outline", args[0]), body)
-			return b, explainOutlineError(err)
+			b, err := cl.doJSON("PUT", apiPath("/v1/books/%s/outline", book), body)
+			if err != nil {
+				return nil, explainOutlineError(err, book, base, lastPushed)
+			}
+			var saved struct {
+				VersionID string `json:"version_id"`
+			}
+			if json.Unmarshal(b, &saved) == nil {
+				// Remember our own push, so a later conflict with it can
+				// be told apart from someone else's change. The push has
+				// succeeded, so failing to remember it is not an error.
+				_ = recordBaseVersion(g, book, saved.VersionID)
+			}
+			return b, nil
 		}, func(m map[string]any) string {
 			return fmt.Sprintf("Saved outline version %v (%s).", value(m, "number"), fmt.Sprint(value(m, "version_id")))
 		})
@@ -312,14 +327,35 @@ func explainBookExists(err error) error {
 
 // explainOutlineError turns a conflict or validation failure into text that
 // says what to do next while keeping the APIError status for exit codes.
-func explainOutlineError(err error) error {
+// lastPushed is the outline version this CLI last pushed for the book, so a
+// conflict with your own earlier push is not blamed on someone else.
+func explainOutlineError(err error, book, base, lastPushed string) error {
 	var ae *APIError
 	if !errors.As(err, &ae) {
 		return err
 	}
 	switch ae.Status {
 	case 409:
-		return &APIError{Status: ae.Status, Code: ae.Code, Body: ae.Body, Message: "Someone changed the outline since you pulled it. Pull again and re-apply your changes."}
+		var payload struct {
+			Error struct {
+				Details struct {
+					CurrentVersionID string `json:"current_version_id"`
+				} `json:"details"`
+			} `json:"error"`
+		}
+		_ = json.Unmarshal([]byte(ae.Body), &payload)
+		current := payload.Error.Details.CurrentVersionID
+		pull := fmt.Sprintf("`slashdocs books outline pull %s <new file>`", book)
+		switch {
+		case current != "" && current == lastPushed:
+			ae.Message = fmt.Sprintf("The outline is at version %s, which you pushed; this push is still based on %s, and no one has changed the outline since. "+
+				"If the file holds every change you want, push it again with --base-version %s. Otherwise run %s and re-apply your changes there.", current, base, current, pull)
+		case current != "":
+			ae.Message = fmt.Sprintf("The outline changed since version %s (now %s). Run %s and re-apply your changes there.", base, current, pull)
+		default:
+			ae.Message = fmt.Sprintf("The outline changed since version %s. Run %s and re-apply your changes there.", base, pull)
+		}
+		return ae
 	case 422:
 		var payload struct {
 			Error struct {
@@ -338,7 +374,8 @@ func explainOutlineError(err error) error {
 		for _, p := range payload.Error.Details.Problems {
 			lines = append(lines, p.Path+": "+p.Message)
 		}
-		return &APIError{Status: ae.Status, Code: ae.Code, Body: ae.Body, Message: "The outline has problems:\n" + strings.Join(lines, "\n")}
+		ae.Message = "The outline has problems:\n" + strings.Join(lines, "\n")
+		return ae
 	}
 	return err
 }
