@@ -73,11 +73,18 @@ func (s *Store) SaveReadingPosition(ctx context.Context, userID, bookID string, 
 	if err != nil {
 		return false, err
 	}
-	return n > 0, nil
+	if n == 0 {
+		return false, nil
+	}
+	// A new device id adds a row; drop the oldest beyond the cap.
+	if err := s.q.PruneReadingPositions(ctx, dbsqlc.PruneReadingPositionsParams{UserID: userID, BookID: bookID, Keep: repo.MaxReadingDevices}); err != nil {
+		return false, fmt.Errorf("prune reading positions: %w", err)
+	}
+	return true, nil
 }
 
 func (s *Store) ListReadingPositions(ctx context.Context, userID, bookID string) ([]repo.ReadingPosition, error) {
-	rows, err := s.q.ListReadingPositions(ctx, dbsqlc.ListReadingPositionsParams{UserID: userID, BookID: bookID})
+	rows, err := s.q.ListReadingPositions(ctx, dbsqlc.ListReadingPositionsParams{UserID: userID, BookID: bookID, RowLimit: repo.MaxReadingDevices})
 	if err != nil {
 		return nil, err
 	}

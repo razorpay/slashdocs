@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -153,5 +154,55 @@ func TestSaveReadingPositionIgnoresStaleWrites(t *testing.T) {
 	}
 	if mine, err := s.ListReadingPositions(ctx, owner.ID, b.ID); err != nil || len(mine) != 0 {
 		t.Fatalf("owner positions = %+v, %v; want none", mine, err)
+	}
+}
+
+// A reader keeps at most repo.MaxReadingDevices positions per book: the
+// device id comes from the client, so new ids must not grow the table or
+// GET /state without bound.
+func TestReadingPositionsKeepTheNewestDevices(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	owner, _, b := bookFixture(t, s, planned("Later"))
+	reader, err := s.EnsureUserByEmail(ctx, "reader@example.com")
+	if err != nil {
+		t.Fatalf("EnsureUserByEmail: %v", err)
+	}
+	doc, v1, err := s.CreateDocument(ctx, owner, "Chapter", []byte("<p>one</p>"))
+	if err != nil {
+		t.Fatalf("CreateDocument: %v", err)
+	}
+	start := time.Now().UTC().Truncate(time.Microsecond).Add(-time.Hour)
+	extra := 5
+	for i := 0; i < repo.MaxReadingDevices+extra; i++ {
+		p := repo.ReadingPosition{DeviceID: fmt.Sprintf("device_%04d", i), DocumentID: doc.ID, VersionID: v1.ID,
+			ClientTS: start.Add(time.Duration(i) * time.Second)}
+		if saved, err := s.SaveReadingPosition(ctx, reader.ID, b.ID, p); err != nil || !saved {
+			t.Fatalf("save %d = %v, %v", i, saved, err)
+		}
+	}
+	got, err := s.ListReadingPositions(ctx, reader.ID, b.ID)
+	if err != nil {
+		t.Fatalf("ListReadingPositions: %v", err)
+	}
+	if len(got) != repo.MaxReadingDevices {
+		t.Fatalf("got %d positions, want %d", len(got), repo.MaxReadingDevices)
+	}
+	if want := fmt.Sprintf("device_%04d", repo.MaxReadingDevices+extra-1); got[0].DeviceID != want {
+		t.Fatalf("newest = %s, want %s", got[0].DeviceID, want)
+	}
+	var rows int
+	if err := s.Pool().QueryRow(ctx, `SELECT count(*) FROM reading_positions WHERE user_id=$1 AND book_id=$2`, reader.ID, b.ID).Scan(&rows); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if rows != repo.MaxReadingDevices {
+		t.Fatalf("table holds %d rows, want the newest %d", rows, repo.MaxReadingDevices)
+	}
+	// A write older than every kept device does not displace one.
+	if _, err := s.SaveReadingPosition(ctx, reader.ID, b.ID, repo.ReadingPosition{DeviceID: "device_0000", DocumentID: doc.ID, VersionID: v1.ID, ClientTS: start}); err != nil {
+		t.Fatalf("re-save: %v", err)
+	}
+	if got, _ := s.ListReadingPositions(ctx, reader.ID, b.ID); len(got) != repo.MaxReadingDevices || got[len(got)-1].DeviceID == "device_0000" {
+		t.Fatalf("an old device displaced a newer one: %d positions, last %s", len(got), got[len(got)-1].DeviceID)
 	}
 }

@@ -507,9 +507,10 @@ type Repository interface {
 	MarkChapterSeen(ctx context.Context, userID, documentID, versionID string) error
 	// SaveReadingPosition stores the device's position in the book. It
 	// returns false, and changes nothing, when a position with the same or a
-	// later client timestamp is stored already.
+	// later client timestamp is stored already. It keeps the reader's
+	// MaxReadingDevices newest devices in the book and drops the rest.
 	SaveReadingPosition(ctx context.Context, userID, bookID string, p ReadingPosition) (bool, error)
-	// ListReadingPositions lists the reader's positions in the book on every
-	// device, newest client timestamp first.
+	// ListReadingPositions lists the reader's positions in the book on at
+	// most MaxReadingDevices devices, newest client timestamp first.
 	ListReadingPositions(ctx context.Context, userID, bookID string) ([]ReadingPosition, error)
 }

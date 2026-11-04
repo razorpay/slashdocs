@@ -277,12 +277,13 @@ func (q *Queries) ListOutlineVersions(ctx context.Context, bookID string) ([]Lis
 
 const listReadingPositions = `-- name: ListReadingPositions :many
 SELECT device_id,document_id,version_id,section_id,anchor,progression,client_ts,updated_at
-FROM reading_positions WHERE user_id = $1 AND book_id = $2 ORDER BY client_ts DESC
+FROM reading_positions WHERE user_id = $1 AND book_id = $2 ORDER BY client_ts DESC, device_id LIMIT $3
 `
 
 type ListReadingPositionsParams struct {
-	UserID string
-	BookID string
+	UserID   string
+	BookID   string
+	RowLimit int32
 }
 
 type ListReadingPositionsRow struct {
@@ -297,7 +298,7 @@ type ListReadingPositionsRow struct {
 }
 
 func (q *Queries) ListReadingPositions(ctx context.Context, arg ListReadingPositionsParams) ([]ListReadingPositionsRow, error) {
-	rows, err := q.db.Query(ctx, listReadingPositions, arg.UserID, arg.BookID)
+	rows, err := q.db.Query(ctx, listReadingPositions, arg.UserID, arg.BookID, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -486,6 +487,24 @@ func (q *Queries) NextOutlineNumber(ctx context.Context, bookID string) (int32, 
 	var column_1 int32
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const pruneReadingPositions = `-- name: PruneReadingPositions :exec
+DELETE FROM reading_positions rp WHERE rp.user_id = $1 AND rp.book_id = $2
+  AND rp.device_id NOT IN (SELECT k.device_id FROM reading_positions k WHERE k.user_id = $1 AND k.book_id = $2
+    ORDER BY k.client_ts DESC, k.device_id LIMIT $3)
+`
+
+type PruneReadingPositionsParams struct {
+	UserID string
+	BookID string
+	Keep   int32
+}
+
+// Keeps only the reader's @keep newest devices in the book.
+func (q *Queries) PruneReadingPositions(ctx context.Context, arg PruneReadingPositionsParams) error {
+	_, err := q.db.Exec(ctx, pruneReadingPositions, arg.UserID, arg.BookID, arg.Keep)
+	return err
 }
 
 const setChapterDone = `-- name: SetChapterDone :exec

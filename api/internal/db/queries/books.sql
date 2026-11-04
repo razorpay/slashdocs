@@ -78,6 +78,11 @@ VALUES(@user_id,@book_id,@device_id,@document_id,@version_id,@section_id,@anchor
 ON CONFLICT (user_id,book_id,device_id) DO UPDATE SET document_id=EXCLUDED.document_id, version_id=EXCLUDED.version_id,
   section_id=EXCLUDED.section_id, anchor=EXCLUDED.anchor, progression=EXCLUDED.progression, client_ts=EXCLUDED.client_ts, updated_at=now()
 WHERE reading_positions.client_ts < EXCLUDED.client_ts;
+-- name: PruneReadingPositions :exec
+-- Keeps only the reader's @keep newest devices in the book.
+DELETE FROM reading_positions rp WHERE rp.user_id = @user_id AND rp.book_id = @book_id
+  AND rp.device_id NOT IN (SELECT k.device_id FROM reading_positions k WHERE k.user_id = @user_id AND k.book_id = @book_id
+    ORDER BY k.client_ts DESC, k.device_id LIMIT @keep);
 -- name: ListReadingPositions :many
 SELECT device_id,document_id,version_id,section_id,anchor,progression,client_ts,updated_at
-FROM reading_positions WHERE user_id = @user_id AND book_id = @book_id ORDER BY client_ts DESC;
+FROM reading_positions WHERE user_id = @user_id AND book_id = @book_id ORDER BY client_ts DESC, device_id LIMIT @row_limit;

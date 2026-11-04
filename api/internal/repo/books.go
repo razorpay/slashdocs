@@ -54,6 +54,11 @@ type ChapterRead struct {
 	LastOpenedAt                                 string
 }
 
+// MaxReadingDevices is how many devices keep a reading position per reader
+// and book. Device ids come from the client, so the oldest positions beyond
+// this are dropped.
+const MaxReadingDevices = 20
+
 // ReadingPosition is one reader's place in a book on one device.
 type ReadingPosition struct {
 	DeviceID, DocumentID, VersionID, SectionID string
