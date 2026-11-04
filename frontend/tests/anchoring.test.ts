@@ -1,5 +1,6 @@
 import { assert, test } from "vitest";
 
+import { describeAnchor, snapToWords } from "../bridge/anchoring/index.ts";
 import { matchQuote } from "../bridge/anchoring/match-quote.ts";
 import {
   rawOffsetToRendered,
@@ -138,4 +139,30 @@ test("renderedOffsetToRaw inverts rawOffsetToRendered for every raw offset", () 
       );
     }
   }
+});
+
+test("snapToWords moves a selection that cuts words out to whole words", () => {
+  const root = document.createElement("div");
+  root.innerHTML = "The worker reads failed <b>webhooks</b> from the queue.";
+  const [lead, , tail] = root.childNodes;
+  const range = document.createRange();
+  // "rker reads failed webhooks from t", as dragged.
+  range.setStart(lead, 6);
+  range.setEnd(tail, 7);
+
+  assert.strictEqual(
+    describeAnchor(root, snapToWords(range))?.quote,
+    "worker reads failed webhooks from the",
+  );
+});
+
+test("snapToWords keeps ends that already fall between words", () => {
+  const root = document.createElement("div");
+  root.textContent = "Retry the job, then stop.";
+  const text = root.firstChild!;
+  const range = document.createRange();
+  range.setStart(text, 6);
+  range.setEnd(text, 14);
+
+  assert.strictEqual(snapToWords(range).toString(), "the job,");
 });
