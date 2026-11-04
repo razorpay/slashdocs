@@ -1,15 +1,16 @@
 import { createContext, useContext } from "react";
 import type { Anchor, AnchorPoint, Comment, CursorSpot, Principal } from "@/api";
 import type { CommentDraft } from "@/lib/comment-drafts";
-import type { TextChange } from "@/lib/text-edits";
+import type { Region, ScriptChange } from "../../bridge/source-pieces";
 import type { CursorListener, DocumentKVListener } from "./use-document-stream";
 
 // What a new comment anchors to, from the render bridge: a text selection, or
 // a spot in an element (anchor.point). `anchor` is present only when the
-// bridge supplies real offsets.
+// bridge supplies real offsets. body starts the draft with text.
 export type PendingSelection = {
   quote: string;
   anchor?: Partial<Anchor>;
+  body?: string;
 };
 
 export type CommentPosition = {
@@ -21,12 +22,14 @@ export type CommentPosition = {
 // on screen. Text and pins report on their own.
 export type UnanchoredKind = "text" | "pins";
 
-// What the rendered document reports when asked for its text edits.
-export type TextEditResult = { changes: TextChange[]; unsupported: boolean };
+// What the rendered document reports when asked for its text edits: every
+// region and every script text that changed since it loaded.
+export type TextEditResult = { regions: Region[]; scripts: ScriptChange[] };
 
 // Where the editor's typing is: none yet, waiting for a pause, being saved,
-// saved, or failed and waiting to try again.
-export type SaveState = "idle" | "unsaved" | "saving" | "saved" | "failed";
+// saved, failed and waiting to try again, or paused because the document
+// changed elsewhere.
+export type SaveState = "idle" | "unsaved" | "saving" | "saved" | "failed" | "paused";
 
 // A request to go to another viewer: once to their cursor, or continuously
 // to their view. Each request is a new object, so the same viewer can be

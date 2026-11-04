@@ -142,7 +142,7 @@ func TestRenderRouteReturnsWrapperNotRawHTML(t *testing.T) {
 	wrapperBody := rr.Body.String()
 	if !strings.Contains(wrapperBody, `<iframe id="slashdocs-doc"`) ||
 		!strings.Contains(wrapperBody, "slashdocs-bootstrap") ||
-		!strings.Contains(wrapperBody, "&lt;html&gt;") ||
+		!strings.Contains(wrapperBody, "&lt;html data-slashdocs-source=&#34;0&#34;&gt;") ||
 		!strings.Contains(wrapperBody, "&lt;/html&gt;") {
 		t.Fatalf("body = %q, want render wrapper with escaped srcdoc", rr.Body.String())
 	}

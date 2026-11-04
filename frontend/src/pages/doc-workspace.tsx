@@ -270,7 +270,7 @@ export function DocWorkspace({
           id: draftId,
           version: draftVersion,
           ...selection,
-          body: "",
+          body: selection.body ?? "",
           mentions: [],
           updatedAt: Date.now(),
         };

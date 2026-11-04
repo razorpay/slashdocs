@@ -27,7 +27,7 @@ Instead of pasting giant reports into chat, give the work a shared home where yo
 - One self-contained HTML file per document
 - Browser review UI with sandboxed rendering
 - Anchored comments and resolve/reopen workflow
-- Editors change the text in place, and edits save as they type
+- Editors change the document in place (words, paragraphs, lists, bold, italic and links), and edits save as they type
 - [Slack or Google Chat notifications, personal mute controls, and comment/heading links](docs/comment-notifications.md)
 - History of every edit, with preview and restore; versions and optimistic concurrency for agents
 - OpenID Connect for human users (Google, Okta, Entra ID, Keycloak, Dex, ...)

@@ -618,6 +618,43 @@ definitions:
       sha256:
         type: string
     type: object
+  server.editSourceRequest:
+    properties:
+      base_version_id:
+        description: BaseVersionID is the version that the replacements were made
+          on.
+        type: string
+      change_summary:
+        type: string
+      client_change_id:
+        description: |-
+          ClientChangeID names the change, so that a retry returns the version
+          that the change made instead of a second one.
+        type: string
+      replacements:
+        items:
+          $ref: '#/definitions/textedit.Replacement'
+        type: array
+    type: object
+  server.editSourceResponse:
+    properties:
+      base_version_id:
+        description: BaseVersionID is the version the replacements were applied to.
+        type: string
+      change_summary:
+        type: string
+      id:
+        type: string
+      number:
+        type: integer
+      rebased:
+        description: |-
+          Rebased is set when that version is newer than the version that the
+          replacements were made on.
+        type: boolean
+      sha256:
+        type: string
+    type: object
   server.errorBody:
     properties:
       code:
@@ -912,6 +949,17 @@ definitions:
         type: string
       replace_all:
         type: boolean
+    type: object
+  textedit.Replacement:
+    properties:
+      end:
+        type: integer
+      new_html:
+        type: string
+      old_html:
+        type: string
+      start:
+        type: integer
     type: object
 info:
   contact: {}
@@ -1936,6 +1984,61 @@ paths:
       summary: Enable or mute your document notifications
       tags:
       - notifications
+  /v1/documents/{id}/source-edits:
+    post:
+      consumes:
+      - application/json
+      description: For the browser editor. Applies replacements by position in the
+        HTML of base_version_id to the current version, and saves the result as a
+        new version. start and end count UTF-8 bytes, end is exclusive, and old_html
+        must be the HTML from start to end of the base version. Replacements are in
+        order and do not overlap. When a newer version exists, each replacement moves
+        to where its HTML is in that version, and a replacement that the newer version
+        changed fails with edit_conflict. A retry with the same client_change_id returns
+        the version that the first attempt made.
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Replacements
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/server.editSourceRequest'
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/server.editSourceResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "413":
+          description: Request Entity Too Large
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Edit document source by position
+      tags:
+      - versions
   /v1/documents/{id}/versions:
     get:
       parameters:
