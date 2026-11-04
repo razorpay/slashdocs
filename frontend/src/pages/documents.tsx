@@ -5,7 +5,7 @@ import { useOnboarding, autoMarkFirstDoc, onboardingProgress } from "@/lib/onboa
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { errorMessage } from "@/lib/errors";
 import { useDebounced } from "@/lib/hooks";
-import { MoreHorizontal, Plus, Sparkles } from "lucide-react";
+import { CloudOff, MoreHorizontal, Plus, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Page } from "@/components/layout/page";
 import { beat } from "@/lib/enter";
@@ -27,6 +27,7 @@ import {
 } from "@/components/browse/upload-backup";
 import { DocumentSearchInput } from "@/components/browse/document-search-input";
 import { FeaturedItems } from "@/components/browse/featured-items";
+import { sortEntries } from "@/components/browse/sort-entries";
 import { hasDocumentSearchOperators } from "@/lib/search-query";
 import {
   DndContext,
@@ -40,11 +41,26 @@ import {
 export function DocumentsPage() {
   useTitle("Documents");
   // The search is in the URL, so Back from a result returns to the results.
-  // Typing replaces the history entry, so Back does not step through letters.
+  // The field keeps its own value, because a URL update can come after the
+  // next key and drop a letter. The URL follows the field after a pause, and
+  // replaces the history entry, so Back does not step through letters.
   const [params, setParams] = useSearchParams();
-  const q = params.get("q") || "";
-  const setQ = (next: string) => setParams(next ? { q: next } : {}, { replace: true });
-  const debouncedQ = useDebounced(q.trim(), 250);
+  const urlQ = params.get("q") || "";
+  const [q, setQ] = useState(urlQ);
+  // The query that the URL has, from the field or from Back, forward or a
+  // link. A query that the field did not write replaces the field.
+  const [seenQ, setSeenQ] = useState(urlQ);
+  if (urlQ !== seenQ) {
+    setSeenQ(urlQ);
+    setQ(urlQ);
+  }
+  const pausedQ = useDebounced(q, 250);
+  useEffect(() => {
+    if (pausedQ !== q || pausedQ === seenQ) return;
+    setSeenQ(pausedQ);
+    setParams(pausedQ ? { q: pausedQ } : {}, { replace: true });
+  }, [pausedQ, q, seenQ, setParams]);
+  const debouncedQ = pausedQ.trim();
   const me = useQuery({ queryKey: queryKeys.me(), queryFn: api.me });
   // The server sends documents a page at a time.
   const docs = useInfiniteQuery({
@@ -67,7 +83,11 @@ export function DocumentsPage() {
     queryFn: () => api.listFolders(undefined, undefined, debouncedQ || undefined),
     placeholderData: (prev) => prev,
     enabled: !structuredSearch,
+    // The page shows the error.
+    meta: { suppressGlobalError: true },
   });
+  // Folders that did not load are not an empty list: the page says so.
+  const foldersFailed = !structuredSearch && rootFolders.isError;
   const documents = useMemo(
     () => docs.data?.pages.flatMap((page) => page.items) || [],
     [docs.data],
@@ -112,26 +132,9 @@ export function DocumentsPage() {
     [folderEntries, documents],
   );
 
-  // Browsing sorts by pinned status, last activity, then title. Search
-  // results keep the server's order: documents with the words in the title
-  // first, then the latest.
-  const merged = useMemo(
-    () =>
-      [...entries].sort((a, b) => {
-        const ap = pinnedIds.has(a.folder?.id || docID(a.document!));
-        const bp = pinnedIds.has(b.folder?.id || docID(b.document!));
-        if (ap !== bp) return ap ? -1 : 1;
-        const ta = a.last_active || "";
-        const tb = b.last_active || "";
-        if (ta && tb) return tb.localeCompare(ta);
-        if (tb) return 1;
-        if (ta) return -1;
-        const na = (a.folder?.title || a.document?.title || "").toLowerCase();
-        const nb = (b.folder?.title || b.document?.title || "").toLowerCase();
-        return na.localeCompare(nb);
-      }),
-    [entries, pinnedIds],
-  );
+  // Search results keep the server's order: documents with the words in the
+  // title first, then the latest.
+  const merged = useMemo(() => sortEntries(entries, pinnedIds), [entries, pinnedIds]);
 
   const viewMode = viewModeStore.useStore();
   const [newFolderOpen, setNewFolderOpen] = useState(false);
@@ -170,6 +173,7 @@ export function DocumentsPage() {
       type: dragType === DRAG_TYPE.folder ? "folder" : "document",
       id: dragId,
       to: targetFolderId,
+      toTitle: folders.find((f) => f.id === targetFolderId)?.title,
     });
   }
 
@@ -182,7 +186,8 @@ export function DocumentsPage() {
     );
   }
   const searching = debouncedQ.length > 0;
-  const empty = !searching && documents.length === 0 && folders.length === 0;
+  const empty =
+    !searching && !foldersFailed && documents.length === 0 && folders.length === 0;
   // The server rejects a search it cannot read with a 400 and says why.
   const invalidSearch =
     searching && docs.error instanceof APIError && docs.error.status === 400;
@@ -219,7 +224,6 @@ export function DocumentsPage() {
               variant="outline"
               size="md"
               aria-label="New folder"
-              tooltip="New folder"
               onClick={() => setNewFolderOpen(true)}
               className="shrink-0 px-3 sm:px-4"
             >
@@ -246,6 +250,19 @@ export function DocumentsPage() {
       </div>
 
       {!searching && <FeaturedItems />}
+
+      {foldersFailed ? (
+        <div
+          role="alert"
+          className="mb-4 flex items-center gap-3 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] py-2 pl-4 pr-2 text-sm dark:border-transparent"
+        >
+          <CloudOff className="h-4 w-4 shrink-0 text-[var(--color-fg-muted)]" />
+          <span className="min-w-0 flex-1 text-pretty">
+            Could not load folders. Documents show below.
+          </span>
+          <RetryButton query={rootFolders} variant="outline" size="sm" />
+        </div>
+      ) : null}
 
       {docs.error ? (
         invalidSearch ? (
