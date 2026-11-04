@@ -6,7 +6,12 @@ import { CloudOff, MapPin, MessageSquareText, X } from "lucide-react";
 import { api, type Comment, type Principal } from "@/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { EmptyState, Skeleton } from "@/components/ui/misc";
+import {
+  EmptyState,
+  RetryButton,
+  Skeleton,
+  type RetryQuery,
+} from "@/components/ui/misc";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { NotificationToggle } from "@/components/notification-toggle";
 import { cn } from "@/lib/cn";
@@ -230,7 +235,7 @@ export function CommentsList({
   showsLatest,
   onPick,
   onPlacePin,
-  onRetry,
+  retry,
   onClose,
 }: {
   // The version on screen is the latest one, which the server places the
@@ -238,7 +243,8 @@ export function CommentsList({
   showsLatest: boolean;
   onPick: (id: string) => void;
   onPlacePin: () => void;
-  onRetry: () => Promise<unknown>;
+  // The comments query, to load again when it failed.
+  retry: RetryQuery;
   onClose: () => void;
 }) {
   const {
@@ -334,7 +340,12 @@ export function CommentsList({
             <Skeleton className="h-16 w-full rounded-md" />
           </div>
         ) : commentsError ? (
-          <CommentsErrorState onRetry={onRetry} />
+          <EmptyState
+            icon={<CloudOff className="h-5 w-5" />}
+            title="Could not load comments"
+            description="Check your connection, then try again."
+            action={<RetryButton query={retry} variant="outline" size="sm" />}
+          />
         ) : items.length === 0 ? (
           <CommentsEmptyState filter={filter} signedOut={!!signIn} />
         ) : (
@@ -388,27 +399,6 @@ export function CommentsList({
         )}
       </div>
     </div>
-  );
-}
-
-// A list that did not load is not an empty one: it says so, and tries again.
-function CommentsErrorState({ onRetry }: { onRetry: () => Promise<unknown> }) {
-  const [retrying, setRetrying] = useState(false);
-  const retry = () => {
-    setRetrying(true);
-    onRetry().finally(() => setRetrying(false));
-  };
-  return (
-    <EmptyState
-      icon={<CloudOff className="h-5 w-5" />}
-      title="Could not load comments"
-      description="Check your connection, then try again."
-      action={
-        <Button variant="outline" size="sm" disabled={retrying} onClick={retry}>
-          {retrying ? "Retrying…" : "Retry"}
-        </Button>
-      }
-    />
   );
 }
 

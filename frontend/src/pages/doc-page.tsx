@@ -17,7 +17,7 @@ import { useDocumentRole, useMe } from "@/lib/hooks";
 import { samePrincipal } from "@/lib/principals";
 import { useSignInPath } from "@/lib/auth-state";
 import { textLinkFragment } from "../../bridge/text-link";
-import { Skeleton } from "@/components/ui/misc";
+import { Skeleton, type RetryQuery } from "@/components/ui/misc";
 import { Button } from "@/components/ui/button";
 import { ErrorState } from "@/components/error-state";
 import { AppBar } from "@/components/layout/app-shell";
@@ -89,11 +89,11 @@ function AccessDeniedState({ documentID }: { documentID: string }) {
 function DocumentError({
   error,
   documentID,
-  onRetry,
+  retry,
 }: {
   error: Error;
   documentID: string;
-  onRetry: () => Promise<unknown>;
+  retry: RetryQuery;
 }) {
   const apiError = error instanceof APIError ? error : undefined;
   if (apiError?.status === 403) return <AccessDeniedState documentID={documentID} />;
@@ -117,7 +117,7 @@ function DocumentError({
     <ErrorState
       title="Could not load document"
       description="Something went wrong while loading this document. Please try again."
-      onRetry={onRetry}
+      retry={retry}
     />
   );
 }
@@ -293,7 +293,7 @@ export function DocumentPage() {
       <>
         <AppBar />
         <Page lane="focus" backdrop={false}>
-          <DocumentError error={doc.error} documentID={id} onRetry={doc.refetch} />
+          <DocumentError error={doc.error} documentID={id} retry={doc} />
         </Page>
       </>
     );

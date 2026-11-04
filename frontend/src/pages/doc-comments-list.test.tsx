@@ -57,7 +57,7 @@ function renderList(over: Partial<DocContextValue> = {}, showsLatest = true) {
     showsLatest,
     onPick: vi.fn(),
     onPlacePin: vi.fn(),
-    onRetry: vi.fn(() => Promise.resolve()),
+    retry: { isFetching: false, refetch: vi.fn() },
     onClose: vi.fn(),
   };
   render(
@@ -159,7 +159,7 @@ it("tells a failed load from an empty list, and tries again", async () => {
   expect(screen.getByText("Could not load comments")).toBeInTheDocument();
   expect(screen.queryByText("No comments yet")).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Retry" }));
-  expect(props.onRetry).toHaveBeenCalled();
+  expect(props.retry.refetch).toHaveBeenCalled();
 });
 
 it("asks a reader who is signed out to sign in to comment", async () => {

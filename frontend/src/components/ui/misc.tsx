@@ -1,7 +1,7 @@
 import * as React from "react";
 import { Check, Copy, X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { Button } from "./button";
+import { Button, type ButtonProps } from "./button";
 
 // Controls that appear on hover or focus inside a `group`. Touch screens
 // cannot hover, so the controls stay visible there.
@@ -112,6 +112,17 @@ export function CodeBlock({
         </>
       )}
     </div>
+  );
+}
+
+export type RetryQuery = { isFetching: boolean; refetch: () => unknown };
+
+// RetryButton loads a query that failed again, and is busy while it does.
+export function RetryButton({ query, ...props }: { query: RetryQuery } & ButtonProps) {
+  return (
+    <Button disabled={query.isFetching} onClick={() => query.refetch()} {...props}>
+      {query.isFetching ? "Retrying…" : "Retry"}
+    </Button>
   );
 }
 
