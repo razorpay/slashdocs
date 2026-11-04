@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Button } from "./button";
 
@@ -36,6 +36,8 @@ export function Skeleton({ className, ...p }: React.HTMLAttributes<HTMLDivElemen
   return <div className={cn("skeleton rounded-md", className)} {...p} />;
 }
 
+const COPY_LABEL = { idle: "Copy", done: "Copied", failed: "Could not copy" };
+
 export function CodeBlock({
   children,
   copy = true,
@@ -48,16 +50,19 @@ export function CodeBlock({
   wrap?: boolean;
   className?: string;
 }) {
-  const [copied, setCopied] = React.useState(false);
+  // The result of the last copy, for 1.5 s. A failed copy selects the text, so
+  // the reader can copy it with the keyboard.
+  const [copied, setCopied] = React.useState<"done" | "failed" | null>(null);
+  const pre = React.useRef<HTMLPreElement>(null);
   const onCopy = async () => {
     try {
       await navigator.clipboard.writeText(children);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      setCopied("done");
     } catch {
-      // Clipboard is unavailable in insecure contexts or was denied; leave the
-      // button state untouched so we don't falsely report success.
+      setCopied("failed");
+      if (pre.current) window.getSelection()?.selectAllChildren(pre.current);
     }
+    setTimeout(() => setCopied(null), 1500);
   };
   return (
     <div
@@ -68,6 +73,7 @@ export function CodeBlock({
     >
       {/* A long command scrolls with no scrollbar, and fades out under Copy. */}
       <pre
+        ref={pre}
         className={cn(
           "p-3 pr-10 leading-relaxed text-[var(--color-fg)]",
           wrap
@@ -89,16 +95,19 @@ export function CodeBlock({
               "absolute right-1.5 top-1.5 h-8 min-h-8 w-8 rounded-md text-[var(--color-fg-muted)] transition-[background-color,color,opacity,transform] duration-150 ease-out active:scale-[0.96] hover:bg-[var(--color-border)] hover:text-[var(--color-fg)]",
               revealOnHover,
             )}
-            aria-label={copied ? "Copied" : "Copy"}
+            aria-label={COPY_LABEL[copied || "idle"]}
           >
-            {copied ? (
+            {copied === "done" ? (
               <Check className="h-3.5 w-3.5" />
+            ) : copied === "failed" ? (
+              <X className="h-3.5 w-3.5 text-[var(--color-danger)]" />
             ) : (
               <Copy className="h-3.5 w-3.5" />
             )}
           </Button>
           <span className="sr-only" role="status" aria-live="polite">
-            {copied ? "Copied to clipboard" : ""}
+            {copied === "done" ? "Copied to clipboard" : ""}
+            {copied === "failed" ? "Could not copy. The text is selected." : ""}
           </span>
         </>
       )}

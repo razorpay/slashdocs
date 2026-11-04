@@ -22,8 +22,8 @@ import { queryKeys } from "@/lib/queryKeys";
 // focus (opening the OS file picker does that) and unmounts everything inside.
 export function UploadVersionMenuItem({ onSelect }: { onSelect: () => void }) {
   return (
-    <DropdownItem onSelect={onSelect} className="text-[var(--color-fg-muted)]">
-      <Upload className="h-3.5 w-3.5" /> Replace with an HTML file
+    <DropdownItem onSelect={onSelect}>
+      <Upload className="h-4 w-4" /> Replace with an HTML file
     </DropdownItem>
   );
 }

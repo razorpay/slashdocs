@@ -12,22 +12,32 @@ export function principalLabel(p?: Principal) {
   return p.id || "Unknown owner";
 }
 
-// Dark enough for white text, and far enough apart to tell people apart.
+// Twelve hues, each at least 4.5:1 with white text, so initials stay
+// readable in light and dark.
 const PRINCIPAL_COLORS = [
-  "#e5484d",
-  "#e5590c",
-  "#d6409f",
-  "#8e4ec6",
-  "#3e63dd",
-  "#0d74ce",
-  "#0d9b8a",
-  "#2b9a66",
+  "#ce2c31",
+  "#cc4e00",
+  "#a35829",
+  "#5c7c2f",
+  "#218358",
+  "#008573",
+  "#107d98",
+  "#0b68cb",
+  "#3a5bc7",
+  "#6550b9",
+  "#ab4aba",
+  "#c2298a",
 ];
 
 // principalColor gives each person one color, the same in every session, for
-// their cursor and the ring of their avatar.
+// their cursor and the ring of their avatar. The hash is FNV-1a with a final
+// mix, so ids that differ in a few characters still get different colors.
 export function principalColor(p: Principal) {
-  let hash = 0;
-  for (const char of `${p.type}:${p.id}`) hash = (hash * 31 + char.charCodeAt(0)) | 0;
-  return PRINCIPAL_COLORS[Math.abs(hash) % PRINCIPAL_COLORS.length];
+  let hash = 0x811c9dc5;
+  for (const char of `${p.type}:${p.id}`) {
+    hash = Math.imul(hash ^ char.charCodeAt(0), 0x01000193);
+  }
+  hash = Math.imul(hash ^ (hash >>> 16), 0x85ebca6b);
+  hash = Math.imul(hash ^ (hash >>> 13), 0xc2b2ae35);
+  return PRINCIPAL_COLORS[((hash ^ (hash >>> 16)) >>> 0) % PRINCIPAL_COLORS.length];
 }
