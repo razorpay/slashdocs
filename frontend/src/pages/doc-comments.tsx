@@ -1,15 +1,8 @@
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type KeyboardEvent,
-} from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { MapPin, MessageSquareText, X } from "lucide-react";
+import { CloudOff, MapPin, MessageSquareText, X } from "lucide-react";
 import { api, type Comment, type Principal } from "@/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -118,26 +111,29 @@ export function CommentComposer({ draft }: { draft: CommentDraft }) {
       setActiveComment(created.id);
       q.invalidateQueries({ queryKey: queryKeys.comments(docId) });
     },
-    onError: (e) => toast.error(errorMessage(e, "Could not add comment")),
+    // The text stays in the field, and the toast sends it again.
+    onError: (e) =>
+      toast.error(errorMessage(e, "Could not add comment"), {
+        action: { label: "Retry", onClick: () => create.mutate() },
+      }),
   });
 
+  // Only this button deletes what was typed. Esc and a click outside close
+  // the popover and keep the draft, and an empty one goes as it closes.
   const discard = () => {
     unsaved.current = null;
     discardDraft(draft.id);
   };
-  const discardOnEscape = (event: KeyboardEvent) => {
-    if (event.key === "Escape") discard();
-  };
 
   const self = useSelf(principal);
   return (
-    <div onKeyDown={discardOnEscape} className="px-3 pb-3 pt-3">
+    <div className="px-3 pb-3 pt-3">
       <div className="flex min-h-6 items-center gap-2">
         {self ? <PersonAvatar who={self} /> : null}
         <span className="min-w-0 flex-1 truncate text-xs font-semibold">
           {self ? principalLabel(self) : "New comment"}
         </span>
-        <CloseButton label="Cancel comment" onClick={discard} />
+        <CloseButton label="Discard comment" onClick={discard} />
       </div>
       <div className="ml-7">
         {unanchoredComments.has(draft.id) && (
@@ -234,6 +230,7 @@ export function CommentsList({
   showsLatest,
   onPick,
   onPlacePin,
+  onRetry,
   onClose,
 }: {
   // The version on screen is the latest one, which the server places the
@@ -241,6 +238,7 @@ export function CommentsList({
   showsLatest: boolean;
   onPick: (id: string) => void;
   onPlacePin: () => void;
+  onRetry: () => Promise<unknown>;
   onClose: () => void;
 }) {
   const {
@@ -250,6 +248,7 @@ export function CommentsList({
     commentsError,
     notifications,
     principal,
+    signIn,
     unanchoredComments,
     activeComment,
   } = useDoc();
@@ -285,17 +284,23 @@ export function CommentsList({
           )}
           <span className="ml-auto flex items-center gap-1">
             {notifications && <NotificationToggle documentId={docId} />}
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={onPlacePin}
-              aria-label="Comment on a spot"
-              tooltip="Comment on a spot (C)"
-              className="h-8 w-8 text-[var(--color-fg-muted)]"
-            >
-              <MapPin className="h-4 w-4" />
-            </Button>
+            {signIn ? (
+              <Button type="button" variant="outline" size="sm" onClick={onPlacePin}>
+                Sign in to comment
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={onPlacePin}
+                aria-label="Comment on a spot"
+                tooltip="Comment on a spot (C)"
+                className="h-8 w-8 text-[var(--color-fg-muted)]"
+              >
+                <MapPin className="h-4 w-4" />
+              </Button>
+            )}
             <CloseButton label="Close comments" onClick={onClose} />
           </span>
         </div>
@@ -304,7 +309,7 @@ export function CommentsList({
           aria-label="Filter comments"
           className="mt-1 flex gap-4 text-xs"
         >
-          {LIST_FILTERS.map((f) => (
+          {(signIn ? COMMENT_FILTERS : LIST_FILTERS).map((f) => (
             <button
               key={f}
               type="button"
@@ -329,11 +334,9 @@ export function CommentsList({
             <Skeleton className="h-16 w-full rounded-md" />
           </div>
         ) : commentsError ? (
-          <p className="p-3 text-sm text-[var(--color-fg-muted)]">
-            Could not load comments.
-          </p>
+          <CommentsErrorState onRetry={onRetry} />
         ) : items.length === 0 ? (
-          <CommentsEmptyState filter={filter} />
+          <CommentsEmptyState filter={filter} signedOut={!!signIn} />
         ) : (
           <ul className="space-y-1">
             {items.map((c) => (
@@ -388,7 +391,34 @@ export function CommentsList({
   );
 }
 
-function CommentsEmptyState({ filter }: { filter: ListFilter }) {
+// A list that did not load is not an empty one: it says so, and tries again.
+function CommentsErrorState({ onRetry }: { onRetry: () => Promise<unknown> }) {
+  const [retrying, setRetrying] = useState(false);
+  const retry = () => {
+    setRetrying(true);
+    onRetry().finally(() => setRetrying(false));
+  };
+  return (
+    <EmptyState
+      icon={<CloudOff className="h-5 w-5" />}
+      title="Could not load comments"
+      description="Check your connection, then try again."
+      action={
+        <Button variant="outline" size="sm" disabled={retrying} onClick={retry}>
+          {retrying ? "Retrying…" : "Retry"}
+        </Button>
+      }
+    />
+  );
+}
+
+function CommentsEmptyState({
+  filter,
+  signedOut,
+}: {
+  filter: ListFilter;
+  signedOut: boolean;
+}) {
   const titles: Record<ListFilter, string> = {
     all: "No comments yet",
     open: "No open comments",
@@ -402,7 +432,9 @@ function CommentsEmptyState({ filter }: { filter: ListFilter }) {
       description={
         filter === COMMENT_STATUS.resolved
           ? "Resolved conversations will appear here."
-          : "Select text, or press C and click a spot, to start a thread."
+          : signedOut
+            ? "Sign in to start a thread."
+            : "Select text, or press C and click a spot, to start a thread."
       }
     />
   );

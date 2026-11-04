@@ -57,6 +57,7 @@ function renderList(over: Partial<DocContextValue> = {}, showsLatest = true) {
     showsLatest,
     onPick: vi.fn(),
     onPlacePin: vi.fn(),
+    onRetry: vi.fn(() => Promise.resolve()),
     onClose: vi.fn(),
   };
   render(
@@ -151,4 +152,22 @@ it("shows a mention as a chip, as the thread does", () => {
     ],
   });
   expect(screen.getByText("@Reader")).toHaveClass("rounded");
+});
+
+it("tells a failed load from an empty list, and tries again", async () => {
+  const props = renderList({ commentsError: true });
+  expect(screen.getByText("Could not load comments")).toBeInTheDocument();
+  expect(screen.queryByText("No comments yet")).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(props.onRetry).toHaveBeenCalled();
+});
+
+it("asks a reader who is signed out to sign in to comment", async () => {
+  const props = renderList({ signIn: vi.fn(), principal: undefined });
+  expect(screen.queryByRole("button", { name: "for you" })).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Comment on a spot" }),
+  ).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Sign in to comment" }));
+  expect(props.onPlacePin).toHaveBeenCalled();
 });

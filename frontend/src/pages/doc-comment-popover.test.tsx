@@ -2,8 +2,11 @@ import { createRef } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, beforeEach, expect, it } from "vitest";
-import type { Comment } from "@/api";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { toast, type Action } from "sonner";
+import { api, type Comment } from "@/api";
+import type { CommentDraft } from "@/lib/comment-drafts";
 import { CommentPopovers } from "./doc-comment-popover";
 import { DocProvider, type DocContextValue } from "./doc-context";
 
@@ -26,7 +29,7 @@ const c = {
 } as Comment;
 
 // A thread whose text is gone opens at once, with no anchor from the frame.
-function renderThread() {
+function renderThread(more: Partial<DocContextValue> = {}) {
   const ctx = {
     docId: "doc-1",
     comments: [c],
@@ -35,6 +38,7 @@ function renderThread() {
     setActiveComment: () => {},
     unanchoredComments: new Set(["c1"]),
     signIn: () => {},
+    ...more,
   } as unknown as DocContextValue;
   render(
     <QueryClientProvider client={new QueryClient()}>
@@ -64,4 +68,64 @@ it("leaves the focus in the document", () => {
   renderThread();
   expect(frame).toHaveFocus();
   frame.remove();
+});
+
+function renderDraft() {
+  const draft: CommentDraft = {
+    id: "d1",
+    version: "v1",
+    quote: "Look",
+    body: "",
+    mentions: [],
+    updatedAt: 0,
+  };
+  const ctx = {
+    drafts: [draft],
+    activeComment: "d1",
+    unanchoredComments: new Set(["d1"]),
+    setActiveComment: vi.fn(),
+    saveDraft: vi.fn(),
+    discardDraft: vi.fn(),
+  };
+  renderThread(ctx);
+  return ctx;
+}
+
+it("keeps a typed draft when Esc closes the new comment", async () => {
+  const ctx = renderDraft();
+  await userEvent.type(screen.getByPlaceholderText("Add a comment…"), "Half a thought");
+  await userEvent.keyboard("{Escape}");
+  expect(ctx.setActiveComment).toHaveBeenCalledWith(undefined);
+  cleanup();
+  expect(ctx.saveDraft).toHaveBeenLastCalledWith("d1", {
+    body: "Half a thought",
+    mentions: [],
+  });
+  expect(ctx.discardDraft).not.toHaveBeenCalled();
+});
+
+it("discards a draft with its discard button only", async () => {
+  const ctx = renderDraft();
+  await userEvent.type(screen.getByPlaceholderText("Add a comment…"), "Never mind");
+  await userEvent.click(screen.getByRole("button", { name: "Discard comment" }));
+  expect(ctx.discardDraft).toHaveBeenCalledWith("d1");
+});
+
+it("keeps the text of a comment that did not post, and posts it again", async () => {
+  const create = vi
+    .spyOn(api, "createComment")
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValueOnce({ id: "c2" } as Comment);
+  const error = vi.spyOn(toast, "error");
+  const ctx = renderDraft();
+  const field = screen.getByPlaceholderText("Add a comment…");
+  await userEvent.type(field, "Try again{Enter}");
+  await vi.waitFor(() => expect(error).toHaveBeenCalled());
+  expect(field).toHaveValue("Try again");
+
+  const retry = error.mock.calls[0][1]?.action as Action;
+  retry.onClick({} as Parameters<Action["onClick"]>[0]);
+  await vi.waitFor(() => expect(ctx.setActiveComment).toHaveBeenCalledWith("c2"));
+  expect(create).toHaveBeenCalledTimes(2);
+  expect(create.mock.calls[1][2]).toBe("Try again");
 });

@@ -404,11 +404,15 @@ export function ReplyRow({
       setDraft((current) => (current === sent.current ? emptyMentionDraft() : current));
       q.invalidateQueries({ queryKey: queryKeys.comments(docId) });
     },
-    onError: (e) => toast.error(errorMessage(e, "Could not add reply")),
+    // The text stays in the field, and the toast sends it again.
+    onError: (e, d) =>
+      toast.error(errorMessage(e, "Could not add reply"), {
+        action: { label: "Retry", onClick: () => send(d) },
+      }),
   });
-  const send = () => {
-    sent.current = draft;
-    reply.mutate(draft);
+  const send = (d = draft) => {
+    sent.current = d;
+    reply.mutate(d);
   };
   if (signIn) return null;
   return (

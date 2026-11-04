@@ -269,7 +269,7 @@ test("comments on a selection with C and lists every shortcut with ?", async ({
   const composer = page.getByPlaceholder("Add a comment…");
   await expect(composer).toBeFocused();
   await expect(composer).toHaveValue("");
-  await page.getByRole("button", { name: "Cancel comment" }).click();
+  await page.getByRole("button", { name: "Discard comment" }).click();
 
   // The owner edits the current document, so in its text C types and Ctrl
   // or Cmd with Alt and M comments.
@@ -279,7 +279,7 @@ test("comments on a selection with C and lists every shortcut with ?", async ({
   await doc.locator("p").selectText();
   await page.keyboard.press("ControlOrMeta+Alt+m");
   await expect(composer).toBeFocused();
-  await page.getByRole("button", { name: "Cancel comment" }).click();
+  await page.getByRole("button", { name: "Discard comment" }).click();
   await expect(doc.locator("p")).toHaveText("Keys beat clicks, again.");
 
   // Esc leaves the text, so ? lists every shortcut and types nothing.
