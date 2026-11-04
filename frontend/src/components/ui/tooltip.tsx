@@ -13,6 +13,13 @@ export function TooltipProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
+// A dialog or menu that opens on a click moves the focus to its first
+// control. Only keyboard focus opens a tooltip, so that one does not cover
+// the dialog.
+function openOnKeyboardFocus(event: React.FocusEvent<HTMLElement>) {
+  if (!event.currentTarget.matches(":focus-visible")) event.preventDefault();
+}
+
 export function Tooltip({
   label,
   children,
@@ -27,7 +34,7 @@ export function Tooltip({
   const child = React.cloneElement(children, { title: undefined });
   const content = (
     <Primitive.Root delayDuration={delayDuration}>
-      <Primitive.Trigger asChild>
+      <Primitive.Trigger asChild onFocus={openOnKeyboardFocus}>
         {children.props.disabled ? (
           <span className="inline-flex shrink-0">{child}</span>
         ) : (
