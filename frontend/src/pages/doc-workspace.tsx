@@ -98,6 +98,7 @@ export function DocWorkspace({
   followedCursor,
   onDocumentClick,
   reader,
+  overlay,
   bar,
 }: {
   docId: string;
@@ -117,6 +118,9 @@ export function DocWorkspace({
   onDocumentClick?: () => void;
   // Book mode. Left out, the page renders as a plain document.
   reader?: DocContextValue["reader"];
+  // Floats over the rendered document, inside the document context; book
+  // mode puts its notes and end-of-chapter card here.
+  overlay?: ReactNode;
   bar: (controls: DocBarControls) => ReactNode;
 }) {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -546,11 +550,16 @@ export function DocWorkspace({
     <>
       {version ? <RenderFrame /> : <Center>No version available.</Center>}
       <Keycast state={chord} available={chordKeys} label={chordLabel} />
+      {overlay}
     </>
   );
   return (
     <DocProvider value={ctx}>
-      <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+      <ShortcutsDialog
+        open={shortcutsOpen}
+        onOpenChange={setShortcutsOpen}
+        book={!!reader}
+      />
       {fullscreen ? (
         <div className="relative h-full bg-[var(--color-surface-muted)]">
           {showFullscreenHint ? (

@@ -10,6 +10,8 @@ export function AppShell() {
   const loc = useLocation();
   const signInPath = useSignInPath();
   const documentPage = loc.pathname.startsWith("/app/d/");
+  // A book chapter has its own bar, as a document does, but needs sign-in.
+  const chapterPage = /^\/app\/b\/[^/]+\/c\//.test(loc.pathname);
   // A signed-out reader can open a document. The document page sends them
   // to sign in when the server does not let them read it.
   if (me.unauth && !documentPage) return <Navigate to={signInPath} replace />;
@@ -17,7 +19,8 @@ export function AppShell() {
   if (!me.data && !me.unauth) return null;
   const user = me.data?.user || me.data?.principal;
   const fullscreenDocument =
-    documentPage && new URLSearchParams(loc.search).get("fullscreen") === "1";
+    (documentPage || chapterPage) &&
+    new URLSearchParams(loc.search).get("fullscreen") === "1";
   return (
     <main
       className={cn(
@@ -25,7 +28,7 @@ export function AppShell() {
         fullscreenDocument ? "overflow-hidden" : "overflow-auto",
       )}
     >
-      {!documentPage && user && (
+      {!documentPage && !chapterPage && user && (
         <TopBar>
           <GetStarted />
           <AccountMenu user={user} />

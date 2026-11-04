@@ -11,7 +11,9 @@ const MOD = /Mac|iPhone|iPad/.test(navigator.userAgent) ? "⌘" : "Ctrl";
 
 // Every document-page shortcut. The Esc chords come from CHORD_KEYS, so a new
 // chord shows here without an edit.
-const SECTIONS: { title: string; rows: [keys: string[], label: string][] }[] = [
+type Section = { title: string; rows: [keys: string[], label: string][] };
+
+const SECTIONS: Section[] = [
   {
     title: "Esc, then a letter",
     rows: CHORD_KEYS.map(({ key, hint }) => [
@@ -39,13 +41,27 @@ const SECTIONS: { title: string; rows: [keys: string[], label: string][] }[] = [
   },
 ];
 
+// Book mode adds these. Reading settings can turn them off (WCAG 2.1.4).
+const BOOK: Section = {
+  title: "Book",
+  rows: [
+    [["←"], "Previous chapter"],
+    [["→"], "Next chapter"],
+    [["T"], "Show or pin the contents"],
+    [["/"], "Search the book"],
+  ],
+};
+
 export function ShortcutsDialog({
   open,
   onOpenChange,
+  book = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  book?: boolean;
 }) {
+  const sections = book ? [BOOK, ...SECTIONS] : SECTIONS;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
@@ -54,7 +70,7 @@ export function ShortcutsDialog({
           <DialogDescription>Your mouse can take the day off.</DialogDescription>
         </DialogHeader>
         <div className="space-y-5">
-          {SECTIONS.map((section) => (
+          {sections.map((section) => (
             <section key={section.title}>
               <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-[var(--color-fg-muted)]">
                 {section.title}

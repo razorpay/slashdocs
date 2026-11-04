@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Pencil } from "lucide-react";
 import { APIError } from "@/api";
 import {
@@ -8,7 +8,6 @@ import {
   latestPosition,
   minutesLeft,
   type BookState,
-  type ChapterState,
   type Manifest,
   type ManifestLink,
 } from "@/lib/books";
@@ -17,30 +16,15 @@ import { useTitle } from "@/lib/use-title";
 import { Button } from "@/components/ui/button";
 import { Center, Skeleton } from "@/components/ui/misc";
 import { Page } from "@/components/layout/page";
-
-type RowState = ChapterState | "planned";
-
-const STATE_LABEL: Record<RowState, string> = {
-  not_started: "Not started",
-  reading: "Reading",
-  read: "Read",
-  done: "Done",
-  planned: "Planned",
-};
-
-const STATE_DOT: Record<RowState, string> = {
-  not_started: "border border-[var(--color-fg-muted)]",
-  reading: "bg-[var(--color-accent)]",
-  read: "bg-[var(--color-fg-muted)]",
-  done: "bg-[var(--color-success,var(--color-fg-muted))]",
-  planned: "border border-dashed border-[var(--color-fg-muted)]",
-};
-
-function rowState(l: ManifestLink, s: BookState | undefined): RowState {
-  if (l.properties?.kind === "planned") return "planned";
-  const id = l.properties?.documentId;
-  return (id && s?.chapters[id]?.state) || "not_started";
-}
+import {
+  STATE_DOT,
+  STATE_LABEL,
+  rowState,
+  useBookState,
+  useChapterChanges,
+  useManifest,
+  type RowState,
+} from "./book-chapter-state";
 
 function Dot({ state }: { state: RowState }) {
   return (
@@ -51,7 +35,7 @@ function Dot({ state }: { state: RowState }) {
   );
 }
 
-function BookError({ error }: { error: unknown }) {
+export function BookError({ error }: { error: unknown }) {
   let title = "Could not load this book";
   let description = "Something went wrong. Please try again.";
   if (error instanceof APIError) {
@@ -78,11 +62,7 @@ function BookError({ error }: { error: unknown }) {
 }
 
 function ChangeSummary({ bookId, docId }: { bookId: string; docId: string }) {
-  const q = useQuery({
-    queryKey: queryKeys.bookChanges(bookId, docId),
-    queryFn: () => booksApi.changes(bookId, docId),
-    meta: { suppressGlobalError: true },
-  });
+  const q = useChapterChanges(bookId, docId, true);
   const latest = q.data?.versions[q.data.versions.length - 1];
   return (
     <p className="mt-1 text-sm text-[var(--color-fg-muted)]">
@@ -284,18 +264,8 @@ function PartSection({
 
 export function BookHomePage() {
   const { bookId = "" } = useParams();
-  const manifest = useQuery({
-    queryKey: queryKeys.book(bookId),
-    queryFn: () => booksApi.manifest(bookId),
-    retry: false,
-    meta: { suppressGlobalError: true },
-  });
-  const state = useQuery({
-    queryKey: queryKeys.bookState(bookId),
-    queryFn: () => booksApi.state(bookId),
-    retry: false,
-    meta: { suppressGlobalError: true },
-  });
+  const manifest = useManifest(bookId);
+  const state = useBookState(bookId);
   useTitle(manifest.data?.metadata.title);
 
   if (manifest.isLoading) {

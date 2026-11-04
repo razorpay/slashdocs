@@ -97,6 +97,9 @@ export function useReadingPosition(opts: {
   documentId: string;
   versionId: string;
   enabled: boolean;
+  // Called once the server has heard the chapter was finished, so the page
+  // can fetch the new chapter state.
+  onReachedEnd?: () => void;
 }): {
   onViewport: (v: Viewport) => void;
   // Call when a saved position is sent to the frame to restore; the gate
@@ -107,6 +110,8 @@ export function useReadingPosition(opts: {
   onRestored: () => void;
 } {
   const { bookId, documentId, versionId, enabled } = opts;
+  const onReachedEnd = useRef(opts.onReachedEnd);
+  onReachedEnd.current = opts.onReachedEnd;
   // Per-visit state; replaced when the chapter changes.
   const visit = useRef<Visit>(newVisit());
   // A restore requested or done while no visit was live (saving not enabled
@@ -189,6 +194,7 @@ export function useReadingPosition(opts: {
       booksApi.progress(bookId, documentId, versionId, progression, true).then(
         () => {
           v.endRetries = 0;
+          onReachedEnd.current?.();
         },
         (err: unknown) => {
           // Sent again on its own, or with the next report at the end.

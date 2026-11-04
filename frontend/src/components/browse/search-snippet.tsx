@@ -6,13 +6,16 @@ import { cn } from "@/lib/cn";
 export function SearchSnippet({
   text,
   className,
+  as: Tag = "p",
 }: {
   text: string;
   className?: string;
+  // span inside a button, where a paragraph is not allowed.
+  as?: "p" | "span";
 }) {
   const parts = text.split("\u0002").flatMap((part) => part.split("\u0003"));
   return (
-    <p className={cn("text-[var(--color-fg-muted)]", className)}>
+    <Tag className={cn("text-[var(--color-fg-muted)]", className)}>
       {parts.map((part, index) =>
         index % 2 ? (
           <mark
@@ -25,6 +28,6 @@ export function SearchSnippet({
           part
         ),
       )}
-    </p>
+    </Tag>
   );
 }
