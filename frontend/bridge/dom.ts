@@ -59,3 +59,20 @@ export function blockOf(node: Node): Element | null {
   }
   return element;
 }
+
+// markSurface sets data-slashdocs-surface on the document element to "dark"
+// or "light", from the background that the document shows behind its text:
+// the background of the body, else of the html element, else white. The
+// bridge's controls in the document take their colors from it.
+export function markSurface(d: Document) {
+  const view = d.defaultView;
+  const [r, g, b] = [d.body, d.documentElement]
+    .map((el) => (el && view?.getComputedStyle(el).backgroundColor) || "")
+    .map((color) => (/^rgba?\(/.test(color) ? color.match(/[\d.]+/g)!.map(Number) : []))
+    // A transparent background shows the one behind it.
+    .find((rgba) => rgba.length >= 3 && rgba[3] !== 0) ?? [255, 255, 255];
+  // The brightness of the color, from 0 to 255, with the sRGB weights.
+  const surface = 0.2126 * r + 0.7152 * g + 0.0722 * b < 128 ? "dark" : "light";
+  if (d.documentElement.getAttribute("data-slashdocs-surface") !== surface)
+    d.documentElement.setAttribute("data-slashdocs-surface", surface);
+}
