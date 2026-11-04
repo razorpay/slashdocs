@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Check, ClipboardCheck, Clock, X } from "lucide-react";
 
@@ -29,6 +29,7 @@ import { errorMessage } from "@/lib/errors";
 import { queryKeys } from "@/lib/queryKeys";
 import { samePrincipal } from "@/lib/principals";
 import { useDoc } from "./doc-context";
+import { useInvalidateApprovals } from "./use-invalidate-approvals";
 import { PersonAvatar } from "./doc-comment-parts";
 
 const STATUS_BADGE: Record<
@@ -227,16 +228,6 @@ function decisionLabel(item: ApprovalListItem, current: boolean) {
         : null}
     </span>
   );
-}
-
-function useInvalidateApprovals(docId: string) {
-  const q = useQueryClient();
-  return () => {
-    q.invalidateQueries({ queryKey: queryKeys.approvalsAll(docId) });
-    q.invalidateQueries({ queryKey: queryKeys.approvers(docId) });
-    q.invalidateQueries({ queryKey: queryKeys.document(docId) });
-    q.invalidateQueries({ queryKey: queryKeys.documents() });
-  };
 }
 
 // ReviewActions is the signed-in approver's own controls: Approve, Reject and
