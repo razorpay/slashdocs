@@ -8,10 +8,12 @@ import {
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
+import { Minimize2 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type CommentMention, type Principal } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { useCommentDrafts } from "@/lib/comment-drafts";
+import { Button } from "@/components/ui/button";
 import { Center } from "@/components/ui/misc";
 import { useIsMobile } from "@/lib/use-media-query";
 import { useTheme } from "@/lib/theme";
@@ -483,13 +485,20 @@ export function DocWorkspace({
       {fullscreen ? (
         <div className="relative h-full bg-[var(--color-surface-muted)]">
           {showFullscreenHint ? (
-            <div className="pointer-events-none absolute left-1/2 top-6 z-20 -translate-x-1/2 rounded-full bg-[var(--color-surface)] px-6 py-3 text-base font-semibold text-[var(--color-fg)] shadow-xl ring-1 ring-[var(--color-border)]">
-              <span className="hidden sm:inline">
-                Esc to exit · ? for all shortcuts
-              </span>
-              <span className="sm:hidden">Go back to exit full screen</span>
+            <div className="pointer-events-none absolute left-1/2 top-6 z-20 hidden -translate-x-1/2 rounded-full bg-[var(--color-surface)] px-6 py-3 text-base font-semibold text-[var(--color-fg)] shadow-xl ring-1 ring-[var(--color-border)] sm:block">
+              Esc to exit · ? for all shortcuts
             </div>
           ) : null}
+          {/* A phone has no Esc key, so its exit stays in view. */}
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={exitFullscreen}
+            aria-label="Exit full screen"
+            className="absolute right-4 top-3 z-20 h-10 w-10 rounded-full sm:hidden"
+          >
+            <Minimize2 className="h-4 w-4" />
+          </Button>
           {frame}
           {banner?.(true)}
         </div>
@@ -502,9 +511,16 @@ export function DocWorkspace({
           })}
           {banner?.(false)}
           <section className="relative min-w-0 flex-1 overflow-hidden bg-[var(--color-surface-muted)]">
-            {/* Under the sheet of a narrow screen, the document is out of
-                reach. */}
-            <div inert={listOpen && isMobile} className="relative h-full">
+            {/* A wide screen makes room for the list beside the document, as
+                Google Docs does. Under the sheet of a narrow one, the
+                document is out of reach. */}
+            <div
+              inert={listOpen && isMobile}
+              className={cn(
+                "relative h-full transition-[margin] duration-200 ease-out",
+                listOpen && "lg:mr-[392px]",
+              )}
+            >
               {frame}
             </div>
             <AnimatePresence>
