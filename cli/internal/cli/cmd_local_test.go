@@ -230,6 +230,37 @@ func TestLocalComments(t *testing.T) {
 	}
 }
 
+func TestLocalPointComments(t *testing.T) {
+	l := newTestLocal(t)
+	base := "/v1/documents/" + url.PathEscape("specs/release #2.html") + "/comments"
+	pin := decodeTest[localComment](t, l.do(http.MethodPost, testApp, base, `{"version_id":"v1","body":"Here","anchor":{"quote":"","point":{"path":"0.1","x":0,"y":0.5}}}`))
+	if p := pin.Anchor.Point; p == nil || p.Path != "0.1" || p.X != 0 || p.Y != 0.5 {
+		t.Fatalf("created point = %+v", pin.Anchor)
+	}
+	text := decodeTest[localComment](t, l.do(http.MethodPost, testApp, base, `{"version_id":"v1","body":"Why?","anchor":{"quote":"Release"}}`))
+	for _, tt := range []struct {
+		target, body string
+		status       int
+	}{
+		{base, `{"version_id":"v1","body":"Off","anchor":{"point":{"x":1.5,"y":0}}}`, http.StatusBadRequest},
+		{base + "/" + pin.ID, `{"anchor":{"point":{"target":"chart","x":0.25,"y":1}}}`, http.StatusOK},
+		{base + "/" + pin.ID, `{"anchor":{"quote":"Release"}}`, http.StatusBadRequest},
+		{base + "/" + text.ID, `{"anchor":{"point":{"target":"chart","x":0.25,"y":1}}}`, http.StatusBadRequest},
+	} {
+		method := http.MethodPatch
+		if tt.target == base {
+			method = http.MethodPost
+		}
+		if w := l.do(method, testApp, tt.target, tt.body); w.Code != tt.status {
+			t.Errorf("%s %s = %d %s, want %d", method, tt.target, w.Code, w.Body, tt.status)
+		}
+	}
+	got := decodeTest[struct{ Items []localComment }](t, l.do(http.MethodGet, testApp, base, "")).Items
+	if p := got[0].Anchor.Point; p == nil || p.Target != "chart" || p.X != 0.25 || got[1].Anchor.Point != nil {
+		t.Fatalf("comments after the move = %+v, %+v", got[0].Anchor, got[1].Anchor)
+	}
+}
+
 func TestLocalCommentsRefuseOtherOrigins(t *testing.T) {
 	l := newTestLocal(t)
 	r := httptest.NewRequest(http.MethodPost, "/v1/documents/report.html/comments", strings.NewReader(`{}`))

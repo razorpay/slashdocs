@@ -49,6 +49,25 @@ type localAnchor struct {
 	DOMPath     string `json:"dom_path,omitzero"`
 	StartOffset int    `json:"start_offset,omitzero"`
 	EndOffset   int    `json:"end_offset,omitzero"`
+	// Point pins a comment to a spot in an element, as on the server.
+	Point *localPoint `json:"point,omitzero"`
+}
+
+type localPoint struct {
+	Target string  `json:"target,omitzero"`
+	Path   string  `json:"path,omitzero"`
+	Label  string  `json:"label,omitzero"`
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+}
+
+// valid reports whether a is a text anchor with a quote, or a point inside
+// its element's box.
+func (a *localAnchor) valid() bool {
+	if a == nil || a.Point == nil {
+		return a != nil && a.Quote != ""
+	}
+	return a.Point.X >= 0 && a.Point.X <= 1 && a.Point.Y >= 0 && a.Point.Y <= 1
 }
 
 // localReaction keeps who reacted. Count and Reacted change with the viewer,
@@ -201,8 +220,8 @@ func (s *localDocs) create(r *http.Request, doc string) (any, error) {
 	if err := decodeLocal(r, &in); err != nil {
 		return nil, err
 	}
-	if in.Anchor == nil || in.Anchor.Quote == "" {
-		return nil, localError{http.StatusBadRequest, "comment anchor needs a quote"}
+	if !in.Anchor.valid() {
+		return nil, localError{http.StatusBadRequest, "comment anchor needs a quote or a point"}
 	}
 	c, err := s.newComment(in.Body)
 	if err != nil {
@@ -239,14 +258,18 @@ func (s *localDocs) reply(r *http.Request, doc string) (any, error) {
 
 func (s *localDocs) patch(r *http.Request, doc string) (any, error) {
 	var in struct {
-		Body   *string `json:"body"`
-		Status string  `json:"status"`
+		Body   *string      `json:"body"`
+		Status string       `json:"status"`
+		Anchor *localAnchor `json:"anchor"`
 	}
 	if err := decodeLocal(r, &in); err != nil {
 		return nil, err
 	}
 	if in.Body != nil && strings.TrimSpace(*in.Body) == "" {
 		return nil, errLocalEmptyBody
+	}
+	if in.Anchor != nil && (in.Anchor.Point == nil || !in.Anchor.valid()) {
+		return nil, localError{http.StatusBadRequest, "invalid comment anchor"}
 	}
 	var c *localComment
 	err := s.update(doc, func(t *localState) error {
@@ -255,6 +278,13 @@ func (s *localDocs) patch(r *http.Request, doc string) (any, error) {
 		}
 		if in.Body != nil && c.Body != *in.Body {
 			c.Body, c.Edited = *in.Body, true
+		}
+		if in.Anchor != nil {
+			// Only a point thread moves.
+			if c.Anchor == nil || c.Anchor.Point == nil {
+				return localError{http.StatusBadRequest, "only a point comment can move"}
+			}
+			c.Anchor = in.Anchor
 		}
 		switch {
 		case in.Status == "":

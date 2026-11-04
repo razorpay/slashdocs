@@ -360,6 +360,23 @@ type Anchor struct {
 	DOMPath     string `json:"dom_path"`
 	StartOffset int    `json:"start_offset"`
 	EndOffset   int    `json:"end_offset"`
+	// Point pins the comment to a spot in an element instead of to the quoted
+	// text. The text fields then hold the start of the element's own text,
+	// which finds the element again after the document changes.
+	Point *AnchorPoint `json:"point,omitempty"`
+}
+
+// AnchorPoint is a spot in a rendered document: the element under it and
+// fractions of that element's box. Target is the element's
+// data-slashdocs-target value or id, when it has one. Path is the element's
+// child-index path under the body, as live cursors name places. Label names
+// the element for lists, such as an image's alt text or its tag.
+type AnchorPoint struct {
+	Target string  `json:"target,omitempty"`
+	Path   string  `json:"path,omitempty"`
+	Label  string  `json:"label,omitempty"`
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
 }
 
 type CLICredential struct {
@@ -416,6 +433,8 @@ type CommentUpdate struct {
 	Body     *string
 	Status   string
 	Mentions *[]CommentMention
+	// Anchor moves a point comment to a new spot. Callers validate it.
+	Anchor *Anchor
 }
 
 type DocumentKVSnapshot struct {

@@ -115,8 +115,8 @@ func commentsJSON(items []repo.Comment, placementVersionID string, placementHTML
 	return out
 }
 
-// commentPlacement reports whether a comment's selected text can still be
-// placed on the given version, returning its placement status, a confidence
+// commentPlacement reports whether a comment's selected text or point can
+// still be placed on the given version, returning its placement status, a confidence
 // score, and the matched text. doc is the version body, or nil when unknown.
 func commentPlacement(cm repo.Comment, placementVersionID string, doc *placementDoc) (status string, confidence float64, matched string) {
 	status = placementAttached
@@ -174,7 +174,7 @@ func commentBaseJSON(cm repo.Comment, viewer auth.Principal) commentResponse {
 		Mentions:           commentMentionsJSON(cm.Mentions),
 		Reactions:          commentReactionsJSON(cm.Reactions, viewer),
 	}
-	if cm.SelectedText != "" {
+	if cm.SelectedText != "" || cm.Anchor.Point != nil {
 		out.SelectedText = cm.SelectedText
 		anchor := cm.Anchor
 		out.Anchor = &anchor

@@ -415,6 +415,49 @@ func registerMCPCommentTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 		return api.json(ctx, http.MethodPost, "/v1/documents/"+doc+"/comments", payload, mcpParams("id", doc), api.handlers.createComment)
 	})
 
+	// A tool of its own, so the schema of create_comment, which clients
+	// cache, stays the same.
+	server.AddTool(mcp.NewTool("create_point_comment", mutationOptions(false, false,
+		mcp.WithDescription("Create a review comment pinned to a spot on an element, such as a chart, diagram or image, in a document version."),
+		mcpDocumentID(), mcpVersionID(true),
+		mcp.WithString("body", mcp.Required(), mcp.Description("Comment text.")),
+		mcp.WithString("target", mcp.Required(), mcp.Description("The element's data-slashdocs-target value, or else its id.")),
+		mcp.WithNumber("x", mcp.Required(), mcp.Min(0), mcp.Max(1), mcp.Description("Horizontal position as a fraction of the element's box, 0 (left) to 1 (right).")),
+		mcp.WithNumber("y", mcp.Required(), mcp.Min(0), mcp.Max(1), mcp.Description("Vertical position as a fraction of the element's box, 0 (top) to 1 (bottom).")),
+		mcp.WithString("quote", mcp.Description("The start of the element's text, which finds the element again when its target changes.")),
+		mcp.WithString("label", mcp.Description("A short name for the element in comment lists, such as \"Revenue chart\".")),
+	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		doc, invalid := mcpRequired(request, "document_id")
+		if invalid != nil {
+			return invalid, nil
+		}
+		version, invalid := mcpRequired(request, "version_id")
+		if invalid != nil {
+			return invalid, nil
+		}
+		body, invalid := mcpRequired(request, "body")
+		if invalid != nil {
+			return invalid, nil
+		}
+		target, invalid := mcpRequired(request, "target")
+		if invalid != nil {
+			return invalid, nil
+		}
+		x, err := request.RequireFloat("x")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		y, err := request.RequireFloat("y")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		payload := map[string]any{"version_id": version, "body": body, "anchor": map[string]any{
+			"quote": request.GetString("quote", ""),
+			"point": map[string]any{"target": target, "label": request.GetString("label", ""), "x": x, "y": y},
+		}}
+		return api.json(ctx, http.MethodPost, "/v1/documents/"+doc+"/comments", payload, mcpParams("id", doc), api.handlers.createComment)
+	})
+
 	server.AddTool(mcp.NewTool("reply_comment", mutationOptions(false, false,
 		mcp.WithDescription("Reply to an existing document comment thread."),
 		mcpDocumentID(), mcpCommentID(),
