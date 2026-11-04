@@ -27,9 +27,16 @@ export type UnanchoredKind = "text" | "pins";
 export type TextEditResult = { regions: Region[]; scripts: ScriptChange[] };
 
 // Where the editor's typing is: none yet, waiting for a pause, being saved,
-// saved, failed and waiting to try again, or paused because the document
-// changed elsewhere.
-export type SaveState = "idle" | "unsaved" | "saving" | "saved" | "failed" | "paused";
+// saved, failed and waiting to try again, paused because the document
+// changed elsewhere, or refused because a change cannot save.
+export type SaveState =
+  | "idle"
+  | "unsaved"
+  | "saving"
+  | "saved"
+  | "failed"
+  | "paused"
+  | "refused";
 
 // A request to go to another viewer: once to their cursor, or continuously
 // to their view. Each request is a new object, so the same viewer can be

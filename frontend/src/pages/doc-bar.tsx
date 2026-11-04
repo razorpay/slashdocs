@@ -452,11 +452,17 @@ function DocTitle({
   const q = useQueryClient();
   const cancelled = useRef(false);
   // Enter and Esc give the focus back to the title, as a click away does not.
+  // After a rename that a click started, the title gets no focus ring: the
+  // browser shows one after any field, and it looks like the field stays.
   const refocus = useRef(false);
+  const clicked = useRef(false);
+  const [quiet, setQuiet] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (renaming || !refocus.current) return;
     refocus.current = false;
+    setQuiet(clicked.current);
+    clicked.current = false;
     button.current?.focus();
   }, [renaming]);
   const key = queryKeys.document(docId);
@@ -511,10 +517,16 @@ function DocTitle({
       type="button"
       title={title}
       aria-label={`Rename ${title}`}
-      onClick={() => onRenamingChange(true)}
+      onClick={(e) => {
+        // A click from the keyboard has no detail.
+        clicked.current = e.detail > 0;
+        onRenamingChange(true);
+      }}
+      onBlur={() => setQuiet(false)}
       className={cn(
         text,
         "h-8 min-w-0 cursor-text text-left transition-[border-color] duration-150 ease-out hover:border-[var(--color-border)]",
+        quiet && "focus-visible:outline-none",
       )}
     >
       {title}

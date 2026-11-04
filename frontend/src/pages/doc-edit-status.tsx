@@ -20,9 +20,9 @@ const STATUS: Record<SaveState, Status> = {
     Icon: Pencil,
   },
   unsaved: {
-    label: "Saving…",
+    label: "Edited",
     title: "Your edits save when you pause.",
-    Icon: LoaderCircle,
+    Icon: Pencil,
   },
   saving: {
     label: "Saving…",
@@ -40,7 +40,16 @@ const STATUS: Record<SaveState, Status> = {
     title: "The document changed elsewhere, so your latest edits are not saved.",
     Icon: AlertCircle,
   },
+  refused: {
+    label: "Not saved",
+    title: "A change cannot save. The message says why.",
+    Icon: AlertCircle,
+  },
 };
+
+// The longest label of a save, "Not saved", has 9 characters. The label
+// keeps that width, so that the title does not move as the label changes.
+const LABEL_WIDTH = "sm:min-w-[9ch]";
 
 // What a reader who cannot change the words may do.
 const ACCESS: Record<"commenter" | "viewer", Status> = {
@@ -59,27 +68,32 @@ const ACCESS: Record<"commenter" | "viewer", Status> = {
 // EditStatus tells an editor that the document is theirs to edit, and whether
 // their edits are saved. There is no edit mode to enter: they type. Other
 // readers see what they may do. A narrow bar, short of room for the title,
-// shows only the icon of a save.
+// shows only the icon of a save. A screen reader hears only that edits are
+// not saved, not each save of a pause.
 export function EditStatus({ access }: { access?: keyof typeof ACCESS }) {
   const { editable, saveState } = useDoc();
   const status = editable ? STATUS[saveState] : access && ACCESS[access];
   if (!status) return null;
   const { label, title, Icon } = status;
+  const failed = editable && Icon === AlertCircle;
   return (
     <span
       role="status"
+      aria-live={failed ? "polite" : "off"}
       title={title}
       className={cn(
         "shrink-0 items-center gap-1 text-xs text-[var(--color-fg-muted)]",
         !editable || saveState === "idle" ? "hidden sm:inline-flex" : "inline-flex",
-        editable && Icon === AlertCircle && "text-[var(--color-danger)]",
+        failed && "text-[var(--color-danger)]",
       )}
     >
       <Icon
         className={`h-3.5 w-3.5 ${Icon === LoaderCircle ? "motion-safe:animate-spin" : ""}`}
         aria-hidden="true"
       />
-      <span className="sr-only sm:not-sr-only">{label}</span>
+      <span className={cn("sr-only sm:not-sr-only", editable && LABEL_WIDTH)}>
+        {label}
+      </span>
     </span>
   );
 }

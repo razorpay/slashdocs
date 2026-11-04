@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/api";
 import { DocBar } from "./doc-bar";
 import { EditStatus } from "./doc-edit-status";
-import { DocProvider, type DocContextValue } from "./doc-context";
+import { DocProvider, type DocContextValue, type SaveState } from "./doc-context";
 import type { Viewer } from "./use-document-stream";
 
 const mockDocContext: DocContextValue = {
@@ -270,6 +270,10 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     await user.clear(field);
     await user.type(field, "Plan B{Enter}");
     expect(rename).toHaveBeenCalledWith("doc_1", "Plan B");
+    // A rename that a click started gives the focus back without a ring.
+    const title = screen.getByRole("button", { name: /^Rename / });
+    expect(title).toHaveFocus();
+    expect(title.className).toContain("focus-visible:outline-none");
 
     await user.click(screen.getByRole("button", { name: "More" }));
     await user.click(await screen.findByRole("menuitem", { name: "Rename" }));
@@ -277,6 +281,9 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     await waitFor(() => expect(again).toHaveFocus());
     await user.type(again, "Plan C{Escape}");
     expect(rename).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: /^Rename / }).className).not.toContain(
+      "focus-visible:outline-none",
+    );
     expect(screen.queryByRole("textbox", { name: "Document title" })).toBeNull();
   });
 
@@ -291,5 +298,23 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     expect(status("viewer")).toBe("Can view");
     expect(status("commenter", true)).toBe("Can edit");
     expect(status()).toBe("");
+  });
+
+  it("says Saving… only while a save runs, and announces only a failed save", () => {
+    const status = (saveState: SaveState) => {
+      cleanup();
+      render(
+        <DocProvider value={{ ...mockDocContext, editable: true, saveState }}>
+          <EditStatus />
+        </DocProvider>,
+      );
+      const region = screen.getByRole("status");
+      return [region.textContent, region.getAttribute("aria-live")];
+    };
+    expect(status("unsaved")).toEqual(["Edited", "off"]);
+    expect(status("saving")).toEqual(["Saving…", "off"]);
+    expect(status("saved")).toEqual(["Saved", "off"]);
+    expect(status("failed")).toEqual(["Not saved", "polite"]);
+    expect(status("refused")).toEqual(["Not saved", "polite"]);
   });
 });
