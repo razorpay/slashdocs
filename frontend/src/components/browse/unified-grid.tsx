@@ -138,7 +138,7 @@ function DraggableEntryCard({
           {/* A search snippet takes the room of the time. */}
           {updated && !snippet && (
             <span className="block truncate text-xs text-[var(--color-fg-muted)]">
-              <RelativeTime iso={updated} prefix="Updated" />
+              <RelativeTime iso={updated} />
             </span>
           )}
         </span>
