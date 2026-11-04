@@ -183,23 +183,53 @@ func TestDiffStaysCheapOnLargeDocuments(t *testing.T) {
 	}
 }
 
-func TestReplacementSummaryNamesTheChangedWords(t *testing.T) {
-	got := ReplacementSummary([]Replacement{
-		{OldHTML: "Retry <b>twice</b>", NewHTML: "Retry <b>three times</b>"},
-		{OldHTML: "", NewHTML: "<p>A new&nbsp;line</p><p>and more</p>"},
-		{OldHTML: "<li>Old item</li>", NewHTML: ""},
-		{OldHTML: "bold", NewHTML: "<strong>bold</strong>"},
-		{OldHTML: "</p><p>", NewHTML: "<br>"},
-		{OldHTML: "one<br>two", NewHTML: "one two"},
+func TestReplacementSummaryNamesWhatAReaderSeesChange(t *testing.T) {
+	base := `<html><head><style>p { color: red }</style></head><body>
+<p>Clients retry <b>twice</b> before the owner. The end.</p>
+<ul><li>Read the notes</li></ul>
+<p id="health">Build health: <b id="status"></b></p>
+<script>const LABEL = "Green"; document.getElementById("status").textContent = LABEL;</script>
+</body></html>`
+	end := strings.Index(base, "\n<p id=")
+	for _, c := range []struct {
+		name string
+		r    Replacement
+		want string
+	}{
+		{"words", at(base, "twice", "three times"), "Replaced “twice” with “three times”"},
+		{"added words", at(base, "The end.", "The end. More words."), "Added “More words.”"},
+		{"removed words", at(base, " The end.", ""), "Removed “The end.”"},
+		// The editor saves the bytes that changed, which can start inside a tag.
+		{"paragraph", Replacement{Start: end - 1, End: end - 1, NewHTML: "><p>A new paragraph.</p"},
+			"Added a paragraph: “A new paragraph.”"},
+		{"list item", at(base, "</li></ul>", "</li><li>Write the notes</li></ul>"), "Added a list item: “Write the notes”"},
+		{"empty list item", at(base, "</li></ul>", "</li><li><br></li></ul>"), "Added a list item"},
+		{"split", at(base, " The end.", "</p><p>The end."), "Split a paragraph: “Clients retry twice before the owner. The end.”"},
+		{"list", at(base, "<ul><li>Read the notes</li></ul>", "<p>Read the notes</p>"), "Changed a bulleted list to paragraphs: “Read the notes”"},
+		{"link", at(base, "owner. The", `<a href="https://example.com">owner. The</a>`), "Linked “owner. The”"},
+		{"bold", at(base, "Clients", "<b>Clients</b>"), "Made “Clients” bold"},
+		{"italic", at(base, "twice", "<em>twice</em>"), "Made “twice” italic"},
+		{"unbold", at(base, "<b>twice</b>", "twice"), "Removed bold from “twice”"},
+		{"script", at(base, `"Green"`, `"Amber"`), "Changed a script"},
+		{"script and tag", at(base, `id="status"></b></p>
+<script>const LABEL = "Green";`, `>Amber</b></p>
+<script>const LABEL = "G";`), "Added “Amber”"},
+		{"style", at(base, "red", "blue"), "Changed the styles"},
+		{"attribute", at(base, `id="health"`, `id="health" class="note"`), "Changed the formatting"},
+	} {
+		if got := ReplacementSummary([]byte(base), []Replacement{c.r}); got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestReplacementSummaryHasALinePerReplacement(t *testing.T) {
+	base := "<p>Try it.</p><p>Try it.</p>"
+	got := ReplacementSummary([]byte(base), []Replacement{
+		{Start: 3, End: 6, OldHTML: "Try", NewHTML: "Run"},
+		{Start: len(base), End: len(base), NewHTML: "<p>" + strings.Repeat("word ", 20) + "</p>"},
 	})
-	want := strings.Join([]string{
-		`Replaced "Retry twice" with "Retry three times"`,
-		`Added "A new line and more"`,
-		`Removed "Old item"`,
-		`Changed the formatting of "bold"`,
-		`Changed the formatting`,
-		`Changed the formatting of "one two"`,
-	}, "\n")
+	want := "Replaced “Try” with “Run”\nAdded a paragraph: “" + strings.TrimSpace(strings.Repeat("word ", 11)) + "…”"
 	if got != want {
 		t.Fatalf("got\n%s\nwant\n%s", got, want)
 	}

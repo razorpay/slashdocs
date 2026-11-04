@@ -70,7 +70,7 @@ func TestEditDocumentReplacesTextAndKeepsTheRest(t *testing.T) {
 		t.Fatalf("response = %+v", out)
 	}
 	// The history says what changed even when the caller gave no summary.
-	if out.ChangeSummary != `Replaced "TTL of 10 minutes" with "TTL of 5 minutes"` {
+	if out.ChangeSummary != "Replaced “TTL of 10 minutes” with “TTL of 5 minutes”" {
 		t.Fatalf("change_summary = %q", out.ChangeSummary)
 	}
 	want := "<html><body>\n  <p>Cache TTL of 5 minutes.</p>\n  <p>Retry  twice.</p>\n</body></html>"
@@ -116,7 +116,7 @@ func TestEditDocumentReplaceAllChangesEveryOccurrence(t *testing.T) {
 	if got := versionHTML(t, e, docID, jsonField(t, body, "id")); got != want {
 		t.Fatalf("html = %q, want %q", got, want)
 	}
-	if got := jsonField(t, body, "change_summary"); got != `Replaced "<p>" with "<p class=\"note\">" everywhere` {
+	if got := jsonField(t, body, "change_summary"); got != `Replaced “<p>” with “<p class="note">” everywhere` {
 		t.Fatalf("change_summary = %q", got)
 	}
 }
@@ -278,7 +278,7 @@ func TestRestoreVersionSavesItsContentAsTheNewest(t *testing.T) {
 	}
 	restored := jsonField(t, body, "id")
 	// The summary names the restored entry as History shows it.
-	if got := jsonField(t, body, "change_summary"); got != "Restored “Created”" {
+	if got := jsonField(t, body, "change_summary"); got != "Restored: Created" {
 		t.Fatalf("change_summary = %q", got)
 	}
 	if got := versionHTML(t, e, docID, restored); got != editFixtureHTML {

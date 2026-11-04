@@ -71,9 +71,11 @@ type editSourceRequest struct {
 	BaseVersionID string `json:"base_version_id"`
 	// ClientChangeID names the change, so that a retry returns the version
 	// that the change made instead of a second one.
-	ClientChangeID string                 `json:"client_change_id"`
-	ChangeSummary  string                 `json:"change_summary,omitempty"`
-	Replacements   []textedit.Replacement `json:"replacements"`
+	ClientChangeID string `json:"client_change_id"`
+	// ChangeSummary, when set, is what History shows for the change. When it
+	// is empty, the server names what a reader sees change.
+	ChangeSummary string                 `json:"change_summary,omitempty"`
+	Replacements  []textedit.Replacement `json:"replacements"`
 }
 
 // editSourceResponse is the payload of POST /v1/documents/{id}/source-edits.
@@ -346,7 +348,7 @@ func (h handlers) saveSourceEdits(ctx context.Context, docID string, in editSour
 	}
 	summary := strings.TrimSpace(in.ChangeSummary)
 	if summary == "" {
-		summary = textedit.ReplacementSummary(in.Replacements)
+		summary = textedit.ReplacementSummary(base, in.Replacements)
 	}
 	v, err = h.saveEdited(ctx, docID, onto, in.ClientChangeID, summary, edited, author)
 	return sourceEdited(v, onto, in.BaseVersionID), true, err
@@ -453,7 +455,8 @@ func (h handlers) restoreVersion(c *gin.Context) {
 
 // restoredSummary names a restore by the entry it brings back, with the
 // words that History shows for that entry. A time would show in one time
-// zone here and in the reader's own zone in the list.
+// zone here and in the reader's own zone in the list. The entry follows a
+// colon, not quotes, because its words can have quotes of their own.
 func restoredSummary(old repo.Version) string {
 	name, _, _ := strings.Cut(strings.TrimSpace(old.ChangeSummary), "\n")
 	name = strings.TrimSpace(strings.TrimLeft(name, "-*• "))
@@ -464,7 +467,7 @@ func restoredSummary(old repo.Version) string {
 	default:
 		name = "Edited"
 	}
-	return "Restored “" + name + "”"
+	return "Restored: " + name
 }
 
 // versionConflict writes the 409 for a stale base, naming the current version.

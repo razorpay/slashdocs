@@ -3,6 +3,7 @@ package textedit
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -124,48 +125,182 @@ func boundary(b []byte, i int) bool {
 	return i == len(b) || utf8.RuneStart(b[i])
 }
 
-// ReplacementSummary describes the replacements in one line each, by the
-// words they change, for version history when the caller gave no change
-// summary.
-func ReplacementSummary(rs []Replacement) string {
+// ReplacementSummary describes the replacements made on base in one line
+// each, by what a reader sees change, for version history when the caller
+// gave no change summary. A replacement can start inside a tag or a script,
+// so each line compares the whole document before and after it, and never
+// shows markup or code.
+func ReplacementSummary(base []byte, rs []Replacement) string {
+	before := outline(base)
 	lines := make([]string, 0, len(rs))
 	for _, r := range rs {
-		before, after := words(r.OldHTML), words(r.NewHTML)
-		switch {
-		case before == "" && after == "":
-			lines = append(lines, "Changed the formatting")
-		case before == after:
-			lines = append(lines, fmt.Sprintf("Changed the formatting of %q", clip(before)))
-		case before == "":
-			lines = append(lines, fmt.Sprintf("Added %q", clip(after)))
-		case after == "":
-			lines = append(lines, fmt.Sprintf("Removed %q", clip(before)))
-		default:
-			before, after = excerpts(before, after)
-			lines = append(lines, fmt.Sprintf("Replaced %q with %q", before, after))
-		}
+		after := outline(slices.Concat(base[:r.Start], []byte(r.NewHTML), base[r.End:]))
+		lines = append(lines, describe(before, after))
 	}
 	return strings.Join(lines, "\n")
 }
 
-// words returns the text of an HTML fragment with single spaces between its
-// words. Tags and comments go, entities are decoded, and the edges of blocks
-// and line breaks separate words.
-func words(fragment string) string {
+// page is what a reader sees of a document: its words, and the words of each
+// element that the editor makes, by kind. The content of hidden elements,
+// such as scripts, is kept only to tell that it changed.
+type page struct {
+	words    string
+	elements map[string][]string
+	code     map[atom.Atom]string
+}
+
+// kinds names the elements that a summary names, by what they make.
+var kinds = map[atom.Atom]string{
+	atom.P: "paragraph", atom.Li: "list item", atom.Ul: "bulleted list", atom.Ol: "numbered list",
+	atom.A: "link", atom.B: "bold", atom.Strong: "bold", atom.I: "italic", atom.Em: "italic",
+}
+
+// hidden holds the elements whose content a reader does not see as text.
+var hidden = map[atom.Atom]bool{
+	atom.Script: true, atom.Style: true, atom.Noscript: true, atom.Template: true,
+	atom.Iframe: true, atom.Noembed: true, atom.Noframes: true, atom.Xmp: true,
+}
+
+// outline reads the page that doc shows.
+func outline(doc []byte) page {
+	p := page{elements: map[string][]string{}, code: map[atom.Atom]string{}}
+	root, err := html.Parse(bytes.NewReader(doc))
+	if err != nil {
+		return p
+	}
 	var text strings.Builder
-	z := html.NewTokenizer(strings.NewReader(fragment))
-	for {
-		switch z.Next() {
-		case html.ErrorToken:
-			return strings.Join(strings.Fields(text.String()), " ")
-		case html.TextToken:
-			text.Write(z.Text())
-		case html.StartTagToken, html.EndTagToken, html.SelfClosingTagToken:
-			if name, _ := z.TagName(); separates[atom.Lookup(name)] {
-				text.WriteByte(' ')
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.TextNode {
+			text.WriteString(n.Data)
+			return
+		}
+		if hidden[n.DataAtom] {
+			for c := n.FirstChild; c != nil; c = c.NextSibling {
+				p.code[n.DataAtom] += c.Data
 			}
+			return
+		}
+		block := separates[n.DataAtom]
+		if block {
+			text.WriteByte(' ')
+		}
+		from := text.Len()
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+		if kind, ok := kinds[n.DataAtom]; ok {
+			p.elements[kind] = append(p.elements[kind], spaced(text.String()[from:]))
+		}
+		if block {
+			text.WriteByte(' ')
 		}
 	}
+	walk(root)
+	p.words = spaced(text.String())
+	return p
+}
+
+// describe names the change from a to b. A new or removed block comes
+// first, then a link or a format, then the words.
+func describe(a, b page) string {
+	if line := blockChange(a, b); line != "" {
+		return line
+	}
+	if line := formatChange(a, b); line != "" {
+		return line
+	}
+	return wordChange(a, b)
+}
+
+// blockChange names a paragraph, list item or list that the change adds or
+// removes. With the same words, a new block splits one, and so on.
+func blockChange(a, b page) string {
+	same := a.words == b.words
+	for _, kind := range []string{"bulleted list", "numbered list", "paragraph", "list item"} {
+		list := strings.HasSuffix(kind, " list")
+		switch more := len(b.elements[kind]) - len(a.elements[kind]); {
+		case more > 0 && same && list:
+			return named("Made a "+kind, only(b, a, kind))
+		case more > 0 && same && only(b, a, kind) != "":
+			return named("Split a "+kind, only(a, b, kind))
+		case more > 0:
+			return named("Added a "+kind, only(b, a, kind))
+		case more < 0 && same && list:
+			return named("Changed a "+kind+" to paragraphs", only(a, b, kind))
+		case more < 0 && same:
+			return named("Joined two "+kind+"s", only(b, a, kind))
+		case more < 0:
+			return named("Removed a "+kind, only(a, b, kind))
+		}
+	}
+	return ""
+}
+
+// formatChange names a link, bold or italic that the change adds or removes.
+func formatChange(a, b page) string {
+	for _, f := range []struct{ kind, made, unmade string }{
+		{"link", "Linked %s", "Removed the link from %s"},
+		{"bold", "Made %s bold", "Removed bold from %s"},
+		{"italic", "Made %s italic", "Removed italic from %s"},
+	} {
+		switch more := len(b.elements[f.kind]) - len(a.elements[f.kind]); {
+		case more > 0:
+			return fmt.Sprintf(f.made, quote(only(b, a, f.kind)))
+		case more < 0:
+			return fmt.Sprintf(f.unmade, quote(only(a, b, f.kind)))
+		}
+	}
+	return ""
+}
+
+// wordChange names the words that the change adds, removes or replaces, or
+// else the hidden content or the markup that it changes.
+func wordChange(a, b page) string {
+	before, after := differing(a.words, b.words)
+	switch {
+	case before == "" && after != "":
+		return "Added " + quote(after)
+	case after == "" && before != "":
+		return "Removed " + quote(before)
+	case a.words != b.words:
+		return "Replaced " + quote(before) + " with " + quote(after)
+	case a.code[atom.Script] != b.code[atom.Script]:
+		return "Changed a script"
+	case a.code[atom.Style] != b.code[atom.Style]:
+		return "Changed the styles"
+	}
+	return "Changed the formatting"
+}
+
+// only returns the words of the first element of kind that a has more of
+// than b.
+func only(a, b page, kind string) string {
+	left := map[string]int{}
+	for _, text := range b.elements[kind] {
+		left[text]++
+	}
+	for _, text := range a.elements[kind] {
+		if left[text] == 0 {
+			return text
+		}
+		left[text]--
+	}
+	return ""
+}
+
+// named adds the words of an element to the start of a line, when it has
+// words.
+func named(line, words string) string {
+	if words == "" {
+		return line
+	}
+	return line + ": " + quote(words)
+}
+
+// spaced returns s with single spaces between its words.
+func spaced(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // separates holds the elements whose edges separate words: blocks and br.
