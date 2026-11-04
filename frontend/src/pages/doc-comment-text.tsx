@@ -49,6 +49,8 @@ export function MentionTextarea({
   // mention. A layout effect (not requestAnimationFrame) applies it: rAF can
   // fire after further keystrokes and yank the caret back mid-word.
   const caretRestore = useRef<number | null>(null);
+  // The caret right after a picked mention and the space that follows it.
+  const afterMention = useRef<number | null>(null);
   const [caret, setCaret] = useState(0);
   const [target, setTarget] = useState<MentionTarget | null>(null);
   const [suggestions, setSuggestions] = useState<UserPrincipal[]>([]);
@@ -65,8 +67,17 @@ export function MentionTextarea({
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const capture = () => {
-      beforeInputSelection.current = { start: el.selectionStart, end: el.selectionEnd };
+    const capture = (event: InputEvent) => {
+      const { selectionStart: start, selectionEnd: end } = el;
+      const spaced = start === end && start === afterMention.current;
+      afterMention.current = null;
+      // A picked mention brings its space, so a space typed next is not a
+      // second one.
+      if (spaced && event.inputType === "insertText" && event.data === " ") {
+        event.preventDefault();
+        return;
+      }
+      beforeInputSelection.current = { start, end };
     };
     el.addEventListener("beforeinput", capture);
     return () => el.removeEventListener("beforeinput", capture);
@@ -102,6 +113,7 @@ export function MentionTextarea({
 
   const syncTarget = (el: HTMLTextAreaElement) => {
     const nextCaret = el.selectionStart ?? 0;
+    if (nextCaret !== afterMention.current) afterMention.current = null;
     setCaret(nextCaret);
     setTarget(
       el.selectionStart === el.selectionEnd
@@ -167,6 +179,7 @@ export function MentionTextarea({
     setSuggestions([]);
     setCaret(nextCaret);
     caretRestore.current = nextCaret;
+    afterMention.current = nextCaret;
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
