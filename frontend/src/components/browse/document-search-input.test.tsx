@@ -52,6 +52,16 @@ describe("DocumentSearchInput", () => {
     expect(screen.getByRole("option", { name: /this month/i })).toBeVisible();
   });
 
+  it("clears the query with the clear button", async () => {
+    const { user, input } = setup();
+    expect(screen.queryByRole("button", { name: "Clear search" })).toBeNull();
+    await user.type(input, "budget");
+    await user.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(input).toHaveValue("");
+    expect(input).toHaveFocus();
+    expect(screen.queryByRole("button", { name: "Clear search" })).toBeNull();
+  });
+
   it("completes a date phrase", async () => {
     const { user, input } = setup();
     await user.type(input, "budget after:last w");

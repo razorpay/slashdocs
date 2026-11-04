@@ -1,12 +1,14 @@
 import { Trash2 } from "lucide-react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { Button } from "@/components/ui/button";
-import { Avatar } from "@/components/ui/misc";
+import { Avatar, revealOnHover } from "@/components/ui/misc";
+import { RelativeTime } from "@/components/ui/relative-time";
 import { DeleteDocumentDialog } from "@/components/delete-document-dialog";
 import { docID, docTitle, type FolderEntry, type Principal } from "@/api";
+import { cn } from "@/lib/cn";
 import { principalLabel, samePrincipal } from "@/lib/principals";
 import { DRAG_TYPE } from "./drag";
-import { ENTRY_ROW, EntryName, EntryTable } from "./entry-table";
+import { ENTRY_ROW, EntryName, EntryTable, WIDE_ONLY } from "./entry-table";
 import { PinButton, PinnedMark } from "./pin-button";
 import { SearchSnippet } from "./search-snippet";
 import {
@@ -25,7 +27,10 @@ export function UnifiedTable({
   pinnedIds?: Set<string>;
 }) {
   return (
-    <EntryTable columns={["Name", "Owner", ""]}>
+    <EntryTable
+      columns={["Name", "Owner", "Updated", ""]}
+      wideOnly={["Owner", "Updated"]}
+    >
       {entries.map((e) => {
         if (e.type === "folder" && e.folder) {
           return (
@@ -35,6 +40,7 @@ export function UnifiedTable({
               id={e.folder.id}
               title={e.folder.title}
               owner={e.folder.owner}
+              updated={e.last_active}
               canDelete={samePrincipal(principal, e.folder.owner)}
               pinned={pinnedIds?.has(e.folder.id)}
             />
@@ -48,6 +54,7 @@ export function UnifiedTable({
               id={docID(e.document)}
               title={docTitle(e.document)}
               owner={e.document.owner}
+              updated={e.last_active}
               canDelete={samePrincipal(principal, e.document.owner)}
               pinned={pinnedIds?.has(docID(e.document))}
               snippet={e.document.snippet}
@@ -65,6 +72,7 @@ function DraggableEntryRow({
   id,
   title,
   owner,
+  updated,
   canDelete,
   pinned,
   snippet,
@@ -73,6 +81,7 @@ function DraggableEntryRow({
   id: string;
   title: string;
   owner?: Principal;
+  updated?: string;
   canDelete: boolean;
   pinned?: boolean;
   snippet?: string;
@@ -112,16 +121,34 @@ function DraggableEntryRow({
         >
           {pinned && <PinnedMark />}
         </EntryName>
+        {/* Narrow screens hide the owner and time columns and show them here. */}
+        <div className="mt-0.5 truncate pl-6 text-xs text-[var(--color-fg-muted)] sm:hidden">
+          {principalLabel(owner)}
+          {updated && (
+            <>
+              {" · "}
+              <RelativeTime iso={updated} />
+            </>
+          )}
+        </div>
         {snippet ? (
           <SearchSnippet text={snippet} className="mt-1 line-clamp-2 pl-6 text-xs" />
         ) : null}
       </td>
-      <td className="px-4 py-3">
+      <td className={cn("px-4 py-3", WIDE_ONLY)}>
         <OwnerCell owner={owner} />
+      </td>
+      <td
+        className={cn(
+          "whitespace-nowrap px-4 py-3 text-[var(--color-fg-muted)]",
+          WIDE_ONLY,
+        )}
+      >
+        <RelativeTime iso={updated} />
       </td>
       <td className="px-2 py-3">
         <div
-          className="flex gap-0.5"
+          className={cn("flex gap-0.5 transition-opacity", revealOnHover)}
           onClick={(e) => e.stopPropagation()}
           onPointerDown={(e) => e.stopPropagation()}
         >
@@ -129,7 +156,7 @@ function DraggableEntryRow({
             resourceType={type}
             resourceId={id}
             pinned={pinned}
-            className="cursor-pointer opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+            className="cursor-pointer"
           />
           {canDelete && (
             <DeleteDocumentDialog
@@ -140,10 +167,10 @@ function DraggableEntryRow({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="cursor-pointer opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+                  className="cursor-pointer text-[var(--color-fg-muted)] hover:text-[var(--color-danger)]"
                   aria-label={isFolder ? "Delete folder" : "Delete document"}
                 >
-                  <Trash2 className="h-3.5 w-3.5 text-[var(--color-danger)]" />
+                  <Trash2 className="h-3.5 w-3.5" />
                 </Button>
               }
             />

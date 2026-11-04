@@ -278,6 +278,11 @@ export function DocumentsPage() {
           <EmptyState
             title="No matches"
             description={`We read every page of every document. "${q}" is not on any of them.`}
+            action={
+              <Button variant="outline" onClick={() => setQ("")}>
+                Clear search
+              </Button>
+            }
           />
         ) : viewMode === "list" ? (
           <UnifiedTable

@@ -1,14 +1,20 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { FileText, Folder as FolderIcon } from "lucide-react";
+import { cn } from "@/lib/cn";
+
+// Cells of a column that narrow screens hide.
+export const WIDE_ONLY = "max-sm:hidden";
 
 // The list view of folders and documents. An empty column name makes a narrow
-// column for row actions.
+// column for row actions. Narrow screens hide the wideOnly columns.
 export function EntryTable({
   columns,
+  wideOnly = [],
   children,
 }: {
   columns: string[];
+  wideOnly?: string[];
   children: ReactNode;
 }) {
   return (
@@ -18,7 +24,13 @@ export function EntryTable({
           <tr>
             {columns.map((name, i) =>
               name ? (
-                <th key={i} className="px-4 py-2.5 text-left font-medium">
+                <th
+                  key={i}
+                  className={cn(
+                    "px-4 py-2.5 text-left font-medium",
+                    wideOnly.includes(name) && WIDE_ONLY,
+                  )}
+                >
                   {name}
                 </th>
               ) : (

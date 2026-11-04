@@ -3,6 +3,11 @@ import { Check, Copy } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Button } from "./button";
 
+// Controls that appear on hover or focus inside a `group`. Touch screens
+// cannot hover, so the controls stay visible there.
+export const revealOnHover =
+  "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100";
+
 export function Skeleton({ className, ...p }: React.HTMLAttributes<HTMLDivElement>) {
   return <div className={cn("skeleton rounded-md", className)} {...p} />;
 }
@@ -53,7 +58,10 @@ export function CodeBlock({
             onClick={onCopy}
             // 32px tall at 6px from the top: centered on the first line, so a
             // one-line block centers it too.
-            className="absolute right-1.5 top-1.5 h-8 min-h-8 w-8 rounded-md text-[var(--color-fg-muted)] opacity-0 transition-[background-color,color,opacity,transform] duration-150 ease-out active:scale-[0.96] hover:bg-[var(--color-border)] hover:text-[var(--color-fg)] group-hover:opacity-100 focus:opacity-100"
+            className={cn(
+              "absolute right-1.5 top-1.5 h-8 min-h-8 w-8 rounded-md text-[var(--color-fg-muted)] transition-[background-color,color,opacity,transform] duration-150 ease-out active:scale-[0.96] hover:bg-[var(--color-border)] hover:text-[var(--color-fg)]",
+              revealOnHover,
+            )}
             aria-label={copied ? "Copied" : "Copy"}
           >
             {copied ? (

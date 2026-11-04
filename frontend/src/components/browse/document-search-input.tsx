@@ -1,7 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Calendar, Folder, Search, SlidersHorizontal, UserRound } from "lucide-react";
+import {
+  Calendar,
+  Folder,
+  Search,
+  SlidersHorizontal,
+  UserRound,
+  X,
+} from "lucide-react";
 import { api } from "@/api";
+import { Button } from "@/components/ui/button";
 import { Avatar } from "@/components/ui/misc";
 import { queryKeys } from "@/lib/queryKeys";
 import {
@@ -143,7 +151,7 @@ export function DocumentSearchInput({
           }
         }}
         placeholder="Search every word, even the footnotes…"
-        className="h-14 w-full rounded-[18px] bg-[var(--color-surface)] pl-14 pr-5 text-base text-transparent caret-[var(--color-fg)] shadow-[0_12px_40px_rgb(20_30_48/0.1)] outline-none placeholder:text-[var(--color-fg-muted)] dark:shadow-[0_14px_36px_rgb(0_0_0/0.42)]"
+        className="h-14 w-full rounded-[18px] bg-[var(--color-surface)] pl-14 pr-14 text-base text-transparent caret-[var(--color-fg)] shadow-[0_12px_40px_rgb(20_30_48/0.1)] outline-none placeholder:text-[var(--color-fg-muted)] dark:shadow-[0_14px_36px_rgb(0_0_0/0.42)]"
         role="combobox"
         aria-label="Search documents"
         aria-autocomplete="list"
@@ -156,14 +164,30 @@ export function DocumentSearchInput({
         }
       />
       {/* The input text is transparent. This copy draws it with modifiers
-          highlighted, clipped to the input's content box: pl-14 / pr-5. */}
+          highlighted, clipped to the input's content box: pl-14 / pr-14. */}
       <div
         ref={mirrorRef}
         aria-hidden
-        className="pointer-events-none absolute inset-y-0 left-14 right-5 flex items-center overflow-hidden whitespace-pre text-base text-[var(--color-fg)]"
+        className="pointer-events-none absolute inset-y-0 left-14 right-14 flex items-center overflow-hidden whitespace-pre text-base text-[var(--color-fg)]"
       >
         <HighlightedQuery value={value} />
       </div>
+      {value ? (
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Clear search"
+          className="absolute right-2.5 top-1/2 z-10 h-10 w-10 -translate-y-1/2 rounded-full text-[var(--color-fg-muted)] hover:text-[var(--color-fg)]"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            onChange("");
+            setCursor(0);
+            inputRef.current?.focus();
+          }}
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      ) : null}
       {open ? (
         <div
           id="document-search-suggestions"
