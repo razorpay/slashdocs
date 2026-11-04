@@ -6,11 +6,14 @@ import { toast } from "sonner";
 import { errorMessage } from "@/lib/errors";
 import {
   ExternalLink,
+  Eye,
+  EyeOff,
   FileDown,
   History,
   ArrowUpToLine,
   Maximize2,
   Keyboard,
+  LocateFixed,
   MoreHorizontal,
   MousePointer2,
   MousePointer2Off,
@@ -362,12 +365,10 @@ export function DocBar({
   );
 }
 
-// Other people viewing the document, in the colors of their cursors.
-// Clicking one goes to their cursor, or else to what they see.
-// Viewers shows who else reads the document. A click goes to where a viewer
-// is, once. The context menu of an avatar follows the viewer instead, until
-// the reader moves. Viewers past the first few are in a "+N" menu, where
-// each can be followed too.
+// Viewers shows who else reads the document, in the colors of their cursors.
+// A click on an avatar opens a menu: jump to where the viewer is, once, or
+// follow them until the reader moves. Viewers past the first few are in a
+// "+N" menu, where each can be followed too.
 function Viewers({
   viewers,
   latest,
@@ -459,6 +460,7 @@ function ViewerAvatar({
   onFollow: (viewer: Viewer, continuous?: boolean) => void;
   onUnfollow: () => void;
 }) {
+  // A context menu opens the same menu.
   const [menuOpen, setMenuOpen] = useState(false);
   const name = principalLabel(viewer.principal);
   const earlier = !!viewer.version && viewer.version !== latest;
@@ -466,43 +468,43 @@ function ViewerAvatar({
   let label = earlier ? `${name} · viewing an earlier edit` : name;
   if (following) label = `Following ${name}`;
   return (
-    <span className="relative">
+    <Dropdown open={menuOpen} onOpenChange={setMenuOpen}>
       <Tooltip label={label}>
-        <button
-          type="button"
-          aria-label={`Go to where ${name} is viewing`}
-          aria-pressed={following}
-          onClick={() => onFollow(viewer)}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            setMenuOpen(true);
-          }}
-          style={{
-            // Followed: a gap, then the viewer's color, as a pressed state.
-            boxShadow: following
-              ? `0 0 0 2px var(--color-surface), 0 0 0 4px ${color}`
-              : `0 0 0 2px ${color}, 0 0 0 4px var(--color-surface)`,
-          }}
-          className="relative rounded-full transition-[translate,scale,box-shadow] duration-150 ease-out hover:z-10 hover:-translate-y-0.5 active:translate-y-0 active:scale-95 focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)] motion-reduce:transition-none"
-        >
-          <Avatar size={28} name={name} src={viewer.principal.picture_url} />
-        </button>
-      </Tooltip>
-      {/* The context menu opens at the avatar. Its trigger takes no input,
-          so a click still goes to the viewer. */}
-      <Dropdown open={menuOpen} onOpenChange={setMenuOpen} modal={false}>
         <DropdownTrigger asChild>
-          <span aria-hidden="true" className="pointer-events-none absolute inset-0" />
-        </DropdownTrigger>
-        <DropdownContent>
-          <DropdownItem
-            onSelect={() => (following ? onUnfollow() : onFollow(viewer, true))}
+          <button
+            type="button"
+            aria-label={label}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setMenuOpen(true);
+            }}
+            style={{
+              // Followed: a gap, then the viewer's color, as a pressed state.
+              boxShadow: following
+                ? `0 0 0 2px var(--color-surface), 0 0 0 4px ${color}`
+                : `0 0 0 2px ${color}, 0 0 0 4px var(--color-surface)`,
+            }}
+            className="relative rounded-full transition-[translate,scale,box-shadow] duration-150 ease-out hover:z-10 hover:-translate-y-0.5 active:translate-y-0 active:scale-95 focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)] motion-reduce:transition-none"
           >
-            {following ? `Stop following ${name}` : `Follow ${name}`}
+            <Avatar size={28} name={name} src={viewer.principal.picture_url} />
+          </button>
+        </DropdownTrigger>
+      </Tooltip>
+      <DropdownContent>
+        <DropdownItem onSelect={() => onFollow(viewer)}>
+          <LocateFixed className="h-4 w-4" /> Jump to {name}
+        </DropdownItem>
+        {following ? (
+          <DropdownItem onSelect={onUnfollow}>
+            <EyeOff className="h-4 w-4" /> Stop following {name}
           </DropdownItem>
-        </DropdownContent>
-      </Dropdown>
-    </span>
+        ) : (
+          <DropdownItem onSelect={() => onFollow(viewer, true)}>
+            <Eye className="h-4 w-4" /> Follow {name}
+          </DropdownItem>
+        )}
+      </DropdownContent>
+    </Dropdown>
   );
 }
 
