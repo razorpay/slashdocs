@@ -228,10 +228,14 @@ function mentions(c: Comment, self?: Principal): boolean {
 // CommentsList is the comment history: every thread, open or resolved, also
 // those whose text or element is gone. Picking one opens it in place.
 export function CommentsList({
+  showsLatest,
   onPick,
   onPlacePin,
   onClose,
 }: {
+  // The version on screen is the latest one, which the server places the
+  // comments of the list on.
+  showsLatest: boolean;
   onPick: (id: string) => void;
   onPlacePin: () => void;
   onClose: () => void;
@@ -247,9 +251,11 @@ export function CommentsList({
   } = useDoc();
   const [filter, setFilter] = useState<ListFilter>("all");
   // The document shows open threads, so the bridge knows which of those it
-  // could not place. The server knows it for the rest.
+  // could not place. The server knows it for the rest, but on the latest
+  // version only, so on an earlier one only the bridge tells.
   const lost = (c: Comment) =>
-    unanchoredComments.has(c.id) || c.current_placement?.status === "orphaned";
+    unanchoredComments.has(c.id) ||
+    (showsLatest && c.current_placement?.status === "orphaned");
   const items = comments.filter((c) =>
     filter === "for you"
       ? mentions(c, principal)

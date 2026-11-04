@@ -314,6 +314,7 @@ export function DocumentPage() {
       editable={editable}
       stayOnVersion={stayOnVersion}
       showLatest={showLatest}
+      showsLatest={current === latest}
       bar={(controls) => (
         <DocBar
           {...controls}

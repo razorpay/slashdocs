@@ -1,5 +1,5 @@
 import { type FrameLocator, type Page } from "@playwright/test";
-import { expect, test, uniqueName } from "./fixtures";
+import { expect, reviewerOn, test, uniqueName } from "./fixtures";
 
 // The bridge window draws the pins over the document frame.
 function bridge(page: Page): FrameLocator {
@@ -147,4 +147,100 @@ test("pins close together merge, and the cluster lists its threads", async ({
   await expect(
     page.getByRole("dialog", { name: "Comment thread" }).getByText("Second pin"),
   ).toBeVisible();
+});
+
+test("C is the document's own when the document takes it", async ({
+  page,
+  slashdocs,
+}) => {
+  const title = uniqueName("Own C");
+  const html = documentHTML(title).replace(
+    "</body>",
+    `<script>window.addEventListener("keydown", (e) => {
+      if (e.key === "c") { e.preventDefault(); document.body.dataset.took = "c"; }
+    });</script></body>`,
+  );
+  const document = await slashdocs.createDocument(title, html);
+  // An earlier version does not take typing, as the C key test does.
+  await slashdocs.pushVersion(document.id, html);
+  await page.goto(`/app/d/${document.id}?version=${document.current_version_id}`);
+  const doc = renderedDocument(page);
+  await doc.locator("h1").click();
+  await page.keyboard.press("c");
+  await expect(doc.locator("body")).toHaveAttribute("data-took", "c");
+  await doc.locator("p").click();
+  await expect(page.getByRole("dialog", { name: "New comment" })).toBeHidden();
+});
+
+// pinTip gives the spot that a pin marks: the bottom left of its button.
+async function pinTip(pin: ReturnType<FrameLocator["getByRole"]>) {
+  const box = (await pin.boundingBox())!;
+  return { x: box.x, y: box.y + box.height };
+}
+
+test("the author drags a pin to a new spot, and it stays there", async ({
+  page,
+  slashdocs,
+}) => {
+  const title = uniqueName("Drag pin");
+  const document = await slashdocs.createDocument(title, documentHTML(title));
+  await slashdocs.createComment(document.id, "Move me", {
+    point: { target: "chart", x: 0.25, y: 0.25 },
+  });
+  await page.goto(`/app/d/${document.id}`);
+  const pin = bridge(page).getByRole("button", { name: /^Comment/ });
+  const from = await pinTip(pin);
+
+  // Let go outside the frame, the pin goes back and nothing is saved.
+  const moves: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "PATCH") moves.push(request.postData() ?? "");
+  });
+  await page.mouse.move(from.x + 10, from.y - 10);
+  await page.mouse.down();
+  await page.mouse.move(from.x + 60, from.y - 10, { steps: 5 });
+  await page.mouse.move(from.x + 60, 10, { steps: 5 });
+  await page.mouse.up();
+  await expect.poll(async () => (await pinTip(pin)).x).toBeCloseTo(from.x, 0);
+  expect(moves).toEqual([]);
+
+  // Dropped in the frame, it moves there, and the move is saved.
+  const moved = page.waitForRequest(
+    (request) => request.method() === "PATCH" && !!request.postDataJSON()?.anchor,
+  );
+  await page.mouse.move(from.x + 10, from.y - 10);
+  await page.mouse.down();
+  await page.mouse.move(from.x + 110, from.y + 40, { steps: 8 });
+  await page.mouse.up();
+  await moved;
+  await page.reload();
+  await expect.poll(async () => (await pinTip(pin)).x).toBeCloseTo(from.x + 100, 0);
+  expect(Math.abs((await pinTip(pin)).y - (from.y + 50))).toBeLessThan(3);
+});
+
+test("a commenter cannot drag someone else's pin", async ({ browser, slashdocs }) => {
+  const title = uniqueName("Fixed pin");
+  const document = await slashdocs.createDocument(title, documentHTML(title));
+  await slashdocs.shareWithAnyone(document.id, "commenter");
+  await slashdocs.createComment(document.id, "Not yours", {
+    point: { target: "chart", x: 0.25, y: 0.25 },
+  });
+  const reviewer = await reviewerOn(browser, `/app/d/${document.id}`);
+  const pin = bridge(reviewer).getByRole("button", { name: /^Comment/ });
+  const from = await pinTip(pin);
+  const moves: string[] = [];
+  reviewer.on("request", (request) => {
+    if (request.method() === "PATCH") moves.push(request.postData() ?? "");
+  });
+  await reviewer.mouse.move(from.x + 10, from.y - 10);
+  await reviewer.mouse.down();
+  await reviewer.mouse.move(from.x + 110, from.y + 40, { steps: 8 });
+  await reviewer.mouse.up();
+  // The press opens the thread, and the pin stays on its spot.
+  await expect(
+    reviewer.getByRole("dialog", { name: "Comment thread" }).getByText("Not yours"),
+  ).toBeVisible();
+  expect(await pinTip(pin)).toEqual(from);
+  expect(moves).toEqual([]);
+  await reviewer.context().close();
 });

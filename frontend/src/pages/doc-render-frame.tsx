@@ -542,25 +542,27 @@ export function RenderFrame() {
 
   useCommentPins(ref, frameOrigin, ready, postToFrame);
 
-  // "/" opens cursor chat at the pointer even when the app has the focus, as
-  // right after following someone from the bar. The document opens it only
-  // when the pointer is over it.
-  useEffect(() => {
-    if (!ready) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey || typingOrInLayer(e))
-        return;
-      postToFrame({ type: "slashdocs:open-cursor-chat" });
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [ready, postToFrame]);
-
   // A signed-in reader chats at their cursor in their cursor color. A
   // signed-out reader sees the chat of others but cannot send.
   const chatColor = principal && !signIn ? principalColor(principal) : undefined;
   useEffect(() => {
     if (ready) postToFrame({ type: "slashdocs:cursor-chat", color: chatColor });
+  }, [ready, chatColor, postToFrame]);
+
+  // "/" opens cursor chat at the pointer even when the app has the focus, as
+  // right after following someone from the bar. The document opens it only
+  // when the pointer is over it. The key is taken, so that it does not also
+  // open the browser's quick find, which takes the focus from the chat.
+  useEffect(() => {
+    if (!ready || !chatColor) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey || typingOrInLayer(e))
+        return;
+      e.preventDefault();
+      postToFrame({ type: "slashdocs:open-cursor-chat" });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, [ready, chatColor, postToFrame]);
 
   // The page holds the event stream; the bridge host forwards its KV changes.

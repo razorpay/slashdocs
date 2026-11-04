@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
 func postComment(t *testing.T, e *testEnv, p auth.Principal, anchor string) *httptest.ResponseRecorder {
@@ -86,14 +87,15 @@ func TestPointCommentRejectsInvalidAnchors(t *testing.T) {
 	e := newTestEnv(t)
 	for _, tc := range []struct{ name, anchor string }{
 		{"no quote and no point", `{"prefix":"p"}`},
+		{"no target and no path", `{"quote":"fixture","point":{"x":0.5,"y":0.5}}`},
 		{"space in target", `{"point":{"target":"t mob","x":0.5,"y":0.5}}`},
 		{"quote in target", `{"point":{"target":"t\"mob","x":0.5,"y":0.5}}`},
 		{"slash in target", `{"point":{"target":"a/b","x":0.5,"y":0.5}}`},
 		{"target too long", `{"point":{"target":"` + strings.Repeat("a", 129) + `","x":0.5,"y":0.5}}`},
 		{"bad path", `{"point":{"path":"0..1","x":0.5,"y":0.5}}`},
 		{"deep path", `{"point":{"path":"0` + strings.Repeat(".0", 64) + `","x":0.5,"y":0.5}}`},
-		{"label too long", `{"point":{"label":"` + strings.Repeat("a", 129) + `","x":0.5,"y":0.5}}`},
-		{"label with a control character", `{"point":{"label":"a\u0007","x":0.5,"y":0.5}}`},
+		{"label too long", `{"point":{"target":"t","label":"` + strings.Repeat("a", 129) + `","x":0.5,"y":0.5}}`},
+		{"label with a control character", `{"point":{"target":"t","label":"a\u0007","x":0.5,"y":0.5}}`},
 		{"x below zero", `{"point":{"target":"t","x":-0.01,"y":0.5}}`},
 		{"x above one", `{"point":{"target":"t","x":1.01,"y":0.5}}`},
 		{"y below zero", `{"point":{"target":"t","x":0.5,"y":-0.01}}`},
@@ -259,6 +261,10 @@ func TestMovePointComment(t *testing.T) {
 	if point["path"] != "0" || point["x"] != 0.1235 || point["y"] != 0.5 || got["selected_text"] != "fixture" {
 		t.Fatalf("moved comment = %v, want path 0 at 0.1235, 0.5 with the new quote", got)
 	}
+	// fixtureUser may comment, but this point is not theirs.
+	if _, err := e.store.CreateGrant(context.Background(), "document", e.doc.ID, fixtureUser, repo.RoleCommenter, fixtureOwner); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
 	// An editor moves anyone's point.
 	assertStatus(t, do(t, e.h, http.MethodPatch, path, `{"anchor":{"point":{"target":"t_otp","x":0.5,"y":0.5}}}`, as(fixtureEditor)), http.StatusOK)
 
@@ -270,7 +276,9 @@ func TestMovePointComment(t *testing.T) {
 		{"text anchor", `{"anchor":{"quote":"hello"}}`, fixtureCommenter, http.StatusBadRequest},
 		{"point out of range", `{"anchor":{"point":{"target":"t_mob","x":1.5,"y":0}}}`, fixtureCommenter, http.StatusBadRequest},
 		{"bad target", `{"anchor":{"point":{"target":"has space","x":0,"y":0}}}`, fixtureCommenter, http.StatusBadRequest},
-		{"someone else's point", `{"anchor":{"point":{"target":"t_mob","x":0,"y":0}}}`, fixtureViewer, http.StatusForbidden},
+		{"no element", `{"anchor":{"point":{"x":0,"y":0}}}`, fixtureCommenter, http.StatusBadRequest},
+		{"a viewer", `{"anchor":{"point":{"target":"t_mob","x":0,"y":0}}}`, fixtureViewer, http.StatusForbidden},
+		{"another commenter", `{"anchor":{"point":{"target":"t_mob","x":0,"y":0}}}`, fixtureUser, http.StatusForbidden},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertStatus(t, do(t, e.h, http.MethodPatch, path, tc.body, as(tc.p)), tc.want)

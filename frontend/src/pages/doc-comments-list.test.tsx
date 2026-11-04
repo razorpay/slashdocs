@@ -42,7 +42,7 @@ const comments = [
   }),
 ];
 
-function renderList(over: Partial<DocContextValue> = {}) {
+function renderList(over: Partial<DocContextValue> = {}, showsLatest = true) {
   const ctx = {
     docId: "doc-1",
     comments,
@@ -53,7 +53,12 @@ function renderList(over: Partial<DocContextValue> = {}) {
     unanchoredComments: new Set<string>(),
     ...over,
   } as DocContextValue;
-  const props = { onPick: vi.fn(), onPlacePin: vi.fn(), onClose: vi.fn() };
+  const props = {
+    showsLatest,
+    onPick: vi.fn(),
+    onPlacePin: vi.fn(),
+    onClose: vi.fn(),
+  };
   render(
     <QueryClientProvider client={new QueryClient()}>
       <MemoryRouter>
@@ -98,6 +103,17 @@ it("marks a thread whose text or pin is gone", () => {
   renderList({ unanchoredComments: new Set(["resolved"]) });
   const item = screen.getByText("Thread resolved").closest("li")!;
   expect(within(item).getByText("Not found in this version")).toBeInTheDocument();
+});
+
+it("trusts the server's placement on the latest version only", () => {
+  const gone = thread("gone", "resolved", {
+    current_placement: { status: "orphaned", confidence: 0, matched_text: "" },
+  });
+  renderList({ comments: [gone] });
+  expect(screen.getByText("Not found in this version")).toBeInTheDocument();
+  cleanup();
+  renderList({ comments: [gone] }, false);
+  expect(screen.queryByText("Not found in this version")).not.toBeInTheDocument();
 });
 
 it("opens a picked thread, and starts placing a pin", async () => {

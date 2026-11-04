@@ -3,6 +3,7 @@ import {
   test as base,
   type APIRequestContext,
   type APIResponse,
+  type Browser,
   type Page,
 } from "@playwright/test";
 import { fileURLToPath } from "node:url";
@@ -36,6 +37,27 @@ export async function installAppStorage(page: Page) {
     },
     { appOrigin: APP_ORIGIN, onboarding: ONBOARDING_STATE },
   );
+}
+
+// signedOutPage opens a page in a new browser context without a session.
+export async function signedOutPage(browser: Browser): Promise<Page> {
+  const context = await browser.newContext({
+    baseURL: APP_ORIGIN,
+    storageState: { cookies: [], origins: [] },
+  });
+  const page = await context.newPage();
+  await installAppStorage(page);
+  return page;
+}
+
+// reviewerOn opens path as the reviewer of dev/dex-config.yaml, in a browser
+// context of their own.
+export async function reviewerOn(browser: Browser, path: string): Promise<Page> {
+  const page = await signedOutPage(browser);
+  await page.goto(`/login?next=${encodeURIComponent(path)}`);
+  await continueWithDex(page, "reviewer@example.com");
+  await expect(page).toHaveURL(`${APP_ORIGIN}${path}`);
+  return page;
 }
 
 export async function loginThroughDex(page: Page) {

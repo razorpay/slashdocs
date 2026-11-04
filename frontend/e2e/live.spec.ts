@@ -1,12 +1,5 @@
-import { type Browser, type FrameLocator, type Page } from "@playwright/test";
-import {
-  APP_ORIGIN,
-  continueWithDex,
-  expect,
-  installAppStorage,
-  test,
-  uniqueName,
-} from "./fixtures";
+import { type FrameLocator, type Page } from "@playwright/test";
+import { expect, reviewerOn, signedOutPage, test, uniqueName } from "./fixtures";
 
 // Two people read one document: the admin and a reviewer (dev/dex-config.yaml).
 
@@ -16,19 +9,6 @@ function bridge(page: Page): FrameLocator {
 
 function renderedDocument(page: Page): FrameLocator {
   return bridge(page).frameLocator("iframe#slashdocs-doc");
-}
-
-async function reviewerOn(browser: Browser, path: string): Promise<Page> {
-  const context = await browser.newContext({
-    baseURL: APP_ORIGIN,
-    storageState: { cookies: [], origins: [] },
-  });
-  const page = await context.newPage();
-  await installAppStorage(page);
-  await page.goto(`/login?next=${encodeURIComponent(path)}`);
-  await continueWithDex(page, "reviewer@example.com");
-  await expect(page).toHaveURL(`${APP_ORIGIN}${path}`);
-  return page;
 }
 
 function documentHTML(title: string) {
@@ -95,4 +75,43 @@ test("chats at the cursor, and follows a viewer until the reader scrolls", async
   await page.mouse.wheel(0, -400);
   await expect(stop).toBeHidden();
   await reviewer.context().close();
+});
+
+test("a signed-out reader sees cursor chat but cannot send it", async ({
+  page,
+  browser,
+  slashdocs,
+}) => {
+  const title = uniqueName("Live public");
+  const document = await slashdocs.createDocument(title, documentHTML(title));
+  await slashdocs.shareWithAnyone(document.id, "commenter");
+  const path = `/app/d/${document.id}`;
+  const reader = await signedOutPage(browser);
+  await reader.goto(path);
+  await expect(renderedDocument(reader).locator("h1")).toBeVisible();
+  await page.goto(path);
+
+  // The admin chats; the signed-out reader sees it live.
+  await pointAt(page, "#s0 h2");
+  await page.keyboard.press("/");
+  const field = bridge(page).getByRole("textbox", { name: "Cursor chat message" });
+  await field.pressSequentially("Hello readers");
+  await expect(
+    bridge(reader).getByText("Hello readers", { exact: true }),
+  ).toBeVisible();
+
+  // The reader's "/" opens no field, and their cursor goes to no one.
+  const posts: string[] = [];
+  reader.on("request", (request) => {
+    if (request.method() === "POST" && request.url().endsWith("/cursor"))
+      posts.push(request.url());
+  });
+  await pointAt(reader, "#s0 h2");
+  await reader.keyboard.press("/");
+  await expect(
+    bridge(reader).getByRole("textbox", { name: "Cursor chat message" }),
+  ).toBeHidden();
+  await reader.waitForTimeout(500);
+  expect(posts).toEqual([]);
+  await reader.context().close();
 });

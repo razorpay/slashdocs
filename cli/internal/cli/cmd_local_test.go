@@ -242,7 +242,8 @@ func TestLocalPointComments(t *testing.T) {
 		target, body string
 		status       int
 	}{
-		{base, `{"version_id":"v1","body":"Off","anchor":{"point":{"x":1.5,"y":0}}}`, http.StatusBadRequest},
+		{base, `{"version_id":"v1","body":"Off","anchor":{"point":{"target":"chart","x":1.5,"y":0}}}`, http.StatusBadRequest},
+		{base, `{"version_id":"v1","body":"Nowhere","anchor":{"point":{"x":0.5,"y":0}}}`, http.StatusBadRequest},
 		{base + "/" + pin.ID, `{"anchor":{"point":{"target":"chart","x":0.25,"y":1}}}`, http.StatusOK},
 		{base + "/" + pin.ID, `{"anchor":{"quote":"Release"}}`, http.StatusBadRequest},
 		{base + "/" + text.ID, `{"anchor":{"point":{"target":"chart","x":0.25,"y":1}}}`, http.StatusBadRequest},
