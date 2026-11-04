@@ -2,10 +2,17 @@ import { useEffect, useMemo, useState, type ComponentPropsWithoutRef } from "rea
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { errorMessage } from "@/lib/errors";
-import { Copy, LockKeyhole, UsersRound } from "lucide-react";
+import { Check, ChevronDown, Copy, LockKeyhole, UsersRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/misc";
+import {
+  Dropdown,
+  DropdownContent,
+  DropdownItem,
+  DropdownSeparator,
+  DropdownTrigger,
+} from "@/components/ui/dropdown";
 import {
   SheetBody,
   SheetContent,
@@ -19,6 +26,7 @@ import {
   type EffectiveAccessItem,
   type GoogleGroup,
 } from "@/api";
+import { cn } from "@/lib/cn";
 import { publicURL } from "@/lib/config";
 import { queryKeys } from "@/lib/queryKeys";
 import {
@@ -29,6 +37,11 @@ import {
   BOT_DOMAIN_SUFFIX,
   BOT_ADDRESS_EXAMPLE,
 } from "@/lib/constants";
+
+const GENERAL_ACCESS_OPTIONS = [
+  { value: GENERAL_ACCESS_NONE, label: "No access" },
+  ...ROLES,
+];
 
 type PendingChange = {
   label: string;
@@ -306,6 +319,48 @@ export function ShareSheet({
     }
   };
 
+  // changeRole sets a role, or "revoke". A change below a role that a folder
+  // gives asks first, because it changes the folder.
+  const changeRole = (item: EffectiveAccessItem, next: string) => {
+    const grantId = directGrantId(item);
+    const inheritedRole = inheritedSource(item)?.role;
+    const reducingBelowInherited =
+      inheritedRole && (ROLE_RANK[next] || 0) < (ROLE_RANK[inheritedRole] || 0);
+    if (reducingBelowInherited) {
+      handleInheritedChange(item, next);
+    } else if (next === "revoke" && grantId) {
+      revokeDirectGrant.mutate(grantId);
+    } else if (grantId) {
+      updateDirectGrant.mutate({ grantId, nextRole: next });
+    } else {
+      handleInheritedChange(item, next);
+    }
+  };
+
+  // The people or groups that match the field. A user whose email is
+  // already in the field was picked, so it shows no more.
+  const suggestions =
+    shareMode === "groups"
+      ? selectedGroup
+        ? []
+        : groupSuggestions.map((g) => ({
+            key: g.id,
+            name: g.name || g.email,
+            email: g.email,
+            pick: () => {
+              setSelectedGroup(g);
+              setAddress(g.email);
+            },
+          }))
+      : userSuggestions
+          .filter((u) => u.email !== address.trim())
+          .map((u) => ({
+            key: u.id || u.email,
+            name: u.name || u.email,
+            email: u.name ? u.email : undefined,
+            pick: () => setAddress(u.email || ""),
+          }));
+
   const everyoneLabel = config.data?.everyone_label || "Everyone on this server";
   const isPublic = config.data?.deployment === "public";
   const userPlaceholder = isPublic ? "user@gmail.com" : "user@org.example";
@@ -421,21 +476,50 @@ export function ShareSheet({
                   </div>
                 ) : null}
                 <div>
-                  <Input
-                    placeholder={
-                      shareMode === "groups"
-                        ? "Search group name or email"
-                        : `${userPlaceholder}  or  ${BOT_ADDRESS_EXAMPLE}`
-                    }
-                    value={address}
-                    onChange={(e) => {
-                      setAddress(e.target.value);
-                      if (shareMode === "groups") setSelectedGroup(null);
-                    }}
-                    autoCapitalize="off"
-                    autoCorrect="off"
-                    spellCheck={false}
-                  />
+                  {/* The suggestions float under the field, over the form. */}
+                  <div className="relative">
+                    <Input
+                      placeholder={
+                        shareMode === "groups"
+                          ? "Search group name or email"
+                          : `${userPlaceholder}  or  ${BOT_ADDRESS_EXAMPLE}`
+                      }
+                      value={address}
+                      onChange={(e) => {
+                        setAddress(e.target.value);
+                        if (shareMode === "groups") setSelectedGroup(null);
+                      }}
+                      autoCapitalize="off"
+                      autoCorrect="off"
+                      spellCheck={false}
+                    />
+                    {suggestions.length > 0 ? (
+                      <div className="absolute inset-x-0 top-full z-10 mt-1 max-h-64 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-[var(--shadow-pop)]">
+                        {suggestions.map((suggestion) => (
+                          <button
+                            key={suggestion.key}
+                            type="button"
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-[var(--color-surface-muted)]"
+                            onClick={suggestion.pick}
+                          >
+                            {shareMode === "groups" ? (
+                              <UsersRound className="h-4 w-4 shrink-0" />
+                            ) : null}
+                            <span className="min-w-0">
+                              <span className="block truncate font-medium">
+                                {suggestion.name}
+                              </span>
+                              {suggestion.email ? (
+                                <span className="block truncate text-xs text-[var(--color-fg-muted)]">
+                                  {suggestion.email}
+                                </span>
+                              ) : null}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
                   <p className="mt-1.5 text-[11px] text-[var(--color-fg-muted)]">
                     {shareMode === "groups"
                       ? "Select a server-verified organization group before sharing."
@@ -443,7 +527,18 @@ export function ShareSheet({
                         ? "Enter a full email, or add a bot by its address. People you share with appear as you type."
                         : "Search existing slashdocs users by email, or add a bot by its address."}
                   </p>
-                  {shareMode === "groups" && selectedGroup ? (
+                  {shareMode === "people" ? (
+                    userSuggestions.length === 0 &&
+                    debouncedAddress.length >= 2 &&
+                    !debouncedAddress.includes(BOT_DOMAIN_SUFFIX) &&
+                    !userSearch.isFetching ? (
+                      <div className="mt-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-2 text-xs text-[var(--color-fg-muted)]">
+                        {isPublic
+                          ? "None of your contacts match. Enter a full email to share with someone else. They need to sign in once first."
+                          : "No matching slashdocs users. They need to sign in once before you can share with them."}
+                      </div>
+                    ) : null
+                  ) : selectedGroup ? (
                     <div className="mt-2 flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
                       <UsersRound className="h-4 w-4 shrink-0" />
                       <div className="min-w-0">
@@ -455,82 +550,27 @@ export function ShareSheet({
                         </div>
                       </div>
                     </div>
-                  ) : shareMode === "groups" && groupSuggestions.length > 0 ? (
-                    <div className="mt-2 overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
-                      {groupSuggestions.map((group) => (
-                        <button
-                          key={group.id}
-                          type="button"
-                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-[var(--color-surface-muted)]"
-                          onClick={() => {
-                            setSelectedGroup(group);
-                            setAddress(group.email);
-                          }}
-                        >
-                          <UsersRound className="h-4 w-4 shrink-0" />
-                          <span className="min-w-0">
-                            <span className="block truncate font-medium">
-                              {group.name || group.email}
-                            </span>
-                            <span className="block truncate text-xs text-[var(--color-fg-muted)]">
-                              {group.email}
-                            </span>
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  ) : shareMode === "groups" && groupSearch.isFetching ? (
+                  ) : groupSuggestions.length > 0 ? null : groupSearch.isFetching ? (
                     <div className="mt-2 text-xs text-[var(--color-fg-muted)]">
                       Searching Google Groups…
                     </div>
-                  ) : shareMode === "groups" && groupSearch.error ? (
+                  ) : groupSearch.error ? (
                     <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-[var(--color-danger)] dark:border-red-900/60 dark:bg-red-950/30">
                       Google Group search is temporarily unavailable. Try again shortly.
                     </div>
-                  ) : shareMode === "groups" && debouncedAddress.length >= 2 ? (
+                  ) : debouncedAddress.length >= 2 ? (
                     <div className="mt-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-2 text-xs text-[var(--color-fg-muted)]">
                       No verified organization groups matched that search.
                     </div>
-                  ) : userSuggestions.length > 0 ? (
-                    <div className="mt-2 overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
-                      {userSuggestions.map((u) => (
-                        <button
-                          key={u.id || u.email}
-                          type="button"
-                          className="block w-full px-3 py-2 text-left text-sm hover:bg-[var(--color-surface-muted)]"
-                          onClick={() => setAddress(u.email || "")}
-                        >
-                          <div className="font-medium">{u.name || u.email}</div>
-                          {u.name && u.email ? (
-                            <div className="text-xs text-[var(--color-fg-muted)]">
-                              {u.email}
-                            </div>
-                          ) : null}
-                        </button>
-                      ))}
-                    </div>
-                  ) : debouncedAddress.length >= 2 &&
-                    !debouncedAddress.includes(BOT_DOMAIN_SUFFIX) &&
-                    !userSearch.isFetching ? (
-                    <div className="mt-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-2 text-xs text-[var(--color-fg-muted)]">
-                      {isPublic
-                        ? "None of your contacts match. Enter a full email to share with someone else. They need to sign in once first."
-                        : "No matching slashdocs users. They need to sign in once before you can share with them."}
-                    </div>
                   ) : null}
                 </div>
-                <select
+                <RoleMenu
+                  label="Access role"
                   value={role}
-                  onChange={(e) => setRole(e.target.value)}
-                  aria-label="Access role"
-                  className="h-9 w-full rounded-sm border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm disabled:cursor-not-allowed"
-                >
-                  {ROLES.map((r) => (
-                    <option key={r.value} value={r.value}>
-                      {r.label}
-                    </option>
-                  ))}
-                </select>
+                  options={ROLES}
+                  onChange={setRole}
+                  className="h-9 w-full"
+                />
                 <Button
                   className="w-full"
                   type="submit"
@@ -659,8 +699,10 @@ export function ShareSheet({
                             Owner
                           </span>
                         ) : (
-                          <select
+                          <RoleMenu
+                            label="Access role"
                             value={item.effective_role}
+                            options={ROLES}
                             disabled={
                               !canManageAccess ||
                               !(grantId || src) ||
@@ -669,33 +711,9 @@ export function ShareSheet({
                               updateDirectGrant.isPending ||
                               revokeDirectGrant.isPending
                             }
-                            onChange={(e) => {
-                              const next = e.target.value;
-                              const inheritedRole = src?.role;
-                              const reducingBelowInherited =
-                                inheritedRole &&
-                                (ROLE_RANK[next] || 0) <
-                                  (ROLE_RANK[inheritedRole] || 0);
-                              if (reducingBelowInherited) {
-                                handleInheritedChange(item, next);
-                              } else if (next === "revoke" && grantId) {
-                                revokeDirectGrant.mutate(grantId);
-                              } else if (grantId) {
-                                updateDirectGrant.mutate({ grantId, nextRole: next });
-                              } else {
-                                handleInheritedChange(item, next);
-                              }
-                            }}
-                            aria-label="Access role"
-                            className="h-8 shrink-0 rounded-sm border border-[var(--color-border)] bg-[var(--color-surface)] px-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            {ROLES.map((r) => (
-                              <option key={r.value} value={r.value}>
-                                {r.label}
-                              </option>
-                            ))}
-                            <option value="revoke">Remove access</option>
-                          </select>
+                            onChange={(next) => changeRole(item, next)}
+                            onRemove={() => changeRole(item, "revoke")}
+                          />
                         )}
                       </div>
                     );
@@ -709,11 +727,12 @@ export function ShareSheet({
               </h4>
               <div className="flex items-center justify-between gap-3 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm">
                 <span className="truncate">{everyoneLabel}</span>
-                <select
+                <RoleMenu
+                  label="General access role"
                   value={anyoneEffectiveRole}
+                  options={GENERAL_ACCESS_OPTIONS}
                   disabled={!canManageAccess || general.isPending}
-                  onChange={(e) => {
-                    const next = e.target.value;
+                  onChange={(next) => {
                     const inheritedRole = anyoneInheritedSource?.role;
                     if (
                       inheritedRole &&
@@ -724,16 +743,7 @@ export function ShareSheet({
                       general.mutate(next);
                     }
                   }}
-                  aria-label="General access role"
-                  className="h-8 rounded-sm border border-[var(--color-border)] bg-[var(--color-surface)] px-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <option value={GENERAL_ACCESS_NONE}>No access</option>
-                  {ROLES.map((r) => (
-                    <option key={r.value} value={r.value}>
-                      {r.label}
-                    </option>
-                  ))}
-                </select>
+                />
               </div>
             </div>
             <div className="mt-6 rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-surface-muted)]/45 p-3">
@@ -759,5 +769,67 @@ export function ShareSheet({
         )}
       </SheetBody>
     </SheetContent>
+  );
+}
+
+// RoleMenu picks a role. Its trigger looks like a field and shows the role,
+// and a check marks the role in the menu. Remove access, when given, sits
+// apart as a danger item.
+function RoleMenu({
+  label,
+  value,
+  options,
+  onChange,
+  onRemove,
+  disabled,
+  className,
+}: {
+  label: string;
+  value: string;
+  options: ReadonlyArray<{ value: string; label: string }>;
+  onChange: (value: string) => void;
+  onRemove?: () => void;
+  disabled?: boolean;
+  className?: string;
+}) {
+  const current = options.find((o) => o.value === value)?.label ?? value;
+  return (
+    <Dropdown>
+      <DropdownTrigger asChild disabled={disabled}>
+        <button
+          type="button"
+          aria-label={`${label}: ${current}`}
+          className={cn(
+            "flex h-8 shrink-0 items-center justify-between gap-2 rounded-sm border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 text-sm transition-colors hover:bg-[var(--color-surface-muted)] disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-[var(--color-surface)]",
+            className,
+          )}
+        >
+          {current}
+          <ChevronDown className="h-4 w-4 text-[var(--color-fg-muted)]" />
+        </button>
+      </DropdownTrigger>
+      <DropdownContent className="min-w-40">
+        {options.map((o) => (
+          <DropdownItem
+            key={o.value}
+            onSelect={() => o.value !== value && onChange(o.value)}
+          >
+            <Check className={cn("h-4 w-4", o.value !== value && "invisible")} />
+            {o.label}
+          </DropdownItem>
+        ))}
+        {onRemove ? (
+          <>
+            <DropdownSeparator />
+            <DropdownItem
+              onSelect={onRemove}
+              className="pl-8 text-[var(--color-danger)] data-[highlighted]:bg-red-50 dark:data-[highlighted]:bg-red-950/40"
+            >
+              Remove access
+            </DropdownItem>
+          </>
+        ) : null}
+      </DropdownContent>
+    </Dropdown>
   );
 }

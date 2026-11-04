@@ -201,9 +201,12 @@ test("shares a document through its general access role", async ({
   await page.goto(`/app/d/${document.id}`);
   await page.getByRole("button", { name: "Share", exact: true }).click();
   const shareSheet = page.getByRole("dialog", { name: "Share document" });
-  const generalAccess = shareSheet.getByLabel("General access role");
-  await generalAccess.selectOption("viewer");
-  await expect(generalAccess).toHaveValue("viewer");
+  const generalAccess = shareSheet.getByRole("button", {
+    name: /^General access role/,
+  });
+  await generalAccess.click();
+  await page.getByRole("menuitem", { name: "Viewer" }).click();
+  await expect(generalAccess).toHaveAccessibleName("General access role: Viewer");
   const access = await slashdocs.documentAccess(document.id);
   expect(
     access.some(
