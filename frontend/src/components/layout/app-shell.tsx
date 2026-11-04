@@ -5,6 +5,23 @@ import { useSignInPath } from "@/lib/auth-state";
 import { Center } from "@/components/ui/misc";
 import { cn } from "@/lib/cn";
 
+// The app bar of every page but a document, which has its own bar. A
+// document that does not open shows this one.
+export function AppBar() {
+  const me = useMe();
+  const user = me.data?.user || me.data?.principal;
+  return (
+    <TopBar>
+      {user && (
+        <>
+          <GetStarted />
+          <AccountMenu user={user} />
+        </>
+      )}
+    </TopBar>
+  );
+}
+
 export function AppShell() {
   const me = useMe();
   const loc = useLocation();
@@ -15,7 +32,6 @@ export function AppShell() {
   if (me.unauth && !documentPage) return <Navigate to={signInPath} replace />;
   if (me.isLoading) return <Center>Loading workspace…</Center>;
   if (!me.data && !me.unauth) return null;
-  const user = me.data?.user || me.data?.principal;
   const fullscreenDocument =
     documentPage && new URLSearchParams(loc.search).get("fullscreen") === "1";
   return (
@@ -25,12 +41,7 @@ export function AppShell() {
         fullscreenDocument ? "overflow-hidden" : "overflow-auto",
       )}
     >
-      {!documentPage && user && (
-        <TopBar>
-          <GetStarted />
-          <AccountMenu user={user} />
-        </TopBar>
-      )}
+      {!documentPage && <AppBar />}
       <Outlet />
     </main>
   );

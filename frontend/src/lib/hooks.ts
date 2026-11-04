@@ -31,7 +31,9 @@ export function useSelf(principal?: Principal): Principal | undefined {
 }
 
 // useDocumentRole is what the signed-in reader may do with a document. The
-// owner may do everything; anyone else has the role their grants give.
+// owner may do everything; anyone else has the role their grants give. The
+// grants are asked for only after the document loads with its owner, so a
+// document that does not open asks for nothing more.
 export function useDocumentRole(
   docId: string,
   owner?: Principal,
@@ -41,7 +43,7 @@ export function useDocumentRole(
   const access = useQuery({
     queryKey: queryKeys.documentAccess(docId),
     queryFn: () => api.documentAccess(docId),
-    enabled: !!docId && !!principal && !isOwner,
+    enabled: !!owner && !!principal && !isOwner,
     staleTime: 30_000,
   });
   const role = isOwner ? "owner" : access.data?.current_role;
