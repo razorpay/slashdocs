@@ -258,6 +258,7 @@ func (h handlers) createApprover(c *gin.Context) {
 		return
 	}
 	incApproval("approver_assigned", labelUnknown, actorType(c))
+	h.announce(c, repo.DocumentEventApprovals)
 	c.JSON(http.StatusCreated, approvalRequestJSON(req))
 }
 
@@ -309,6 +310,7 @@ func (h handlers) deleteApprover(c *gin.Context) {
 		return
 	}
 	incApproval("approver_removed", labelUnknown, actorType(c))
+	h.announce(c, repo.DocumentEventApprovals)
 	c.Status(http.StatusNoContent)
 }
 
@@ -407,6 +409,7 @@ func (h handlers) createApproval(c *gin.Context) {
 		return
 	}
 	incApproval("decided", a.Decision, actorType(c))
+	h.announce(c, repo.DocumentEventApprovals)
 	status := http.StatusOK
 	if created {
 		status = http.StatusCreated
@@ -564,6 +567,7 @@ func (h handlers) deleteApproval(c *gin.Context) {
 		return
 	}
 	incApproval("revoked", labelUnknown, actorType(c))
+	h.announce(c, repo.DocumentEventApprovals)
 	c.Status(http.StatusNoContent)
 }
 
