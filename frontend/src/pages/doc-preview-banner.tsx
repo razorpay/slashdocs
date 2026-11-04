@@ -27,26 +27,31 @@ export function PreviewBanner({
     <div
       role="status"
       className={cn(
-        "flex items-center gap-3 border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100",
+        // Narrow screens put the actions under the message.
+        "flex flex-col gap-2 border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 sm:flex-row sm:items-center sm:gap-3 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100",
         floating
           ? "absolute bottom-6 left-1/2 z-20 w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 rounded-md border shadow-xl"
           : "border-b",
       )}
     >
-      <History className="h-4 w-4 shrink-0" aria-hidden="true" />
-      <p className="min-w-0 flex-1">
-        {version?.created_at ? (
-          <>
-            This is the document as it was <RelativeTime iso={version.created_at} />.
-          </>
-        ) : (
-          "This is an earlier state of the document."
-        )}
-      </p>
-      {canRestore ? <RestoreButton docId={docId} version={version} /> : null}
-      <Button size="sm" variant="outline" className="shrink-0" onClick={showLatest}>
-        Back to the current document
-      </Button>
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <History className="h-4 w-4 shrink-0" aria-hidden="true" />
+        <p className="min-w-0 text-pretty">
+          {version?.created_at ? (
+            <>
+              This is the document as it was <RelativeTime iso={version.created_at} />.
+            </>
+          ) : (
+            "This is an earlier state of the document."
+          )}
+        </p>
+      </div>
+      <div className="flex shrink-0 justify-end gap-2">
+        {canRestore ? <RestoreButton docId={docId} version={version} /> : null}
+        <Button size="sm" variant="outline" onClick={showLatest}>
+          Current document
+        </Button>
+      </div>
     </div>
   );
 }

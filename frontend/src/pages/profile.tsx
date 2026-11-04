@@ -59,14 +59,17 @@ export function ProfilePage() {
         description="How you appear, and how slashdocs works for you."
       />
       <div className="enter space-y-4" style={beat(2)}>
-        <Card className="flex flex-wrap items-center gap-4 p-5">
-          <Avatar size={56} src={user.picture_url} name={user.name || user.email} />
-          <div className="min-w-0 flex-1">
-            <div className="font-heading text-lg font-medium">
-              {user.name || "Signed-in user"}
-            </div>
-            <div className="truncate text-sm text-[var(--color-fg-muted)]">
-              {user.email || user.id}
+        {/* Narrow screens put Sign out under the identity. */}
+        <Card className="flex flex-col items-start gap-4 p-5 sm:flex-row sm:items-center">
+          <div className="flex min-w-0 flex-1 items-center gap-4">
+            <Avatar size={56} src={user.picture_url} name={user.name || user.email} />
+            <div className="min-w-0">
+              <div className="font-heading text-lg font-medium">
+                {user.name || "Signed-in user"}
+              </div>
+              <div className="break-all text-sm text-[var(--color-fg-muted)]">
+                {user.email || user.id}
+              </div>
             </div>
           </div>
           <Button
