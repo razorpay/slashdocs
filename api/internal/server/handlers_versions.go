@@ -1,6 +1,8 @@
 package server
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/url"
@@ -154,10 +156,16 @@ func (h handlers) renderPrintVersion(c *gin.Context) {
 		internalErr(c, err)
 		return
 	}
-	c.Header("Content-Security-Policy", "default-src 'none'; img-src * data: blob:; media-src * data: blob:; font-src * data: blob:; style-src * 'unsafe-inline'; script-src 'unsafe-inline'; connect-src *; frame-ancestors 'none'; object-src 'none'")
+	var nonceBytes [16]byte
+	if _, err := rand.Read(nonceBytes[:]); err != nil {
+		internalErr(c, err)
+		return
+	}
+	nonce := base64.RawStdEncoding.EncodeToString(nonceBytes[:])
+	c.Header("Content-Security-Policy", "default-src 'none'; img-src * data: blob:; media-src * data: blob:; font-src * data: blob:; style-src * 'unsafe-inline'; script-src 'nonce-"+nonce+"'; connect-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'none'")
 	c.Header("Referrer-Policy", "no-referrer")
 	c.Header("X-Content-Type-Options", "nosniff")
-	c.Data(http.StatusOK, "text/html; charset=utf-8", printableHTML(b))
+	c.Data(http.StatusOK, "text/html; charset=utf-8", printableHTML(b, nonce))
 }
 
 // RenderVersion godoc

@@ -43,8 +43,8 @@ func TestGitHubTokenKeyKeepsPreRenameSeparator(t *testing.T) {
 }
 
 func TestPrintableHTMLInjectsTopLevelPrintBootstrap(t *testing.T) {
-	got := printableHTML([]byte("<!doctype html><html><body><h1>Report</h1></body></html>"))
-	if !bytes.Contains(got, []byte(`window.print()`)) || !bytes.Contains(got, []byte(`<h1>Report</h1>`)) {
+	got := printableHTML([]byte("<!doctype html><html><body><h1>Report</h1></body></html>"), "test-nonce")
+	if !bytes.Contains(got, []byte(`window.print()`)) || !bytes.Contains(got, []byte(`<h1>Report</h1>`)) || !bytes.Contains(got, []byte(`nonce="test-nonce"`)) {
 		t.Fatalf("printable HTML missing content or bootstrap: %s", got)
 	}
 }
