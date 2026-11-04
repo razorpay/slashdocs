@@ -7,14 +7,17 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { cn } from "@/lib/cn";
 import { EDGE, placeBeside, type Rect } from "@/lib/place-beside";
 import { anchorLabel } from "@/lib/comment-pins";
 import { principalLabel } from "@/lib/principals";
 import { useIsMobile } from "@/lib/use-media-query";
+import { popIn, sheetUp } from "@/lib/motion";
 import { useDoc } from "./doc-context";
 import { CommentComposer, CommentThread } from "./doc-comments";
 import { PersonAvatar } from "./doc-comment-parts";
+import { CommentBody } from "./doc-comment-text";
 import { useFrameMessage } from "./use-frame-message";
 
 const WIDTH = 340;
@@ -76,25 +79,40 @@ function Popover({
     e.stopPropagation();
     onClose();
   };
+  const enter = mobile ? sheetUp : popIn;
+  // It grows from the side of its anchor.
+  const origin =
+    at && anchor
+      ? `${anchor.left + anchor.width / 2 - at.x}px ${anchor.top + anchor.height / 2 - at.y}px`
+      : "top right";
   return (
-    <div
+    <motion.div
       ref={ref}
+      {...enter}
+      // It waits, hidden, until it knows where it goes.
+      animate={mobile || at ? enter.animate : enter.initial}
       role="dialog"
       aria-label={label}
       onKeyDown={closeOnEscape}
       style={
-        mobile ? undefined : { left: at?.x ?? -9999, top: at?.y ?? -9999, width: WIDTH }
+        mobile
+          ? undefined
+          : {
+              left: at?.x ?? -9999,
+              top: at?.y ?? -9999,
+              width: WIDTH,
+              transformOrigin: origin,
+            }
       }
       className={cn(
         "fixed z-40 flex flex-col overflow-hidden bg-[var(--color-surface)] shadow-xl ring-1 ring-[var(--color-border)]",
         mobile
           ? "inset-x-0 bottom-0 max-h-[70vh] rounded-t-2xl pb-[env(safe-area-inset-bottom)]"
-          : "max-h-[min(70vh,560px)] rounded-xl transition-opacity duration-150",
-        !mobile && !at && "opacity-0",
+          : "max-h-[min(70vh,560px)] rounded-xl",
       )}
     >
       <div className="min-h-0 overflow-y-auto overscroll-contain">{children}</div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -145,7 +163,7 @@ export function CommentPopovers({
   const placed = !!rect || (!!activeComment && unanchoredComments.has(activeComment));
   const clustered = cluster && comments.filter((c) => cluster.ids.includes(c.id));
   return (
-    <>
+    <AnimatePresence>
       {(draft || thread) && placed ? (
         <Popover
           key={activeComment}
@@ -163,6 +181,7 @@ export function CommentPopovers({
       ) : null}
       {cluster && clustered?.length ? (
         <Popover
+          key="cluster"
           anchor={cluster.rect}
           bounds={bounds}
           label="Comment threads"
@@ -190,7 +209,7 @@ export function CommentPopovers({
                         </span>
                       ) : null}
                     </span>
-                    <span className="line-clamp-2 text-sm break-words">{c.body}</span>
+                    <CommentBody text={c.body} mentions={c.mentions} preview />
                   </span>
                 </button>
               </li>
@@ -198,6 +217,6 @@ export function CommentPopovers({
           </ul>
         </Popover>
       ) : null}
-    </>
+    </AnimatePresence>
   );
 }
