@@ -5,7 +5,8 @@ import type { BookState, Manifest, ManifestLink } from "@/lib/books";
 import { cn } from "@/lib/cn";
 import { useIsMobile } from "@/lib/use-media-query";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { STATE_DOT, STATE_LABEL, rowState } from "./book-chapter-state";
+import { STATE_LABEL, rowState } from "./book-chapter-state";
+import { StateDot } from "./book-state-dot";
 import { useReaderKeys } from "./book-keys";
 
 const RAIL_KEYS = ["t", "T"] as const;
@@ -36,26 +37,22 @@ function ChapterDot({
   state: BookState | undefined;
   current: boolean;
 }) {
-  const s = rowState(link, state);
   const id = link.properties?.documentId;
-  const updated = !!id && !!state?.chapters[id]?.updated;
   return (
     <span
       aria-hidden="true"
-      className="relative flex h-4 w-4 shrink-0 items-center justify-center"
+      className={cn(
+        "flex h-4 w-4 shrink-0 items-center justify-center rounded-full",
+        // The reader's chapter is ringed and slightly larger.
+        current &&
+          "ring-2 ring-[var(--color-accent)] ring-offset-1 ring-offset-[var(--color-chrome)]",
+      )}
     >
-      <span
-        className={cn(
-          "block rounded-full",
-          current
-            ? "h-3 w-3 ring-2 ring-[var(--color-accent)] ring-offset-2 ring-offset-[var(--color-chrome)]"
-            : "h-2.5 w-2.5",
-          STATE_DOT[s],
-        )}
+      <StateDot
+        state={rowState(link, state)}
+        updated={!!id && !!state?.chapters[id]?.updated}
+        className={current ? "h-3 w-3" : undefined}
       />
-      {updated ? (
-        <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-[var(--color-warning)]" />
-      ) : null}
     </span>
   );
 }
@@ -87,11 +84,21 @@ function RailRow({
             {p.number}
           </span>
         ) : null}
-        <span className="truncate">{link.title}</span>
-      </span>
-      <span className="sr-only">
-        , {STATE_LABEL[s]}
-        {updated ? ", Updated since you read" : ""}
+        <span className="min-w-0 flex-1 truncate">{link.title}</span>
+        {/* The state as text too, never colour alone (R13). */}
+        <span className="shrink-0 text-xs text-[var(--color-fg-muted)]">
+          <span className="sr-only">, </span>
+          {/* An empty ring is the quiet default; its label is only read out. */}
+          <span className={s === "not_started" ? "sr-only" : undefined}>
+            {STATE_LABEL[s]}
+          </span>
+          {updated ? (
+            <span className="text-[var(--color-warning)]">
+              <span aria-hidden="true"> · </span>
+              <span className="sr-only">, </span>Updated
+            </span>
+          ) : null}
+        </span>
       </span>
     </>
   );

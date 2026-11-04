@@ -8,7 +8,8 @@ import {
 import { queryKeys } from "@/lib/queryKeys";
 
 // Chapter states as book home and the reader's rail show them. Every dot
-// comes with its label as text, never colour alone (R13).
+// has its own shape (book-state-dot.tsx) and comes with its label as text,
+// never colour alone (R13).
 export type RowState = ChapterState | "planned";
 
 export const STATE_LABEL: Record<RowState, string> = {
@@ -17,14 +18,6 @@ export const STATE_LABEL: Record<RowState, string> = {
   read: "Read",
   done: "Done",
   planned: "Planned",
-};
-
-export const STATE_DOT: Record<RowState, string> = {
-  not_started: "border border-[var(--color-fg-muted)]",
-  reading: "bg-[var(--color-accent)]",
-  read: "bg-[var(--color-fg-muted)]",
-  done: "bg-[var(--color-success,var(--color-fg-muted))]",
-  planned: "border border-dashed border-[var(--color-fg-muted)]",
 };
 
 export function rowState(l: ManifestLink, s: BookState | undefined): RowState {

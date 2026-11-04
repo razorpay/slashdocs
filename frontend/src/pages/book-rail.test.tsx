@@ -12,17 +12,22 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function Harness({ shortcuts = true }: { shortcuts?: boolean }) {
+type Chapters = Parameters<typeof bookState>[0];
+
+function Harness({
+  shortcuts = true,
+  chapters = { doc_1: { state: "read", updated: true }, doc_2: { state: "reading" } },
+}: {
+  shortcuts?: boolean;
+  chapters?: Chapters;
+}) {
   const [pinned, setPinned] = useState(false);
   return (
     <MemoryRouter>
       <input aria-label="Notes" />
       <BookRail
         manifest={bookManifest()}
-        state={bookState({
-          doc_1: { state: "read", updated: true },
-          doc_2: { state: "reading" },
-        })}
+        state={bookState(chapters)}
         current="doc_2"
         pinned={pinned}
         onPinnedChange={setPinned}
@@ -98,5 +103,39 @@ describe("BookRail", () => {
     expect(
       within(sheet).getByRole("navigation", { name: "Book contents" }),
     ).toBeInTheDocument();
+  });
+
+  it("tells chapter states apart without colour", () => {
+    render(
+      <Harness
+        chapters={{
+          doc_1: { state: "done", updated: true },
+          doc_2: { state: "reading" },
+          doc_3: { state: "read" },
+        }}
+      />,
+    );
+    const nav = screen.getByRole("navigation", { name: "Book contents" });
+    const shapeOf = (name: RegExp) =>
+      within(nav)
+        .getByText(name)
+        .closest("li")!
+        .querySelector("[data-shape]")!
+        .getAttribute("data-shape");
+    const shapes = [/Title 1/, /Title 2/, /Title 3/, /Planned 4/].map(shapeOf);
+    expect(new Set(shapes).size).toBe(4);
+    // Done carries a check glyph, and an update has its own badge.
+    const done = within(nav)
+      .getByText(/Title 1/)
+      .closest("li")!;
+    expect(done.querySelector('[data-shape="check"] svg')).not.toBeNull();
+    expect(done.querySelector('[data-shape="updated"]')).not.toBeNull();
+    // The open rail shows each state as text.
+    expect(within(done).getByText("Done")).toBeInTheDocument();
+    expect(within(done).getByText("Updated")).toBeInTheDocument();
+    const reading = within(nav)
+      .getByText(/Title 2/)
+      .closest("li")!;
+    expect(within(reading).getByText("Reading")).toBeInTheDocument();
   });
 });

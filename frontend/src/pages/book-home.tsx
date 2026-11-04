@@ -16,8 +16,8 @@ import { useTitle } from "@/lib/use-title";
 import { Button } from "@/components/ui/button";
 import { Center, Skeleton } from "@/components/ui/misc";
 import { Page } from "@/components/layout/page";
+import { StateDot } from "./book-state-dot";
 import {
-  STATE_DOT,
   STATE_LABEL,
   rowState,
   useBookState,
@@ -27,12 +27,7 @@ import {
 } from "./book-chapter-state";
 
 function Dot({ state }: { state: RowState }) {
-  return (
-    <span
-      aria-hidden="true"
-      className={`inline-block h-2 w-2 shrink-0 rounded-full ${STATE_DOT[state]}`}
-    />
-  );
+  return <StateDot state={state} />;
 }
 
 export function BookError({ error }: { error: unknown }) {
