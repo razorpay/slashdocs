@@ -21,6 +21,7 @@ type FetchOptions = {
   accessFails?: boolean;
   owner?: { id: string; email?: string; name?: string };
   requesters?: Array<{ type: string; id: string; email?: string; name?: string }>;
+  grantError?: string;
 };
 
 function installFetch(options: FetchOptions = {}) {
@@ -62,6 +63,9 @@ function installFetch(options: FetchOptions = {}) {
       }
       if (url.startsWith("/v1/users")) {
         return jsonResponse({ items: options.userItems ?? [] });
+      }
+      if (url.startsWith("/v1/documents/doc_1/access-requests/")) {
+        return new Response(null, { status: 204 });
       }
       if (url === "/v1/documents/doc_1/access-requests") {
         return jsonResponse({
@@ -157,6 +161,12 @@ function installFetch(options: FetchOptions = {}) {
         });
       }
       if (url === "/v1/documents/doc_1/grants") {
+        if (options.grantError) {
+          return jsonResponse(
+            { error: { code: "bad_request", message: options.grantError } },
+            400,
+          );
+        }
         return jsonResponse({ id: "gr_new", role: "commenter" }, 201);
       }
       if (url.includes("/grants/")) return jsonResponse({ id: "gr_editors" });
@@ -271,22 +281,75 @@ describe("Google Group sharing", () => {
     ).toBeDisabled();
   });
 
-  it("lists requests for access and puts a requester in the share form", async () => {
-    installFetch({
+  it("shares with a requester in the chosen role, or declines", async () => {
+    const calls = installFetch({
       requesters: [
         { type: "user", id: "usr_reader", email: "reader@example.com", name: "Reader" },
         { type: "service_account", id: "sa_bot", name: "report-bot@brave.otter.bot" },
       ],
     });
     renderShare();
+    const user = userEvent.setup();
     expect(await screen.findByText("Requests for access")).toBeVisible();
     expect(screen.getByText("report-bot@brave.otter.bot (bot)")).toBeVisible();
-    for (const address of ["reader@example.com", "report-bot@brave.otter.bot"]) {
-      await userEvent.click(
-        screen.getByRole("button", { name: `Share with ${address}` }),
-      );
-      expect(screen.getByDisplayValue(address)).toBeVisible();
-    }
+
+    await user.click(
+      screen.getByRole("button", { name: "Role for reader@example.com: Commenter" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Editor" }));
+    await user.click(
+      screen.getByRole("button", { name: "Share with reader@example.com" }),
+    );
+    await waitFor(() => {
+      const grant = calls.find((call) => call.url === "/v1/documents/doc_1/grants");
+      expect(JSON.parse(String(grant?.init?.body))).toEqual({
+        address: "reader@example.com",
+        role: "editor",
+      });
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: "Decline report-bot@brave.otter.bot" }),
+    );
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (call) =>
+            call.url === "/v1/documents/doc_1/access-requests/service_account/sa_bot" &&
+            call.init?.method === "DELETE",
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("shows a failed share under the field, and clears it on a change", async () => {
+    installFetch({
+      groupsEnabled: false,
+      userItems: [{ id: "usr_ana", email: "ana@example.com", name: "Ana" }],
+      grantError: "No slashdocs user exists for that email.",
+    });
+    renderShare();
+    const user = userEvent.setup();
+    const input = await screen.findByRole("combobox", { name: "Person or bot" });
+    expect(input).toHaveAttribute("placeholder", "Email or bot address");
+    await user.type(input, "ana@example.co");
+    await user.click(screen.getByRole("button", { name: "Share" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "No slashdocs user exists for that email.",
+    );
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    await user.type(input, "m");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("does not offer Share for an address that has no account", async () => {
+    installFetch({ groupsEnabled: false, userItems: [] });
+    renderShare();
+    const user = userEvent.setup();
+    const input = await screen.findByRole("combobox", { name: "Person or bot" });
+    await user.type(input, "nobody@example.com");
+    expect(await screen.findByText(/They need to sign in once/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Share" })).toBeDisabled();
   });
 
   it("does not expose an internal id for an unhydrated owner", async () => {

@@ -28,6 +28,7 @@ type FetchOptions = {
       items?: ApprovalListItem[];
     }
   >;
+  users?: Array<{ id: string; email: string; name: string }>;
 };
 
 // Decisions the page posted, in order.
@@ -39,7 +40,7 @@ function installFetch(options: FetchOptions = {}, posted: PostedDecision[] = [])
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      calls.push(url);
+      calls.push(init?.body ? `${url} ${String(init.body)}` : url);
       if (url === "/v1/documents/doc_1/approvals" && init?.method === "POST") {
         const body = JSON.parse(String(init.body)) as PostedDecision;
         posted.push(body);
@@ -80,9 +81,11 @@ function installFetch(options: FetchOptions = {}, posted: PostedDecision[] = [])
         });
       }
       if (url.startsWith("/v1/documents/doc_1/approvers")) {
+        if (init?.method === "POST") return jsonResponse({ id: "apr_1" }, 201);
         return jsonResponse({ items: [] });
       }
-      if (url.startsWith("/v1/users")) return jsonResponse({ items: [] });
+      if (url.startsWith("/v1/users"))
+        return jsonResponse({ items: options.users ?? [] });
       throw new Error(`unexpected fetch: ${url}`);
     }),
   );
@@ -192,11 +195,43 @@ describe("ApprovalsDialog", () => {
     // a trigger, since the dialog is the only place to assign the first one.
     const trigger = await screen.findByRole("button", { name: "Request approval" });
     await userEvent.click(trigger);
-    expect(
-      await screen.findByPlaceholderText("Add approver by email or bot address…"),
-    ).toBeTruthy();
+    expect(await screen.findByRole("combobox", { name: "Approver" })).toBeTruthy();
     // The form says who cannot approve, so the owner is not surprised by a 400.
     expect(screen.getByText(/Anyone who edited it, in the browser/)).toBeTruthy();
+  });
+
+  it("picks an approver from the suggestions with the keyboard", async () => {
+    const calls = installFetch({
+      users: [{ id: "usr_rev", email: "reviewer@example.com", name: "Reviewer" }],
+    });
+    renderDialog({ isOwner: true });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Request approval" }));
+    const input = await screen.findByRole("combobox", { name: "Approver" });
+    const add = screen.getByRole("button", { name: "Add" });
+    await user.type(input, "rev");
+    // A part of an address cannot be added.
+    expect(add).toBeDisabled();
+    await screen.findByRole("option", { name: /Reviewer/ });
+
+    await user.keyboard("{Escape}");
+    expect(input).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("dialog")).toBeVisible();
+
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByRole("option", { name: /Reviewer/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await user.keyboard("{Enter}");
+    expect(input).toHaveValue("reviewer@example.com");
+    expect(add).toBeEnabled();
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(calls).toContain(
+        '/v1/documents/doc_1/approvers {"address":"reviewer@example.com"}',
+      ),
+    );
   });
 
   it("shows nothing to a non-owner when no approvers are assigned", async () => {
