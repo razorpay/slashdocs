@@ -152,6 +152,24 @@ describe("applyRegions", () => {
         removed: [0],
       },
     ],
+    [
+      "new content cannot have start on <ol>",
+      {
+        from: 0,
+        to: 0,
+        pieces: [{ open: '<ol start="0">', close: "</ol>", children: [] }],
+        removed: [0],
+      },
+    ],
+    [
+      "new content cannot have start on <p>",
+      {
+        from: 0,
+        to: 0,
+        pieces: [{ open: '<p start="2">', close: "</p>", children: [] }],
+        removed: [0],
+      },
+    ],
   ])("refuses: %s", async (reason, region) => {
     expect(await apply("<p><b>a</b></p><p><i>b</i></p>", region)).toBe(
       `refused: ${reason}`,
@@ -176,6 +194,19 @@ describe("applyRegions", () => {
         removed: [],
       }),
     ).toBe(source + open + "b</p>");
+  });
+
+  test("lets a new numbered list start at a number", async () => {
+    const source = "<ol><li>a</li></ol>";
+    const open = '<ol start="3">';
+    expect(
+      await apply(source, {
+        from: 0,
+        to: 0,
+        pieces: [{ keep: 0 }, { open, close: "</ol>", children: [] }],
+        removed: [],
+      }),
+    ).toBe(source + open + "</ol>");
   });
 });
 

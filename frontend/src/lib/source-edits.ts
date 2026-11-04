@@ -207,8 +207,9 @@ function writeRegion(tree: SourceTree, span: Span): string {
 }
 
 // checkNewTag makes sure that new content is one of the tags that the bridge
-// writes, with attributes that the source already uses on that tag, so that a
-// region can never add a script or an event handler.
+// writes, with attributes that the source already uses on that tag or the
+// start number of a list, so that a region can never add a script or an
+// event handler.
 function checkNewTag(tree: SourceTree, open: string, close: string) {
   const [, name, attributes] = NEW_OPEN.exec(open) ?? [];
   if (!name || !NEW_TAG.test(name) || close !== (name === "br" ? "" : `</${name}>`)) {
@@ -218,7 +219,8 @@ function checkNewTag(tree: SourceTree, open: string, close: string) {
     const allowed =
       attribute === "href"
         ? name === "a" && SAFE_HREF.test(value.replace(/&amp;/g, "&"))
-        : attribute !== "id" && tree.attributes.get(name)?.has(attribute);
+        : (attribute === "start" && name === "ol" && /^[1-9]\d*$/.test(value)) ||
+          (attribute !== "id" && tree.attributes.get(name)?.has(attribute));
     if (!allowed)
       throw new Refusal(`new content cannot have ${attribute} on <${name}>`);
   }

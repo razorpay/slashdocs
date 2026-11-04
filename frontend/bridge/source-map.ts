@@ -319,14 +319,16 @@ export function createSourceMap(
     return [{ open: `<${name}${newAttributes(el)}>`, close: `</${name}>`, children }];
   };
 
-  // The attributes of a new element: href, and the attributes that the
-  // source uses on that tag, which Enter copies from the block it splits.
+  // The attributes of a new element: href, the start of a numbered list
+  // that continues another, and the attributes that the source uses on that
+  // tag, which Enter copies from the block it splits.
   const newAttributes = (el: Element) =>
     Array.from(el.attributes)
       .filter(({ name }) =>
         name === "href"
           ? el.localName === "a"
-          : attributeNames.get(el.localName)?.has(name),
+          : (name === "start" && el.localName === "ol") ||
+            attributeNames.get(el.localName)?.has(name),
       )
       .map(
         ({ name, value }) =>
