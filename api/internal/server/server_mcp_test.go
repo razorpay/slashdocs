@@ -201,6 +201,54 @@ func TestMCPStreamableHTTPInitializeListAndCall(t *testing.T) {
 	}
 }
 
+func TestMCPBookToolDescriptionsGuideAgents(t *testing.T) {
+	e := newMCPOAuthTestEnvConfig(t, func(cfg *server.Config) { cfg.BooksEnabled = true })
+	token := auth.NewMCPAccessToken(fixtureUser.ID, e.resource, oauthTestSigningMaterial, time.Minute)
+	listed := mcpPost(t, e, token, "", map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": map[string]any{},
+	})
+	assertStatus(t, listed, http.StatusOK)
+	var response struct {
+		Result struct {
+			Tools []struct {
+				Name        string `json:"name"`
+				Description string `json:"description"`
+				InputSchema struct {
+					Properties map[string]struct {
+						Description string `json:"description"`
+					} `json:"properties"`
+				} `json:"inputSchema"`
+			} `json:"tools"`
+		} `json:"result"`
+	}
+	decodeMCPResponse(t, listed, &response)
+	text := map[string]string{}
+	for _, tool := range response.Result.Tools {
+		text[tool.Name] = tool.Description
+		for arg, p := range tool.InputSchema.Properties {
+			text[tool.Name+"."+arg] = p.Description
+		}
+	}
+	for key, phrases := range map[string][]string{
+		// Delete is permanent, and what it keeps is stated exactly.
+		"delete_book": {"Permanently", "outline versions", "chapter progress stay", "Requires editor access"},
+		// The editor-only tools say so; get_book is the reader tool.
+		"create_book":         {"Requires editor access", "book_exists", "book_id"},
+		"get_book_outline":    {"Requires editor access"},
+		"get_book_status":     {"Requires editor access"},
+		"update_book_outline": {"Requires editor access", "current_version_id", "problems"},
+		"get_book":            {"chapters you can open"},
+		// doc is a document id, not a title, and only the outline field is sent.
+		"update_book_outline.outline": {"document ID", "planned", "subtitle", "only the outline field"},
+	} {
+		for _, phrase := range phrases {
+			if !strings.Contains(text[key], phrase) {
+				t.Errorf("%s description %q lacks %q", key, text[key], phrase)
+			}
+		}
+	}
+}
+
 func TestMCPListsBookToolsOnlyWithBookMode(t *testing.T) {
 	e := newMCPOAuthTestEnv(t) // book mode is off by default
 	token := auth.NewMCPAccessToken(fixtureUser.ID, e.resource, oauthTestSigningMaterial, time.Minute)
