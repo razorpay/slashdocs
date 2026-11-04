@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { toast, type ExternalToast } from "sonner";
 import { api, APIError } from "@/api";
 import { errorMessage } from "@/lib/errors";
@@ -12,7 +12,6 @@ import {
   applyRegions,
   parseSource,
   replacementsBetween,
-  type Replacement,
   type SourceTree,
 } from "@/lib/source-edits";
 import { randomId } from "@/lib/uuid";
@@ -29,39 +28,42 @@ const AUTOSAVE_RETRY_MS = 5_000;
 
 const FAILED_TOAST = "autosave-failed";
 const PAUSED_TOAST = "autosave-paused";
+const REFUSED_TOAST = "autosave-refused";
 const SCRIPT_TOAST = "script-text";
+const COPIED_TOAST = "autosave-copied";
 
 // The version that the frame loaded: its source, and the parse of it that
 // the regions from the frame refer to.
 type Base = { source: string; tree: SourceTree };
 
-// The last version saved from the frame, and its source. Its source is what
-// the frame shows at that save.
-type Head = { id: string; source: string };
+// The last version saved from the frame, its source, and its source without
+// script text. Its source is what the frame shows at that save.
+type Head = { id: string; source: string; regions: string };
 
-// One save: the regions that it holds, the local source that it makes, and
-// the request. A request that failed for a reason that can pass goes again
-// as it is, so that the server can tell that it is the same save. scripts
-// names the script changes that this save is the first to hold, places
-// counts the places that show them, and undo writes their old text back.
+// A script string that a save changes: the text that the page shows for it
+// before the save and after it, and the count of places that show it. key
+// names the script text that the reader typed in.
+type ScriptSave = { key: string; from: string; to: string; places: number };
+
+// One save: the local source that it makes, with and without script text,
+// and the request. A request that failed for a reason that can pass goes
+// again as it is, so that the server can tell that it is the same save.
 type Save = {
-  regions: Region[];
   html: string;
+  regions: string;
   body: Parameters<typeof api.editSource>[1];
-  scripts: string[];
-  places: number;
-  undo: Replacement[];
+  scripts: ScriptSave[];
 };
 
-// The edits cannot be written into the source. The reason says why.
+// The edits cannot be written into the source.
 class Refused extends Error {}
 
 // useTextAutosave saves what an editor types in the rendered document. A
 // pause in typing takes the edited regions from the frame, writes them into
 // the source of the version that the frame loaded, and saves the difference
 // from the last save as replacements by position. The server moves them onto
-// a newer version when someone else saved first. It returns the function to
-// call on each change in the frame.
+// a newer version when someone else saved first. It returns the functions to
+// call on each change in the frame and on each draft that the frame sends.
 export function useTextAutosave(options: {
   docId: string;
   // The version the frame loaded, and which load it is. A new load starts
@@ -77,6 +79,9 @@ export function useTextAutosave(options: {
   // Renders a source in a probe frame, to make sure that a script change
   // shows.
   probe: Render;
+  // Changes the script text that the page shows in every place, as a load
+  // of the saved source would.
+  replaceText: (from: string, to: string) => void;
 }) {
   const { loaded } = options;
   const latest = useRef(options);
@@ -85,6 +90,11 @@ export function useTextAutosave(options: {
   // Unset until the first save: then the loaded version is the head.
   const head = useRef<Head | undefined>(undefined);
   const unsent = useRef<Save | undefined>(undefined);
+  // The latest edits that the frame sent by itself. They save when the
+  // frame goes before it could save them.
+  const draft = useRef<TextEditResult | undefined>(undefined);
+  // Set when the frame went away: saves use the draft, and say nothing.
+  const gone = useRef(false);
   // Set when the document changed elsewhere in a way that the edits on
   // screen cannot follow. Only a new load saves again.
   const paused = useRef(false);
@@ -93,22 +103,30 @@ export function useTextAutosave(options: {
   const saving = useRef(false);
   const again = useRef(false);
   const unsaved = useRef(false);
-  // The outcome of each script change, by its JSON, and the script changes
-  // that a save holds.
+  const attempts = useRef(0);
+  // Why the last save left out a script change, if it did.
+  const refusal = useRef<string | undefined>(undefined);
+  // The outcome of each script change, by its JSON, and the text that the
+  // page shows for each script text that the reader typed in.
   const checks = useRef(
     new Map<string, Promise<{ places: number } | { refused: string }>>(),
   );
-  const savedScripts = useRef(new Set<string>());
+  const shown = useRef(new Map<string, string>());
 
   useEffect(() => {
+    // A new load drops what the frame showed. When that was not saved, the
+    // reader chose to see the saved version.
+    if (unsaved.current || paused.current) latest.current.setState("idle");
     base.current = undefined;
     head.current = undefined;
     unsent.current = undefined;
+    draft.current = undefined;
     paused.current = false;
     unsaved.current = false;
+    refusal.current = undefined;
     checks.current = new Map();
-    savedScripts.current = new Set();
-    toast.dismiss(PAUSED_TOAST);
+    shown.current = new Map();
+    for (const id of [PAUSED_TOAST, REFUSED_TOAST, FAILED_TOAST]) toast.dismiss(id);
   }, [loaded]);
 
   const loadBase = useCallback(async (): Promise<Base> => {
@@ -124,68 +142,83 @@ export function useTextAutosave(options: {
     [loadBase],
   );
 
-  // check makes sure once that a script change shows on the page. A change
-  // that does not show is not saved, and the reader is told why once.
+  // check makes sure once that a script change shows on the page. Without
+  // the frame, only a change that was checked before can save.
   const check = useCallback((change: ScriptChange) => {
     const key = JSON.stringify(change);
     let checked = checks.current.get(key);
-    if (!checked) {
+    if (!checked && !gone.current) {
       checked = checkScriptChange(base.current!, change, latest.current.probe).catch(
         () => ({ refused: "The new text could not be checked." }),
       );
-      void checked.then((c) => {
-        if ("refused" in c) toast.error(c.refused, { id: SCRIPT_TOAST });
-      });
       checks.current.set(key, checked);
     }
     return checked;
   }, []);
 
   // The local source for what the frame shows: the loaded source with every
-  // region, and with each script change that shows on the page.
+  // region, and with each script change that shows on the page. refused
+  // tells why a script change is left out.
   const build = useCallback(
     async ({ regions, scripts }: TextEditResult) => {
       const applied = applyRegions(base.current!.tree, regions);
       if ("refused" in applied) throw new Refused(applied.refused);
       let html = applied.html;
-      const fresh: (ScriptChange & { key: string; places: number })[] = [];
+      let refused: string | undefined;
+      const changes: ScriptSave[] = [];
       for (const change of scripts) {
         const checked = await check(change);
-        if ("refused" in checked) continue;
+        if (checked && "refused" in checked) refused ??= checked.refused;
+        if (!checked || "refused" in checked) continue;
         const written = await writeScriptChange(html, change.before, change.after);
         if (!written) continue;
         html = written;
-        const key = JSON.stringify(change);
-        if (!savedScripts.current.has(key))
-          fresh.push({ ...change, key, places: checked.places });
+        const key = JSON.stringify(change.locator);
+        const from = shown.current.get(key) ?? change.before;
+        changes.push({ key, from, to: change.after, places: checked.places });
       }
-      return { html, fresh };
+      return { html, regions: applied.html, scripts: changes, refused };
     },
     [check],
+  );
+
+  // The edits on screen: from the frame, or the last draft without it.
+  const edits = useCallback(
+    async () => (gone.current ? draft.current : await latest.current.take()),
+    [],
   );
 
   // The save for what the frame shows now, or nothing when it shows what the
   // head holds.
   const next = useCallback(async (): Promise<Save | undefined> => {
-    const { loaded, take } = latest.current;
     const { source } = await loadBase();
-    const result = await take();
-    const { html, fresh } = await build(result);
-    const from = head.current ?? { id: loaded.version, source };
-    const replacements = replacementsBetween(from.source, html);
-    if (!replacements.length) return undefined;
-    let undone = html;
-    for (const { before, after } of fresh)
-      undone = (await writeScriptChange(undone, after, before)) ?? undone;
-    return {
-      regions: result.regions,
-      html,
-      body: { base_version_id: from.id, client_change_id: randomId(), replacements },
-      scripts: fresh.map((c) => c.key),
-      places: fresh.reduce((sum, c) => sum + c.places, 0),
-      undo: fresh.length ? replacementsBetween(html, undone) : [],
+    const result = await edits();
+    if (!result) return undefined;
+    const built = await build(result);
+    refusal.current = built.refused;
+    const from = head.current ?? {
+      id: latest.current.loaded.version,
+      source,
+      regions: source,
     };
-  }, [loadBase, build]);
+    const replacements = replacementsBetween(from.source, built.html);
+    if (!replacements.length) return undefined;
+    const scripts = built.scripts.filter((s) => s.from.trim() !== s.to.trim());
+    // A save of script text only says what it changed in words.
+    const summary =
+      scripts.length && built.regions === from.regions ? describe(scripts) : undefined;
+    return {
+      html: built.html,
+      regions: built.regions,
+      body: {
+        base_version_id: from.id,
+        client_change_id: randomId(),
+        replacements,
+        change_summary: summary,
+      },
+      scripts,
+    };
+  }, [loadBase, edits, build]);
 
   // Whether the frame still shows html, as when the reader typed nothing
   // more during a save.
@@ -198,6 +231,31 @@ export function useTextAutosave(options: {
       }
     },
     [build],
+  );
+
+  // copy puts the text that the reader typed, as it is now, on the
+  // clipboard.
+  const copy = useCallback(async () => {
+    try {
+      const result = await edits();
+      await navigator.clipboard.writeText(
+        result ? draftText(base.current!, result) : "",
+      );
+      toast.success("Your text is copied.", { id: COPIED_TOAST });
+    } catch {
+      toast.error("Could not copy your text.", { id: COPIED_TOAST });
+    }
+  }, [edits]);
+  // The message stays after a copy, so that the reader can still choose.
+  const copyAction = useMemo<ExternalToast["action"]>(
+    () => ({
+      label: "Copy my text",
+      onClick: (event) => {
+        event.preventDefault();
+        void copy();
+      },
+    }),
+    [copy],
   );
 
   // Keeps the edits on screen and stops saving them, with a message that
@@ -219,55 +277,33 @@ export function useTextAutosave(options: {
     const { docId, setState, onSaved, reload } = latest.current;
     const showLatest = () => latest.current.reload();
     saving.current = true;
-    let touched = unsaved.current;
-    let outcome: "retry" | "refused" | "paused" | "reload" | undefined;
-    // The version that a load after the save shows.
-    let shown: string | undefined;
+    // The state after the save, and a load after it, if any.
+    let state: SaveState | undefined;
+    let load: { version?: string } | undefined;
     try {
       const resent = unsent.current !== undefined;
       const change = (unsent.current ??= await next());
-      if (!change) return;
-      touched = true;
+      if (!change) {
+        if (refusal.current) state = "refused";
+        else if (unsaved.current) state = "saved";
+        return;
+      }
       setState("saving");
       const saved = await api.editSource(docId, change.body);
       unsent.current = undefined;
-      shown = saved.id;
+      attempts.current = 0;
       onSaved(saved.id, !saved.rebased);
-      if (change.places) {
-        for (const key of change.scripts) savedScripts.current.add(key);
-        // Undo saves the old text back after what the reader typed since,
-        // and loads the frame again to show it.
-        const undo = async () => {
-          await save();
-          try {
-            const undone = await api.editSource(docId, {
-              base_version_id: saved.id,
-              client_change_id: randomId(),
-              replacements: change.undo,
-            });
-            onSaved(undone.id, false);
-            latest.current.reload(undone.id);
-          } catch (e) {
-            toast.error(errorMessage(e, "The change could not be undone."), {
-              id: SCRIPT_TOAST,
-            });
-          }
-        };
-        toast.success(
-          change.places > 1 ? `Changed in ${change.places} places` : "Changed",
-          { id: SCRIPT_TOAST, action: { label: "Undo", onClick: () => void undo() } },
-        );
-      }
       if (!saved.rebased) {
-        head.current = { id: saved.id, source: change.html };
+        head.current = { id: saved.id, source: change.html, regions: change.regions };
         // The frame changed while the save waited to go again.
         again.current ||= resent;
-        // The other places that show the script text show it after a load.
-        if (change.places && (await shows(change.html))) outcome = "reload";
+        if (!gone.current) showScripts(change.scripts);
+        state = refusal.current ? "refused" : "saved";
       } else if (await shows(change.html)) {
-        outcome = "reload";
+        state = "saved";
+        load = { version: saved.id };
       } else {
-        outcome = "paused";
+        state = "paused";
         pause(
           "The document changed elsewhere, so your latest words are on screen but not saved.",
           { action: { label: "Show the latest version", onClick: showLatest } },
@@ -275,35 +311,28 @@ export function useTextAutosave(options: {
       }
     } catch (e) {
       if (e instanceof Refused) {
-        outcome = "refused";
-        toast.error(e.message, { id: FAILED_TOAST });
+        state = "refused";
+        refusal.current =
+          "This edit does not fit the source of the document, so it cannot save.";
       } else if (e instanceof APIError && e.code === "edit_conflict") {
-        outcome = "paused";
-        const text = regionText(base.current!.tree, unsent.current!.regions);
+        state = "paused";
         pause(
           "Someone else changed the same text. Your text stays on screen and is not saved.",
           {
-            action: {
-              label: "Copy my text",
-              onClick: (event) => {
-                // The message stays, to show their version after the copy.
-                event.preventDefault();
-                void navigator.clipboard.writeText(text).then(
-                  () => toast.success("Your text is copied."),
-                  () => toast.error("Could not copy your text."),
-                );
-              },
-            },
+            action: copyAction,
             cancel: { label: "Show their version", onClick: showLatest },
           },
         );
       } else if (passing(e)) {
-        outcome = "retry";
-        toast.error("Your edits are not saved yet. Trying again…", {
-          id: FAILED_TOAST,
-        });
+        state = "failed";
+        attempts.current++;
+        toast.error(
+          `Your edits are not saved yet. Trying again (attempt ${attempts.current})…`,
+          { id: FAILED_TOAST, action: copyAction },
+        );
       } else {
-        outcome = "reload";
+        state = "idle";
+        load = {};
         toast.error(
           e instanceof APIError && e.code === "edit_failed"
             ? "Your edit could not be saved. The document now shows the latest version."
@@ -311,19 +340,50 @@ export function useTextAutosave(options: {
           { id: FAILED_TOAST },
         );
       }
-      if (outcome !== "retry") unsent.current = undefined;
+      if (state !== "failed") unsent.current = undefined;
     } finally {
       saving.current = false;
-      unsaved.current = outcome !== undefined && outcome !== "reload";
-      if (outcome === "paused") setState("paused");
-      else if (outcome === "retry" || outcome === "refused") setState("failed");
-      else if (touched) setState("saved");
-      if (outcome === "reload") reload(shown);
-      else if (outcome === "retry") later(timer, save, AUTOSAVE_RETRY_MS);
+      if (state) {
+        unsaved.current = state !== "saved" && !load;
+        setState(state);
+      }
+      if (state !== "failed") toast.dismiss(FAILED_TOAST);
+      if (state === "refused" && !gone.current)
+        toast.error(refusal.current, {
+          id: REFUSED_TOAST,
+          duration: Infinity,
+          action: copyAction,
+          // The saved version shows the text before the change.
+          cancel: {
+            label: "Discard my change",
+            onClick: () => latest.current.reload(head.current?.id),
+          },
+        });
+      else toast.dismiss(REFUSED_TOAST);
+      if (gone.current) load = undefined;
+      if (load) reload(load.version);
+      else if (state === "failed") later(timer, save, AUTOSAVE_RETRY_MS);
       else if (again.current) later(timer, save, 0);
       again.current = false;
     }
-  }, [next, shows, pause]);
+    // showScripts changes the other places of the saved script text in
+    // place, and offers to undo the change. An undo puts the text back in
+    // every place, which the next save then saves.
+    function showScripts(scripts: ScriptSave[]) {
+      if (!scripts.length) return;
+      const set = (from: "from" | "to", to: "from" | "to") => {
+        for (const s of scripts) {
+          latest.current.replaceText(s[from], s[to]);
+          shown.current.set(s.key, s[to]);
+        }
+      };
+      set("from", "to");
+      toast.success(describe(scripts), {
+        id: SCRIPT_TOAST,
+        action: { label: "Undo", onClick: () => set("to", "from") },
+      });
+    }
+  }, [next, shows, pause, copyAction]);
 
   // Each change waits for a pause in typing, but no longer than the longest
   // delay since the first change of the burst.
@@ -343,9 +403,16 @@ export function useTextAutosave(options: {
     [save],
   );
 
+  const drafted = useCallback((result: TextEditResult) => {
+    draft.current = result;
+  }, []);
+
   // Save at once when the reader leaves the frame for the page around it, or
-  // leaves the page, and warn before an unload loses unsaved edits.
+  // leaves the page, and warn before an unload loses unsaved edits. When the
+  // frame goes, as on a move to another page, its last draft saves.
   useEffect(() => {
+    gone.current = false;
+    const pending = () => unsaved.current || saving.current || !!timer.current;
     const flush = () => {
       if (timer.current !== undefined) void save();
     };
@@ -353,7 +420,7 @@ export function useTextAutosave(options: {
       if (document.visibilityState === "hidden") flush();
     };
     const warn = (e: BeforeUnloadEvent) => {
-      if (unsaved.current || saving.current) e.preventDefault();
+      if (pending()) e.preventDefault();
     };
     document.addEventListener("pointerdown", flush, true);
     document.addEventListener("visibilitychange", onHidden);
@@ -362,11 +429,16 @@ export function useTextAutosave(options: {
       document.removeEventListener("pointerdown", flush, true);
       document.removeEventListener("visibilitychange", onHidden);
       window.removeEventListener("beforeunload", warn);
+      const left = pending();
       window.clearTimeout(timer.current);
+      timer.current = undefined;
+      if (!left) return;
+      gone.current = true;
+      void save();
     };
   }, [save]);
 
-  return { changed, scriptEditable };
+  return { changed, drafted, scriptEditable };
 }
 
 async function readBase(docId: string, version: string): Promise<Base> {
@@ -387,6 +459,24 @@ function later(
 // frame that did not answer, or a server that is busy or failed.
 function passing(e: unknown): boolean {
   return !(e instanceof APIError) || e.status >= 500 || [408, 429].includes(e.status);
+}
+
+// describe says in words what a save changed in script text.
+function describe(scripts: ScriptSave[]): string {
+  return scripts
+    .map(
+      ({ from, to, places }) =>
+        `Changed “${from.trim()}” to “${to.trim()}” in ${places} ${places === 1 ? "place" : "places"}`,
+    )
+    .join(", ");
+}
+
+// draftText is the text that the reader typed: the text of each region and
+// each script text.
+function draftText(base: Base, { regions, scripts }: TextEditResult): string {
+  return [regionText(base.tree, regions), ...scripts.map((s) => s.after.trim())]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 // Elements that start a new line in the text to copy.
