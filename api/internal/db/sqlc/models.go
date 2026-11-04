@@ -9,16 +9,17 @@ import (
 )
 
 type Approval struct {
-	ID           string
-	DocumentID   string
-	VersionID    string
-	Sha256       string
-	ApproverType string
-	ApproverID   string
-	Decision     string
-	Note         string
-	DecidedAt    pgtype.Timestamptz
-	RevokedAt    pgtype.Timestamptz
+	ID                 string
+	DocumentID         string
+	VersionID          string
+	Sha256             string
+	ApproverType       string
+	ApproverID         string
+	Decision           string
+	Note               string
+	DecidedAt          pgtype.Timestamptz
+	RevokedAt          pgtype.Timestamptz
+	RevokedByVersionID pgtype.Text
 }
 
 type ApprovalEventOutbox struct {
@@ -42,14 +43,15 @@ type ApprovalNotificationOutbox struct {
 }
 
 type ApprovalRequest struct {
-	ID              string
-	DocumentID      string
-	ApproverType    string
-	ApproverID      string
-	RequestedByType string
-	RequestedByID   string
-	CreatedAt       pgtype.Timestamptz
-	RevokedAt       pgtype.Timestamptz
+	ID                 string
+	DocumentID         string
+	ApproverType       string
+	ApproverID         string
+	RequestedByType    string
+	RequestedByID      string
+	CreatedAt          pgtype.Timestamptz
+	RevokedAt          pgtype.Timestamptz
+	RevokedByVersionID pgtype.Text
 }
 
 type CliCredential struct {

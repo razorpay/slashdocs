@@ -551,6 +551,66 @@ func (q *Queries) LockDocumentForApproval(ctx context.Context, documentID string
 	return current_version_id, err
 }
 
+const restoreAuthorApprovers = `-- name: RestoreAuthorApprovers :many
+WITH undone AS (
+  SELECT r.id, r.approver_type, r.approver_id, r.revoked_by_version_id
+  FROM approval_requests r
+  WHERE r.document_id = $1
+    AND r.revoked_by_version_id IS NOT NULL
+    AND CASE r.approver_type WHEN 'user' THEN r.approver_id
+          ELSE (SELECT owner_user_id FROM service_accounts WHERE id = r.approver_id) END -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+      = CASE $2::text WHEN 'user' THEN $3::text
+          ELSE (SELECT owner_user_id FROM service_accounts WHERE id = $3::text) END -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+), decisions AS (
+  UPDATE approvals a SET revoked_at = NULL, revoked_by_version_id = NULL
+  FROM undone u
+  WHERE a.document_id = $1
+    AND a.approver_type = u.approver_type
+    AND a.approver_id = u.approver_id
+    AND a.revoked_by_version_id = u.revoked_by_version_id
+)
+UPDATE approval_requests r SET revoked_at = NULL, revoked_by_version_id = NULL
+FROM undone u
+WHERE r.id = u.id
+RETURNING r.approver_type, r.approver_id
+`
+
+type RestoreAuthorApproversParams struct {
+	DocumentID string
+	AuthorType string
+	AuthorID   string
+}
+
+type RestoreAuthorApproversRow struct {
+	ApproverType string
+	ApproverID   string
+}
+
+// Gives back the approvers that the versions of an author removed, with the
+// decisions that each removal revoked, once a new version undoes that
+// author's edits. While the author's edits stay, nobody can assign them
+// again, so no newer assignment of theirs exists. The caller first makes sure
+// that the creator is no longer an author.
+func (q *Queries) RestoreAuthorApprovers(ctx context.Context, arg RestoreAuthorApproversParams) ([]RestoreAuthorApproversRow, error) {
+	rows, err := q.db.Query(ctx, restoreAuthorApprovers, arg.DocumentID, arg.AuthorType, arg.AuthorID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RestoreAuthorApproversRow
+	for rows.Next() {
+		var i RestoreAuthorApproversRow
+		if err := rows.Scan(&i.ApproverType, &i.ApproverID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const revokeApproval = `-- name: RevokeApproval :exec
 UPDATE approvals SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL
 `
@@ -584,21 +644,29 @@ func (q *Queries) RevokeApprovalRequest(ctx context.Context, arg RevokeApprovalR
 }
 
 const revokeApprovalsForApprover = `-- name: RevokeApprovalsForApprover :exec
-UPDATE approvals SET revoked_at = now()
-WHERE document_id = $1
-  AND approver_type = $2
-  AND approver_id = $3
+UPDATE approvals SET revoked_at = now(), revoked_by_version_id = $1
+WHERE document_id = $2
+  AND approver_type = $3
+  AND approver_id = $4
   AND revoked_at IS NULL
 `
 
 type RevokeApprovalsForApproverParams struct {
+	VersionID    pgtype.Text
 	DocumentID   string
 	ApproverType string
 	ApproverID   string
 }
 
+// Revokes the decisions of a removed approver. A removal by a version names
+// that version, as RevokeAuthorApprovers does.
 func (q *Queries) RevokeApprovalsForApprover(ctx context.Context, arg RevokeApprovalsForApproverParams) error {
-	_, err := q.db.Exec(ctx, revokeApprovalsForApprover, arg.DocumentID, arg.ApproverType, arg.ApproverID)
+	_, err := q.db.Exec(ctx, revokeApprovalsForApprover,
+		arg.VersionID,
+		arg.DocumentID,
+		arg.ApproverType,
+		arg.ApproverID,
+	)
 	return err
 }
 
@@ -622,17 +690,18 @@ func (q *Queries) RevokeApproverRequest(ctx context.Context, arg RevokeApproverR
 }
 
 const revokeAuthorApprovers = `-- name: RevokeAuthorApprovers :many
-UPDATE approval_requests r SET revoked_at = now()
-WHERE r.document_id = $1
+UPDATE approval_requests r SET revoked_at = now(), revoked_by_version_id = $1
+WHERE r.document_id = $2
   AND r.revoked_at IS NULL
   AND CASE r.approver_type WHEN 'user' THEN r.approver_id
         ELSE (SELECT owner_user_id FROM service_accounts WHERE id = r.approver_id) END -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
-    = CASE $2::text WHEN 'user' THEN $3::text
-        ELSE (SELECT owner_user_id FROM service_accounts WHERE id = $3::text) END -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+    = CASE $3::text WHEN 'user' THEN $4::text
+        ELSE (SELECT owner_user_id FROM service_accounts WHERE id = $4::text) END -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 RETURNING r.approver_type, r.approver_id
 `
 
 type RevokeAuthorApproversParams struct {
+	VersionID  pgtype.Text
 	DocumentID string
 	AuthorType string
 	AuthorID   string
@@ -644,10 +713,16 @@ type RevokeAuthorApproversRow struct {
 }
 
 // Removes the approvers who are the same author as the creator of a new
-// version, by the bot owner rule of CreatedVersionOf. The caller first makes
-// sure that the creator is an author.
+// version, by the bot owner rule of CreatedVersionOf, and names the version
+// that removed them. The caller first makes sure that the creator is an
+// author.
 func (q *Queries) RevokeAuthorApprovers(ctx context.Context, arg RevokeAuthorApproversParams) ([]RevokeAuthorApproversRow, error) {
-	rows, err := q.db.Query(ctx, revokeAuthorApprovers, arg.DocumentID, arg.AuthorType, arg.AuthorID)
+	rows, err := q.db.Query(ctx, revokeAuthorApprovers,
+		arg.VersionID,
+		arg.DocumentID,
+		arg.AuthorType,
+		arg.AuthorID,
+	)
 	if err != nil {
 		return nil, err
 	}

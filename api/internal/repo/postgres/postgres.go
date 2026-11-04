@@ -551,7 +551,7 @@ func (s *Store) CreateVersion(ctx context.Context, documentID, baseVersionID, cl
 	if err := q.UpdateDocumentCurrentVersion(ctx, dbsqlc.UpdateDocumentCurrentVersionParams{CurrentVersionID: pgtype.Text{String: id, Valid: true}, ID: documentID}); err != nil {
 		return repo.Version{}, err
 	}
-	if err := s.removeAuthorApprovers(ctx, q, documentID, createdBy); err != nil {
+	if err := s.syncAuthorApprovers(ctx, q, documentID, id, createdBy); err != nil {
 		return repo.Version{}, err
 	}
 	if err := s.recordApprovalEvent(ctx, q, approvalEvent{documentID: documentID, kind: repo.ApprovalEventVersionCreated, actor: createdBy}); err != nil {
