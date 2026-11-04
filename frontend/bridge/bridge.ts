@@ -1413,6 +1413,7 @@ type Theme = "dark" | "light";
     for (const name of PUBLIC_NAMES) {
       d.documentElement.setAttribute(`data-${name}-theme`, t);
     }
+    markSurface(d);
     if (d !== setupDoc || announcedTheme === t) return;
     announcedTheme = t;
     reloadExpected = true;
@@ -1508,9 +1509,47 @@ type Theme = "dark" | "light";
   }
 
   const SELECTION_ACTION_GAP = 6;
-  const COMMENT_CHORD = /Mac|iPhone|iPad/.test(navigator.userAgent)
-    ? "⌘⌥M"
-    : "Ctrl+Alt+M";
+  const MAC = /Mac|iPhone|iPad/.test(navigator.userAgent);
+  const COMMENT_CHORD = MAC ? "⌘⌥M" : "Ctrl+Alt+M";
+  // The formatting actions for an editor: the input that each one runs, its
+  // name and keys, the elements around a selection that has it, and its icon.
+  const FORMATS = [
+    {
+      type: "formatBold",
+      name: "Bold",
+      keys: MAC ? "⌘B" : "Ctrl+B",
+      on: "strong,b",
+      icon: "M6 12h9a4 4 0 0 1 0 8H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h7a4 4 0 0 1 0 8",
+    },
+    {
+      type: "formatItalic",
+      name: "Italic",
+      keys: MAC ? "⌘I" : "Ctrl+I",
+      on: "em,i",
+      icon: "M19 4h-9M14 20H5M15 4 9 20",
+    },
+    {
+      type: "insertLink",
+      name: "Link",
+      keys: MAC ? "⌘K" : "Ctrl+K",
+      on: "a[href]",
+      icon: "M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 1 1 0 10h-2M8 12h8",
+    },
+    {
+      type: "insertUnorderedList",
+      name: "Bulleted list",
+      keys: MAC ? "⌘⇧8" : "Ctrl+Shift+8",
+      on: "ul>li",
+      icon: "M3 12h.01M3 18h.01M3 6h.01M8 12h13M8 18h13M8 6h13",
+    },
+    {
+      type: "insertOrderedList",
+      name: "Numbered list",
+      keys: MAC ? "⌘⇧7" : "Ctrl+Shift+7",
+      on: "ol>li",
+      icon: "M10 12h11M10 18h11M10 6h11M4 10h2M4 6h1v4M6 18H4c0-1 2-2 2-3s-1-1.5-2-1",
+    },
+  ];
   let selectionAction: HTMLDivElement | null = null;
   let actionRange: Range | null = null;
   let selectionDismissed = false;
@@ -1595,6 +1634,15 @@ type Theme = "dark" | "light";
         selectionAction!.appendChild(button);
         return button;
       };
+      if (textEditor)
+        for (const format of FORMATS) {
+          const button = addAction(format.name, format.icon, () => {
+            textEditor?.run(format.type);
+            selection();
+          });
+          button.dataset.slashdocsFormat = format.on;
+          labelIcon(button, `${format.name} ${format.keys}`);
+        }
       const comment = addAction(
         "Comment on selected text",
         "M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9H13a8.48 8.48 0 0 1 8 8v.5Z",
@@ -1620,19 +1668,24 @@ type Theme = "dark" | "light";
         const style = d.createElement("style");
         style.id = "slashdocs-selection-style";
         style.textContent = `
-          .slashdocs-selection-action{all:initial!important;position:fixed!important;z-index:2147483647!important;display:flex!important;padding:2px!important;border-radius:10px!important;background:#fff!important;color:#52525b!important;box-shadow:0 0 0 1px #0001,0 4px 16px #0002!important;animation:slashdocs-selection-in .15s ease-out!important}
+          .slashdocs-selection-action{all:initial!important;position:fixed!important;z-index:2147483647!important;display:flex!important;flex-wrap:wrap!important;max-width:calc(100vw - 16px)!important;padding:2px!important;border-radius:10px!important;background:#fff!important;color:#52525b!important;box-shadow:0 0 0 1px #0001,0 4px 16px #0002!important;animation:slashdocs-selection-in .15s ease-out!important}
           @keyframes slashdocs-selection-in{from{opacity:0;transform:scale(.97)}}
           .slashdocs-selection-action button{all:initial!important;position:relative!important;box-sizing:border-box!important;display:flex!important;align-items:center!important;justify-content:center!important;gap:6px!important;min-width:40px!important;height:40px!important;padding:0 11px!important;border-radius:8px!important;color:inherit!important;cursor:pointer!important;transition:background-color .15s,transform .15s!important}
           .slashdocs-selection-action span{all:initial!important;color:inherit!important;font:500 13px/1 system-ui,sans-serif!important}
           .slashdocs-selection-action kbd{all:initial!important;padding:2px 5px!important;border-radius:4px!important;background:#f4f4f5!important;color:#71717a!important;font:500 11px/1.2 system-ui,sans-serif!important}
           .slashdocs-selection-action button:hover{background:#f4f4f5!important;color:#18181b!important}
           .slashdocs-selection-action button:active{transform:scale(.96)!important}
+          .slashdocs-selection-action button[hidden]{display:none!important}
+          .slashdocs-selection-action button[aria-pressed=true]{background:#eef2ff!important;color:#4338ca!important}
+          .slashdocs-selection-action [data-slashdocs-format]:not([hidden])+button:not([data-slashdocs-format])::before{all:initial!important;content:""!important;position:absolute!important;left:-1px!important;top:10px!important;bottom:10px!important;width:1px!important;background:currentColor!important;opacity:.2!important}
           .slashdocs-selection-action button:focus-visible{outline:2px solid #6366f1!important;outline-offset:-2px!important}
           .slashdocs-selection-action svg{all:initial!important;color:inherit!important;width:17px!important;height:17px!important;fill:none!important;stroke:currentColor!important;stroke-width:1.8!important;stroke-linecap:round!important;stroke-linejoin:round!important;pointer-events:none!important}
           .slashdocs-selection-action path{fill:none!important;stroke:inherit!important;stroke-width:inherit!important}
-          [data-slashdocs-theme=dark] .slashdocs-selection-action{background:#27272a!important;color:#d4d4d8!important;box-shadow:0 0 0 1px #fff2,0 4px 16px #0004!important}
-          [data-slashdocs-theme=dark] .slashdocs-selection-action button:hover{background:#3f3f46!important;color:#fff!important}
-          [data-slashdocs-theme=dark] .slashdocs-selection-action kbd{background:#3f3f46!important;color:#a1a1aa!important}
+          [data-slashdocs-surface=dark] .slashdocs-selection-action{background:#27272a!important;color:#d4d4d8!important;box-shadow:0 0 0 1px #fff2,0 4px 16px #0004!important}
+          [data-slashdocs-surface=dark] .slashdocs-selection-action button:hover{background:#3f3f46!important;color:#fff!important}
+          [data-slashdocs-surface=dark] .slashdocs-selection-action kbd{background:#3f3f46!important;color:#a1a1aa!important}
+          [data-slashdocs-surface=dark] .slashdocs-selection-action button[aria-pressed=true]{background:#312e81!important;color:#e0e7ff!important}
+          @media(pointer:coarse){.slashdocs-selection-action kbd{display:none!important}}
           @media(prefers-reduced-motion:reduce){.slashdocs-selection-action,.slashdocs-selection-action button{animation:none!important;transition:none!important}}
           @media print{.slashdocs-selection-action,.slashdocs-text-flash{display:none!important}}`;
         d.head.appendChild(style);
@@ -1642,24 +1695,75 @@ type Theme = "dark" | "light";
     // In text that the reader edits, C types, so the chip shows the chord.
     const typing = isEditableTarget(d, d.activeElement);
     selectionAction.querySelector("kbd")!.textContent = typing ? COMMENT_CHORD : "C";
-    // The actions sit centered above the selection, clear of its first line,
-    // or below its last line when there is no room above.
-    const rect = range.getBoundingClientRect();
+    // The formatting actions show for editable text, and are pressed when
+    // the whole selection has their format.
+    const ends = [range.startContainer, range.endContainer];
+    const formattable = inEditor && ends.every((n) => isEditableTarget(d, n));
+    selectionAction
+      .querySelectorAll<HTMLButtonElement>("[data-slashdocs-format]")
+      .forEach((button) => {
+        button.hidden = !formattable;
+        const on = ends.every((n) =>
+          elementOf(n)?.closest(button.dataset.slashdocsFormat!),
+        );
+        button.setAttribute("aria-pressed", String(on));
+      });
+    // The actions sit where they cover no text: centered above the
+    // selection, else below it, else after its last line, else beside its
+    // block. When each place covers text, they sit above the selection.
     const view = d.defaultView!;
+    const rect = range.getBoundingClientRect();
+    const lines = Array.from(range.getClientRects()).filter((r) => r.width);
+    const [first, last] = [lines[0] ?? rect, lines.at(-1) ?? rect];
+    const block = blockOf(range.startContainer)?.getBoundingClientRect() ?? rect;
     const { offsetWidth: width, offsetHeight: height } = selectionAction;
-    const above = rect.top - SELECTION_ACTION_GAP - height;
-    const top = above >= 8 ? above : rect.bottom + SELECTION_ACTION_GAP;
-    const left = rect.left + (rect.width - width) / 2;
-    selectionAction.style.setProperty(
-      "left",
-      `${Math.max(8, Math.min(left, view.innerWidth - width - 8))}px`,
-      "important",
+    const gap = SELECTION_ACTION_GAP;
+    const center = rect.left + (rect.width - width) / 2;
+    const beside = (line: DOMRect) => line.top + (line.height - height) / 2;
+    const places = [
+      [center, first.top - gap - height],
+      [center, last.bottom + gap],
+      [last.right + gap, beside(last)],
+      [block.right + gap, beside(first)],
+      [block.left - gap - width, beside(first)],
+    ].map(([left, top]) =>
+      DOMRect.fromRect({
+        x: Math.max(8, Math.min(left, view.innerWidth - width - 8)),
+        y: Math.max(8, Math.min(top, view.innerHeight - height - 8)),
+        width,
+        height,
+      }),
     );
-    selectionAction.style.setProperty(
-      "top",
-      `${Math.max(8, Math.min(top, view.innerHeight - height - 8))}px`,
-      "important",
-    );
+    // The actions must not hide themselves from the test for text.
+    selectionAction.style.setProperty("visibility", "hidden", "important");
+    const place =
+      places.find(
+        (box) => !lines.some((line) => overlap(box, line)) && !coversText(d, box),
+      ) ?? places[0];
+    selectionAction.style.removeProperty("visibility");
+    selectionAction.style.setProperty("left", `${place.left}px`, "important");
+    selectionAction.style.setProperty("top", `${place.top}px`, "important");
+  }
+
+  function overlap(a: DOMRect, b: DOMRect): boolean {
+    return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+  }
+
+  // coversText tells whether box, in the viewport, covers text of document
+  // d. It tests points in three rows, 24px apart.
+  function coversText(d: Document, box: DOMRect): boolean {
+    const words = d.createRange();
+    for (const y of [box.top + 4, box.top + box.height / 2, box.bottom - 4]) {
+      for (let x = box.left + 4; x < box.right; x += 24) {
+        const node = caretRange(d, x, y)?.startContainer;
+        if (node?.nodeType !== Node.TEXT_NODE || !node.textContent!.trim()) continue;
+        words.selectNodeContents(node);
+        const at = DOMRect.fromRect({ x, y });
+        if (Array.from(words.getClientRects()).some((line) => overlap(at, line)))
+          return true;
+      }
+    }
+    return false;
   }
 
   function handleKVUndoRedoShortcut(d: Document, ev: KeyboardEvent): void {
