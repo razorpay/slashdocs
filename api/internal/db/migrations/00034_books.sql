@@ -31,8 +31,6 @@ CREATE TABLE version_sections (
   words INT NOT NULL CHECK (words >= 0),
   PRIMARY KEY (version_id, ord)
 );
-ALTER TABLE versions ADD COLUMN sections_indexed BOOLEAN NOT NULL DEFAULT false;
-CREATE INDEX versions_sections_unindexed_idx ON versions (created_at) WHERE NOT sections_indexed;
 -- Reading state belongs to human users only.
 CREATE TABLE chapter_reads (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -59,11 +57,24 @@ CREATE TABLE reading_positions (
   PRIMARY KEY (user_id, book_id, device_id)
 );
 CREATE INDEX reading_positions_user_book_idx ON reading_positions (user_id, book_id, client_ts DESC);
+-- Every foreign key leads an index, so a cascading document, version or book
+-- delete looks rows up instead of scanning these tables once per deleted row.
+-- The tables are new and empty, so building the indexes here is instant.
+CREATE INDEX chapter_reads_document_idx ON chapter_reads (document_id);
+CREATE INDEX chapter_reads_seen_version_idx ON chapter_reads (seen_version_id) WHERE seen_version_id IS NOT NULL;
+CREATE INDEX chapter_reads_last_read_version_idx ON chapter_reads (last_read_version_id) WHERE last_read_version_id IS NOT NULL;
+CREATE INDEX reading_positions_book_idx ON reading_positions (book_id);
+CREATE INDEX reading_positions_document_idx ON reading_positions (document_id);
+CREATE INDEX reading_positions_version_idx ON reading_positions (version_id);
+-- Last, so that the ACCESS EXCLUSIVE lock it takes on versions (held until
+-- commit) blocks document reads for as little time as possible. A constant
+-- default makes it a catalog-only change; no index is built on versions: the
+-- startup backfill reaches unindexed versions through the join to books.
+ALTER TABLE versions ADD COLUMN sections_indexed BOOLEAN NOT NULL DEFAULT false;
 
 -- +goose Down
 DROP TABLE IF EXISTS reading_positions;
 DROP TABLE IF EXISTS chapter_reads;
-DROP INDEX IF EXISTS versions_sections_unindexed_idx;
 ALTER TABLE versions DROP COLUMN IF EXISTS sections_indexed;
 DROP TABLE IF EXISTS version_sections;
 DROP TABLE IF EXISTS book_outline_versions;
