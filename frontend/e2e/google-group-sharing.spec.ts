@@ -325,9 +325,7 @@ async function shareWithPlatformGroup(page: Page) {
   await shareSheet.getByRole("tab", { name: "Google Groups" }).click();
   await shareSheet.getByPlaceholder("Search group name or email").fill("platform");
   await shareSheet
-    .locator("button")
-    .filter({ hasText: "Platform" })
-    .filter({ hasText: "platform@example.com" })
+    .getByRole("option", { name: /Platform.*platform@example\.com/ })
     .click();
   await shareSheet.getByRole("button", { name: "Share", exact: true }).click();
   // The field clears when the group gets access.
@@ -481,7 +479,7 @@ test("existing user and service-account sharing remains available", async ({
   const shareSheet = page.getByRole("dialog", { name: "Share document" });
   const input = shareSheet.getByPlaceholder(/user@org\.example/);
   await input.fill("alice");
-  await shareSheet.getByRole("button", { name: /Alice/ }).click();
+  await shareSheet.getByRole("option", { name: /Alice/ }).click();
   await shareSheet.getByRole("button", { name: "Share", exact: true }).click();
   await expect.poll(() => state.directShares).toContain("alice@example.com");
   await expect(input).toHaveValue("");
