@@ -41,7 +41,10 @@ export function bookManifest(): Manifest {
 }
 
 export function bookState(
-  chapters: Record<string, { state?: ChapterState; updated?: boolean }> = {},
+  chapters: Record<
+    string,
+    { state?: ChapterState; updated?: boolean; furthest?: number }
+  > = {},
   over: Partial<BookState> = {},
 ): BookState {
   return {
@@ -53,7 +56,7 @@ export function bookState(
           state: c.state ?? "reading",
           updated: c.updated ?? false,
           seen_version_id: "",
-          furthest_progression: 0,
+          furthest_progression: c.furthest ?? 0,
         },
       ]),
     ),

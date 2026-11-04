@@ -47,7 +47,7 @@ function Note({
 }) {
   return (
     <div
-      role="status"
+      role="group"
       aria-label={label}
       className="pointer-events-auto flex max-w-full items-center gap-2 rounded-2xl bg-[var(--color-surface)] py-1 pl-4 pr-1 text-sm shadow-[var(--shadow-pop)] ring-1 ring-[var(--color-border)]"
     >
@@ -115,39 +115,38 @@ export function ReaderOverlay({
   return (
     <>
       <CaptureRestore into={restoreRef} />
-      {offer || back ? (
-        <div className="pointer-events-none absolute inset-x-4 top-3 z-20 flex flex-col items-center gap-2">
-          {offer ? (
-            <Note label="Other device" onDismiss={onDismissOffer}>
-              {offer}
-              <span aria-hidden="true" className="text-[var(--color-fg-muted)]">
-                —
-              </span>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-7 px-2"
-                onClick={onGoOffer}
-              >
-                Go there
-              </Button>
-            </Note>
-          ) : null}
-          {back ? (
-            <Note label="Back" onDismiss={onDismissBack}>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="-ml-2 h-7 px-2"
-                onClick={onBack}
-              >
-                <Undo2 aria-hidden="true" className="h-3.5 w-3.5" />
-                Back to where you were
-              </Button>
-            </Note>
-          ) : null}
-        </div>
-      ) : null}
+      {/* One live region, always mounted, so a note that appears is read out. */}
+      <div
+        role="status"
+        aria-live="polite"
+        aria-label="Reading notes"
+        className="pointer-events-none absolute inset-x-4 top-3 z-20 flex flex-col items-center gap-2"
+      >
+        {offer ? (
+          <Note label="Other device" onDismiss={onDismissOffer}>
+            {offer}
+            <span aria-hidden="true" className="text-[var(--color-fg-muted)]">
+              —
+            </span>
+            <Button size="sm" variant="ghost" className="h-7 px-2" onClick={onGoOffer}>
+              Go there
+            </Button>
+          </Note>
+        ) : null}
+        {back ? (
+          <Note label="Back" onDismiss={onDismissBack}>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="-ml-2 h-7 px-2"
+              onClick={onBack}
+            >
+              <Undo2 aria-hidden="true" className="h-3.5 w-3.5" />
+              Back to where you were
+            </Button>
+          </Note>
+        ) : null}
+      </div>
       {end}
     </>
   );

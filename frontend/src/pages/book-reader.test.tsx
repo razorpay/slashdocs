@@ -106,7 +106,7 @@ function renderReader(
       </MemoryRouter>
     </QueryClientProvider>,
   );
-  return { open, done };
+  return { open, done, client };
 }
 
 const where = () => screen.getByTestId("where").textContent;
@@ -231,7 +231,9 @@ describe("BookReader", () => {
         },
       ),
     );
-    const note = await screen.findByRole("status", { name: "Other device" });
+    const note = await screen.findByRole("group", { name: "Other device" });
+    // Notes sit in one live region, so they are read out.
+    expect(note.closest('[role="status"]')).toHaveAttribute("aria-live", "polite");
     // The section's title arrives with that chapter's headings.
     await waitFor(() =>
       expect(note).toHaveTextContent(
@@ -270,9 +272,9 @@ describe("BookReader", () => {
         },
       ),
     );
-    const note = await screen.findByRole("status", { name: "Other device" });
+    const note = await screen.findByRole("group", { name: "Other device" });
     await user.click(within(note).getByRole("button", { name: "Dismiss" }));
-    expect(screen.queryByRole("status", { name: "Other device" })).toBeNull();
+    expect(screen.queryByRole("group", { name: "Other device" })).toBeNull();
   });
 
   it("shows a toast when the saved place cannot be found", async () => {
@@ -365,5 +367,132 @@ describe("BookReader", () => {
       ],
     });
     await waitFor(() => expect(reader().markHeadings).toEqual(["setup"]));
+  });
+
+  it("does not restore a position saved on another chapter", async () => {
+    renderReader(
+      "/app/b/b1/c/doc_2",
+      bookState({}, { positions: [position({ document_id: "doc_1" })] }),
+    );
+    await screen.findByTestId("workspace");
+    await waitFor(() => expect(booksApi.state).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(h.restore).not.toHaveBeenCalled();
+  });
+
+  it("restores once per visit, even when the state is fetched again", async () => {
+    const { client } = renderReader(
+      "/app/b/b1/c/doc_2",
+      bookState({}, { positions: [position({})] }),
+    );
+    await waitFor(() => expect(h.restore).toHaveBeenCalledTimes(1));
+    await act(() => client.invalidateQueries({ queryKey: ["book", "b1"] }));
+    await waitFor(() =>
+      expect(vi.mocked(booksApi.state).mock.calls.length).toBeGreaterThan(1),
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    expect(h.restore).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to how far the reader got when there is no saved place", async () => {
+    const info = vi.spyOn(toast, "info");
+    renderReader(
+      "/app/b/b1/c/doc_2",
+      bookState(
+        { doc_2: { state: "reading", furthest: 0.5 } },
+        { positions: [position({ document_id: "doc_1" })] },
+      ),
+    );
+    await waitFor(() => expect(h.restore).toHaveBeenCalledWith({ progression: 0.5 }));
+    // A miss here is not a lost saved place, so it stays quiet.
+    act(() => reader().onRestored!("none"));
+    expect(info).not.toHaveBeenCalledWith(expect.stringContaining("saved place"));
+  });
+
+  it("never uses the progression fallback for a finished chapter", async () => {
+    renderReader(
+      "/app/b/b1/c/doc_2",
+      bookState({ doc_2: { state: "read", furthest: 0.5 } }),
+    );
+    await screen.findByTestId("workspace");
+    await waitFor(() => expect(booksApi.state).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(h.restore).not.toHaveBeenCalled();
+  });
+
+  it("keeps the version being read when the manifest brings a newer one", async () => {
+    const info = vi.spyOn(toast, "info");
+    const { client } = renderReader();
+    const workspace = await screen.findByTestId("workspace");
+    expect(workspace).toHaveAttribute("data-version", "ver_2");
+    const newer = bookManifest();
+    newer.readingOrder[1].properties!.versionId = "ver_2b";
+    vi.mocked(booksApi.manifest).mockResolvedValue(newer);
+    await act(() => client.invalidateQueries({ queryKey: ["book", "b1"] }));
+    await waitFor(() =>
+      expect(info).toHaveBeenCalledWith(
+        "A new version of this chapter is available.",
+        expect.anything(),
+      ),
+    );
+    expect(screen.getByTestId("workspace")).toHaveAttribute("data-version", "ver_2");
+    expect(h.last!.version).toBe("ver_2");
+  });
+
+  it("View moves to the new version and keeps the reader's place", async () => {
+    const info = vi.spyOn(toast, "info");
+    const { client } = renderReader();
+    await screen.findByTestId("workspace");
+    await waitFor(() => expect(booksApi.state).toHaveBeenCalled());
+    act(() =>
+      reader().onViewport!({
+        anchor: { quote: "where I was" },
+        section: "setup",
+        progression: 0.6,
+      }),
+    );
+    const newer = bookManifest();
+    newer.readingOrder[1].properties!.versionId = "ver_2b";
+    vi.mocked(booksApi.manifest).mockResolvedValue(newer);
+    await act(() => client.invalidateQueries({ queryKey: ["book", "b1"] }));
+    await waitFor(() => expect(info).toHaveBeenCalled());
+    const [, options] = info.mock.calls.find(
+      ([message]) => message === "A new version of this chapter is available.",
+    )!;
+    h.restore.mockClear();
+    act(() =>
+      (options as unknown as { action: { onClick: () => void } }).action.onClick(),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("workspace")).toHaveAttribute("data-version", "ver_2b"),
+    );
+    expect(h.restore).toHaveBeenCalledWith({
+      anchor: { quote: "where I was" },
+      section: "setup",
+      progression: 0.6,
+    });
+  });
+
+  it("keeps the changed-heading marks after the update is seen", async () => {
+    const { client } = renderReader(
+      "/app/b/b1/c/doc_2",
+      bookState({ doc_2: { updated: true } }),
+      {
+        since_version_id: "ver_1",
+        versions: [{ id: "ver_2", number: 2, change_summary: "x", created_at: "" }],
+        changed_sections: [{ id: "setup", title: "Setting up", removed: false }],
+      },
+    );
+    await waitFor(() => expect(reader().markHeadings).toEqual(["setup"]));
+    vi.mocked(booksApi.state).mockResolvedValue(
+      bookState({ doc_2: { updated: false } }),
+    );
+    await act(() => client.invalidateQueries({ queryKey: ["book", "b1"] }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: /Updated since you read/ }),
+      ).toBeNull(),
+    );
+    expect(reader().markHeadings).toEqual(["setup"]);
   });
 });

@@ -136,30 +136,21 @@ function BookReader({
     [qc, bookId],
   );
 
-  // The version being read. It stays put when someone publishes a newer one
-  // mid-chapter; the reader is told and can move on.
+  // The version being read is pinned for the chapter visit. A newer one,
+  // whether the live stream or a manifest refetch brings it, only offers a
+  // switch; the frame never swaps under the reader.
   const latest = link.properties?.versionId ?? "";
-  const [held, setHeld] = useState<{ doc: string; version: string }>();
-  const current = (held?.doc === docId && held.version) || latest;
+  const [held, setHeld] = useState({ doc: docId, version: latest });
+  if (held.doc !== docId || (!held.version && latest)) {
+    setHeld({ doc: docId, version: latest });
+  }
+  const current = (held.doc === docId && held.version) || latest;
   const stream = useDocumentStream({
     docId,
     version: current,
     principal: me.data?.principal,
-    onRemoteDocumentChange: () => {
-      setHeld((h) => (h?.doc === docId ? h : { doc: docId, version: current }));
-      void invalidateBook();
-    },
+    onRemoteDocumentChange: () => void invalidateBook(),
   });
-  const seenLatest = useRef({ doc: docId, version: latest });
-  useEffect(() => {
-    const prev = seenLatest.current;
-    seenLatest.current = { doc: docId, version: latest };
-    if (prev.doc !== docId || !prev.version || prev.version === latest) return;
-    if (current !== prev.version) return;
-    toast.info("A new version of this chapter is available.", {
-      action: { label: "View", onClick: () => setHeld(undefined) },
-    });
-  }, [docId, latest, current]);
 
   // Reading position, saved as the reader scrolls.
   const position = useReadingPosition({
@@ -222,6 +213,33 @@ function BookReader({
     },
     [here],
   );
+  // Switching to a newer version keeps the reader's place: the quote anchor
+  // resolves fuzzily in the new version, once its frame is ready.
+  const versionRestore = useRef<PositionTarget | null>(null);
+  const viewVersion = useCallback(
+    (version: string) => {
+      versionRestore.current = here().target;
+      setHeld({ doc: docId, version });
+    },
+    [here, docId],
+  );
+  useEffect(() => {
+    const target = versionRestore.current;
+    if (!target) return;
+    versionRestore.current = null;
+    restoreSaved(target);
+  }, [current, restoreSaved]);
+  const viewVersionRef = useRef(viewVersion);
+  viewVersionRef.current = viewVersion;
+  const offeredVersion = useRef("");
+  useEffect(() => {
+    if (!latest || current === latest || offeredVersion.current === latest) return;
+    offeredVersion.current = latest;
+    toast.info("A new version of this chapter is available.", {
+      action: { label: "View", onClick: () => viewVersionRef.current(latest) },
+    });
+  }, [latest, current]);
+
   const goChapter = useCallback(
     (to: string, jump: boolean) => {
       if (isMobile) setPinned(false);
@@ -268,8 +286,19 @@ function BookReader({
       restoreDone();
       return;
     }
-    if (mine?.document_id === docId) restoreSaved(toTarget(mine));
-    else restoreDone();
+    if (mine?.document_id === docId) {
+      restoreSaved(toTarget(mine));
+      return;
+    }
+    // No saved place here, but the reader got partway through before (say
+    // on a device whose position has since moved to another chapter).
+    const chapter = s?.chapters[docId];
+    const furthest = chapter?.furthest_progression ?? 0;
+    if (chapter?.state === "reading" && furthest > 0 && furthest < END_PROGRESSION) {
+      restoreRef.current?.({ progression: furthest });
+      return;
+    }
+    restoreDone();
     // Runs once per chapter visit, when the state first arrives.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stateSettled, docId]);
@@ -279,12 +308,14 @@ function BookReader({
   const [announcement, setAnnouncement] = useState("");
   const firstChapter = useRef(docId);
   const name = chapterName(link);
+  const nameRef = useRef(name);
+  nameRef.current = name;
   useEffect(() => {
     if (firstChapter.current === docId) return;
     firstChapter.current = "";
     titleRef.current?.focus();
-    setAnnouncement(name);
-  }, [docId, name]);
+    setAnnouncement(nameRef.current);
+  }, [docId]);
 
   const { prev, next } = neighbours(manifest, href);
   const onKey = useCallback(
@@ -308,13 +339,19 @@ function BookReader({
 
   const updated = !!state.data?.chapters[docId]?.updated;
   const changes = useChapterChanges(bookId, docId, updated);
-  const markHeadings = useMemo(
-    () =>
-      updated && changes.data
-        ? changes.data.changed_sections.filter((s) => !s.removed).map((s) => s.id)
-        : undefined,
-    [updated, changes.data],
-  );
+  // Marks stay for the rest of the visit once the update is seen, so the
+  // dots do not vanish while the reader looks at the changes.
+  const [marks, setMarks] = useState<{ doc: string; ids: string[] }>();
+  useEffect(() => {
+    if (!updated || !changes.data) return;
+    const ids = changes.data.changed_sections
+      .filter((s) => !s.removed)
+      .map((s) => s.id);
+    setMarks((m) =>
+      m?.doc === docId && m.ids.join("\n") === ids.join("\n") ? m : { doc: docId, ids },
+    );
+  }, [updated, changes.data, docId]);
+  const markHeadings = marks?.doc === docId ? marks.ids : undefined;
   const reader = useMemo<ReaderOptions>(
     () => ({
       onViewport,
@@ -393,7 +430,9 @@ function BookReader({
       )}
       <div className="min-w-0 flex-1">
         <DocWorkspace
-          key={docId}
+          // A new chapter or version is a new frame, so a restore waiting for
+          // one never lands in another.
+          key={`${docId}:${current}`}
           docId={docId}
           version={current}
           principal={me.data?.principal}
