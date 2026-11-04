@@ -527,6 +527,62 @@ describe("formatting at a caret, links and numbered lists", () => {
     assert.equal(doc.saved(), doc.source);
   });
 
+  test("a link field refuses an address with a space or with no dot in its host", async () => {
+    const doc = await open("<p>Hello world</p>");
+    place("Hello |world", "Hello world|");
+    key({ key: "k", metaKey: true });
+    const field = linkField()!;
+    const note = document.querySelector(".slashdocs-link-input p")!;
+    const enter = () =>
+      field.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+      );
+    for (const value of ["exa mple", "example", "https://example.com/a b"]) {
+      field.value = value;
+      field.dispatchEvent(new Event("input"));
+      assert.notInclude(note.textContent, "Links to");
+      enter();
+      assert.equal(linkField(), field);
+      assert.equal(note.textContent, "This is not a link.");
+      assert.isTrue(note.hasAttribute("data-error"));
+    }
+    field.value = "localhost:3000";
+    field.dispatchEvent(new Event("input"));
+    assert.equal(note.textContent, "Links to https://localhost:3000");
+    assert.isFalse(note.hasAttribute("data-error"));
+    enter();
+    doc.expect(["Hello world", 'Hello <a href="https://localhost:3000">world</a>']);
+  });
+
+  test.each(["192.168.0.1", "mailto:a@example.com", "#intro", "http://[::1]:8080"])(
+    "a link field takes %s",
+    async (value) => {
+      await open("<p>Hello world</p>");
+      place("Hello |world", "Hello world|");
+      key({ key: "k", metaKey: true });
+      linkField()!.value = value;
+      linkField()!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+      );
+      assert.isNull(linkField());
+    },
+  );
+
+  test("after a link applies, the caret is after it, so the next keys do not type over it", async () => {
+    await open("<p>Clients retry twice before giving up.</p>");
+    place("retry |twice", "retry twice|");
+    key({ key: "k", metaKey: true });
+    linkField()!.value = "example.com";
+    linkField()!.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+    );
+    const selection = document.getSelection()!;
+    const a = document.querySelector("p a")!;
+    assert.isTrue(selection.isCollapsed);
+    assert.equal(selection.anchorNode, a.parentNode);
+    assert.equal(selection.anchorOffset, [...a.parentNode!.childNodes].indexOf(a) + 1);
+  });
+
   test("a link field marks the words of the link until it closes", async () => {
     const set = new Map<string, unknown>();
     Object.assign(window, {

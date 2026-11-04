@@ -11,7 +11,7 @@
 // execCommand writes <b> and <i>, copies the source attribute of an element
 // that it splits onto both halves, and keeps its own undo stack.
 
-import { blockOf, reducedMotion } from "./dom.ts";
+import { blockOf, placeClear, reducedMotion } from "./dom.ts";
 import type { SourceMap } from "./source-map.ts";
 import { SOURCE_ATTR } from "./source-pieces.ts";
 
@@ -79,7 +79,7 @@ const LINK_STYLE = `
   .slashdocs-link-input button{height:40px!important;padding:0 10px!important;border-radius:8px!important;color:#b91c1c!important;font:500 13px/40px system-ui,sans-serif!important;cursor:pointer!important}
   .slashdocs-link-input button:hover{background:#fef2f2!important}
   .slashdocs-link-input button:focus-visible{outline:2px solid #6366f1!important;outline-offset:-2px!important}
-  .slashdocs-link-input p{flex-basis:100%!important;padding:0 8px 4px!important;color:#71717a!important;font:12px/1.4 system-ui,sans-serif!important;overflow-wrap:anywhere!important}
+  .slashdocs-link-input p{flex-basis:100%!important;padding:0 8px 4px!important;color:#71717a!important;font:12px/1.4 system-ui,sans-serif!important;overflow-wrap:anywhere!important;text-wrap:pretty!important}
   .slashdocs-link-input p:empty{display:none!important}
   .slashdocs-link-input p[data-error]{color:#b91c1c!important}
   .slashdocs-link-input i{position:fixed!important;pointer-events:none!important;background:#6366f140!important}
@@ -352,8 +352,11 @@ export function createStructure(e: Editor) {
     const fragment = d.createDocumentFragment();
     fragment.append(...nodes);
     at.insertNode(fragment);
-    const last = nodes.at(-1)!;
-    d.getSelection()!.collapse(last.parentNode!, indexOf(last) + 1);
+    caretAfter(nodes.at(-1)!);
+  }
+
+  function caretAfter(node: Node) {
+    d.getSelection()!.collapse(node.parentNode!, indexOf(node) + 1);
   }
 
   // format toggles bold or italic on the selection. At a caret, it toggles
@@ -548,21 +551,30 @@ export function createStructure(e: Editor) {
       d.getSelection()!.addRange(r);
       if (href !== null) e.apply(linkChange(r, href));
     };
-    // The note shows an address that differs from the typed one.
-    field.addEventListener("input", () => {
-      const href = normalizeHref(field.value);
-      note.removeAttribute("data-error");
-      note.textContent = href && href !== field.value.trim() ? `Links to ${href}` : "";
-    });
+    // The note shows an address that differs from the typed one. After an
+    // Enter that the field refuses, it shows why, until the address is good.
+    let refused = false;
+    const check = () => {
+      const target = linkTarget(field.value);
+      const error = refused && "error" in target ? target.error : "";
+      const preview =
+        "href" in target && target.href !== field.value.trim()
+          ? `Links to ${target.href}`
+          : "";
+      note.toggleAttribute("data-error", !!error);
+      note.textContent = error || preview;
+      return target;
+    };
+    field.addEventListener("input", check);
+    // The card can grow a line for the note, so it finds a clear place again.
+    if (view?.ResizeObserver)
+      new view.ResizeObserver(() => place(card, words)).observe(card);
     card.addEventListener("keydown", (event) => {
       event.stopPropagation();
       if (event.key === "Enter" && event.target === field) {
-        const href = normalizeHref(field.value);
-        if (href !== null) close(href);
-        else {
-          note.setAttribute("data-error", "");
-          note.textContent = "A link must start with http, https, mailto or #.";
-        }
+        refused = true;
+        const target = check();
+        if ("href" in target) close(target.href);
       } else if (event.key === "Escape") close(null);
       else return;
       event.preventDefault();
@@ -595,20 +607,17 @@ export function createStructure(e: Editor) {
     return el.animate(keyframes, { duration, easing: "ease-out", fill: "forwards" });
   }
 
-  // place puts card below the last line of words, with a gap, or above the
-  // first line when there is no room below.
+  // place puts card where it covers no text: below the last line of words,
+  // else above the first line, else where placeClear finds room.
   function place(card: HTMLElement, words: Range) {
     // jsdom has no layout, and so no rectangles for ranges.
     const lines = [...(words.getClientRects?.() ?? [])];
-    if (!lines.length || !view) return;
-    const { offsetWidth: width, offsetHeight: height } = card;
+    if (!lines.length) return;
     const [first, last] = [lines[0], lines.at(-1)!];
-    const below = last.bottom + LINK_GAP + height <= view.innerHeight - 8;
-    const line = below ? last : first;
-    const top = below ? last.bottom + LINK_GAP : first.top - LINK_GAP - height;
-    const left = Math.max(8, Math.min(line.left, view.innerWidth - width - 8));
-    card.style.setProperty("left", `${left}px`, "important");
-    card.style.setProperty("top", `${Math.max(8, top)}px`, "important");
+    placeClear(d, card, lines, [
+      [last.left, last.bottom + LINK_GAP],
+      [first.left, first.top - LINK_GAP - card.offsetHeight],
+    ]);
   }
 
   function closeLink() {
@@ -634,11 +643,14 @@ export function createStructure(e: Editor) {
           el.setAttribute("href", href);
           return el;
         };
+        // The caret goes after a new or changed link, so that the next keys
+        // do not type over its words.
         if (a && !href) a.replaceWith(...a.childNodes);
         else if (a) {
           const el = make();
           el.append(...a.childNodes);
           a.replaceWith(el);
+          caretAfter(el);
         } else if (href && r.collapsed) {
           const el = make();
           el.textContent = href;
@@ -646,7 +658,7 @@ export function createStructure(e: Editor) {
         } else if (href) {
           const texts = textsIn(e, r);
           wrap(texts, make);
-          select(texts);
+          if (texts.length) caretAfter(texts.at(-1)!.parentNode!);
         }
       },
     };
@@ -943,12 +955,30 @@ function insertText(d: Document, at: Range, text: string, preformatted = false) 
   d.getSelection()!.collapse(node, offset + text.length);
 }
 
-function normalizeHref(value: string): string | null {
+// linkTarget gives the address that a typed link gets, or why it cannot have
+// one. A web address needs a host with a dot, an IP address or localhost.
+function linkTarget(value: string): { href: string } | { error: string } {
   let href = value.trim();
-  if (!href) return "";
-  if (!/^[a-z][a-z\d+.-]*:/i.test(href) && !href.startsWith("#"))
+  if (!href) return { href };
+  // A port, as in localhost:3000, is not a scheme.
+  if (!/^[a-z][a-z\d+.-]*:(?!\d)/i.test(href) && !href.startsWith("#"))
     href = (/^[^/]+@[^/]+$/.test(href) ? "mailto:" : "https://") + href;
-  return SAFE_HREF.test(href) ? href : null;
+  if (!SAFE_HREF.test(href))
+    return { error: "A link must start with http, https, mailto or #." };
+  if (
+    /\s/.test(href) ||
+    (/^https?:/i.test(href) && !/[.:]|^localhost$/.test(hostOf(href)))
+  )
+    return { error: "This is not a link." };
+  return { href };
+}
+
+function hostOf(href: string): string {
+  try {
+    return new URL(href).hostname;
+  } catch {
+    return "";
+  }
 }
 
 // paragraphs turns pasted plain text into paragraphs at blank lines, with

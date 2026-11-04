@@ -77,9 +77,16 @@ export function markSurface(d: Document) {
     d.documentElement.setAttribute("data-slashdocs-surface", surface);
 }
 
-// placeClear puts el, fixed in the viewport, at the first of places, as
-// [left, top], that covers none of lines and no text of d, or else at the
-// first place.
+// The room that a control keeps clear of text on each side, and the distance
+// between the points at which coversText looks for text.
+const CLEAR_MARGIN = 4;
+const CLEAR_STEP = 10;
+
+// placeClear puts el, fixed in the viewport, at the first place where it
+// covers none of lines and no text of d, with a margin of CLEAR_MARGIN around
+// it. It tries places, as [left, top], then the sides of lines, then the
+// bottom and the top of the viewport. When each place covers text, el sits at
+// the bottom or the top of the viewport, where it covers none of lines.
 export function placeClear(
   d: Document,
   el: HTMLElement,
@@ -88,7 +95,20 @@ export function placeClear(
 ): void {
   const view = d.defaultView!;
   const { offsetWidth: width, offsetHeight: height } = el;
-  const boxes = places.map(([left, top]) =>
+  const span = lines.reduce(union, lines[0] ?? new DOMRect());
+  const first = lines[0] ?? span;
+  const beside = first.top + (first.height - height) / 2;
+  const center = (view.innerWidth - width) / 2;
+  const edges = [
+    [center, view.innerHeight],
+    [center, 0],
+  ];
+  const boxes = [
+    ...places,
+    [span.right + CLEAR_MARGIN * 2, beside],
+    [span.left - CLEAR_MARGIN * 2 - width, beside],
+    ...edges,
+  ].map(([left, top]) =>
     DOMRect.fromRect({
       x: Math.max(8, Math.min(left, view.innerWidth - width - 8)),
       y: Math.max(8, Math.min(top, view.innerHeight - height - 8)),
@@ -96,15 +116,33 @@ export function placeClear(
       height,
     }),
   );
-  // el must not hide the text under it from the test for text.
-  el.style.setProperty("display", "none", "important");
+  const coversLines = (box: DOMRect) => lines.some((line) => overlap(box, line));
+  // The hit test for text skips el, so that el does not hide the text under
+  // it. el keeps its layout, and so the focus of a field in it.
+  el.style.setProperty("pointer-events", "none", "important");
+  const [bottom, top] = boxes.slice(-edges.length);
   const place =
-    boxes.find(
-      (box) => !lines.some((line) => overlap(box, line)) && !coversText(d, box),
-    ) ?? boxes[0];
-  el.style.removeProperty("display");
+    boxes.find((box) => {
+      const room = grow(box, CLEAR_MARGIN);
+      return !coversLines(room) && !coversText(d, room);
+    }) ?? (coversLines(bottom) ? top : bottom);
+  el.style.removeProperty("pointer-events");
   el.style.setProperty("left", `${place.left}px`, "important");
   el.style.setProperty("top", `${place.top}px`, "important");
+}
+
+function union(a: DOMRect, b: DOMRect): DOMRect {
+  const [left, top] = [Math.min(a.left, b.left), Math.min(a.top, b.top)];
+  return new DOMRect(
+    left,
+    top,
+    Math.max(a.right, b.right) - left,
+    Math.max(a.bottom, b.bottom) - top,
+  );
+}
+
+function grow(box: DOMRect, by: number): DOMRect {
+  return new DOMRect(box.x - by, box.y - by, box.width + by * 2, box.height + by * 2);
 }
 
 function overlap(a: DOMRect, b: DOMRect): boolean {
@@ -112,11 +150,12 @@ function overlap(a: DOMRect, b: DOMRect): boolean {
 }
 
 // coversText tells whether box, in the viewport, covers text of document d.
-// It tests points in three rows, 24px apart.
+// It tests points on a grid of CLEAR_STEP, edges included, which finds every
+// line of text and every word that is taller and wider than the step.
 function coversText(d: Document, box: DOMRect): boolean {
   const words = d.createRange();
-  for (const y of [box.top + 4, box.top + box.height / 2, box.bottom - 4]) {
-    for (let x = box.left + 4; x < box.right; x += 24) {
+  for (const y of steps(box.top, box.bottom)) {
+    for (const x of steps(box.left, box.right)) {
       const node = caretRange(d, x, y)?.startContainer;
       if (node?.nodeType !== Node.TEXT_NODE || !node.textContent!.trim()) continue;
       words.selectNodeContents(node);
@@ -126,4 +165,13 @@ function coversText(d: Document, box: DOMRect): boolean {
     }
   }
   return false;
+}
+
+// steps gives points from start to end, end included, at most CLEAR_STEP apart.
+function steps(start: number, end: number): number[] {
+  const count = Math.max(1, Math.ceil((end - start) / CLEAR_STEP));
+  return Array.from(
+    { length: count + 1 },
+    (_, i) => start + ((end - start) * i) / count,
+  );
 }
