@@ -352,3 +352,28 @@ test("a posted comment opens beside its text, and Esc closes it", async ({
   await doc.locator("mark.slashdocs-mark").first().click();
   await expect(thread.getByText("Posted in a popover")).toBeVisible();
 });
+
+test("Edit in the thread menu opens the message in a field to type in", async ({
+  page,
+  slashdocs,
+}) => {
+  const title = uniqueName("Edit in place");
+  const document = await slashdocs.createDocument(
+    title,
+    documentHTML(title, "<p>Change my comment.</p>"),
+  );
+  await slashdocs.createComment(document.id, "First words", {
+    quote: "Change my comment.",
+  });
+  await page.goto(`/app/d/${document.id}`);
+  await (await listedThread(page, "First words")).click();
+  const thread = page.getByRole("dialog", { name: "Comment thread" });
+  await thread.getByRole("button", { name: "More actions" }).click();
+  await page.getByRole("menuitem", { name: "Edit" }).click();
+  await expect(thread.getByRole("combobox").first()).toBeFocused();
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.type("Better words");
+  await page.keyboard.press("Enter");
+  await expect(thread.getByText("Better words")).toBeVisible();
+  await expect(thread.getByText("edited")).toBeVisible();
+});
