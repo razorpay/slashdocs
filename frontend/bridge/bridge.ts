@@ -1207,26 +1207,45 @@ type Theme = "dark" | "light";
     const id = watched;
     if (!id) return;
     const rect = pins.rect(id) ?? marksRect(id);
-    // The blocks that hold a highlight. The rest of their lines is part of
-    // what the comment is on, so the app keeps the popover off them.
-    const block = marksRect(id, blockOf);
-    const key = JSON.stringify([rect, block]);
+    // The blocks that hold a highlight, and the text of its lines. The rest
+    // of those lines is part of what the comment is on, so the app keeps the
+    // popover off them: in the margin of the blocks, or else beside the text.
+    const block = marksRect(id, (mark) => blockOf(mark)?.getBoundingClientRect());
+    const lines = marksRect(id, linesOf);
+    const key = JSON.stringify([rect, block, lines]);
     if (key !== watchedRect) {
       watchedRect = key;
       parent.postMessage(
-        { type: "slashdocs:anchor-rect", id, rect, block },
+        { type: "slashdocs:anchor-rect", id, rect, block, lines },
         targetOrigin(),
       );
     }
     watchFrame = requestAnimationFrame(postWatched);
   }
 
+  // linesOf gives the box of the text on the lines of a mark, in its block.
+  function linesOf(mark: Element): DOMRect {
+    const own = mark.getBoundingClientRect();
+    const block = blockOf(mark);
+    if (!block) return own;
+    const range = mark.ownerDocument.createRange();
+    range.selectNodeContents(block);
+    let [left, right] = [own.left, own.right];
+    for (const line of range.getClientRects()) {
+      if (!line.width || line.bottom <= own.top || line.top >= own.bottom) continue;
+      left = Math.min(left, line.left);
+      right = Math.max(right, line.right);
+    }
+    return new DOMRect(left, own.top, right - left, own.height);
+  }
+
   // marksRect gives the box around a text comment's highlight, or around the
-  // element that `of` gives for each of its marks. It is null when the
+  // box that `boxOf` gives for each of its marks. It is null when the
   // comment has no highlight.
   function marksRect(
     id: string,
-    of: (mark: Element) => Element | null = (mark) => mark,
+    boxOf: (mark: Element) => DOMRect | undefined = (mark) =>
+      mark.getBoundingClientRect(),
   ): PinRect | null {
     const d = doc();
     if (!d) return null;
@@ -1235,7 +1254,7 @@ type Theme = "dark" | "light";
     for (const mark of d.querySelectorAll(
       `mark.slashdocs-mark[data-cid="${cid}"],.slashdocs-svg-mark-rect[data-cid="${cid}"]`,
     )) {
-      const r = of(mark)?.getBoundingClientRect();
+      const r = boxOf(mark);
       if (!r || (!r.width && !r.height)) continue;
       box = box
         ? new DOMRect(
