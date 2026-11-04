@@ -66,10 +66,13 @@ export function CodeBlock({
         className,
       )}
     >
+      {/* A long command scrolls with no scrollbar, and fades out under Copy. */}
       <pre
         className={cn(
-          "overflow-x-auto p-3 pr-10 leading-relaxed text-[var(--color-fg)]",
-          wrap && "whitespace-pre-wrap",
+          "p-3 pr-10 leading-relaxed text-[var(--color-fg)]",
+          wrap
+            ? "whitespace-pre-wrap"
+            : "overflow-x-auto [mask-image:linear-gradient(to_left,transparent_2.25rem,black_3.5rem)] [scrollbar-width:none]",
         )}
       >
         {children}
@@ -119,7 +122,7 @@ export function EmptyState({
   return (
     <div
       className={cn(
-        "flex flex-col items-center justify-center rounded-lg bg-[radial-gradient(ellipse_at_50%_0%,color-mix(in_srgb,var(--razorsense-wash-from)_14%,transparent),transparent_70%)] px-6 py-10 text-center",
+        "flex flex-col items-center justify-center bg-[radial-gradient(closest-side,color-mix(in_srgb,var(--razorsense-wash-from)_14%,transparent),transparent)] px-6 py-10 text-center",
         className,
       )}
     >
@@ -128,7 +131,9 @@ export function EmptyState({
           {icon}
         </div>
       )}
-      <h3 className="text-balance font-heading text-base font-medium">{title}</h3>
+      <h3 className="text-balance font-heading text-base font-medium text-[var(--color-fg)]">
+        {title}
+      </h3>
       {description && (
         <p className="mt-1 max-w-md text-pretty text-sm text-[var(--color-fg-muted)]">
           {description}
@@ -158,14 +163,18 @@ export function Center({
   );
 }
 
+// A photo, or else initials: white on the person's color when there is one
+// (principalColor), or the accent tint.
 export function Avatar({
   name,
   src,
   size = 32,
+  color,
 }: {
   name?: string;
   src?: string;
   size?: number;
+  color?: string;
 }) {
   const initials =
     (name || "?")
@@ -186,8 +195,14 @@ export function Avatar({
         width: size,
         height: size,
         fontSize: Math.max(10, Math.floor(size * 0.38)),
+        background: color,
       }}
-      className="flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--color-accent-muted)] font-semibold text-[var(--color-accent)]"
+      className={cn(
+        "flex shrink-0 items-center justify-center overflow-hidden rounded-full font-semibold",
+        color
+          ? "text-white"
+          : "bg-[var(--color-accent-muted)] text-[var(--color-accent)]",
+      )}
     >
       {showImg ? (
         <img
