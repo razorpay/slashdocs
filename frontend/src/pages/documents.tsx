@@ -2,7 +2,12 @@ import { useTitle } from "@/lib/use-title";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useOnboarding, autoMarkFirstDoc, onboardingProgress } from "@/lib/onboarding";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { toast } from "sonner";
 import { errorMessage } from "@/lib/errors";
 import { MoreHorizontal, Plus, Sparkles } from "lucide-react";
@@ -45,9 +50,13 @@ export function DocumentsPage() {
     return () => window.clearTimeout(t);
   }, [q]);
   const me = useQuery({ queryKey: queryKeys.me(), queryFn: api.me });
-  const docs = useQuery({
+  // The server sends documents a page at a time.
+  const docs = useInfiniteQuery({
     queryKey: [...queryKeys.documents(), debouncedQ],
-    queryFn: () => api.listDocuments(debouncedQ || undefined),
+    queryFn: ({ pageParam }) => api.listDocuments(debouncedQ || undefined, pageParam),
+    initialPageParam: 0,
+    getNextPageParam: (last, pages) =>
+      last.has_more ? pages.reduce((n, page) => n + page.items.length, 0) : undefined,
     placeholderData: (prev) => prev,
   });
   const pins = useQuery({
@@ -68,12 +77,13 @@ export function DocumentsPage() {
       nav("/app/start", { replace: true });
     }
   }, [onb, nav]);
+  const documents = useMemo(
+    () => docs.data?.pages.flatMap((page) => page.items) || [],
+    [docs.data],
+  );
   useEffect(() => {
-    if (docs.data && (docs.data.items || []).length > 0) {
-      autoMarkFirstDoc();
-    }
-  }, [docs.data]);
-  const documents = useMemo(() => docs.data?.items || [], [docs.data]);
+    if (documents.length > 0) autoMarkFirstDoc();
+  }, [documents]);
   const folderEntries = (structuredSearch ? [] : rootFolders.data?.items || []).filter(
     (e): e is FolderEntry & { folder: Folder } => e.type === "folder" && !!e.folder,
   );
@@ -296,6 +306,18 @@ export function DocumentsPage() {
           <BrowseDragOverlay activeDrag={activeDrag} viewMode={viewMode} />
         </DndContext>
       )}
+
+      {docs.hasNextPage ? (
+        <div className="mt-6 flex justify-center">
+          <Button
+            variant="outline"
+            disabled={docs.isFetchingNextPage}
+            onClick={() => docs.fetchNextPage()}
+          >
+            Show more documents
+          </Button>
+        </div>
+      ) : null}
 
       <NewFolderDialog open={newFolderOpen} onOpenChange={setNewFolderOpen} />
       <UploadBackupDialog open={uploadOpen} onOpenChange={setUploadOpen} />

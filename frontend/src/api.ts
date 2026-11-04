@@ -383,15 +383,19 @@ export const api = {
   loginURL: (redirect: string = location.pathname + location.search) =>
     `/v1/auth/google/start?mode=web&redirect=${encodeURIComponent(redirect)}`,
   logout: () => request<void>("/v1/auth/logout", { method: "POST" }),
-  listDocuments: (q?: string) => {
+  // One page of documents. has_more says that the next offset holds more.
+  listDocuments: (q?: string, offset = 0) => {
     const params = new URLSearchParams();
     if (q) {
       params.set("q", q);
       // Date modifiers such as on:today use the searcher's days.
       params.set("tz", Intl.DateTimeFormat().resolvedOptions().timeZone);
     }
+    if (offset) params.set("offset", String(offset));
     const qs = params.toString();
-    return request<{ items: Document[] }>(`/v1/documents${qs ? `?${qs}` : ""}`);
+    return request<{ items: Document[]; has_more: boolean }>(
+      `/v1/documents${qs ? `?${qs}` : ""}`,
+    );
   },
   getDocument: (id: string) => request<Document>(`/v1/documents/${id}`),
   requestDocumentAccess: (id: string) =>
