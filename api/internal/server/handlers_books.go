@@ -66,6 +66,12 @@ type createBookResponse struct {
 	NotInOutline     []bookDoc `json:"not_in_outline"`
 }
 
+// bookExistsDetails names the folder's existing book in a book_exists error.
+// Only folder editors reach it, and they can already look the book up.
+type bookExistsDetails struct {
+	BookID string `json:"book_id"`
+}
+
 // folderBookResponse is the payload of GET /v1/folders/{id}/book.
 type folderBookResponse struct {
 	BookID string `json:"book_id"`
@@ -208,7 +214,7 @@ func normalizeOutline(o books.Outline) books.Outline {
 // @Param id path string true "Folder ID"
 // @Success 201 {object} createBookResponse
 // @Failure 403 {object} errorEnvelope
-// @Failure 409 {object} errorEnvelope "book_exists"
+// @Failure 409 {object} errorEnvelope "book_exists: error.details.book_id names the folder's book"
 // @Router /v1/folders/{id}/book [post]
 func (h handlers) createBook(c *gin.Context) {
 	if !h.booksOn(c) {
@@ -241,7 +247,7 @@ func (h handlers) createBook(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, repo.ErrConflict):
-			c.JSON(http.StatusConflict, errorResponse("book_exists", "This folder is already a book.", nil))
+			h.bookExists(c, folderID)
 		case errors.Is(err, repo.ErrNotFound):
 			notFound(c)
 		default:
@@ -261,6 +267,16 @@ func (h handlers) createBook(c *gin.Context) {
 		Placed:           books.DocIDs(b.Outline),
 		NotInOutline:     rest,
 	})
+}
+
+// bookExists answers 409 book_exists, naming the folder's book when it can
+// be found so the caller can go on to use it.
+func (h handlers) bookExists(c *gin.Context, folderID string) {
+	var details any
+	if id, err := h.deps.repository.GetBookIDByFolder(c.Request.Context(), folderID); err == nil {
+		details = bookExistsDetails{BookID: id}
+	}
+	c.JSON(http.StatusConflict, errorResponse("book_exists", "This folder is already a book.", details))
 }
 
 // FolderBook godoc

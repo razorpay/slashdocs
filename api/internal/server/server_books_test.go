@@ -192,6 +192,10 @@ func TestCreateBookTwiceConflicts(t *testing.T) {
 	if got := bkString(t, rr.Body.Bytes(), "error.code"); got != "book_exists" {
 		t.Fatalf("error.code = %q, want book_exists", got)
 	}
+	// The editor is told which book it is, so an agent can carry on with it.
+	if got := bkString(t, rr.Body.Bytes(), "error.details.book_id"); got != f.bookID {
+		t.Fatalf("error.details.book_id = %q, want %q", got, f.bookID)
+	}
 }
 
 func TestFolderBookIsNotFoundWhenFolderIsNotABook(t *testing.T) {
