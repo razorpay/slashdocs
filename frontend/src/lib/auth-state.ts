@@ -1,9 +1,11 @@
+import { useEffect } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "@/api";
 import { clearCommentDrafts } from "./comment-drafts";
 import { clearFieldDrafts } from "./field-drafts";
-import { clearOneTimeKeys } from "./one-time-keys";
+import { useMe } from "./hooks";
+import { clearOneTimeKeys, setKeyAccount } from "./one-time-keys";
 import { clearTextDrafts } from "./text-drafts";
 
 // Sign-out once only set this flag and kept the session cookie.
@@ -26,22 +28,59 @@ export function useSignInPath() {
   return signInPath(useLocation());
 }
 
-// Ends the browser session and forgets everything cached for the user.
-export function useSignOut() {
+// The tabs of the app tell each other the account that they show: an id,
+// or null after a sign-out.
+const accounts =
+  typeof BroadcastChannel === "undefined"
+    ? undefined
+    : new BroadcastChannel("slashdocs.account");
+
+// useEndSession forgets everything of the session in this tab: unsent
+// comments and text, keys that show once, and the cache. They must not
+// outlive the session on a shared browser. Then the tab goes to the start.
+function useEndSession() {
   const qc = useQueryClient();
   const nav = useNavigate();
+  return () => {
+    clearCommentDrafts();
+    clearFieldDrafts();
+    clearTextDrafts();
+    clearOneTimeKeys();
+    qc.clear();
+    nav("/", { replace: true });
+  };
+}
+
+// Ends the browser session, here and in every other tab.
+export function useSignOut() {
+  const endSession = useEndSession();
   return useMutation({
     mutationFn: api.logout,
     onSuccess: () => {
-      // Unsent comments and text, and keys that show once, must not outlive
-      // the session on a shared browser.
-      clearCommentDrafts();
-      clearFieldDrafts();
-      clearTextDrafts();
-      clearOneTimeKeys();
-      qc.clear();
-      nav("/", { replace: true });
+      accounts?.postMessage(null);
+      endSession();
     },
+  });
+}
+
+// useAccountSync keeps a tab on the account of the browser. The tab tells
+// the others its account. When another tab tells of a sign-out or another
+// account, this tab ends its session, so that no key, draft or page of the
+// account before shows to the next one.
+export function useAccountSync() {
+  const me = useMe();
+  const endSession = useEndSession();
+  const account = me.unauth ? null : me.data?.principal.id;
+  useEffect(() => {
+    if (account === undefined) return;
+    setKeyAccount(account);
+    accounts?.postMessage(account);
+  }, [account]);
+  useEffect(() => {
+    if (account === undefined || !accounts) return;
+    const onMessage = ({ data }: MessageEvent) => data !== account && endSession();
+    accounts.addEventListener("message", onMessage);
+    return () => accounts.removeEventListener("message", onMessage);
   });
 }
 
