@@ -17,9 +17,12 @@ export type OneTimeKey = {
 // one.
 let keys: OneTimeKey[] = [];
 let nextId = 1;
-// A sign-out starts a new session. A key of a request made before it never
-// shows.
+// A sign-out or a change of account starts a new session. A key of a request
+// made before it never shows.
 let session = 0;
+// The account whose keys this tab shows, or null when no one is signed in.
+// Keys belong to it: another account never sees them.
+let account: string | null | undefined;
 const listeners = new Set<() => void>();
 
 function set(next: OneTimeKey[]) {
@@ -49,6 +52,13 @@ export const closeOneTimeKey = (id: number) => set(keys.filter((k) => k.id !== i
 export function clearOneTimeKeys() {
   session++;
   set([]);
+}
+
+// setKeyAccount tells the account that this tab shows. A new account, as
+// after a sign-in in another tab, forgets the keys of the one before.
+export function setKeyAccount(next: string | null) {
+  if (account !== undefined && next !== account) clearOneTimeKeys();
+  account = next;
 }
 
 const subscribe = (listener: () => void) => {

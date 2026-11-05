@@ -2,7 +2,7 @@ import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { CloudOff, LogOut } from "lucide-react";
 import { AccessRequestsMenu, AccountMenu, GetStarted, TopBar } from "./topbar";
 import { useMe } from "@/lib/hooks";
-import { useSignInPath, useSignOut } from "@/lib/auth-state";
+import { useAccountSync, useSignInPath, useSignOut } from "@/lib/auth-state";
 import { Button } from "@/components/ui/button";
 import { Center, RetryButton } from "@/components/ui/misc";
 import { ErrorState } from "@/components/error-state";
@@ -28,6 +28,7 @@ export function AppBar() {
 }
 
 export function AppShell() {
+  useAccountSync();
   const me = useMe();
   const loc = useLocation();
   const signInPath = useSignInPath();

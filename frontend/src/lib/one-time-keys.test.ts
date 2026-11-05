@@ -4,6 +4,7 @@ import {
   clearOneTimeKeys,
   closeOneTimeKey,
   keepOneTimeKey,
+  setKeyAccount,
   useOneTimeKeys,
 } from "./one-time-keys";
 
@@ -41,4 +42,21 @@ it("stores no key in the browser", async () => {
   );
   expect(stored.join()).not.toContain("sd_never_stored");
   expect(location.href).not.toContain("sd_never_stored");
+});
+
+it("forgets the keys of an account when the tab shows another one", async () => {
+  const { result } = renderHook(() => useOneTimeKeys());
+  setKeyAccount("admin");
+  let answer!: (token: string) => void;
+  const late = keepOneTimeKey(new Promise<string>((r) => (answer = r)), made);
+  await act(() => keepOneTimeKey(Promise.resolve("admin key"), made));
+  setKeyAccount("admin");
+  expect(result.current).toHaveLength(1);
+  act(() => setKeyAccount("reviewer"));
+  expect(result.current).toEqual([]);
+  await act(async () => {
+    answer("late admin key");
+    await late;
+  });
+  expect(result.current).toEqual([]);
 });
