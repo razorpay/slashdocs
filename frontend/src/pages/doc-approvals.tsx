@@ -1,11 +1,17 @@
-import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useIsMutating,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Check, ClipboardCheck, Clock, CloudOff, X } from "lucide-react";
 
 import {
   api,
   APIError,
+  docTitle,
   type Comment,
   type ApprovalDecision,
   type ApprovalListItem,
@@ -224,6 +230,41 @@ function decisionLabel(item: ApprovalListItem, current: boolean) {
   );
 }
 
+type Decision = {
+  version: string;
+  decision: ApprovalDecision;
+  note?: string;
+  // The document, for the toast of an answer that comes after the reader left.
+  title: string;
+};
+
+// useDecide records a decision on the version on screen when the reader
+// decided. Every form that decides has its own, so a late answer closes only
+// the form that sent it, while it is open. The toast and the refresh come
+// always. Each form waits while any of them decides.
+function useDecide(docId: string) {
+  const invalidate = useInvalidateApprovals(docId);
+  const mutationKey = [...queryKeys.approvalsAll(docId), "decide"];
+  const decide = useMutation({
+    mutationKey,
+    mutationFn: (d: Decision) =>
+      api.createApproval(docId, d.version, d.decision, d.note),
+    onSuccess: (_, d) => {
+      toast.success(
+        `${d.decision === "approved" ? "Approved" : "Rejected"} “${d.title}”.`,
+      );
+      invalidate();
+    },
+    onError: (e) => {
+      toast.error(errorMessage(e, "Could not record decision"));
+      // A newer version may have been pushed while this one was open: reload
+      // the document and decisions so the next click is on the latest one.
+      invalidate();
+    },
+  });
+  return { decide, deciding: useIsMutating({ mutationKey }) > 0 };
+}
+
 // ReviewActions is the signed-in approver's own controls: Approve, Reject and
 // Revoke. It renders nothing for anyone else, or while an older version is on
 // screen. It lives
@@ -250,22 +291,12 @@ export function ReviewActions({
     queryFn: () => api.listApprovals(docId, version),
     enabled: !!docId,
   });
-  const decide = useMutation({
-    mutationFn: (input: { decision: ApprovalDecision; note?: string }) =>
-      api.createApproval(docId, version, input.decision, input.note),
-    onSuccess: (a) => {
-      toast.success(a.decision === "approved" ? "Approved." : "Rejected.");
-      setRejectOpen(false);
-      setConfirmApprove(false);
-      invalidate();
-    },
-    onError: (e) => {
-      toast.error(errorMessage(e, "Could not record decision"));
-      // A newer version may have been pushed while this one was open: reload
-      // the document and decisions so the next click is on the latest one.
-      invalidate();
-    },
-  });
+  const { decide, deciding } = useDecide(docId);
+  const approve = () =>
+    decide.mutate(
+      { version, decision: "approved", title: docTitle(doc.data || {}) },
+      { onSuccess: () => setConfirmApprove(false) },
+    );
   const revoke = useMutation({
     mutationFn: (approvalId: string) => api.deleteApproval(docId, approvalId),
     onSuccess: () => {
@@ -314,17 +345,13 @@ export function ReviewActions({
             You have {mine.length} open {plural}. Approve anyway?
           </p>
           <div className="flex gap-2">
-            <Button
-              size="sm"
-              disabled={decide.isPending}
-              onClick={() => decide.mutate({ decision: "approved" })}
-            >
+            <Button size="sm" disabled={deciding} onClick={approve}>
               <Check className="h-3.5 w-3.5" /> Approve anyway
             </Button>
             <Button
               size="sm"
               variant="ghost"
-              disabled={decide.isPending}
+              disabled={deciding}
               onClick={() => setConfirmApprove(false)}
             >
               Cancel
@@ -339,12 +366,8 @@ export function ReviewActions({
             <Button
               size="sm"
               autoFocus
-              disabled={decide.isPending}
-              onClick={() =>
-                mine.length > 0
-                  ? setConfirmApprove(true)
-                  : decide.mutate({ decision: "approved" })
-              }
+              disabled={deciding}
+              onClick={() => (mine.length > 0 ? setConfirmApprove(true) : approve())}
             >
               <Check className="h-3.5 w-3.5" /> Approve
             </Button>
@@ -354,7 +377,7 @@ export function ReviewActions({
               size="sm"
               variant="outline"
               className="text-[var(--color-danger)]"
-              disabled={decide.isPending}
+              disabled={deciding}
               onClick={() => setRejectOpen(true)}
             >
               Reject
@@ -377,10 +400,7 @@ export function ReviewActions({
         open={rejectOpen}
         onOpenChange={setRejectOpen}
         comments={mine}
-        pending={decide.isPending}
-        onSubmit={(note) =>
-          decide.mutate({ decision: "rejected", note: note || undefined })
-        }
+        decision={{ version, decision: "rejected", title: docTitle(doc.data || {}) }}
         onJump={(id) => {
           setRejectOpen(false);
           onNavigate?.();
@@ -397,24 +417,11 @@ export function ReviewActions({
 function RejectDialog({
   open,
   onOpenChange,
-  comments,
-  pending,
-  onSubmit,
-  onJump,
+  ...form
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  comments: Comment[];
-  pending: boolean;
-  onSubmit: (note: string) => void;
-  onJump: (commentId: string) => void;
-}) {
-  const [note, setNote] = useState("");
-  useEffect(() => {
-    if (!open) setNote("");
-  }, [open]);
-  const hasComments = comments.length > 0;
-  const canSubmit = !pending && (hasComments || note.trim().length > 0);
+} & Omit<Parameters<typeof RejectForm>[0], "onClose">) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -424,66 +431,88 @@ function RejectDialog({
         <DialogHeader className="px-6 pt-6">
           <DialogTitle>Reject</DialogTitle>
         </DialogHeader>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (canSubmit) onSubmit(note.trim());
-          }}
-        >
-          {hasComments ? (
-            <div className="max-h-48 overflow-y-auto border-b border-[var(--color-border)] p-3">
-              <p className="px-1 pb-1 text-xs font-medium">
-                Your open comments ({comments.length})
-              </p>
-              <ul className="space-y-0.5">
-                {comments.map((c) => (
-                  <li key={c.id}>
-                    <button
-                      type="button"
-                      onClick={() => onJump(c.id)}
-                      className="w-full rounded-md px-1.5 py-1.5 text-left hover:bg-[var(--color-surface-muted)] focus-visible:-outline-offset-2"
-                    >
-                      <span className="block truncate text-xs font-medium">
-                        {c.selected_text || "Comment"}
-                      </span>
-                      <span className="block truncate text-xs text-[var(--color-fg-muted)]">
-                        {c.body}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-          <div className="space-y-2 p-3">
-            <Textarea
-              autoFocus
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              maxLength={2000}
-              placeholder={
-                hasComments ? "Reason (optional)" : "Why are you rejecting this?"
-              }
-              aria-label="Reason"
-              className="min-h-[72px] text-xs"
-            />
-            <div className="flex gap-2">
-              <Button size="sm" type="submit" variant="danger" disabled={!canSubmit}>
-                Reject
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                type="button"
-                onClick={() => onOpenChange(false)}
-              >
-                Cancel
-              </Button>
-            </div>
-          </div>
-        </form>
+        <RejectForm {...form} onClose={() => onOpenChange(false)} />
       </DialogContent>
     </Dialog>
+  );
+}
+
+// The form mounts each time the dialog opens, with an empty reason. A late
+// rejection closes only the form that sent it.
+function RejectForm({
+  comments,
+  decision,
+  onJump,
+  onClose,
+}: {
+  comments: Comment[];
+  decision: Decision;
+  onJump: (commentId: string) => void;
+  onClose: () => void;
+}) {
+  const { docId } = useDoc();
+  const { decide, deciding } = useDecide(docId);
+  const [note, setNote] = useState("");
+  const hasComments = comments.length > 0;
+  const canSubmit = !deciding && (hasComments || note.trim().length > 0);
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (canSubmit)
+          decide.mutate(
+            { ...decision, note: note.trim() || undefined },
+            { onSuccess: onClose },
+          );
+      }}
+    >
+      {hasComments ? (
+        <div className="max-h-48 overflow-y-auto border-b border-[var(--color-border)] p-3">
+          <p className="px-1 pb-1 text-xs font-medium">
+            Your open comments ({comments.length})
+          </p>
+          <ul className="space-y-0.5">
+            {comments.map((c) => (
+              <li key={c.id}>
+                <button
+                  type="button"
+                  onClick={() => onJump(c.id)}
+                  className="w-full rounded-md px-1.5 py-1.5 text-left hover:bg-[var(--color-surface-muted)] focus-visible:-outline-offset-2"
+                >
+                  <span className="block truncate text-xs font-medium">
+                    {c.selected_text || "Comment"}
+                  </span>
+                  <span className="block truncate text-xs text-[var(--color-fg-muted)]">
+                    {c.body}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      <div className="space-y-2 p-3">
+        <Textarea
+          autoFocus
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          maxLength={2000}
+          placeholder={
+            hasComments ? "Reason (optional)" : "Why are you rejecting this?"
+          }
+          aria-label="Reason"
+          className="min-h-[72px] text-xs"
+        />
+        <div className="flex gap-2">
+          <Button size="sm" type="submit" variant="danger" disabled={!canSubmit}>
+            Reject
+          </Button>
+          <Button size="sm" variant="ghost" type="button" onClick={onClose}>
+            Cancel
+          </Button>
+        </div>
+      </div>
+    </form>
   );
 }
 
@@ -597,11 +626,14 @@ function ApproverRow({
   onChanged: () => void;
 }) {
   const remove = useMutation({
-    mutationFn: (approverId: string) => api.deleteApprover(docId, approverId),
-    onSuccess: () => {
+    mutationFn: ({ id }: { id: string; label: string }) =>
+      api.deleteApprover(docId, id),
+    onSuccess: (_, { label }) => {
+      toast.success(`Removed ${label} as approver.`);
       onChanged();
     },
-    onError: (e) => toast.error(errorMessage(e, "Could not remove approver")),
+    onError: (e, { label }) =>
+      toast.error(errorMessage(e, `Could not remove ${label} as approver`)),
   });
   const request = assignments?.find((r) => samePrincipal(r.approver, item.approver));
   const label = item.approver.name || item.approver.email || item.approver.id;
@@ -632,7 +664,7 @@ function ApproverRow({
           aria-label={`Remove ${label} as approver`}
           tooltip={request ? undefined : "Remove waits until the approvers load"}
           disabled={!request || remove.isPending}
-          onClick={() => request && remove.mutate(request.id)}
+          onClick={() => request && remove.mutate({ id: request.id, label })}
         >
           <X className="h-3.5 w-3.5" />
         </Button>
@@ -644,11 +676,16 @@ function ApproverRow({
 const WHO_CAN_APPROVE =
   "Approvers need access to this document. Anyone who edited it, in the browser, by upload, or by an agent, can't approve it. This includes you. An edit that its author undid does not count.";
 
-// AddApprover assigns an approver. Its errors show under the field. A person
-// who cannot open the document can be shared with as a viewer and added in
-// one step.
+// AddApprover assigns an approver. Its errors show under the field, or in a
+// toast when the dialog closed before the answer. A person who cannot open
+// the document can be shared with as a viewer and added in one step.
 function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void }) {
   const q = useQueryClient();
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => void (mounted.current = false);
+  }, []);
   const [address, setAddress] = useState("");
   const [debounced, setDebounced] = useState("");
   useEffect(() => {
@@ -667,17 +704,25 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
       return api.createApprover(docId, addr);
     },
     onSuccess: ({ approver }, { addr, share }) => {
-      setAddress("");
-      if (share) {
-        q.invalidateQueries({ queryKey: queryKeys.documentAccess(docId) });
-        toast.success(
-          `Shared with ${approver.name || addr} as viewer and added as approver.`,
-        );
-      }
+      const name = approver.name || addr;
+      if (share) q.invalidateQueries({ queryKey: queryKeys.documentAccess(docId) });
+      toast.success(
+        share
+          ? `Shared with ${name} as viewer and added as approver.`
+          : `Added ${name} as approver.`,
+      );
       onAdded();
     },
-    onError: () => {},
+    onError: (e) => {
+      if (!mounted.current) toast.error(errorMessage(e, "Could not assign approver."));
+    },
   });
+  // The field clears only if it still holds the address that was added.
+  const send = (addr: string, share?: boolean) =>
+    add.mutate(
+      { addr, share },
+      { onSuccess: () => setAddress((now) => (now.trim() === addr ? "" : now)) },
+    );
   const noAccess =
     add.error instanceof APIError && add.error.code === "approver_no_access";
   const trimmed = address.trim();
@@ -699,7 +744,7 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
         // Send the raw address so the server resolves either a user email or a
         // service-account (bot) address; assuming "user" here made bot
         // approvers impossible to assign from the UI.
-        if (ADDRESS_PATTERN.test(trimmed)) add.mutate({ addr: trimmed });
+        if (ADDRESS_PATTERN.test(trimmed)) send(trimmed);
       }}
     >
       {/* The help sits on the line of the hint, so the messages under the
@@ -757,7 +802,7 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
               size="sm"
               className="shrink-0"
               disabled={add.isPending}
-              onClick={() => add.mutate({ addr: trimmed, share: true })}
+              onClick={() => send(trimmed, true)}
             >
               Share as viewer and add
             </Button>
