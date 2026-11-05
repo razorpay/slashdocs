@@ -15,6 +15,18 @@ import { errorMessage } from "@/lib/errors";
 // message, as an error page of the render URL does, or a frame that does not
 // load at all, failed: the consumer shows the error in its place, and Retry
 // gets a fresh token with refresh, then loads the frame again.
+// loads tells if a frame at `href` shows the render URL `url`: the path
+// names the document and its version. A bridge that sends no address counts.
+function loads(href: unknown, url?: string) {
+  if (typeof href !== "string" || !url) return true;
+  try {
+    const base = window.location.href;
+    return new URL(href, base).pathname === new URL(url, base).pathname;
+  } catch {
+    return false;
+  }
+}
+
 export function useBridgeHost(
   docId: string,
   renderURL: string | undefined,
@@ -125,7 +137,7 @@ export function useBridgeHost(
         requestWindow.postMessage(message, frameOrigin);
       };
       const data = e.data as Record<string, unknown> | null;
-      if (data?.type === "slashdocs:ready") {
+      if (data?.type === "slashdocs:ready" && loads(data.href, renderURLRef.current)) {
         setReadyURL(renderURLRef.current);
         reply(themeMessageRef.current);
       }

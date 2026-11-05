@@ -113,3 +113,18 @@ it("Retry gets a fresh token first, then waits for the frame again", async () =>
   send({ type: "slashdocs:ready" });
   expect(result.current.ready).toBe(true);
 });
+
+it("does not take a late ready of the old document after the address changes", () => {
+  const { result, rerender, send } = setup();
+  rerender({ url: `${ORIGIN}/v/doc_a/ver_b` });
+  send({
+    type: "slashdocs:ready",
+    href: `${ORIGIN}/v/doc_a/ver_a?slashdocs_theme=light`,
+  });
+  expect(result.current.ready).toBe(false);
+  send({
+    type: "slashdocs:ready",
+    href: `${ORIGIN}/v/doc_a/ver_b?slashdocs_theme=light`,
+  });
+  expect(result.current.ready).toBe(true);
+});
