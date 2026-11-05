@@ -710,13 +710,14 @@ export function BookOutlineEditorPage() {
   // The outline carries no titles for documents already placed. The manifest
   // has them; if it fails the rows fall back to a generic name.
   const manifest = useManifest(bookId);
+  // readingOrder has every document slot, front and back matter included;
+  // the toc has chapters only.
   const titles = useMemo(() => {
     const m = new Map<string, string>();
-    for (const g of manifest.data?.toc ?? [])
-      for (const l of g.children) {
-        const id = l.properties?.documentId;
-        if (id) m.set(id, l.title);
-      }
+    for (const l of manifest.data?.readingOrder ?? []) {
+      const id = l.properties?.documentId;
+      if (id) m.set(id, l.title);
+    }
     return m;
   }, [manifest.data]);
 

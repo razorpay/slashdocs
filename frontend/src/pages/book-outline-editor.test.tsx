@@ -4,7 +4,12 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { APIError } from "@/api";
-import { booksApi, type Outline, type OutlineResponse } from "@/lib/books";
+import {
+  booksApi,
+  type ManifestLink,
+  type Outline,
+  type OutlineResponse,
+} from "@/lib/books";
 import { bookManifest, stubMatchMedia } from "./book-fixtures";
 import { BookOutlineEditorPage } from "./book-outline-editor";
 
@@ -38,7 +43,7 @@ function response(over: Partial<OutlineResponse> = {}): OutlineResponse {
   };
 }
 
-function mockLoad(over: Partial<OutlineResponse> = {}) {
+function mockLoad(over: Partial<OutlineResponse> = {}, front: ManifestLink[] = []) {
   const m = bookManifest();
   m.toc = [
     {
@@ -64,6 +69,9 @@ function mockLoad(over: Partial<OutlineResponse> = {}) {
       ],
     },
   ];
+  // As the server sends it: every document slot the reader can open, front
+  // and back matter included, in reading order. The toc has chapters only.
+  m.readingOrder = [...front, ...m.toc.flatMap((p) => p.children)];
   vi.spyOn(booksApi, "manifest").mockResolvedValue(m);
   return vi.spyOn(booksApi, "outline").mockResolvedValue(response(over));
 }
@@ -332,5 +340,21 @@ describe("BookOutlineEditorPage", () => {
     ).toBeTruthy();
     await waitFor(() => expect(booksApi.manifest).toHaveBeenCalled());
     expect(globalErrors).not.toHaveBeenCalled();
+  });
+
+  it("names front matter documents", async () => {
+    mockLoad({ outline: { ...outline(), front: [{ doc: "doc_f" }] } }, [
+      {
+        href: "/app/b/b1/c/doc_f",
+        title: "Roadmap",
+        properties: { documentId: "doc_f", kind: "front", part: -1 },
+      },
+    ]);
+    const user = userEvent.setup();
+    renderEditor();
+    const row = await screen.findByRole("listitem", { name: "Front matter: Roadmap" });
+    await user.click(within(row).getByRole("button", { name: "Remove Roadmap" }));
+    const pool = screen.getByRole("region", { name: "Not in outline" });
+    expect(within(pool).getByText("Roadmap")).toBeTruthy();
   });
 });
