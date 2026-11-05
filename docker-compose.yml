@@ -80,6 +80,8 @@ services:
       # The compose stack uses direct Postgres, so exercise LISTEN/NOTIFY rather
       # than allowing the E2E harness to pass through the polling fallback.
       SLASHDOCS_KV_EVENTS_MODE: notify
+      # Book mode is off by default; the browser suite exercises it.
+      SLASHDOCS_BOOKS_ENABLED: "true"
 
       BLOB_BUCKET: slashdocs-documents
       BLOB_ENDPOINT: http://blob:9000

@@ -44,6 +44,7 @@ import { canManageSharing } from "@/lib/constants";
 import { queryKeys } from "@/lib/queryKeys";
 import { samePrincipal } from "@/lib/principals";
 import { viewModeStore } from "@/lib/view-mode";
+import { FolderBookAction } from "@/pages/folder-book-action";
 import { ShareSheet } from "@/pages/doc-share-sheet";
 import { Sheet, SheetTrigger } from "@/components/ui/sheet";
 import { DRAG_TYPE, type ActiveDrag } from "@/components/browse/drag";
@@ -279,6 +280,8 @@ export function FolderPage() {
           </div>
           <div className="flex items-center gap-2">
             <ViewModeToggle />
+            {/* Only folder editors may build a book from the folder (R1). */}
+            <FolderBookAction folderId={id} canEdit={canManageAccess} />
             <Button
               variant="outline"
               size="md"

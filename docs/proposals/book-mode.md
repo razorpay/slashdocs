@@ -1,6 +1,9 @@
 # Book mode for slashdocs
 
-Status: Proposed
+Status: Implemented (v1), behind SLASHDOCS_BOOKS_ENABLED.
+
+Two follow-ups are tracked in [TODOS.md](../../TODOS.md): signed-out readers of
+public books (R27) and one batched access query for manifests.
 
 ## Summary
 
@@ -93,7 +96,8 @@ on every change, like document versions. Entries are:
 - _Placeholders_: planned chapters with a title and no document yet.
 
 Chapters and placeholders are numbered by their position across the whole
-book, starting at 1. Numbers are never stored in titles. When a document title
+book, starting at 1. A chapter's URL is `/app/b/{book}/c/{docId}`; a URL that
+uses the chapter number redirects to it. Numbers are never stored in titles. When a document title
 starts with its own number followed by a separator (for example `24 · `), the
 reader hides that prefix if the number matches the computed one.
 
@@ -117,13 +121,16 @@ The response lists the documents placed and the ones left out.
 
 ### Editing the outline
 
-- People drag and drop chapters and parts, add placeholders, and move
-  documents in or out of the outline, in an outline editor on the book page.
+- People drag and drop chapters and parts, or use keyboard Move up and Move
+  down buttons, add placeholders, and move documents in or out of the outline,
+  in an outline editor on the book page.
 - Agents pull and push the outline as JSON through the CLI or MCP. A push
   states the outline version it was based on and fails with a conflict if the
   outline has changed since, the same way document pushes work today.
 - Every change creates a new outline version with an optional change note.
-  Editors can see the list of outline versions.
+  Editors can list the outline versions through the API
+  (`GET /v1/books/{id}/outline/versions`); the outline editor shows the
+  current version number.
 
 The authoring format is small and easy to write by hand or generate:
 
@@ -163,7 +170,9 @@ server checks the outline:
 - Otherwise it goes into "Not in outline".
 
 A fill creates a new outline version with a change note such as "Chapter 58
-filled by doc_…". "Not in outline" is shown only to editors.
+filled by doc_…". A chapter whose document is deleted or moved out of the
+folder also writes a new outline version, so the outline never keeps a dead
+chapter. "Not in outline" is shown only to editors.
 
 ### What readers receive
 
@@ -228,8 +237,11 @@ The book home is the default page of a book. It shows:
 ### Reading settings
 
 Text size (three steps), line width (narrow, comfortable, wide) and theme
-(light, paper, system). The bridge applies them inside the frame by adding a
-stylesheet. Settings are saved per reader and apply to every book.
+(light, paper, system). Text size works through zoom. The light and paper
+themes force the document's light theme. The bridge applies the settings inside
+the frame by adding a stylesheet. In v1 settings are saved per device, in local
+storage, and apply to every book on that device. A server-side `reader_settings`
+table can follow.
 
 ### Keyboard
 
@@ -266,12 +278,14 @@ the section id and the progression to that report.
 
 To restore a position, the reader tries each of these in turn:
 
-1. navigate to the quote, using the existing quote navigation;
+1. navigate to the quote with a dedicated fuzzy restore message
+   (`slashdocs:navigate-position`). The existing quote navigation
+   (`navigate-text`) stays exact-match and is not used for this;
 2. otherwise, go to the section heading;
 3. otherwise, scroll to the progression.
 
-This works across versions because quote anchoring already allows fuzzy
-matches.
+This works across versions because the restore message matches the quote
+fuzzily.
 
 The client saves the position at most every few seconds while the reader is
 scrolling. It also saves immediately when the page is hidden. Each device keeps
@@ -300,8 +314,10 @@ where you were" note stays available for that chapter visit.
 | Done                   | The reader pressed "Mark chapter done". It can be undone.                                                                                |
 | Updated since you read | The chapter has a newer version than the one the reader last saw, and the reader had opened it before. Shown alongside the other states. |
 
-"Reached the end" means the last section came into view and the reader scrolled
-to the end of it.
+"Reached the end" means the reader scrolled to the end of the chapter during
+this visit: a restore that lands at the end does not count until the reader
+scrolls away and back. A chapter that fits on screen, so that nothing scrolls,
+counts as reached once it has stayed on screen for 15 seconds.
 
 ### Updated since you read
 
@@ -329,7 +345,11 @@ Opening the chapter alone does not clear it.
 using the headings parsed from the HTML. Each section's text is normalised and
 hashed. A section is marked changed if its hash differs, if it is new, or if
 it was removed (removed sections are listed in the panel without a link).
-Hashes are computed once per version and kept. The comparison for a pair of
+The hash covers the section's figures (`svg`, `img`, `pre`, `code` and `table`)
+as well as its text, so a changed diagram or code block counts as a change.
+Hashes are computed once per version and kept. Sections are indexed for book
+documents when a version is published, and on demand for versions that have
+not been indexed yet. The comparison for a pair of
 versions is cached.
 
 ### Progress
@@ -345,15 +365,20 @@ versions is cached.
 
 ### Signed-out readers
 
+Not in v1 (R27, deferred; see [TODOS.md](../../TODOS.md)). Book routes require
+sign-in, so a signed-out reader cannot open a book on any deployment type.
+The design for the follow-up is:
+
 On a public deployment, a signed-out reader of a book shared with "anyone"
 gets the full reader. Their position and chapter states are kept in local
 storage only. Signing in does not merge local state into the account.
 
 ## Book search
 
-Search in a book uses the existing full-text search, limited to the book's
-folder, and returns only chapters the reader can open. Results are listed by
-chapter number. A toggle narrows the search to the current chapter. Opening a
+Search in a book uses a book-scoped endpoint (`GET /v1/books/{id}/search`) over
+the existing full-text index, limited to the book's folder, and returns only
+chapters the reader can open. Results are listed in relevance order, as the
+full-text search ranks them. A toggle narrows the search to the current chapter. Opening a
 result takes the reader to the first match in the chapter, using the existing
 text navigation. Hits pointing to individual sections are left for later,
 because search covers whole documents today.
@@ -415,15 +440,16 @@ The final names are settled in the implementation plan.
 | `version_sections`      | Per document version: section heading id, title, level, order, text hash, word count. Filled when a version is created; older versions are filled in the background. |
 | `reading_positions`     | User, book, device id, document, version, anchor JSON, progression, client and server timestamps. One row per user, book and device.                                 |
 | `chapter_reads`         | User, document, book, last seen version, furthest progression, reached-end time, done time, last opened time.                                                        |
-| `reader_settings`       | User, text size, line width, theme, shortcuts on or off.                                                                                                             |
+| `reader_settings`       | Not in v1. Reader settings are kept per device in local storage (User, text size, line width, theme, shortcuts on or off would move here).                           |
 
 ## Error handling
 
 - An outline push with a stale base version returns a conflict with the
   current version id, as document pushes do.
 - An invalid outline returns every validation problem with its path.
-- A chapter whose document was deleted drops out of the outline in the next
-  outline version, which the server creates with a change note. Readers' state
+- A chapter whose document was deleted or moved out of the folder drops out of
+  the outline in a new outline version, which the server writes with a change
+  note. Readers' state
   for it is deleted with the document.
 - A position that cannot be restored by quote, heading or progression opens
   the chapter at the top, with a note saying the saved place could not be
@@ -466,8 +492,8 @@ between versions.
 
 ## Rollout
 
-- Behind a deployment setting, off by default, until the browser tests pass on
-  stage.
+- Behind a deployment setting (`SLASHDOCS_BOOKS_ENABLED`, Helm
+  `features.books`), off by default, until the browser tests pass on stage.
 - The motivating course is the first book. Its roadmap document stays as
   front matter until the book home replaces it.
 - No data migration for existing folders or documents. `version_sections` for
@@ -494,8 +520,9 @@ between versions.
   optional note.
 - R3: Agents can pull and push the outline through the CLI and MCP, with a
   base-version conflict check and complete validation errors.
-- R4: People can reorder chapters and parts, add placeholders, and move
-  documents in or out of the outline in the web UI.
+- R4: People can reorder chapters and parts (drag and drop, with keyboard
+  Move up and Move down buttons), add placeholders, and move documents in or
+  out of the outline in the web UI.
 - R5: A document arriving in a book's folder fills a placeholder with the same
   number or title. Otherwise it goes to "Not in outline", visible only to
   editors.
@@ -512,7 +539,7 @@ between versions.
   and an end-of-chapter Done button and next-chapter card.
 - R10: Below tablet width, the rail becomes a drawer.
 - R11: Readers can set text size, line width, theme, and turn single-key
-  shortcuts off. Settings apply to every book.
+  shortcuts off. Settings apply to every book and are kept per device in v1.
 - R12: `←`/`→`, `T`, `/` and `?` work, and do nothing while focus is in a text
   field.
 - R13: On a chapter change, focus moves to the chapter title and the change is
@@ -522,8 +549,9 @@ between versions.
   progression, pinned to a version, per device. It is saved while scrolling
   (debounced) and immediately when the page is hidden. Stale writes are
   ignored.
-- R15: Opening a book or chapter restores the position by quote, then heading,
-  then progression, and says so when none works.
+- R15: Opening a book or chapter restores the position by fuzzy quote match
+  (a dedicated restore message), then heading, then progression, and says so
+  when none works.
 - R16: Continue reading uses the most recent position from any device. A
   non-modal note offers another device's newer position under the stated
   threshold. A "Back to where you were" note follows any jump.
@@ -540,7 +568,8 @@ between versions.
 - R21: Progress shows "Chapter X of N" and a word-weighted share, both counted
   over chapters the reader can open. Time left in a chapter uses 230 words per
   minute.
-- R22: Book search uses existing full-text search scoped to the book, returns
+- R22: Book search uses a book-scoped endpoint over the existing full-text
+  index, returns
   only chapters the reader can open, can narrow to the current chapter, and
   opens results at the first match.
 - R23: Each book serves a filtered `llms.txt` of its chapters.
@@ -551,7 +580,7 @@ between versions.
 - R26: Position reports from the frame are validated: known heading ids,
   clamped progression, capped quote length, served version.
 - R27: Signed-out readers of public books get the reader with local-only
-  state.
+  state. Follow-up, not in v1 (see TODOS.md).
 - R28: Book mode is behind a deployment setting, off by default.
 
 ## Open questions

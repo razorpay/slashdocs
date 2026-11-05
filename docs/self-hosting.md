@@ -249,6 +249,19 @@ authorization-code flow with S256 PKCE.
 For unattended automation, a slashdocs service-account key can be supplied as the
 Bearer token instead of using browser OAuth.
 
+### Book mode
+
+Book mode lets a folder of documents be read as a book, with an outline, chapter
+navigation, saved reading places and book search. It is off by default. Set
+`SLASHDOCS_BOOKS_ENABLED=true` (Helm: `features.books: true`) to turn it on.
+While it is off, every `/v1/books` and `/v1/folders/{id}/book` route returns a "feature disabled" error, the
+MCP server does not offer the book tools, and the web app hides book entry
+points. `GET /v1/config` and the MCP
+`get_server_config` tool report the current state as `books_enabled`.
+
+Readers who are not signed in cannot open public books yet; book routes require
+sign-in on every deployment type.
+
 ## Local dev stack (docker compose)
 
 The repository ships a ready-made compose stack —
@@ -554,7 +567,7 @@ both. The redirect URI to register is
 | `ALLOWED_OAUTH_DOMAINS`                     | unset       | Comma-separated email-domain allowlist for OAuth logins (public deployments).                                                                                                                                                                                                                       |
 | `SLASHDOCS_DEPLOYMENT`                      | `public`    | `public` or `org`. An org deployment gates login to `SLASHDOCS_ORG_DOMAINS`.                                                                                                                                                                                                                        |
 | `SLASHDOCS_ORG_DOMAINS`                     | unset       | Comma-separated org domains. Required when `SLASHDOCS_DEPLOYMENT=org`; also the login gate.                                                                                                                                                                                                         |
-| `SLASHDOCS_ORG_NAME`                        | unset       | Org display name used in share UI copy (e.g. "Anyone in Razorpay").                                                                                                                                                                                                                                     |
+| `SLASHDOCS_ORG_NAME`                        | unset       | Org display name used in share UI copy (e.g. "Anyone in Razorpay").                                                                                                                                                                                                                                 |
 | `BLOB_REGION`                               | `us-east-1` | AWS region for the S3 client.                                                                                                                                                                                                                                                                       |
 | `BLOB_ENDPOINT`                             | unset       | Custom S3 endpoint (MinIO, R2, etc.).                                                                                                                                                                                                                                                               |
 | `BLOB_ACCESS_KEY_ID`                        | unset       | Override AWS-SDK default credential chain.                                                                                                                                                                                                                                                          |

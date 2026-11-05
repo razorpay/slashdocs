@@ -84,6 +84,17 @@ Publishing model:
   - Runtime KV changes from uploaded HTML do not create versions; see:
       slashdocs guidelines interactivity kv
 
+Books (when Book mode is enabled on the server):
+  - A book is a folder of documents read as chapters. Publish each chapter as
+    its own document in the book folder.
+  - To change the chapter order, pull the outline, edit the file, and push the
+    same file back:
+      slashdocs books outline pull <book_id> outline.json
+      slashdocs books outline push <book_id> outline.json
+    The push takes its base version from the pulled file's version_id. Pass
+    --base-version only with a bare outline, and give the outline's version_id
+    (bov_...), not its number.
+
 Before publishing, run the relevant guideline pages for the kind of document you
 are authoring. For example:
   slashdocs guidelines rendering theme
@@ -443,6 +454,10 @@ Write documents for review, not just display.
   - Give charts and screenshots nearby captions or summaries so comments can
     refer to them precisely.
   - Preserve stable headings between versions so reviewers can keep orientation.
+  - Keep stable heading ids (the id attribute on each h1 to h6) across versions.
+    Readers' saved places and "what changed" lists point at those ids, so
+    renaming one makes both less precise. Change the heading text freely; keep
+    the id.
   - Use accessible labels for controls in interactive documents.
   - Keep approval or tracker controls close to the content they affect.
   - Use KV for live document-local workflow state. Use versioned HTML updates for
