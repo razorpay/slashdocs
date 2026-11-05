@@ -16,8 +16,8 @@ import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
 import { useDoc, type PositionTarget } from "./doc-context";
 
-// The chapter reader's notes and end-of-chapter card. They float over the
-// rendered chapter, inside the document context.
+// The chapter reader's notes, which float over the rendered chapter inside
+// the document context, and the end-of-chapter strip under it.
 
 // Gives the reader the frame's restorePosition, which only the document
 // context below it has.
@@ -101,7 +101,6 @@ export function ReaderOverlay({
   back,
   onBack,
   onDismissBack,
-  end,
 }: {
   restoreRef: RefObject<((t: PositionTarget) => void) | null>;
   offer: ReactNode;
@@ -110,7 +109,6 @@ export function ReaderOverlay({
   back: boolean;
   onBack: () => void;
   onDismissBack: () => void;
-  end: ReactNode;
 }) {
   return (
     <>
@@ -147,7 +145,6 @@ export function ReaderOverlay({
           </Note>
         ) : null}
       </div>
-      {end}
     </>
   );
 }
@@ -159,6 +156,7 @@ export function EndOfChapter({
   link,
   next,
   state,
+  onClose,
 }: {
   bookId: string;
   docId: string;
@@ -166,6 +164,7 @@ export function EndOfChapter({
   link: ManifestLink;
   next?: ManifestLink;
   state?: BookState;
+  onClose: () => void;
 }) {
   const qc = useQueryClient();
   const done = state?.chapters[docId]?.state === "done";
@@ -183,45 +182,55 @@ export function EndOfChapter({
   return (
     <section
       aria-label="End of chapter"
-      className="pointer-events-auto absolute bottom-4 left-1/2 z-20 flex w-[min(40rem,calc(100%-2rem))] -translate-x-1/2 flex-wrap items-center gap-3 rounded-lg bg-[var(--color-surface)] p-3 shadow-[var(--shadow-pop)] ring-1 ring-[var(--color-border)]"
+      className="flex shrink-0 items-center gap-3 border-t border-[var(--color-border)] bg-[var(--color-chrome)] px-3 py-2 sm:px-4"
     >
-      <Button
-        variant={pressed ? "secondary" : "outline"}
-        aria-pressed={pressed}
-        onClick={() => toggle.mutate(!pressed)}
-      >
-        <Check
-          aria-hidden="true"
-          className={cn("h-4 w-4", pressed ? "opacity-100" : "opacity-40")}
-        />
-        Mark chapter done
-      </Button>
-      {next?.href ? (
-        <Link
-          to={next.href}
-          className="group flex min-w-0 flex-1 items-center justify-between gap-3 rounded-md px-3 py-2 hover:bg-[var(--color-surface-muted)]"
+      <div className="mx-auto flex w-full max-w-[40rem] flex-wrap items-center gap-3">
+        <Button
+          variant={pressed ? "secondary" : "outline"}
+          aria-pressed={pressed}
+          onClick={() => toggle.mutate(!pressed)}
         >
-          <span className="min-w-0">
-            <span className="block text-xs text-[var(--color-fg-muted)]">
-              {newPart ? `${newPart} starts` : "Next"}
-            </span>
-            <span className="block truncate font-medium text-[var(--color-fg)]">
-              {chapterCrumb(next)}
-            </span>
-          </span>
-          <ArrowRight
+          <Check
             aria-hidden="true"
-            className="h-4 w-4 shrink-0 text-[var(--color-fg-muted)] transition-transform group-hover:translate-x-0.5"
+            className={cn("h-4 w-4", pressed ? "opacity-100" : "opacity-40")}
           />
-        </Link>
-      ) : (
-        <Link
-          to={`/app/b/${encodeURIComponent(bookId)}`}
-          className="flex-1 rounded-md px-3 py-2 text-sm text-[var(--color-fg-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-fg)]"
-        >
-          You reached the end of the book. Back to the book home
-        </Link>
-      )}
+          Mark chapter done
+        </Button>
+        {next?.href ? (
+          <Link
+            to={next.href}
+            className="group flex min-w-0 flex-1 items-center justify-between gap-3 rounded-md px-3 py-2 hover:bg-[var(--color-surface-muted)]"
+          >
+            <span className="min-w-0">
+              <span className="block text-xs text-[var(--color-fg-muted)]">
+                {newPart ? `${newPart} starts` : "Next"}
+              </span>
+              <span className="block truncate font-medium text-[var(--color-fg)]">
+                {chapterCrumb(next)}
+              </span>
+            </span>
+            <ArrowRight
+              aria-hidden="true"
+              className="h-4 w-4 shrink-0 text-[var(--color-fg-muted)] transition-transform group-hover:translate-x-0.5"
+            />
+          </Link>
+        ) : (
+          <Link
+            to={`/app/b/${encodeURIComponent(bookId)}`}
+            className="flex-1 rounded-md px-3 py-2 text-sm text-[var(--color-fg-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-fg)]"
+          >
+            You reached the end of the book. Back to the book home
+          </Link>
+        )}
+      </div>
+      <button
+        type="button"
+        aria-label="Close"
+        onClick={onClose}
+        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[var(--color-fg-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-fg)]"
+      >
+        <X aria-hidden="true" className="h-4 w-4" />
+      </button>
     </section>
   );
 }

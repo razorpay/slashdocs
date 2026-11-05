@@ -209,7 +209,10 @@ function BookReader({
     onReachedEnd: invalidateBook,
   });
   const [section, setSection] = useState("");
-  const [atEnd, setAtEnd] = useState(false);
+  // The end strip shows once the reader reaches the end and then stays for
+  // the visit until closed: it takes room from the frame, and hiding it
+  // again as the frame grows back would make the two flicker.
+  const [endStrip, setEndStrip] = useState<"hidden" | "shown" | "closed">("hidden");
   const { onViewport: saveViewport, onRestored: restoreDone } = position;
   const onViewport = useCallback(
     (v: ReaderViewport) => {
@@ -219,7 +222,9 @@ function BookReader({
       firstRead.current ??= Date.now();
       setSection(v.section);
       // A chapter that fits on screen is visible to its end.
-      setAtEnd(!!v.fits || v.progression >= END_PROGRESSION);
+      if (v.fits || v.progression >= END_PROGRESSION) {
+        setEndStrip((e) => (e === "hidden" ? "shown" : e));
+      }
     },
     [saveViewport, docId],
   );
@@ -275,7 +280,7 @@ function BookReader({
     booksApi.open(bookId, docId, current).then(invalidateBook, () => {});
   }, [bookId, docId, current, invalidateBook]);
   useEffect(() => {
-    setAtEnd(false);
+    setEndStrip("hidden");
     setSection("");
     lastView.current = null;
     setBack((location.state as ArrivalState)?.back ?? null);
@@ -464,65 +469,69 @@ function BookReader({
           shortcuts={shortcuts}
         />
       )}
-      <div className="min-w-0 flex-1">
-        <DocWorkspace
-          // A new chapter or version is a new frame, so a restore waiting for
-          // one never lands in another.
-          key={`${docId}:${current}`}
-          docId={docId}
-          version={current}
-          principal={me.data?.principal}
-          home={`/app/b/${encodeURIComponent(bookId)}`}
-          stream={stream}
-          reader={reader}
-          overlay={
-            <ReaderOverlay
-              restoreRef={restoreRef}
-              offer={offer && <OfferNote offer={offer} manifest={manifest} />}
-              onGoOffer={goOffer}
-              onDismissOffer={() => {
-                dismissOffer();
-                refocus();
-              }}
-              back={!!back}
-              onBack={goBack}
-              onDismissBack={() => {
-                setBack(null);
-                refocus();
-              }}
-              end={
-                atEnd ? (
-                  <EndOfChapter
-                    bookId={bookId}
-                    docId={docId}
-                    manifest={manifest}
-                    link={link}
-                    next={next}
-                    state={state.data}
-                  />
-                ) : null
-              }
-            />
-          }
-          bar={(controls) => (
-            <ReaderBar
-              controls={controls}
-              bookId={bookId}
-              manifest={manifest}
-              link={link}
-              version={current}
-              shortcuts={shortcuts}
-              isMobile={isMobile}
-              onContents={() => setPinned(true)}
-              onSearch={() => setSearchOpen(true)}
-              onJump={(id) => jumpWithin({ section: id })}
-              onChipDismissed={refocus}
-              headings={headings.data?.items}
-              section={section}
-              user={me.data?.user || me.data?.principal}
-            />
-          )}
-        />
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="min-h-0 flex-1">
+          <DocWorkspace
+            // A new chapter or version is a new frame, so a restore waiting for
+            // one never lands in another.
+            key={`${docId}:${current}`}
+            docId={docId}
+            version={current}
+            principal={me.data?.principal}
+            home={`/app/b/${encodeURIComponent(bookId)}`}
+            stream={stream}
+            reader={reader}
+            overlay={
+              <ReaderOverlay
+                restoreRef={restoreRef}
+                offer={offer && <OfferNote offer={offer} manifest={manifest} />}
+                onGoOffer={goOffer}
+                onDismissOffer={() => {
+                  dismissOffer();
+                  refocus();
+                }}
+                back={!!back}
+                onBack={goBack}
+                onDismissBack={() => {
+                  setBack(null);
+                  refocus();
+                }}
+              />
+            }
+            bar={(controls) => (
+              <ReaderBar
+                controls={controls}
+                bookId={bookId}
+                manifest={manifest}
+                link={link}
+                version={current}
+                shortcuts={shortcuts}
+                isMobile={isMobile}
+                onContents={() => setPinned(true)}
+                onSearch={() => setSearchOpen(true)}
+                onJump={(id) => jumpWithin({ section: id })}
+                onChipDismissed={refocus}
+                headings={headings.data?.items}
+                section={section}
+                user={me.data?.user || me.data?.principal}
+              />
+            )}
+          />
+        </div>
+        {endStrip === "shown" ? (
+          <EndOfChapter
+            bookId={bookId}
+            docId={docId}
+            manifest={manifest}
+            link={link}
+            next={next}
+            state={state.data}
+            onClose={() => {
+              setEndStrip("closed");
+              refocus();
+            }}
+          />
+        ) : null}
       </div>
       <BookSearch
         open={searchOpen}

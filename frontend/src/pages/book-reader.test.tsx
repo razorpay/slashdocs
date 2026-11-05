@@ -430,6 +430,24 @@ describe("BookReader", () => {
     await waitFor(() => expect(done).toHaveBeenCalledWith("b1", "doc_2", true));
   });
 
+  it("shows the end strip below the chapter, not over it, until dismissed", async () => {
+    const user = userEvent.setup();
+    renderReader();
+    const workspace = await screen.findByTestId("workspace");
+    act(() => reader().onViewport!({ section: "setup", progression: 0.99 }));
+    const strip = screen.getByRole("region", { name: "End of chapter" });
+    // Outside the frame's area, so it never covers the last lines.
+    expect(workspace).not.toContainElement(strip);
+    // It stays while the reader scrolls back up, so the frame does not
+    // resize back and forth.
+    act(() => reader().onViewport!({ section: "setup", progression: 0.9 }));
+    expect(screen.getByRole("region", { name: "End of chapter" })).toBeInTheDocument();
+    await user.click(within(strip).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("region", { name: "End of chapter" })).toBeNull();
+    act(() => reader().onViewport!({ section: "setup", progression: 0.995 }));
+    expect(screen.queryByRole("region", { name: "End of chapter" })).toBeNull();
+  });
+
   it("offers the end strip for a chapter that fits on screen", async () => {
     renderReader();
     await screen.findByTestId("workspace");
