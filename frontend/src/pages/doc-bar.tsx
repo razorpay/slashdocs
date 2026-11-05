@@ -50,6 +50,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { DraftNotice } from "@/components/draft-notice";
 import type { RetryQuery } from "@/components/ui/misc";
 import { LoadErrorLine } from "@/components/error-state";
 import { Sheet, SheetTrigger } from "@/components/ui/sheet";
@@ -64,6 +65,7 @@ import {
 } from "@/api";
 import { canManageSharing, ROLE_RANK } from "@/lib/constants";
 import { useDocumentRole } from "@/lib/hooks";
+import { useEditDraft } from "@/lib/edit-drafts";
 import { queryKeys } from "@/lib/queryKeys";
 import { loadFailed } from "@/lib/query-retry";
 import { cursorsShownStore } from "@/lib/live-cursors";
@@ -511,8 +513,110 @@ export function DocBar({
 
 // The title of the document. Its owner renames it in place, as in Google
 // Docs: a click on it, or Rename in the More menu, makes it a field. Enter or
-// a click away saves, and Esc keeps the old title. The bar shows the new
-// title at once, and the old one again if the save fails.
+// a click away saves, and Esc keeps the old title.
+// TitleField is the title while its owner renames it. The words are a draft
+// of the document (`title:<docId>`), so that a route change or a reload keeps
+// them. If someone else renames the document first, the field stays open
+// with the reader's words, and saves nothing until the reader chooses. The
+// bar shows the new title at once, and the old one again if the save fails.
+function TitleField({
+  docId,
+  title,
+  onDone,
+}: {
+  docId: string;
+  title: string;
+  onDone: (how: "enter" | "escape" | "away") => void;
+}) {
+  const q = useQueryClient();
+  const name = useEditDraft(`title:${docId}`, title, title);
+  const key = queryKeys.document(docId);
+  const rename = useMutation({
+    mutationFn: (next: string) => api.renameDocument(docId, next),
+    onMutate: async (next) => {
+      await q.cancelQueries({ queryKey: key });
+      const before = q.getQueryData<Document>(key);
+      q.setQueryData<Document>(key, (doc) => doc && { ...doc, title: next });
+      return { before };
+    },
+    onSuccess: (_, next) => name.sent(next),
+    // The old title comes back only if nobody renamed it since.
+    onError: (e, next, context) => {
+      q.setQueryData<Document>(key, (doc) =>
+        doc?.title === next && context?.before ? context.before : doc,
+      );
+      toast.error(errorMessage(e, "Rename failed"));
+    },
+    onSettled: () => {
+      q.invalidateQueries({ queryKey: key });
+      q.invalidateQueries({ queryKey: queryKeys.documents() });
+    },
+  });
+  const how = useRef<"enter" | "escape" | "away">("away");
+  const field = useRef<HTMLInputElement>(null);
+  return (
+    <div className="relative w-full max-w-sm">
+      <Input
+        ref={field}
+        aria-label="Document title"
+        value={name.value}
+        onChange={(e) => name.setValue(e.target.value)}
+        autoFocus
+        onFocus={(e) => e.currentTarget.select()}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter" && e.key !== "Escape") return;
+          // Esc leaves the field and does not reach the page's shortcuts.
+          e.preventDefault();
+          e.stopPropagation();
+          how.current = e.key === "Escape" ? "escape" : "enter";
+          e.currentTarget.blur();
+        }}
+        onBlur={() => {
+          const done = how.current;
+          how.current = "away";
+          if (done === "escape") name.discard();
+          // A title that changed elsewhere waits for the reader's choice.
+          else if (name.stale) return;
+          else {
+            const next = name.value.trim();
+            if (next && next !== title) rename.mutate(next);
+            else name.discard();
+          }
+          onDone(done);
+        }}
+        className="h-8 w-full px-1.5 font-semibold"
+      />
+      {name.stale || name.conflict || name.cameBack ? (
+        // A press in the notice keeps the focus in the field.
+        <div
+          className="absolute inset-x-0 top-full z-50 mt-1 rounded-md shadow-[var(--shadow-pop)]"
+          onMouseDown={(e) => e.preventDefault()}
+        >
+          <DraftNotice
+            draft={name}
+            cameBack="Your title from earlier came back."
+            stale={{
+              say: "The document was renamed elsewhere. It is now:",
+              quote: title,
+              take: "Use the new title",
+              keep: "Keep mine",
+              onTake: () => {
+                name.discard();
+                onDone("away");
+              },
+              onKeep: () => {
+                name.follow();
+                field.current?.focus();
+              },
+            }}
+            className="mt-0"
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function DocTitle({
   docId,
   title,
@@ -526,8 +630,6 @@ function DocTitle({
   renaming: boolean;
   onRenamingChange: (renaming: boolean) => void;
 }) {
-  const q = useQueryClient();
-  const cancelled = useRef(false);
   // Enter and Esc give the focus back to the title, as a click away does not.
   // After a rename that a click started, the title gets no focus ring: the
   // browser shows one after any field, and it looks like the field stays.
@@ -542,47 +644,15 @@ function DocTitle({
     clicked.current = false;
     button.current?.focus();
   }, [renaming]);
-  const key = queryKeys.document(docId);
-  const rename = useMutation({
-    mutationFn: (next: string) => api.renameDocument(docId, next),
-    onMutate: async (next) => {
-      await q.cancelQueries({ queryKey: key });
-      const before = q.getQueryData<Document>(key);
-      q.setQueryData<Document>(key, (doc) => doc && { ...doc, title: next });
-      return { before };
-    },
-    onError: (e, _, context) => {
-      q.setQueryData(key, context?.before);
-      toast.error(errorMessage(e, "Rename failed"));
-    },
-    onSettled: () => {
-      q.invalidateQueries({ queryKey: key });
-      q.invalidateQueries({ queryKey: queryKeys.documents() });
-    },
-  });
   if (renaming) {
     return (
-      <Input
-        aria-label="Document title"
-        defaultValue={title}
-        autoFocus
-        onFocus={(e) => e.currentTarget.select()}
-        onKeyDown={(e) => {
-          if (e.key !== "Enter" && e.key !== "Escape") return;
-          // Esc leaves the field and does not reach the page's shortcuts.
-          e.preventDefault();
-          e.stopPropagation();
-          cancelled.current = e.key === "Escape";
-          refocus.current = true;
-          e.currentTarget.blur();
-        }}
-        onBlur={(e) => {
-          const next = e.currentTarget.value.trim();
-          if (!cancelled.current && next && next !== title) rename.mutate(next);
-          cancelled.current = false;
+      <TitleField
+        docId={docId}
+        title={title}
+        onDone={(how) => {
+          refocus.current = how !== "away";
           onRenamingChange(false);
         }}
-        className="h-8 w-full max-w-sm px-1.5 font-semibold"
       />
     );
   }
@@ -901,8 +971,11 @@ function LabelsDialog({
   );
 }
 
-// The form mounts each time the dialog opens, however it was opened, so the
-// draft always starts from the saved labels.
+// The form mounts each time the dialog opens, however it was opened. Its
+// words are a draft of the document (`labels:<docId>`) that starts from the
+// saved labels, and stays through a close, a failure and a reload. If the
+// labels change elsewhere while the form has words, it keeps them and saves
+// nothing until the reader chooses. A late save closes only its own form.
 function LabelsForm({
   docId,
   labels,
@@ -914,35 +987,51 @@ function LabelsForm({
   canEdit: boolean;
   onSaved: () => void;
 }) {
-  const [draft, setDraft] = useState(labels.join(", "));
+  const saved = labels.join(", ");
+  const draft = useEditDraft(`labels:${docId}`, saved, saved);
   const qc = useQueryClient();
   const save = useMutation({
-    mutationFn: () =>
+    mutationFn: (sent: string) =>
       api.replaceDocumentLabels(
         docId,
-        draft
+        sent
           .split(",")
           .map((label) => label.trim())
           .filter(Boolean),
       ),
-    onSuccess: () => {
+    onSuccess: (_, sent) => {
+      draft.sent(sent);
       qc.invalidateQueries({ queryKey: queryKeys.document(docId) });
       qc.invalidateQueries({ queryKey: queryKeys.documents() });
-      onSaved();
     },
     onError: (e) => toast.error(errorMessage(e, "Could not update labels")),
   });
   return (
     <>
       <Input
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
+        aria-label="Labels"
+        value={draft.value}
+        onChange={(event) => draft.setValue(event.target.value)}
         placeholder="runbook, payments, onboarding"
         disabled={!canEdit}
       />
+      <DraftNotice
+        draft={draft}
+        cameBack="Your labels from earlier came back. They are not saved yet."
+        stale={{
+          say: "The labels changed elsewhere. They now say:",
+          quote: saved || "No labels",
+          take: "Use the new labels",
+          keep: "Keep mine",
+        }}
+      />
       <DialogFooter>
         {canEdit ? (
-          <Button onClick={() => save.mutate()} disabled={save.isPending}>
+          <Button
+            onClick={() => save.mutate(draft.value, { onSuccess: onSaved })}
+            disabled={draft.stale}
+            busy={save.isPending}
+          >
             Save labels
           </Button>
         ) : null}

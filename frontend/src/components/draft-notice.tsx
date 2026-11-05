@@ -14,6 +14,7 @@ export function DraftNotice({
   draft,
   cameBack,
   stale,
+  className,
 }: {
   draft: EditDraft;
   // What the words that came back were written for.
@@ -29,11 +30,13 @@ export function DraftNotice({
     onTake?: () => void;
     onKeep?: () => void;
   };
+  className?: string;
 }): ReactNode {
   const { conflict } = draft;
   if (conflict)
     return (
       <Notice
+        className={className}
         say="This draft changed in another tab. It now says:"
         quotes={[quote(conflict.theirs.body)]}
       >
@@ -55,7 +58,7 @@ export function DraftNotice({
     );
   if (draft.cameBack)
     return (
-      <Notice say={cameBack}>
+      <Notice className={className} say={cameBack}>
         <NoticeAction onClick={draft.discard}>Discard</NoticeAction>
       </Notice>
     );
