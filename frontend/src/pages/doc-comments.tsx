@@ -307,6 +307,7 @@ export function CommentsList({
     activeComment,
     drafts,
     discardDraft,
+    editable,
   } = useDoc();
   const self = useSelf(principal);
   const [filter, setFilter] = useState<ListFilter>("all");
@@ -452,7 +453,11 @@ export function CommentsList({
           />
         ) : items.length === 0 ? (
           unsent.length ? null : (
-            <CommentsEmptyState filter={filter} signedOut={!!signIn} />
+            <CommentsEmptyState
+              filter={filter}
+              signedOut={!!signIn}
+              editable={editable}
+            />
           )
         ) : (
           <ul className="space-y-1">
@@ -505,12 +510,16 @@ export function CommentsList({
   );
 }
 
+// For an editor, a click in the document puts the caret in its text, where C
+// types a letter. Esc first leaves the text.
 function CommentsEmptyState({
   filter,
   signedOut,
+  editable,
 }: {
   filter: ListFilter;
   signedOut: boolean;
+  editable: boolean;
 }) {
   const titles: Record<ListFilter, string> = {
     all: "No comments yet",
@@ -527,7 +536,9 @@ function CommentsEmptyState({
           ? "Resolved conversations will appear here."
           : signedOut
             ? "Sign in to start a thread."
-            : "Select text, or press C and click a spot, to start a thread."
+            : editable
+              ? "Select text, or press Esc, then C, and click a spot, to start a thread."
+              : "Select text, or press C and click a spot, to start a thread."
       }
     />
   );
