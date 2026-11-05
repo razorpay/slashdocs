@@ -214,6 +214,20 @@ describe("BookHomePage", () => {
     expect(screen.queryByText(/Chapter 0 of/)).toBeNull();
   });
 
+  it("counts the chapters the reader can open, in the singular for one", async () => {
+    vi.spyOn(booksApi, "manifest").mockResolvedValue(manifest([1]));
+    vi.spyOn(booksApi, "state").mockResolvedValue(state());
+    renderHome();
+    expect(await screen.findByText("1 chapter in 1 part")).toBeTruthy();
+  });
+
+  it("counts placeholders apart from chapters", async () => {
+    vi.spyOn(booksApi, "manifest").mockResolvedValue(manifest([1, 2, 58]));
+    vi.spyOn(booksApi, "state").mockResolvedValue(state());
+    renderHome();
+    expect(await screen.findByText("2 chapters and 1 planned in 1 part")).toBeTruthy();
+  });
+
   it("says so quietly when the reading state cannot be loaded", async () => {
     vi.spyOn(booksApi, "manifest").mockResolvedValue(manifest([1, 2]));
     const st = vi

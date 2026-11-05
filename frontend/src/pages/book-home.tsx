@@ -274,6 +274,16 @@ function ChapterRow({
   );
 }
 
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+// Chapters marked Read or Done.
+function countRead(links: ManifestLink[], state: BookState | undefined): number {
+  return links.filter((l) => {
+    const st = rowState(l, state);
+    return st === "read" || st === "done";
+  }).length;
+}
+
 function PartSection({
   part,
   state,
@@ -283,10 +293,7 @@ function PartSection({
 }) {
   const rows = part.children.filter((l) => l.properties?.number !== undefined);
   const real = rows.filter((l) => l.properties?.kind !== "planned");
-  const read = real.filter((l) => {
-    const s = rowState(l, state);
-    return s === "read" || s === "done";
-  }).length;
+  const read = countRead(real, state);
   return (
     <details open className="rounded-md border border-[var(--color-border)]">
       <summary className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2.5">
@@ -336,10 +343,11 @@ export function BookHomePage() {
   const m = manifest.data;
   const s = state.data;
   const allLinks = m.toc.flatMap((p) => p.children);
-  const read = allLinks.filter((l) => {
-    const st = rowState(l, s);
-    return st === "read" || st === "done";
-  }).length;
+  const read = countRead(allLinks, s);
+  // Counted over what this reader can open, as progress.of is; the
+  // manifest's numberOfChapters also counts placeholders.
+  const chapters = allLinks.filter((l) => l.properties?.kind === "chapter").length;
+  const planned = allLinks.filter((l) => l.properties?.kind === "planned").length;
   const share = s ? Math.round(s.progress.share * 100) : 0;
 
   return (
@@ -364,8 +372,8 @@ export function BookHomePage() {
             </p>
           ) : null}
           <p className="mt-1 text-sm text-[var(--color-fg-muted)]">
-            {m.metadata.numberOfChapters} chapters in {m.toc.length}{" "}
-            {m.toc.length === 1 ? "part" : "parts"}
+            {plural(chapters, "chapter")}
+            {planned ? ` and ${planned} planned` : ""} in {plural(m.toc.length, "part")}
           </p>
           {!s && state.isError ? (
             <p role="status" className="mt-3 text-xs text-[var(--color-fg-muted)]">
@@ -399,7 +407,7 @@ export function BookHomePage() {
                 {s.progress.chapter > 0
                   ? `Chapter ${s.progress.chapter} of ${s.progress.of} · `
                   : ""}
-                {share}% of the book · {read} chapters read
+                {share}% of the book · {plural(read, "chapter")} read
               </p>
             </div>
           ) : null}
