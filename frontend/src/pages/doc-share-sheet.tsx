@@ -227,45 +227,32 @@ export function ShareSheet({
       if (!form.current) toast.error(errorMessage(e, "Couldn't share."));
     },
   });
-  const updateGrant = useMutation({
-    mutationFn: ({
-      resourceId: rid,
-      grantId,
-      nextRole,
-      sourceType,
-    }: {
-      resourceId: string;
-      grantId: string;
-      nextRole: string;
-      sourceType: string;
-    }) =>
-      sourceType === "document"
-        ? api.updateGrant(rid, grantId, nextRole)
-        : api.updateFolderGrant(rid, grantId, nextRole),
-    onSuccess: () => {
-      invalidateAccess();
-      setPendingChange(null);
+  // A confirmed change to inherited access. Its success closes only its own
+  // confirmation, not a newer one that the reader opened while it waited.
+  const inheritedChange = useMutation({
+    mutationFn: async ({ source, action, newRole }: PendingChange) => {
+      const { resource_id: rid, grant_id: grantId = "" } = source;
+      const onDocument = source.resource_type === "document";
+      if (action === "revoke")
+        await (onDocument
+          ? api.deleteGrant(rid, grantId)
+          : api.deleteFolderGrant(rid, grantId));
+      else
+        await (onDocument
+          ? api.updateGrant(rid, grantId, newRole!)
+          : api.updateFolderGrant(rid, grantId, newRole!));
     },
-    onError: (e) => toast.error(errorMessage(e, "Couldn't update access.")),
-  });
-  const revokeGrant = useMutation({
-    mutationFn: ({
-      resourceId: rid,
-      grantId,
-      sourceType,
-    }: {
-      resourceId: string;
-      grantId: string;
-      sourceType: string;
-    }) =>
-      sourceType === "document"
-        ? api.deleteGrant(rid, grantId)
-        : api.deleteFolderGrant(rid, grantId),
-    onSuccess: () => {
+    onSuccess: (_, change) => {
       invalidateAccess();
-      setPendingChange(null);
+      setPendingChange((now) => (now === change ? null : now));
     },
-    onError: (e) => toast.error(errorMessage(e, "Couldn't revoke access.")),
+    onError: (e, { action }) =>
+      toast.error(
+        errorMessage(
+          e,
+          `Couldn't ${action === "revoke" ? "revoke" : "update"} access.`,
+        ),
+      ),
   });
   const updateDirectGrant = useMutation({
     mutationFn: ({ grantId, nextRole }: { grantId: string; nextRole: string }) =>
@@ -297,10 +284,7 @@ export function ShareSheet({
       if (isFolder) await api.setFolderGeneralAccess(id, next);
       else await api.setGeneralAccess(id, next);
     },
-    onSuccess: () => {
-      invalidateAccess();
-      setPendingChange(null);
-    },
+    onSuccess: invalidateAccess,
     onError: (e) => toast.error(errorMessage(e, "Couldn't update general access.")),
   });
 
@@ -315,22 +299,8 @@ export function ShareSheet({
     !!pendingChange && pendingNow?.role !== pendingChange.source.role;
 
   const confirmPending = () => {
-    if (!canManageAccess || !pendingChange || !pendingNow) return;
-    const { source, action, newRole } = pendingChange;
-    if (action === "revoke") {
-      revokeGrant.mutate({
-        resourceId: source.resource_id,
-        grantId: source.grant_id!,
-        sourceType: source.resource_type,
-      });
-    } else if (newRole) {
-      updateGrant.mutate({
-        resourceId: source.resource_id,
-        grantId: source.grant_id!,
-        nextRole: newRole,
-        sourceType: source.resource_type,
-      });
-    }
+    if (canManageAccess && pendingChange && pendingNow)
+      inheritedChange.mutate(pendingChange);
   };
 
   const handleInheritedChange = (item: EffectiveAccessItem, nextValue: string) => {
@@ -497,7 +467,10 @@ export function ShareSheet({
               <Button
                 size="sm"
                 disabled={!pendingNow}
-                busy={updateGrant.isPending || revokeGrant.isPending}
+                busy={
+                  inheritedChange.isPending &&
+                  inheritedChange.variables === pendingChange
+                }
                 onClick={confirmPending}
               >
                 {pendingChange.action === "revoke"
@@ -754,8 +727,7 @@ export function ShareSheet({
                             disabled={
                               !canManageAccess ||
                               !(grantId || src) ||
-                              updateGrant.isPending ||
-                              revokeGrant.isPending ||
+                              inheritedChange.isPending ||
                               updateDirectGrant.isPending ||
                               revokeDirectGrant.isPending
                             }
