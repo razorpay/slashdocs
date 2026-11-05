@@ -137,30 +137,39 @@ func renderBookStatus(out io.Writer, b []byte) error {
 		_, err := fmt.Fprintln(out, "The outline is empty.")
 		return err
 	}
-	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "Outline:")
+	var tw strings.Builder
+	fmt.Fprintln(&tw, "Outline:")
 	for _, e := range m.Entries {
 		slot := fmt.Sprint(e.Number)
 		if e.Number == 0 {
 			slot = e.Kind
 		}
 		if e.Planned || e.DocumentID == "" {
-			fmt.Fprintf(tw, "  %s\t%s\tplanned\n", slot, e.Title)
+			fmt.Fprintf(&tw, "  %s\t%s\tplanned\n", slot, e.Title)
 			continue
 		}
-		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", slot, e.Title, e.DocumentID, e.CurrentVersionID)
+		fmt.Fprintf(&tw, "  %s\t%s\t%s\t%s\n", slot, e.Title, e.DocumentID, e.CurrentVersionID)
 	}
 	if len(m.NotInOutline) > 0 {
-		fmt.Fprintln(tw, "Not in outline:")
+		fmt.Fprintln(&tw, "Not in outline:")
 		for _, d := range m.NotInOutline {
-			fmt.Fprintf(tw, "  %s\t%s\n", d.ID, d.Title)
+			fmt.Fprintf(&tw, "  %s\t%s\n", d.ID, d.Title)
 		}
 	}
 	if len(m.Removed) > 0 {
-		fmt.Fprintln(tw, "Removed from the outline:")
+		fmt.Fprintln(&tw, "Removed from the outline:")
 		for _, id := range m.Removed {
-			fmt.Fprintf(tw, "  %s\n", id)
+			fmt.Fprintf(&tw, "  %s\n", id)
 		}
+	}
+	return writeTabbed(out, tw.String())
+}
+
+// writeTabbed writes tab-separated lines to out as aligned columns.
+func writeTabbed(out io.Writer, text string) error {
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	if _, err := io.WriteString(tw, text); err != nil {
+		return err
 	}
 	return tw.Flush()
 }
@@ -184,20 +193,20 @@ func renderBookSummary(out io.Writer, b []byte) error {
 	if err := json.Unmarshal(b, &m); err != nil {
 		return err
 	}
-	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(tw, "%s (%s, %d chapters)\n", m.Metadata.Title, m.Metadata.Identifier, m.Metadata.NumberOfChapters)
+	var tw strings.Builder
+	fmt.Fprintf(&tw, "%s (%s, %d chapters)\n", m.Metadata.Title, m.Metadata.Identifier, m.Metadata.NumberOfChapters)
 	for _, item := range m.ReadingOrder {
 		if item.Properties == nil {
-			fmt.Fprintf(tw, "  %s\n", item.Title)
+			fmt.Fprintf(&tw, "  %s\n", item.Title)
 			continue
 		}
 		slot := item.Properties.Kind
 		if item.Properties.Number > 0 {
 			slot = fmt.Sprint(item.Properties.Number)
 		}
-		fmt.Fprintf(tw, "  %s\t%s\t%s\n", slot, item.Title, item.Properties.DocumentID)
+		fmt.Fprintf(&tw, "  %s\t%s\t%s\n", slot, item.Title, item.Properties.DocumentID)
 	}
-	return tw.Flush()
+	return writeTabbed(out, tw.String())
 }
 
 func booksOutlineCmd(g *globals, out io.Writer) *cobra.Command {

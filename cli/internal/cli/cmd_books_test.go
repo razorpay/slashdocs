@@ -171,7 +171,7 @@ func TestBooksOutlinePullWritesFileOrStdout(t *testing.T) {
 	if out, err := Execute([]string{"books", "outline", "pull", "book_1", dest, "--quiet"}); err != nil || out != "" {
 		t.Fatalf("quiet pull = %q, %v", out, err)
 	}
-	b, err := os.ReadFile(dest)
+	b, err := os.ReadFile(dest) //nolint:gosec // The test reads the file it just wrote under t.TempDir.
 	if err != nil || !strings.Contains(string(b), `"outline"`) {
 		t.Fatalf("file = %q, %v", b, err)
 	}
