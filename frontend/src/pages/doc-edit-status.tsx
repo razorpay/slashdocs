@@ -87,8 +87,11 @@ export function EditStatus({ access }: { access?: keyof typeof ACCESS }) {
   // A later state of a save says itself. Undo stays for its while.
   const noted = !!note && saveState === "saved";
   const label = noted ? (
-    <span className="block max-w-[32ch] truncate" title={note.said}>
-      {note.said}
+    <span className="inline-flex min-w-0 gap-1">
+      <span>{status.label}</span>
+      <span className="max-w-[32ch] truncate" title={note.said}>
+        · {note.said}
+      </span>
     </span>
   ) : hinted ? (
     <>
