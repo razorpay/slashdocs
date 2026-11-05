@@ -16,9 +16,9 @@ import { queryKeys } from "@/lib/queryKeys";
 import { useDocumentRole, useMe } from "@/lib/hooks";
 import { samePrincipal } from "@/lib/principals";
 import { useSignInPath } from "@/lib/auth-state";
-import { Skeleton, type RetryQuery } from "@/components/ui/misc";
+import { Skeleton } from "@/components/ui/misc";
 import { Button } from "@/components/ui/button";
-import { ErrorState } from "@/components/error-state";
+import { ErrorState, PageError } from "@/components/error-state";
 import { AppBar } from "@/components/layout/app-shell";
 import { Page } from "@/components/layout/page";
 import { DocBar } from "./doc-bar";
@@ -123,43 +123,6 @@ function AccessDeniedState({ documentID }: { documentID: string }) {
           ) : null}
         </div>
       }
-    />
-  );
-}
-
-function DocumentError({
-  error,
-  documentID,
-  retry,
-}: {
-  error: Error;
-  documentID: string;
-  retry: RetryQuery;
-}) {
-  const apiError = error instanceof APIError ? error : undefined;
-  if (apiError?.status === 403) return <AccessDeniedState documentID={documentID} />;
-  if (apiError?.status === 404) {
-    return (
-      <ErrorState
-        title="Document not found"
-        description="This document may have been deleted, or the link may be incorrect."
-      />
-    );
-  }
-  if (apiError?.code === "group_membership_unavailable") {
-    return (
-      <ErrorState
-        title="Group access is temporarily unavailable"
-        description="Google Group membership could not be refreshed. Try again shortly; stale group access has not been used."
-        retry={retry}
-      />
-    );
-  }
-  return (
-    <ErrorState
-      title="Could not load document"
-      description="Something went wrong while loading this document. Please try again."
-      retry={retry}
     />
   );
 }
@@ -305,7 +268,12 @@ export function DocumentPage() {
       <>
         <AppBar />
         <Page lane="focus" backdrop={false}>
-          <DocumentError error={doc.error} documentID={id} retry={doc} />
+          <PageError
+            error={doc.error}
+            what="document"
+            denied={<AccessDeniedState documentID={id} />}
+            retry={doc}
+          />
         </Page>
       </>
     );

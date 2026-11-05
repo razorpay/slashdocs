@@ -9,8 +9,8 @@ import { MoreHorizontal, Plus, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Page } from "@/components/layout/page";
 import { beat } from "@/lib/enter";
-import { Skeleton, EmptyState, RetryButton } from "@/components/ui/misc";
-import { LoadErrorLine } from "@/components/error-state";
+import { Skeleton, EmptyState } from "@/components/ui/misc";
+import { LoadError, LoadErrorLine } from "@/components/error-state";
 import { Dropdown, DropdownContent, DropdownTrigger } from "@/components/ui/dropdown";
 import { api, APIError, docID, docTitle, type Folder, type FolderEntry } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
@@ -263,19 +263,25 @@ export function DocumentsPage() {
         </LoadErrorLine>
       ) : null}
 
-      {docs.error ? (
+      {docs.isRefetchError ? (
+        <LoadErrorLine boxed query={docs}>
+          Could not refresh the documents. The list may be out of date.
+        </LoadErrorLine>
+      ) : null}
+
+      {docs.error && !docs.data ? (
         invalidSearch ? (
           <EmptyState
             title="Search query not valid"
             description={errorMessage(docs.error)}
           />
         ) : (
-          <EmptyState
+          <LoadError
             title={
               searching ? "Could not search documents" : "Could not load documents"
             }
-            description="Something went wrong. Please try again."
-            action={<RetryButton query={docs} variant="outline" />}
+            error={docs.error}
+            query={docs}
           />
         )
       ) : empty ? (
@@ -320,7 +326,14 @@ export function DocumentsPage() {
       )}
 
       {/* The pages of the last search show while a new search loads. */}
-      {docs.hasNextPage && !docs.isPlaceholderData ? (
+      {docs.isFetchNextPageError ? (
+        <LoadErrorLine
+          query={{ isFetching: docs.isFetchingNextPage, refetch: docs.fetchNextPage }}
+          className="mx-auto mt-6 max-w-md"
+        >
+          Could not load more documents.
+        </LoadErrorLine>
+      ) : docs.hasNextPage && !docs.isPlaceholderData ? (
         <div className="mt-6 flex justify-center">
           <Button
             variant="outline"
