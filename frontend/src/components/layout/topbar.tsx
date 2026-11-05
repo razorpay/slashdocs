@@ -8,6 +8,7 @@ import {
   Monitor,
   Moon,
   Rocket,
+  RotateCw,
   Sun,
   Terminal,
   User as UserIcon,
@@ -30,6 +31,7 @@ import { useAccessRequests, useMe } from "@/lib/hooks";
 import { useTheme } from "@/lib/theme";
 import { principalColor, principalLabel } from "@/lib/principals";
 import type { Principal } from "@/api";
+import { cn } from "@/lib/cn";
 
 // The app bar sits on the page, as the landing header does, so the
 // RazorSense wash runs behind it. The negative margin starts the page under it.
@@ -73,12 +75,17 @@ export function GetStarted() {
 }
 
 // The requests for access on every document that the reader shares. Each one
-// opens the share sheet of its document. With no request, nothing shows.
+// opens the share sheet of its document. With no request, nothing shows. A
+// list that did not load shows a quiet mark and Retry, not an empty list.
 export function AccessRequestsMenu() {
   const nav = useNavigate();
-  const items = useAccessRequests().data?.items ?? [];
-  if (!items.length) return null;
-  const count = `${items.length} ${items.length === 1 ? "request" : "requests"} for access`;
+  const requests = useAccessRequests();
+  const items = requests.data?.items ?? [];
+  const failed = requests.isError && !requests.data;
+  if (!items.length && !failed) return null;
+  const label = failed
+    ? "Requests for access did not load"
+    : `${items.length} ${items.length === 1 ? "request" : "requests"} for access`;
   return (
     <Dropdown>
       <DropdownTrigger asChild>
@@ -87,19 +94,40 @@ export function AccessRequestsMenu() {
           size="icon"
           className="relative min-h-10 min-w-10 rounded-full"
           tooltip="Requests for access"
-          aria-label={count}
+          aria-label={label}
         >
           <Inbox className="h-4 w-4" />
           <span
             data-state="open"
-            className="pop absolute right-1 top-1 min-w-4 rounded-full bg-[var(--color-accent)] px-1 text-[10px] font-medium leading-4 tabular-nums text-white"
+            className={cn(
+              "pop absolute right-1 top-1 min-w-4 rounded-full px-1 text-[10px] font-medium leading-4 tabular-nums text-white",
+              failed ? "bg-[var(--color-fg-muted)]" : "bg-[var(--color-accent)]",
+            )}
           >
-            {items.length}
+            {failed ? "!" : items.length}
           </span>
         </Button>
       </DropdownTrigger>
       <DropdownContent className="w-80">
         <DropdownLabel>Requests for access</DropdownLabel>
+        {failed ? (
+          <>
+            <p className="px-2 pb-1 text-xs text-[var(--color-fg-muted)]">
+              Could not load the requests for access.
+            </p>
+            <DropdownItem
+              disabled={requests.isFetching}
+              // The menu stays open, so the list shows when it loads.
+              onSelect={(e) => {
+                e.preventDefault();
+                requests.refetch();
+              }}
+            >
+              <RotateCw className="h-4 w-4" />
+              {requests.isFetching ? "Retrying…" : "Retry"}
+            </DropdownItem>
+          </>
+        ) : null}
         {items.map((r) => (
           <DropdownItem
             key={`${r.document_id}:${r.requester.type}:${r.requester.id}`}
