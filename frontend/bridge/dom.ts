@@ -201,15 +201,20 @@ const SLIDE = "slashdocs-slide";
 // cover tells document d that the app covers the bottom px of its viewport,
 // or none for 0. Its scroll padding then centers what comes into view above
 // that part, and as much room after the page lets the end of the page come
-// up above it.
+// up above it. While a sheet stays open, the room keeps all of it that the
+// view shows, so that the words above a sheet that shrinks stay still.
 export function cover(d: Document, px: number) {
-  const { scrollHeight, clientHeight } = d.scrollingElement ?? d.documentElement;
+  const root = d.scrollingElement ?? d.documentElement;
+  const room =
+    covered(d) && parseFloat(d.defaultView!.getComputedStyle(root).paddingBottom);
+  // The last scroll position in the page itself.
+  const end = root.scrollHeight - room - root.clientHeight;
   makeRoom(
     d,
     COVER,
     px,
-    `html{scroll-padding-bottom:${px}px!important;padding-bottom:${px}px!important}`,
-    { top: Math.min(d.defaultView!.scrollY, scrollHeight - covered(d) - clientHeight) },
+    `html{scroll-padding-bottom:${px}px!important;padding-bottom:${Math.max(px, root.scrollTop - end)}px!important}`,
+    { top: Math.min(root.scrollTop, end) },
   );
 }
 
