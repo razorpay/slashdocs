@@ -165,6 +165,7 @@ export function DocWorkspace({
   }, []);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [text, setText] = useState<TextControls>();
+  const [frameReady, setFrameReady] = useState(false);
   useEffect(() => {
     setSaveState("idle");
   }, [docId]);
@@ -486,6 +487,8 @@ export function DocWorkspace({
       setSaveState,
       text,
       setText,
+      frameReady,
+      setFrameReady,
       stayOnVersion,
       showLatest,
     }),
@@ -524,6 +527,7 @@ export function DocWorkspace({
       editable,
       saveState,
       text,
+      frameReady,
       stayOnVersion,
       showLatest,
     ],

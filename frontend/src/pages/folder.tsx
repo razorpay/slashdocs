@@ -19,8 +19,13 @@ import {
 import { Page } from "@/components/layout/page";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Skeleton, EmptyState, RetryButton } from "@/components/ui/misc";
-import { ErrorState, LoadErrorLine } from "@/components/error-state";
+import { Skeleton, EmptyState } from "@/components/ui/misc";
+import {
+  ErrorState,
+  LoadError,
+  LoadErrorLine,
+  PageError,
+} from "@/components/error-state";
 import {
   Dropdown,
   DropdownContent,
@@ -43,7 +48,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { api, APIError, type FolderEntry } from "@/api";
+import { api, type FolderEntry } from "@/api";
 import { canManageSharing } from "@/lib/constants";
 import { queryKeys } from "@/lib/queryKeys";
 import { samePrincipal } from "@/lib/principals";
@@ -161,34 +166,17 @@ function FolderView({ id }: { id: string }) {
       </Page>
     );
   }
-  const error = folder.error || contents.error;
-  if (error) {
-    const apiError = error instanceof APIError ? error : undefined;
+  if (folder.error)
     return (
       <Page backdrop={false}>
-        {apiError?.status === 403 ? (
-          <FolderAccessDenied />
-        ) : apiError?.status === 404 ? (
-          <ErrorState
-            title="Folder not found"
-            description="This folder may have been deleted, or the link may be incorrect."
-          />
-        ) : apiError?.code === "group_membership_unavailable" ? (
-          <ErrorState
-            title="Group access is temporarily unavailable"
-            description="Google Group membership could not be refreshed. Try again shortly; stale group content has not been shown."
-            retry={folder.error ? folder : contents}
-          />
-        ) : (
-          <ErrorState
-            title="Could not load folder"
-            description="Something went wrong while loading this folder. Please try again."
-            retry={folder.error ? folder : contents}
-          />
-        )}
+        <PageError
+          error={folder.error}
+          what="folder"
+          denied={<FolderAccessDenied />}
+          retry={folder}
+        />
       </Page>
     );
-  }
 
   const f = folder.data!;
   const items = contents.data?.items || [];
@@ -371,12 +359,23 @@ function FolderView({ id }: { id: string }) {
         </AlertDialog>
 
         {/* Contents */}
+        {contents.isRefetchError ? (
+          <LoadErrorLine boxed query={contents}>
+            Could not refresh what is in this folder. It may be out of date.
+          </LoadErrorLine>
+        ) : null}
         {pins.isError && visibleItems.length ? (
           <LoadErrorLine boxed query={pins}>
             Could not load your pins. Pinned items show in their usual place.
           </LoadErrorLine>
         ) : null}
-        {visibleItems.length === 0 && !readme ? (
+        {contents.error && !contents.data ? (
+          <LoadError
+            title="Could not load what is in this folder"
+            error={contents.error}
+            query={contents}
+          />
+        ) : visibleItems.length === 0 && !readme ? (
           <EmptyState
             icon={<FolderIcon className="h-5 w-5" />}
             title="Empty folder"
@@ -504,7 +503,9 @@ function FolderReadme({
   });
   // The README is a full document: it follows the theme and reads and
   // writes its KV state, live, like on the document page.
-  const bridge = useBridgeHost(document.id, token.data?.url);
+  const bridge = useBridgeHost(document.id, token.data?.url, {
+    refresh: token.refetch,
+  });
   useDocumentEvents(document.id, { kv: bridge.deliverKV });
   return (
     <section className="mt-8 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
@@ -517,19 +518,20 @@ function FolderReadme({
           <Link to={`/app/d/${document.id}`}>Open document</Link>
         </Button>
       </div>
-      {bridge.frameSrc ? (
+      {token.error || bridge.failed ? (
+        <LoadError
+          title="Could not render README.html"
+          error={token.error}
+          query={token.error ? token : bridge.retry}
+        />
+      ) : bridge.frameSrc ? (
         <iframe
           ref={bridge.ref}
           title="Folder README"
           src={bridge.frameSrc}
+          onLoad={bridge.onLoad}
           className="h-[min(70vh,760px)] w-full border-0"
           sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-        />
-      ) : token.error ? (
-        <EmptyState
-          title="Could not render README.html"
-          description={errorMessage(token.error)}
-          action={<RetryButton query={token} variant="outline" size="sm" />}
         />
       ) : (
         <div className="p-6 text-sm text-[var(--color-fg-muted)]">

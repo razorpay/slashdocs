@@ -72,7 +72,7 @@ const ACCESS: Record<"commenter" | "viewer", Status> = {
 // shows only the icon of a save. A screen reader hears only that edits are
 // not saved, not each save of a pause.
 export function EditStatus({ access }: { access?: keyof typeof ACCESS }) {
-  const { editable, saveState, text } = useDoc();
+  const { editable, saveState, text, frameReady } = useDoc();
   const status = editable ? STATUS[saveState] : access && ACCESS[access];
   if (!status) return null;
   const { label, title, Icon } = status;
@@ -92,8 +92,15 @@ export function EditStatus({ access }: { access?: keyof typeof ACCESS }) {
     // A phone has no Esc key to leave the text, so a touch screen shows Done
     // while the text has the caret. On a narrow bar Done takes the place of
     // the status. The place keeps its width in every state, so that the
-    // title does not move.
-    <span className="grid shrink-0 items-center justify-items-center *:col-start-1 *:row-start-1 sm:flex sm:gap-2">
+    // title does not move. It shows once the document takes edits.
+    <span
+      aria-hidden={!frameReady || undefined}
+      className={cn(
+        "grid shrink-0 items-center justify-items-center *:col-start-1 *:row-start-1 sm:flex sm:gap-2",
+        fade,
+        !frameReady && "invisible opacity-0",
+      )}
+    >
       <Status
         label={label}
         title={title}

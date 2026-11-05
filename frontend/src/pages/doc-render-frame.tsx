@@ -11,9 +11,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type Anchor } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { COMMENT_STATUS } from "@/lib/constants";
-import { Center, RetryButton } from "@/components/ui/misc";
-import { ErrorState } from "@/components/error-state";
-import { errorMessage } from "@/lib/errors";
+import { Center } from "@/components/ui/misc";
+import { LoadError } from "@/components/error-state";
 import { CHORD_KEYS } from "@/lib/esc-chord";
 import { cursorsShownStore, parseCursorSpot } from "@/lib/live-cursors";
 import { createPersistentStore } from "@/lib/persistent-store";
@@ -93,6 +92,7 @@ export function RenderFrame({
     editable,
     setSaveState,
     setText,
+    setFrameReady,
     stayOnVersion,
     showLatest,
   } = useDoc();
@@ -129,11 +129,25 @@ export function RenderFrame({
     staleTime: 4 * 60_000,
     enabled: !!frameVersion,
   });
-  const { ref, frameSrc, frameOrigin, ready, postToFrame, deliverKV } = useBridgeHost(
-    docId,
-    token.data?.url && reloadURL(token.data.url, reloads),
+  const {
+    ref,
+    frameSrc,
+    frameOrigin,
+    ready,
+    failed,
+    onLoad,
+    retry,
+    postToFrame,
+    deliverKV,
+  } = useBridgeHost(docId, token.data?.url && reloadURL(token.data.url, reloads), {
     signIn,
-  );
+    refresh: token.refetch,
+  });
+  // The bar says that the reader can edit only once the frame shows the text.
+  useEffect(() => {
+    setFrameReady(ready);
+    return () => setFrameReady(false);
+  }, [ready, setFrameReady]);
   // Paint results from a frame that is navigating away (its WindowProxy
   // survives navigation) must not bring back the state reset below.
   const readyRef = useRef(ready);
@@ -768,13 +782,15 @@ export function RenderFrame({
   // The parent (DocPage) only mounts RenderFrame when a current version
   // exists, so version is always set here.
   if (token.isLoading) return <Center>Preparing secure render…</Center>;
-  if (token.error)
+  if (token.error || failed)
     return (
-      <ErrorState
-        title="Could not open the document"
-        description={errorMessage(token.error)}
-        action={<RetryButton query={token} />}
-      />
+      <Center>
+        <LoadError
+          title="Could not open the document"
+          error={token.error}
+          query={token.error ? token : retry}
+        />
+      </Center>
     );
 
   const showZoomBadge = Math.round(scale * 100) !== 100;
@@ -805,6 +821,7 @@ export function RenderFrame({
             background: "#fff",
           }}
           src={frameSrc}
+          onLoad={onLoad}
           sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
         />
       </div>

@@ -101,6 +101,10 @@ export type DocContextValue = {
   // text. The frame sets them.
   text?: TextControls;
   setText: (text: TextControls | undefined) => void;
+  // The frame shows the text and takes edits. Until then, and when it did
+  // not load, the bar does not say that the reader can edit.
+  frameReady: boolean;
+  setFrameReady: (ready: boolean) => void;
   // Keeps the reader on the version on screen when the document changes
   // under them, as when edits land on top of someone else's, or on a given
   // version that holds what is on screen.

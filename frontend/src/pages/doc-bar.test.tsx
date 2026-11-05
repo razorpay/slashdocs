@@ -47,6 +47,8 @@ const mockDocContext: DocContextValue = {
   saveState: "idle",
   setSaveState: vi.fn(),
   setText: vi.fn(),
+  frameReady: true,
+  setFrameReady: vi.fn(),
   stayOnVersion: vi.fn(),
   showLatest: vi.fn(),
 };
@@ -386,6 +388,15 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     expect(status("viewer")).toBe("Can view");
     expect(status("commenter", true)).toBe("Can edit");
     expect(status()).toBeUndefined();
+  });
+
+  it("does not say Can edit while the document does not show, or did not load", () => {
+    render(
+      <DocProvider value={{ ...mockDocContext, editable: true, frameReady: false }}>
+        <EditStatus />
+      </DocProvider>,
+    );
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("says Saving… only while a save runs, and announces only a failed save", () => {
