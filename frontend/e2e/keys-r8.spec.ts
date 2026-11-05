@@ -175,7 +175,7 @@ test.describe("at 1440x900", () => {
 });
 
 // The link of a heading stays in the page at any width, also after a long
-// last word at the edge.
+// last word at the edge, and adds no line to its heading.
 test.describe("at 390x844", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
@@ -197,8 +197,22 @@ test.describe("at 390x844", () => {
       const outside = [...body.querySelectorAll(".slashdocs-heading-link")].filter(
         (button) => button.getBoundingClientRect().right > root.clientWidth,
       );
-      return { wider: root.scrollWidth - root.clientWidth, outside: outside.length };
+      // The links take no line of their own: each heading keeps its height
+      // without them.
+      const headings = [...body.querySelectorAll("h1,h2")];
+      const heights = () => headings.map((h) => h.getBoundingClientRect().height);
+      const withLinks = heights();
+      body.ownerDocument.head.insertAdjacentHTML(
+        "beforeend",
+        "<style>.slashdocs-heading-link{display:none!important}</style>",
+      );
+      const taller = heights().filter((height, i) => height !== withLinks[i]);
+      return {
+        wider: root.scrollWidth - root.clientWidth,
+        outside: outside.length,
+        taller: taller.length,
+      };
     });
-    expect(overflow).toEqual({ wider: 0, outside: 0 });
+    expect(overflow).toEqual({ wider: 0, outside: 0, taller: 0 });
   });
 });

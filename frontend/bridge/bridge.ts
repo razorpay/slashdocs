@@ -1856,9 +1856,8 @@ type Theme = "dark" | "light";
       // The link button is out of flow, in the gutter before the heading's
       // first line. Headings keep the height that the author gave them, so
       // readers, editors and previews lay out the document in the same way.
-      // With no gutter, it follows the text in the flow, so that it wraps
-      // with the words and never makes the page wider.
-      style.textContent = `.slashdocs-heading-link{position:absolute!important;box-sizing:border-box!important;width:1.2em!important;margin:0!important;margin-inline-start:-1.2em!important;padding:0!important;border:0!important;border-radius:4px;background:transparent!important;color:inherit;font:inherit;text-align:center;cursor:pointer}.slashdocs-heading-link.slashdocs-heading-link-end{position:static!important;display:inline-block!important;margin-inline-start:.25em!important}.slashdocs-heading-link::before{content:"#";opacity:0;transition:opacity .15s ease-out}:is(h1,h2,h3,h4,h5,h6):hover>.slashdocs-heading-link::before,.slashdocs-heading-link:focus-visible::before{opacity:.5}.slashdocs-heading-link:hover::before{opacity:.85}.slashdocs-heading-link:focus-visible{outline:2px solid currentColor}@media print{.slashdocs-heading-link{display:none!important}}`;
+      // With no gutter, it follows the heading's last word.
+      style.textContent = `.slashdocs-heading-link{position:absolute!important;box-sizing:border-box!important;width:1.2em!important;margin:0!important;margin-inline-start:-1.2em!important;padding:0!important;border:0!important;border-radius:4px;background:transparent!important;color:inherit;font:inherit;text-align:center;cursor:pointer}.slashdocs-heading-link.slashdocs-heading-link-end{margin-inline-start:.25em!important}.slashdocs-heading-link::before{content:"#";opacity:0;transition:opacity .15s ease-out}:is(h1,h2,h3,h4,h5,h6):hover>.slashdocs-heading-link::before,.slashdocs-heading-link:focus-visible::before{opacity:.5}.slashdocs-heading-link:hover::before{opacity:.85}.slashdocs-heading-link:focus-visible{outline:2px solid currentColor}@media print{.slashdocs-heading-link{display:none!important}}`;
       d.head.appendChild(style);
     }
     Array.from(d.querySelectorAll("h1,h2,h3,h4,h5,h6")).forEach((heading) => {
@@ -1908,6 +1907,11 @@ type Theme = "dark" | "light";
         else heading.append(button);
       }
       button.classList.toggle("slashdocs-heading-link-end", !fits);
+      // A button after a last word at the page's edge would make the page
+      // wider. It moves back over that word, where only hover and focus show it.
+      button.style.translate = "";
+      const over = button.getBoundingClientRect().right - d.documentElement.clientWidth;
+      if (!fits && over > 0) button.style.translate = `${-Math.ceil(over)}px`;
     });
     if (pendingHeading) navigateHeading(pendingHeading);
   }
@@ -2064,6 +2068,8 @@ type Theme = "dark" | "light";
   // blocks are still there: this frame goes after the document does.
   const SEEN_BLOCKS = `slashdocs:blocks:${location.pathname.split("/")[2]}`;
   function keepSeen(blocks: Block[]): void {
+    // A window that goes before its blocks show keeps the list of the last.
+    if (!blocks.length) return;
     try {
       sessionStorage.setItem(SEEN_BLOCKS, JSON.stringify(blocks.map((b) => b.text)));
     } catch {}
