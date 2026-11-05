@@ -202,3 +202,41 @@ test("the document frame does not scroll sideways on a phone", async ({
   const bridgeRoot = bridge(page).locator("html");
   expect(await bridgeRoot.evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0);
 });
+
+test("keyboard placement works again and again in one page, with Esc and the Esc chord between", async ({
+  page,
+  slashdocs,
+}) => {
+  const title = uniqueName("Keyboard pins again");
+  const document = await slashdocs.createDocument(title, documentHTML(title));
+  await page.goto(`/app/d/${document.id}`);
+  await expect(renderedDocument(page).locator("#intro")).toBeVisible();
+  await page.evaluate(() => {
+    const w = window as unknown as { keydowns: number };
+    w.keydowns = 0;
+    window.addEventListener("keydown", () => w.keydowns++, true);
+  });
+  const composer = page
+    .getByRole("dialog", { name: "New comment" })
+    .getByPlaceholder("Add a comment…");
+  for (const between of ["Escape", "Escape", "Escape c"]) {
+    const comments = page.getByRole("button", { name: "Comment on a spot" });
+    if (!(await comments.isVisible()))
+      await page.getByRole("button", { name: "Comments", exact: true }).click();
+    await comments.focus();
+    await page.keyboard.press("Enter");
+    await expect(bridge(page).getByText(PLACE_HINT)).toBeVisible();
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Enter");
+    await expect(composer).toBeFocused();
+    await expect(composer).toHaveValue("");
+    await expect(bridge(page).getByText(PLACE_HINT)).toHaveCount(0);
+    for (const key of between.split(" ")) await page.keyboard.press(key);
+    await expect(composer).toHaveCount(0);
+  }
+  // Each press is one key: nothing sends keys again, and the page answers.
+  expect(
+    await page.evaluate(() => (window as unknown as { keydowns: number }).keydowns),
+  ).toBeLessThan(40);
+});
