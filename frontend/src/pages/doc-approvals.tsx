@@ -629,10 +629,7 @@ function ApproverRow({
         <Button
           size="icon"
           variant="ghost"
-          className={cn(
-            "h-6 w-6 transition-opacity pointer-coarse:h-10 pointer-coarse:w-10",
-            revealOnHover,
-          )}
+          className={cn("h-6 w-6 transition-opacity", revealOnHover)}
           aria-label={`Remove ${label} as approver`}
           disabled={remove.isPending}
           onClick={() => remove.mutate(request.id)}
