@@ -27,7 +27,16 @@ import { PreviewBanner } from "./doc-preview-banner";
 import { useDocumentStream } from "./use-document-stream";
 import { useFollowViewer } from "./use-follow-viewer";
 
-function AccessDeniedState({ documentID }: { documentID: string }) {
+// A reader without access waits on the page. The document query asks again
+// while they wait (see waitingForAccess), so the page opens the document by
+// itself when someone grants access.
+function AccessDeniedState({
+  documentID,
+  retry,
+}: {
+  documentID: string;
+  retry: RetryQuery;
+}) {
   // The server keeps the reader's request, so it stays sent after a reload.
   const ownRequest = useQuery({
     queryKey: queryKeys.documentAccessRequests(documentID),
@@ -39,40 +48,54 @@ function AccessDeniedState({ documentID }: { documentID: string }) {
     // The error shows under the button, not as a toast.
     onError: () => {},
   });
+  const check = useMutation({ mutationFn: async () => void (await retry.refetch()) });
   const sent = requestAccess.isSuccess || !!ownRequest.data?.items.length;
   return (
     <ErrorState
       title="You don't have access to this document"
       description={
-        sent
-          ? "People who can share this document will see your request."
-          : "Send the owner a request to grant you access."
+        check.isSuccess
+          ? "You still don't have access. This page opens the document when someone grants it."
+          : sent
+            ? "People who can share this document will see your request. This page opens the document when they grant access."
+            : "Send the owner a request to grant you access."
       }
       icon={<KeyRound aria-hidden="true" className="h-5 w-5" />}
       action={
         <div className="flex flex-col items-center gap-2">
-          <Button
-            disabled={ownRequest.isPending || requestAccess.isPending || sent}
-            onClick={() => requestAccess.mutate()}
-          >
-            <AnimatePresence initial={false} mode="wait">
-              <motion.span
-                key={sent ? "sent" : requestAccess.isPending ? "sending" : "request"}
-                className="inline-flex items-center gap-2"
-                initial={{ opacity: 0, y: 3 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -3 }}
-                transition={{ type: "spring", duration: 0.3, bounce: 0 }}
+          <div className="flex flex-wrap justify-center gap-2">
+            <Button
+              disabled={ownRequest.isPending || requestAccess.isPending || sent}
+              onClick={() => requestAccess.mutate()}
+            >
+              <AnimatePresence initial={false} mode="wait">
+                <motion.span
+                  key={sent ? "sent" : requestAccess.isPending ? "sending" : "request"}
+                  className="inline-flex items-center gap-2"
+                  initial={{ opacity: 0, y: 3 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -3 }}
+                  transition={{ type: "spring", duration: 0.3, bounce: 0 }}
+                >
+                  {sent ? <Check className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+                  {sent
+                    ? "Request sent"
+                    : requestAccess.isPending
+                      ? "Sending…"
+                      : "Request access"}
+                </motion.span>
+              </AnimatePresence>
+            </Button>
+            {sent ? (
+              <Button
+                variant="outline"
+                disabled={check.isPending}
+                onClick={() => check.mutate()}
               >
-                {sent ? <Check className="h-4 w-4" /> : <Send className="h-4 w-4" />}
-                {sent
-                  ? "Request sent"
-                  : requestAccess.isPending
-                    ? "Sending…"
-                    : "Request access"}
-              </motion.span>
-            </AnimatePresence>
-          </Button>
+                {check.isPending ? "Checking…" : "Check access"}
+              </Button>
+            ) : null}
+          </div>
           {requestAccess.isError ? (
             <p className="text-sm text-[var(--color-danger)]" role="alert">
               Could not send the request. Please try again.
@@ -94,7 +117,8 @@ function DocumentError({
   retry: RetryQuery;
 }) {
   const apiError = error instanceof APIError ? error : undefined;
-  if (apiError?.status === 403) return <AccessDeniedState documentID={documentID} />;
+  if (apiError?.status === 403)
+    return <AccessDeniedState documentID={documentID} retry={retry} />;
   if (apiError?.status === 404) {
     return (
       <ErrorState
@@ -108,6 +132,7 @@ function DocumentError({
       <ErrorState
         title="Group access is temporarily unavailable"
         description="Google Group membership could not be refreshed. Try again shortly; stale group access has not been used."
+        retry={retry}
       />
     );
   }
@@ -122,6 +147,10 @@ function DocumentError({
 
 const CHANGED_TOAST = "document-changed";
 
+// The reader has no access to the document yet, and may get it at any time.
+const waitingForAccess = ({ state }: { state: { error: Error | null } }) =>
+  state.error instanceof APIError && state.error.status === 403;
+
 export function DocumentPage() {
   const { id = "" } = useParams();
   const [searchParams] = useSearchParams();
@@ -130,6 +159,8 @@ export function DocumentPage() {
     queryKey: queryKeys.document(id),
     queryFn: () => api.getDocument(id),
     meta: { suppressGlobalError: true },
+    refetchInterval: (query) => (waitingForAccess(query) ? 5_000 : false),
+    refetchOnWindowFocus: waitingForAccess,
   });
   const me = useMe();
   const versions = useQuery({
