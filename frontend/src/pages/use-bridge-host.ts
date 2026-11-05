@@ -10,10 +10,15 @@ import { errorMessage } from "@/lib/errors";
 // document's KV and GitHub requests, and forwards KV changes to the frame.
 // Message origins are checked on both ends. A signed-out reader who writes
 // KV data goes to signIn instead.
+//
+// The frame must be ready soon. A frame that loads and sends no ready
+// message, as an error page of the render URL does, or a frame that does not
+// load at all, failed: the consumer shows the error in its place, and Retry
+// gets a fresh token with refresh, then loads the frame again.
 export function useBridgeHost(
   docId: string,
   renderURL: string | undefined,
-  signIn?: () => void,
+  { signIn, refresh }: { signIn?: () => void; refresh: () => Promise<unknown> },
 ) {
   const ref = useRef<HTMLIFrameElement>(null);
   // The frame is ready only for the URL it loaded. A new URL is not ready
@@ -35,6 +40,30 @@ export function useBridgeHost(
   const kvRevision = useRef(0);
   const signInRef = useRef(signIn);
   signInRef.current = signIn;
+
+  const [loadedURL, setLoadedURL] = useState<string>();
+  const [failedURL, setFailedURL] = useState<string>();
+  const failed = !!renderURL && !ready && failedURL === renderURL;
+  const [retrying, setRetrying] = useState(false);
+  useEffect(() => {
+    if (!renderURL || ready) return;
+    const wait = loadedURL === renderURL ? READY_AFTER_LOAD : LOAD_TIMEOUT;
+    const timer = window.setTimeout(() => setFailedURL(renderURL), wait);
+    return () => window.clearTimeout(timer);
+  }, [renderURL, ready, loadedURL]);
+  const onLoad = () => setLoadedURL(renderURL);
+  // The consumer takes the failed frame out of the page, so the frame that
+  // comes back loads the URL again, even the same one.
+  const retry = {
+    isFetching: retrying,
+    refetch: async () => {
+      setRetrying(true);
+      await refresh().catch(() => undefined);
+      setRetrying(false);
+      setLoadedURL(undefined);
+      setFailedURL(undefined);
+    },
+  };
 
   const frameOrigin = useMemo(() => {
     if (!renderURL) return null;
@@ -118,8 +147,23 @@ export function useBridgeHost(
     return () => window.removeEventListener("message", onMessage);
   }, [docId, frameOrigin]);
 
-  return { ref, frameSrc, frameOrigin, ready, postToFrame, deliverKV };
+  return {
+    ref,
+    frameSrc,
+    frameOrigin,
+    ready,
+    failed,
+    onLoad,
+    retry,
+    postToFrame,
+    deliverKV,
+  };
 }
+
+// The bridge sends its ready message when the document loads, before the
+// frame's own load event. A slow document may take long to load.
+const READY_AFTER_LOAD = 3_000;
+const LOAD_TIMEOUT = 30_000;
 
 type Reply = (message: unknown) => void;
 
