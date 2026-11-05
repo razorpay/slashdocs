@@ -5,6 +5,7 @@ import {
   type InputHTMLAttributes,
   type ReactNode,
 } from "react";
+import { LoaderCircle } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Input } from "./input";
 
@@ -22,13 +23,16 @@ export type ComboboxOption = {
 // the bottom of a dialog. The arrow keys move through the options that can be
 // picked, and Enter picks the active one. The first one is active when the
 // list opens, so one match takes one Enter. Escape closes the list before the
-// dialog or sheet around it.
+// dialog or sheet around it. While the options load, a busy field shows a
+// spinner at its end. The spinner waits a moment, so a fast load shows none.
 export function Combobox<T extends ComboboxOption>({
   value,
   onValueChange,
   options,
   onPick,
   listAbove = false,
+  busy = false,
+  className,
   ...inputProps
 }: {
   value: string;
@@ -36,6 +40,7 @@ export function Combobox<T extends ComboboxOption>({
   options: T[];
   onPick: (option: T) => void;
   listAbove?: boolean;
+  busy?: boolean;
 } & Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "role">) {
   const listId = useId();
   const [open, setOpen] = useState(false);
@@ -73,6 +78,8 @@ export function Combobox<T extends ComboboxOption>({
     <div className="relative">
       <Input
         {...inputProps}
+        className={cn("pr-8", className)}
+        aria-busy={busy || undefined}
         role="combobox"
         aria-autocomplete="list"
         aria-expanded={showList}
@@ -97,6 +104,13 @@ export function Combobox<T extends ComboboxOption>({
             pick(active);
           }
         }}
+      />
+      <LoaderCircle
+        aria-hidden="true"
+        className={cn(
+          "pointer-events-none absolute right-2.5 top-[calc(50%-0.5rem)] h-4 w-4 text-[var(--color-fg-muted)] transition-opacity duration-150 ease-out motion-safe:animate-spin",
+          busy ? "opacity-100 delay-200" : "opacity-0",
+        )}
       />
       <ul
         id={listId}
