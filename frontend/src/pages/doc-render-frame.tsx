@@ -64,6 +64,7 @@ export function RenderFrame() {
     signIn,
     handleDocCommentClick,
     setUnanchoredComments,
+    setMovedPins,
     setCommentPositions,
     setDocumentHeight,
     registerDocumentScroller,
@@ -153,12 +154,14 @@ export function RenderFrame() {
     // "highlight not found" badges never linger across version switches.
     setUnanchoredComments("text", new Set());
     setUnanchoredComments("pins", new Set());
+    setMovedPins(new Set());
     setCommentPositions(new Map());
     setDocumentHeight(1);
   }, [
     frameOrigin,
     token.data?.url,
     setUnanchoredComments,
+    setMovedPins,
     setCommentPositions,
     setDocumentHeight,
   ]);

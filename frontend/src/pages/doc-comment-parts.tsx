@@ -23,7 +23,8 @@ import { errorMessage } from "@/lib/errors";
 import { queryKeys } from "@/lib/queryKeys";
 import { principalColor, principalLabel, samePrincipal } from "@/lib/principals";
 import { COMMENT_STATUS } from "@/lib/constants";
-import { isAgentRequest } from "@/lib/agent-request";
+import { agentThatSaw, isAgentRequest } from "@/lib/agent-request";
+import { anchorLabel } from "@/lib/comment-pins";
 import { emptyMentionDraft, type MentionDraft } from "@/lib/comment-mentions";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { Badge } from "@/components/ui/badge";
@@ -209,7 +210,7 @@ export function Message({
             <RelativeTime iso={c.created_at} />
           </span>
         ) : null}
-        <AgentRequestBadge body={c.body} />
+        <AgentRequestBadge c={c} />
         {/* The thread's own actions sit in its header; a reply's on hover. */}
         {actions}
         {!thread ? (
@@ -222,9 +223,9 @@ export function Message({
         ) : null}
       </div>
       <div className="mt-0.5 pl-7">
-        {thread && c.selected_text ? (
+        {thread && anchorLabel(c) ? (
           <blockquote className="mb-2 rounded-r-md border-l-2 border-[var(--color-border-strong)] bg-[var(--color-surface-muted)] py-1.5 pl-2 pr-2 text-xs leading-relaxed break-words text-[var(--color-fg-muted)]">
-            {c.selected_text}
+            {anchorLabel(c)}
           </blockquote>
         ) : null}
         <EditableBody c={c} docId={docId} />
@@ -238,13 +239,16 @@ export function Message({
   );
 }
 
-// AgentRequestBadge marks a comment that asks an agent to change words.
-export function AgentRequestBadge({ body }: { body: string }) {
-  return isAgentRequest(body) ? (
+// AgentRequestBadge marks a comment that asks an agent to change words, and
+// names the bot that saw it.
+export function AgentRequestBadge({ c }: { c: Comment }) {
+  if (!isAgentRequest(c.body)) return null;
+  const agent = agentThatSaw(c);
+  return (
     <Badge variant="accent" className="shrink-0">
-      Agent request
+      Agent request{agent ? ` · Seen by ${principalLabel(agent)}` : ""}
     </Badge>
-  ) : null;
+  );
 }
 
 // EditableBody is a message's text, or, while its author edits it, a field

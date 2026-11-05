@@ -149,6 +149,7 @@ export function DocWorkspace({
     () => new Set([...unanchored.text, ...unanchored.pins]),
     [unanchored],
   );
+  const [movedPins, setMovedPins] = useState<ReadonlySet<string>>(new Set());
   const [commentPositions, setCommentPositions] = useState<
     ReadonlyMap<string, CommentPosition>
   >(new Map());
@@ -443,6 +444,8 @@ export function DocWorkspace({
       setActiveComment,
       unanchoredComments,
       setUnanchoredComments,
+      movedPins,
+      setMovedPins,
       commentPositions,
       setCommentPositions,
       documentHeight,
@@ -486,6 +489,7 @@ export function DocWorkspace({
       activeComment,
       unanchoredComments,
       setUnanchoredComments,
+      movedPins,
       commentPositions,
       documentHeight,
       registerDocumentPrinter,

@@ -74,14 +74,19 @@ export type Anchor = {
   point?: AnchorPoint;
 };
 // A spot in a rendered document: the element by its data-slashdocs-target
-// value or id, and by its child-index path, a label for lists, and x and y
-// as fractions of its box.
+// value or id, and by its child-index path (neither for the body), a label
+// for lists, and x and y as fractions of its box, outside 0 to 1 beside it.
+// page_x and page_y are the spot in the page, in a viewport viewport_w wide,
+// where the pin shows when its element is gone.
 export type AnchorPoint = {
   target?: string;
   path?: string;
   label?: string;
   x: number;
   y: number;
+  page_x?: number;
+  page_y?: number;
+  viewport_w?: number;
 };
 // REACTION_EMOJI is the closed set the server accepts. Values are stable ASCII
 // slugs rather than literal emoji, so each client picks its own glyph.
@@ -121,7 +126,7 @@ export type Comment = {
   anchor?: Anchor;
   replies?: Comment[];
   current_placement?: {
-    status: string;
+    status: "attached" | "orphaned" | "moved";
     confidence: number;
     matched_text: string;
   };
@@ -252,7 +257,7 @@ export type DocumentKVEvent = {
   updated_by?: Principal;
   // Stream events other than KV changes set kind; presence and cursor events
   // carry data.
-  kind?: "kv" | "document" | "comments" | "presence" | "cursor";
+  kind?: "kv" | "document" | "comments" | "approvals" | "presence" | "cursor";
   data?: unknown;
 };
 // A viewer's place in a document, published on the document event stream.
@@ -269,12 +274,14 @@ export type DocumentPresence = {
 // zooms itself. It is absent when the element is not zoomed.
 export type CursorPlace = { path: string; x: number; y: number; z?: number };
 // Where a viewer's pointer is, in v the place at the center of their view,
-// which those who follow them show, and in m their cursor chat message. A
-// hidden spot means that the pointer left the document; it may still carry
-// the view.
+// which those who follow them show, in m their cursor chat message, and in e
+// the path of the block that holds their caret while they edit. A hidden spot
+// means that the pointer left the document; it may still carry the view and
+// the block.
 export type CursorSpot = CursorPlace & {
   v?: CursorPlace;
   m?: string;
+  e?: string;
   hidden?: boolean;
 };
 // A pointer position at time t, in milliseconds on the sender's clock.
