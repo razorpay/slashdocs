@@ -1,4 +1,4 @@
-import { createRef } from "react";
+import { createRef, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -29,7 +29,8 @@ const c = {
 } as Comment;
 
 // A thread whose text is gone opens at once, with no anchor from the frame.
-function renderThread(more: Partial<DocContextValue> = {}) {
+function Thread(more: Partial<DocContextValue>) {
+  const [client] = useState(() => new QueryClient());
   const ctx = {
     docId: "doc-1",
     comments: [c],
@@ -41,8 +42,8 @@ function renderThread(more: Partial<DocContextValue> = {}) {
     signIn: () => {},
     ...more,
   } as unknown as DocContextValue;
-  render(
-    <QueryClientProvider client={new QueryClient()}>
+  return (
+    <QueryClientProvider client={client}>
       <MemoryRouter>
         <DocProvider value={ctx}>
           <CommentPopovers
@@ -54,8 +55,17 @@ function renderThread(more: Partial<DocContextValue> = {}) {
           />
         </DocProvider>
       </MemoryRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+}
+
+function renderThread(more: Partial<DocContextValue> = {}) {
+  render(<Thread {...more} />);
+}
+
+function ClosableThread() {
+  const [active, setActive] = useState<string | undefined>("c1");
+  return <Thread activeComment={active} setActiveComment={setActive} />;
 }
 
 it("takes the focus that was lost, so Esc reaches the thread", () => {
@@ -69,6 +79,27 @@ it("leaves the focus in the document", () => {
   renderThread();
   expect(frame).toHaveFocus();
   frame.remove();
+});
+
+it.each([
+  ["the button that opened it", true],
+  ["the Comments button, when its opener is gone", false],
+])("gives the focus back to %s when Esc closes it", async (_, kept) => {
+  const button = (label: string) => {
+    const el = document.body.appendChild(document.createElement("button"));
+    el.setAttribute("aria-label", label);
+    return el;
+  };
+  const comments = button("Comments");
+  const opener = button("Open thread");
+  opener.focus();
+  render(<ClosableThread />);
+  expect(screen.getByRole("dialog", { name: "Comment thread" })).toHaveFocus();
+  if (!kept) opener.remove();
+  await userEvent.keyboard("{Escape}");
+  await vi.waitFor(() => expect(kept ? opener : comments).toHaveFocus());
+  comments.remove();
+  opener.remove();
 });
 
 function renderDraft() {

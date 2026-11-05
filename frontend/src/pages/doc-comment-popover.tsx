@@ -7,7 +7,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, useIsPresent } from "framer-motion";
 import { SheetHandle } from "@/components/ui/sheet";
 import { cn } from "@/lib/cn";
 import { EDGE, placeBeside, type Rect } from "@/lib/place-beside";
@@ -80,13 +80,29 @@ function Popover({
     );
   }, [anchor, beside, bounds, mobile, children]);
   // It takes the focus that a post or a pick in a list left behind, so Esc
-  // and Tab reach it. Focus in the document stays there.
+  // and Tab reach it. Focus in the document stays there. When it closes, it
+  // gives the focus back to where it came from, or to the Comments button
+  // when that is gone, unless the reader moved it on.
+  const opener = useRef<Element | null>(null);
+  const present = useIsPresent();
   useEffect(() => {
     const el = ref.current;
     const focus = document.activeElement;
+    opener.current = focus;
     if (el && !el.contains(focus) && !(focus instanceof HTMLIFrameElement))
       el.focus({ preventScroll: true });
   }, []);
+  useEffect(() => {
+    const focus = document.activeElement;
+    if (present || !(focus === document.body || ref.current?.contains(focus))) return;
+    const back =
+      opener.current instanceof HTMLElement &&
+      opener.current !== document.body &&
+      opener.current.isConnected
+        ? opener.current
+        : document.querySelector<HTMLElement>('button[aria-label="Comments"]');
+    back?.focus({ preventScroll: true });
+  }, [present]);
   const closeOnEscape = (e: KeyboardEvent) => {
     if (e.key !== "Escape") return;
     e.stopPropagation();
