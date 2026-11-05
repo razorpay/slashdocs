@@ -34,6 +34,7 @@ export function MentionTextarea({
   onChange,
   onKeyDown,
   placeholder,
+  label,
   autoFocus,
   action,
 }: {
@@ -41,6 +42,8 @@ export function MentionTextarea({
   onChange: (draft: MentionDraft) => void;
   onKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   placeholder?: string;
+  // The name of a field without a placeholder.
+  label?: string;
   autoFocus?: boolean;
   // A button at the end of the field, such as Send. The notes under the
   // field do not move it.
@@ -250,6 +253,7 @@ export function MentionTextarea({
           onSelect={(event) => syncTarget(event.currentTarget)}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
+          aria-label={label}
           // One line that grows with the text.
           className="block max-h-40 min-h-9 min-w-0 resize-none py-1.5 text-sm [field-sizing:content]"
         />
