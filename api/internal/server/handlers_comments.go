@@ -66,6 +66,9 @@ type patchCommentRequest struct {
 	Mentions *[]commentMentionRequest `json:"mentions"`
 	// Anchor moves a point comment to a new spot.
 	Anchor *repo.Anchor `json:"anchor"`
+	// BaseBody is the body that an edit started from. When set, and another
+	// edit changed the body since, the patch fails with 409 comment_changed.
+	BaseBody *string `json:"base_body"`
 }
 
 // maxCommentBodyRunes bounds a comment or reply body. Longer ones are pastes
@@ -271,6 +274,7 @@ func (h handlers) createCommentReply(c *gin.Context) {
 // @Param comment_id path string true "Comment ID"
 // @Param update body patchCommentRequest true "Fields to update; omitted mentions are preserved unless the body changes"
 // @Success 200 {object} commentResponse
+// @Failure 409 {object} errorEnvelope "comment_changed: the body is no longer base_body"
 // @Router /v1/documents/{id}/comments/{comment_id} [patch]
 func (h handlers) patchComment(c *gin.Context) {
 	if !h.canMutateComment(c, c.Param("id"), c.Param("comment_id")) {
@@ -299,7 +303,7 @@ func (h handlers) patchComment(c *gin.Context) {
 		converted := commentMentions(*in.Mentions)
 		mentions = &converted
 	}
-	cm, err := h.deps.repository.UpdateComment(c.Request.Context(), c.Param("comment_id"), repo.CommentUpdate{Body: in.Body, Status: in.Status, Mentions: mentions, Anchor: in.Anchor})
+	cm, err := h.deps.repository.UpdateComment(c.Request.Context(), c.Param("comment_id"), repo.CommentUpdate{Body: in.Body, BaseBody: in.BaseBody, Status: in.Status, Mentions: mentions, Anchor: in.Anchor})
 	if err != nil {
 		commentWriteError(c, err)
 		return
@@ -399,6 +403,8 @@ func commentWriteError(c *gin.Context, err error) {
 		badRequest(c, "invalid comment mention")
 	case errors.Is(err, repo.ErrNotFound):
 		notFound(c)
+	case errors.Is(err, repo.ErrConflict):
+		c.JSON(http.StatusConflict, errorResponse("comment_changed", "the comment changed since base_body; load it and try again", nil))
 	default:
 		internalErr(c, err)
 	}

@@ -1105,6 +1105,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/server.commentResponse"
                         }
+                    },
+                    "409": {
+                        "description": "comment_changed: the body is no longer base_body",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
                     }
                 }
             }
@@ -3748,6 +3754,10 @@ const docTemplate = `{
                             "$ref": "#/definitions/repo.Anchor"
                         }
                     ]
+                },
+                "base_body": {
+                    "description": "BaseBody is the body that an edit started from. When set, and another\nedit changed the body since, the patch fails with 409 comment_changed.",
+                    "type": "string"
                 },
                 "body": {
                     "type": "string"

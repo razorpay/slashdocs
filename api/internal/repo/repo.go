@@ -451,6 +451,9 @@ type CommentUpdate struct {
 	Mentions *[]CommentMention
 	// Anchor moves a point comment to a new spot. Callers validate it.
 	Anchor *Anchor
+	// BaseBody, when set, is the body that the edit started from. The update
+	// fails with ErrConflict when the body is no longer this.
+	BaseBody *string
 }
 
 type DocumentKVSnapshot struct {
