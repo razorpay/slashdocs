@@ -103,7 +103,7 @@ function DraggableEntryRow({
     id: `drop:${id}`,
     disabled: !isFolder,
   });
-  const del = useDeleteResource(type, id);
+  const del = useDeleteResource(type, id, title);
 
   return (
     <tr
