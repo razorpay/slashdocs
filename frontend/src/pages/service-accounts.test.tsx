@@ -101,6 +101,23 @@ describe("ServiceAccountsPage", () => {
     expect(list).toHaveBeenCalledTimes(2);
   });
 
+  it("offers Retry when the keys of a bot do not load", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, "listServiceAccounts").mockResolvedValue({
+      items: [{ id: "sa_1", name: "n8n@bots.bot" }],
+    } as Awaited<ReturnType<typeof api.listServiceAccounts>>);
+    const keys = vi
+      .spyOn(api, "listServiceAccountKeys")
+      .mockRejectedValueOnce(new Error("unavailable"))
+      .mockResolvedValue({ items: [] });
+    renderPage();
+
+    expect(await screen.findByText("Could not load keys")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText(/No keys yet/)).toBeInTheDocument();
+    expect(keys).toHaveBeenCalledTimes(2);
+  });
+
   it("names each Revoke button by its key", async () => {
     vi.spyOn(api, "listServiceAccounts").mockResolvedValue({
       items: [{ id: "sa_1", name: "n8n@bots.bot" }],
