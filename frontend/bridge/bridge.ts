@@ -1433,10 +1433,10 @@ type Theme = "dark" | "light";
     });
   }
 
+  let curTheme: Theme | null = null;
   // The app's pointer, "coarse" for a finger. A frame does not always match
   // the app's (pointer: coarse), as in touch emulation.
   let hostPointer = "";
-  let curTheme: Theme | null = null;
   // The theme last announced to the current document. A document that reloads
   // itself on a theme change (a common way to re-render a diagram) would
   // reload forever if every load were announced. So the load right after an
@@ -1464,8 +1464,8 @@ type Theme = "dark" | "light";
     for (const name of PUBLIC_NAMES) {
       d.documentElement.setAttribute(`data-${name}-theme`, t);
     }
-    d.documentElement.setAttribute("data-slashdocs-pointer", hostPointer);
     markSurface(d);
+    d.documentElement.setAttribute("data-slashdocs-pointer", hostPointer);
     if (d !== setupDoc || announcedTheme === t) return;
     announcedTheme = t;
     reloadExpected = true;
@@ -1706,10 +1706,10 @@ type Theme = "dark" | "light";
       // they do not fit in one row, it is an icon with a tooltip.
       const name = d.createElement("span");
       name.textContent = "Comment";
+      comment.append(name, d.createElement("kbd"));
       comment.classList.add("slashdocs-comment");
       labelIcon(comment, "Comment");
       // A hash, as at headings, so that it differs from the Link action.
-      comment.append(name, d.createElement("kbd"));
       const copy = addAction(
         "Copy link to selected text",
         "M4 9h16M4 15h16M10 3 8 21M16 3l-2 18",
@@ -1740,8 +1740,8 @@ type Theme = "dark" | "light";
           [data-slashdocs-surface=dark] .slashdocs-selection-action{background:#27272a!important;color:#d4d4d8!important;box-shadow:0 0 0 1px #fff2,0 4px 16px #0004!important}
           [data-slashdocs-surface=dark] .slashdocs-selection-action button:hover{background:#3f3f46!important;color:#fff!important}
           [data-slashdocs-surface=dark] .slashdocs-selection-action kbd{background:#3f3f46!important;color:#a1a1aa!important}
-          [data-slashdocs-pointer=coarse] .slashdocs-selection-action kbd{display:none!important}
           [data-slashdocs-surface=dark] .slashdocs-selection-action button[aria-pressed=true]{background:#312e81!important;color:#e0e7ff!important}
+          [data-slashdocs-pointer=coarse] .slashdocs-selection-action kbd{display:none!important}
           @media(pointer:coarse){.slashdocs-selection-action kbd{display:none!important}}
           @media(prefers-reduced-motion:reduce){.slashdocs-selection-action,.slashdocs-selection-action button{animation:none!important;transition:none!important}}
           @media print{.slashdocs-selection-action,.slashdocs-text-flash{display:none!important}}`;
@@ -1767,12 +1767,12 @@ type Theme = "dark" | "light";
           elementOf(n)?.closest(button.dataset.slashdocsFormat!),
         );
         button.setAttribute("aria-pressed", String(on));
+      });
     selectionAction.removeAttribute("data-compact");
     selectionAction.toggleAttribute(
       "data-compact",
       selectionAction.scrollWidth > selectionAction.clientWidth,
     );
-      });
     // The actions sit where they cover no text: centered above the
     // selection, else below it, else after its last line, else beside its
     // block, else where placeClear finds room.
