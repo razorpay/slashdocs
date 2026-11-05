@@ -1,91 +1,158 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
-import { toast } from "sonner";
-import { afterEach, expect, it, vi } from "vitest";
-import { api, type Document, type Version } from "@/api";
-import { queryKeys } from "@/lib/queryKeys";
-import { DocProvider, type DocContextValue } from "./doc-context";
-import { RestoreButton } from "./doc-history";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Principal, Version } from "@/api";
+import { HistoryDialog } from "./doc-history";
 
-vi.mock("sonner", () => ({
-  toast: { success: vi.fn(), error: vi.fn(), promise: vi.fn() },
+const ana: Principal = { type: "user", id: "ana", name: "Ana" };
+const versions: Version[] = [1, 2].map((number) => ({
+  id: `ver_${number}`,
+  number,
+  created_by: ana,
+  created_at: new Date(Date.UTC(2026, 9, 1, 10, number)).toISOString(),
 }));
+
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+
+function renderHistory(
+  current: string,
+  fetch = vi.fn(async () => json({ items: versions })),
+  latest = "ver_2",
+  onSelectVersion = () => {},
+) {
+  vi.stubGlobal("fetch", fetch);
+  render(
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+    >
+      <HistoryDialog
+        open
+        onOpenChange={() => {}}
+        docId="doc_1"
+        current={current}
+        latest={latest}
+        canRestore
+        onSelectVersion={onSelectVersion}
+      />
+    </QueryClientProvider>,
+  );
+  return screen.getByRole("dialog");
+}
 
 afterEach(() => {
   cleanup();
-  vi.restoreAllMocks();
-  vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 
-const v3 = { id: "v3", number: 3 } as Version;
-const v5 = { id: "v5", number: 5 } as Version;
+describe("HistoryDialog", () => {
+  it("marks only the current entry when the document is not a preview", async () => {
+    const dialog = renderHistory("ver_2");
+    expect(await within(dialog).findByText("Current")).toBeVisible();
+    expect(within(dialog).queryByText("Viewing")).toBeNull();
+    // The session counts its earlier entries once, on the expander.
+    expect(within(dialog).queryByText(/edits since/)).toBeNull();
+    expect(
+      within(dialog).getByRole("button", { name: "Show 1 earlier edit" }),
+    ).toBeVisible();
+  });
 
-// A Restore whose answer waits until the test releases it.
-function renderHeldRestore() {
-  let answer!: (v: Version) => void;
-  vi.spyOn(api, "restoreVersion").mockReturnValue(
-    new Promise((resolve) => (answer = resolve)),
-  );
-  const doc = { showLatest: vi.fn(), stayOnVersion: vi.fn() };
-  const client = new QueryClient();
-  client.setQueryData(queryKeys.document("doc_1"), { title: "Plan B" } as Document);
-  client.setQueryData(queryKeys.versions("doc_1"), { items: [v3, v5] });
-  const invalidate = vi.spyOn(client, "invalidateQueries");
-  const ui = (version: Version) => (
-    <QueryClientProvider client={client}>
-      <DocProvider value={doc as unknown as DocContextValue}>
-        <RestoreButton docId="doc_1" version={version} />
-      </DocProvider>
-    </QueryClientProvider>
-  );
-  const view = render(ui(v3));
-  fireEvent.click(screen.getByRole("button", { name: "Restore" }));
-  const release = () => act(async () => answer({ id: "v6", number: 6 } as Version));
-  return { doc, view, ui, invalidate, release };
-}
+  it("marks the entry that the preview shows", async () => {
+    const dialog = renderHistory("ver_1");
+    expect(
+      await within(dialog).findByText("Viewing", { exact: false }),
+    ).toBeInTheDocument();
+  });
 
-it("refreshes the document but stays where the reader went, after a Restore ends", async () => {
-  const { doc, view, invalidate, release } = renderHeldRestore();
-  // The reader leaves the document, for Documents or another document.
-  view.unmount();
-  await release();
+  it("leaves out an edit that its author undid", async () => {
+    const undone: Version[] = [
+      { ...versions[0], sha256: "a" },
+      { ...versions[1], sha256: "b", change_summary: "Added “x”" },
+      {
+        id: "ver_3",
+        number: 3,
+        created_by: ana,
+        sha256: "a",
+        change_summary: "Removed “x”",
+      },
+      {
+        id: "ver_4",
+        number: 4,
+        created_by: ana,
+        sha256: "c",
+        change_summary: "Added “y”",
+      },
+    ];
+    const dialog = renderHistory(
+      "ver_4",
+      vi.fn(async () => json({ items: undone })),
+      "ver_4",
+    );
+    expect(await within(dialog).findByText("Added “y”")).toBeVisible();
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Show 1 earlier edit" }),
+    );
+    expect(within(dialog).getByText("Created")).toBeInTheDocument();
+    expect(within(dialog).queryByText("Added “x”")).toBeNull();
+    expect(within(dialog).queryByText("Removed “x”")).toBeNull();
+  });
 
-  await waitFor(() =>
-    expect(toast.success).toHaveBeenCalledWith(
-      "Restored an earlier version of “Plan B”.",
-      expect.anything(),
-    ),
-  );
-  expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.versions("doc_1") });
-  expect(doc.showLatest).not.toHaveBeenCalled();
-  expect(doc.stayOnVersion).not.toHaveBeenCalled();
-});
+  it("lets the entry before an undone newest run stand for the latest version", async () => {
+    const undone: Version[] = [
+      { ...versions[0], sha256: "a" },
+      { ...versions[1], sha256: "b", change_summary: "Changed “Green” to “Greeny”" },
+      {
+        id: "ver_3",
+        number: 3,
+        created_by: ana,
+        sha256: "a",
+        change_summary: "Changed “Greeny” to “Green”",
+      },
+    ];
+    const onSelectVersion = vi.fn();
+    const dialog = renderHistory(
+      "ver_3",
+      vi.fn(async () => json({ items: undone })),
+      "ver_3",
+      onSelectVersion,
+    );
+    const entry = (await within(dialog).findByText("Created")).closest("button")!;
+    expect(within(entry).getByText("Current")).toBeVisible();
+    expect(within(dialog).queryByText(/Greeny/)).toBeNull();
+    fireEvent.click(entry);
+    expect(onSelectVersion).not.toHaveBeenCalled();
+  });
 
-it("leaves another preview on screen, after a Restore ends", async () => {
-  const { doc, view, ui, release } = renderHeldRestore();
-  view.rerender(ui(v5));
-  await release();
+  it("gives each earlier edit its own time, small and muted", async () => {
+    const dialog = renderHistory("ver_2");
+    fireEvent.click(
+      await within(dialog).findByRole("button", { name: "Show 1 earlier edit" }),
+    );
+    const entry = within(dialog).getByText("Created").closest("button")!;
+    const time = entry.querySelector(`time[datetime="${versions[0].created_at}"]`);
+    expect(time?.parentElement).toHaveClass("text-xs", "text-[var(--color-fg-muted)]");
+  });
 
-  await waitFor(() => expect(toast.success).toHaveBeenCalled());
-  expect(doc.showLatest).not.toHaveBeenCalled();
-});
+  it("shows that the history loads", () => {
+    const dialog = renderHistory(
+      "ver_2",
+      vi.fn(() => new Promise<Response>(() => {})),
+    );
+    expect(within(dialog).getByLabelText("Loading the history")).toBeInTheDocument();
+  });
 
-it("shows the restored document to a reader who stays on the preview", async () => {
-  const { doc, release } = renderHeldRestore();
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Restore" })).toHaveAttribute(
-      "aria-busy",
-    ),
-  );
-  await release();
-
-  await waitFor(() => expect(doc.stayOnVersion).toHaveBeenCalledWith("v6"));
-  expect(doc.showLatest).toHaveBeenCalled();
+  it("says when the history did not load, and tries again", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(json({ error: "Service unavailable" }, 503))
+      .mockResolvedValueOnce(json({ items: versions }));
+    const dialog = renderHistory("ver_2", fetch);
+    expect(await within(dialog).findByText("Could not load the history")).toBeVisible();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Retry" }));
+    expect(await within(dialog).findByText("Current")).toBeVisible();
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
 });
