@@ -13,7 +13,9 @@ export const DialogClose = DialogPrimitive.Close;
 // A dialog sits in the middle of the screen. With anchor "top", it sits at a
 // fixed top instead, so content that grows, such as a list that loads, makes
 // it longer at the bottom and does not move it. A narrow screen shows such a
-// dialog as a sheet at the bottom, as the comment sheets are.
+// dialog as a sheet at the bottom, as the comment sheets are. A dialog never
+// grows past the screen: taller content scrolls inside it, with its title and
+// close button at the top of the scroll.
 export function DialogContent({
   className,
   children,
@@ -30,9 +32,9 @@ export function DialogContent({
       <DialogPrimitive.Content
         ref={keepToastsAbove}
         className={cn(
-          "dialog-content fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-[var(--shadow-pop)] dark:border-transparent focus:outline-none",
+          "dialog-content fixed left-1/2 top-1/2 z-50 max-h-[calc(100dvh-2rem)] w-full max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-y-auto overscroll-contain rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-[var(--shadow-pop)] dark:border-transparent focus:outline-none",
           anchor === "top" &&
-            "dialog-sheet top-[12vh] translate-y-0 max-md:bottom-0 max-md:left-0 max-md:top-auto max-md:max-w-none max-md:translate-x-0 max-md:rounded-b-none max-md:rounded-t-2xl max-md:pb-[calc(1.5rem+env(safe-area-inset-bottom))] max-md:pt-0",
+            "dialog-sheet top-[12vh] translate-y-0 md:max-h-[calc(88dvh-1rem)] max-md:bottom-0 max-md:left-0 max-md:top-auto max-md:max-w-none max-md:translate-x-0 max-md:rounded-b-none max-md:rounded-t-2xl max-md:pb-[calc(1.5rem+env(safe-area-inset-bottom))] max-md:pt-0",
           className,
         )}
         {...useLayerFocus({ onOpenAutoFocus, onCloseAutoFocus })}
