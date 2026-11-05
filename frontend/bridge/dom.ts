@@ -153,21 +153,31 @@ function overlap(a: DOMRect, b: DOMRect): boolean {
 }
 
 // coversText tells whether box, in the viewport, covers text of document d.
-// It tests points on a grid of CLEAR_STEP, edges included, which finds every
-// line of text and every word that is taller and wider than the step.
 function coversText(d: Document, box: DOMRect): boolean {
+  return textCover(d, box, 1) > 0;
+}
+
+// textCover counts the points of box, in the viewport, that lie on text of
+// document d, up to most. It tests points on a grid of CLEAR_STEP, edges
+// included, which finds every line of text and every word that is taller and
+// wider than the step.
+export function textCover(d: Document, box: DOMRect, most = Infinity): number {
   const words = d.createRange();
+  let count = 0;
   for (const y of steps(box.top, box.bottom)) {
     for (const x of steps(box.left, box.right)) {
       const node = caretRange(d, x, y)?.startContainer;
       if (node?.nodeType !== Node.TEXT_NODE || !node.textContent!.trim()) continue;
       words.selectNodeContents(node);
       const at = DOMRect.fromRect({ x, y });
-      if (Array.from(words.getClientRects()).some((line) => overlap(at, line)))
-        return true;
+      if (
+        Array.from(words.getClientRects()).some((line) => overlap(at, line)) &&
+        ++count >= most
+      )
+        return count;
     }
   }
-  return false;
+  return count;
 }
 
 // steps gives points from start to end, end included, at most CLEAR_STEP apart.
