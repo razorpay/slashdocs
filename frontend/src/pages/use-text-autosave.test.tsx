@@ -8,6 +8,7 @@ import { findLiterals, type Render } from "@/lib/script-literals";
 import * as sourceEdits from "@/lib/source-edits";
 import { readTextDraft, writeTextDraft } from "@/lib/text-drafts";
 import type { Region, ScriptChange } from "../../bridge/source-pieces";
+import type { SaveNote } from "./doc-context";
 import { useTextAutosave } from "./use-text-autosave";
 
 vi.mock("@/lib/source-edits", { spy: true });
@@ -56,6 +57,7 @@ function setup() {
     loaded,
     take: vi.fn(async () => ({ ...frame })),
     setState: vi.fn(),
+    note: vi.fn<(note?: SaveNote) => void>(),
     onSaved: vi.fn(),
     reload: vi.fn(),
     undo: vi.fn(),
@@ -359,35 +361,35 @@ it.each([
 );
 
 it("says nothing is saved when the edits went back to the loaded text", async () => {
-  const success = vi.spyOn(toast, "success");
   const edit = vi.spyOn(api, "editSource");
-  const { pause, setState } = setup();
+  const { pause, setState, note } = setup();
 
   await pause();
 
   expect(edit).not.toHaveBeenCalled();
   expect(setState).toHaveBeenLastCalledWith("idle");
-  expect(success).not.toHaveBeenCalled();
+  expect(note).not.toHaveBeenCalled();
 });
 
-it("offers Undo once, for eight seconds, after the first save of a visit", async () => {
+it("offers Undo once, for eight seconds, in the bar after the first save of a visit", async () => {
   const success = vi.spyOn(toast, "success");
   vi.spyOn(api, "editSource")
     .mockResolvedValueOnce(saved("ver_2", false, "Changed “it.” to “it now.”"))
     .mockResolvedValueOnce(saved("ver_3"));
-  const { type, undo } = setup();
+  const { type, undo, note } = setup();
 
   await type("Try it now.");
   await type("Try it now!");
 
-  expect(success).toHaveBeenCalledOnce();
-  const [message, options] = success.mock.lastCall!;
-  // The message says what changed, as the history does.
-  expect(message).toBe("Changed “it.” to “it now.”.");
-  const { action, duration } = options as Actions & { duration: number };
-  expect(duration).toBe(8000);
-  expect(action.label).toBe("Undo");
-  action.onClick({ preventDefault: vi.fn() });
+  // The note says what changed, as the history does, with no message over
+  // the words.
+  expect(note).toHaveBeenCalledOnce();
+  expect(success).not.toHaveBeenCalled();
+  const shown = note.mock.lastCall![0]!;
+  expect(shown.said).toBe("Changed “it.” to “it now.”");
+  await act(() => vi.advanceTimersByTimeAsync(8000));
+  expect(note).toHaveBeenLastCalledWith(undefined);
+  shown.undo!();
   expect(undo).toHaveBeenCalledOnce();
 });
 
@@ -425,7 +427,7 @@ describe("an approved document", () => {
   });
 
   it("says that a save resets the approval, and that the save after it restores it", async () => {
-    const success = vi.spyOn(toast, "success");
+    const info = vi.spyOn(toast, "info");
     approvedOn({ ver_1: true, ver_3: true });
     vi.spyOn(api, "editSource")
       .mockResolvedValueOnce(saved("ver_2", false, "Changed “it.” to “it now.”"))
@@ -434,15 +436,11 @@ describe("an approved document", () => {
     await act(() => vi.advanceTimersByTimeAsync(0));
 
     await type("Try it now.");
-    expect(success.mock.lastCall![0]).toBe(
-      "Changed “it.” to “it now.”. The approval of Rev is reset.",
-    );
+    expect(info.mock.lastCall![0]).toBe("The approval of Rev is reset.");
     await type("Try it.");
-    expect(success.mock.lastCall![0]).toBe(
-      "Changed “it now.” to “it.”. The approval of Rev is restored.",
-    );
+    expect(info.mock.lastCall![0]).toBe("The approval of Rev is restored.");
     // The restored approval is news again before the next key.
-    const info = vi.spyOn(toast, "info");
+    info.mockClear();
     await act(() => result.current.focused());
     expect(info).toHaveBeenCalledOnce();
   });
@@ -540,13 +538,12 @@ describe("script text", () => {
   });
 
   it("saves a change that shows, changes its other places in place, and undoes it", async () => {
-    const success = vi.spyOn(toast, "success");
     const edit = vi
       .spyOn(api, "editSource")
       .mockResolvedValue(
         saved("ver_2", false, "Changed “Try it.” to “Run it.” in 2 places"),
       );
-    const { frame, probe, pause, reload, replaceText } = setup();
+    const { frame, probe, pause, reload, replaceText, note } = setup();
     probe.mockImplementation(render());
 
     frame.scripts = [change];
@@ -563,13 +560,11 @@ describe("script text", () => {
     });
     expect(reload).not.toHaveBeenCalled();
     expect(replaceText).toHaveBeenLastCalledWith("Try it.", "Run it.");
-    const [message, options] = success.mock.lastCall!;
-    expect(message).toBe("Changed “Try it.” to “Run it.” in 2 places.");
-    const { action } = options as { action: { label: string; onClick: () => void } };
-    expect(action.label).toBe("Undo");
+    const shown = note.mock.lastCall![0]!;
+    expect(shown.said).toBe("Changed “Try it.” to “Run it.” in 2 places.");
 
     // Undo puts the text back on the page, which the next save saves.
-    action.onClick();
+    shown.undo!();
     expect(replaceText).toHaveBeenLastCalledWith("Run it.", "Try it.");
   });
 

@@ -20,7 +20,7 @@ import {
 import { readTextDraft, removeTextDraft, writeTextDraft } from "@/lib/text-drafts";
 import { randomId } from "@/lib/uuid";
 import type { Piece, Region, ScriptChange } from "../../bridge/source-pieces";
-import type { SaveState, TextEditResult } from "./doc-context";
+import type { SaveNote, SaveState, TextEditResult } from "./doc-context";
 
 // A pause in typing this long saves the edits.
 const AUTOSAVE_DELAY_MS = 1500;
@@ -29,13 +29,12 @@ const AUTOSAVE_MAX_DELAY_MS = 10_000;
 // A save that failed for a reason that can pass, such as the network, tries
 // again after this long.
 const AUTOSAVE_RETRY_MS = 5_000;
-// How long the message of a save shows.
-const UNDO_MS = 8_000;
+// How long the note of a save shows.
+const NOTE_MS = 8_000;
 
 const FAILED_TOAST = "autosave-failed";
 const PAUSED_TOAST = "autosave-paused";
 const REFUSED_TOAST = "autosave-refused";
-const UNDO_TOAST = "autosave-undo";
 const COPIED_TOAST = "autosave-copied";
 const EARLIER_TOAST = "autosave-earlier";
 const APPROVALS_TOAST = "autosave-approvals";
@@ -90,6 +89,8 @@ export function useTextAutosave(options: {
   loaded: { version: string; load: number };
   take: () => Promise<TextEditResult>;
   setState: (state: SaveState) => void;
+  // Shows the note of a save in the bar, or none.
+  note: (note: SaveNote | undefined) => void;
   // A version saved from the frame. It is clean when it holds exactly what
   // is on screen; otherwise it also holds someone else's edits.
   onSaved: (versionID: string, clean: boolean) => void;
@@ -124,6 +125,7 @@ export function useTextAutosave(options: {
   // screen cannot follow. Only a new load saves again.
   const paused = useRef(false);
   const timer = useRef<number | undefined>(undefined);
+  const noteTimer = useRef<number | undefined>(undefined);
   const burstStart = useRef(0);
   const saving = useRef(false);
   const again = useRef(false);
@@ -483,9 +485,9 @@ export function useTextAutosave(options: {
     // pressed by accident is easy to take back. A save of script text
     // changes its other places in place, and always offers to undo it. An
     // undo puts the text back in every place, which the next save then
-    // saves. A save that resets approvals, or gives them back, always says
-    // so. The message says what the save changed, in the words of the
-    // history.
+    // saves. The note in the bar says what the save changed, in the words of
+    // the history. A save that resets approvals, or gives them back, always
+    // says so, in a message, as it is about more than the words.
     async function offerUndo(
       summary: string | undefined,
       scripts: ScriptSave[],
@@ -506,12 +508,19 @@ export function useTextAutosave(options: {
         undo = () => set("to", "from");
       } else if (first && clean) undo = () => latest.current.undo();
       const note = await approvals;
-      if (!undo && !note) return;
-      const changed = changeSummaryLines(summary).join(", ") || "Your edit is saved";
-      toast.success(`${changed}. ${note}`.trim(), {
-        id: UNDO_TOAST,
-        duration: UNDO_MS,
-        action: undo && { label: "Undo", onClick: undo },
+      if (note) toast.info(note, { id: APPROVALS_TOAST });
+      if (!undo) return;
+      const { note: show } = latest.current;
+      const take = undo;
+      window.clearTimeout(noteTimer.current);
+      noteTimer.current = window.setTimeout(() => show(undefined), NOTE_MS);
+      show({
+        said: sentence(changeSummaryLines(summary).join(", ") || "Your edit is saved"),
+        undo: () => {
+          window.clearTimeout(noteTimer.current);
+          show(undefined);
+          take();
+        },
       });
     }
     // approvalsChange says whose approvals a save reset or gave back.
@@ -641,6 +650,10 @@ function describe(scripts: ScriptSave[]): string {
     )
     .join(", ");
 }
+
+// sentence ends a text with a period, unless it ends with one already, as a
+// quote of a whole sentence does.
+const sentence = (text: string) => (/[.!?]["”’]?$/.test(text) ? text : `${text}.`);
 
 // names lists the approvers by name.
 function names(people: Principal[]): string {

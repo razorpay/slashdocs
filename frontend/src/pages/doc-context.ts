@@ -28,6 +28,10 @@ export type TextEditResult = { regions: Region[]; scripts: ScriptChange[] };
 
 export type TextControls = { focused: boolean; leave(): void };
 
+// What a save of the editor changed, in the words of the history, and the
+// way to take it back, if it offers one.
+export type SaveNote = { said: string; undo?: () => void };
+
 // Where the editor's typing is: none yet, waiting for a pause, being saved,
 // saved, failed and waiting to try again, paused because the document
 // changed elsewhere, or refused because a change cannot save.
@@ -97,6 +101,10 @@ export type DocContextValue = {
   editable: boolean;
   saveState: SaveState;
   setSaveState: (state: SaveState) => void;
+  // The note of the last save, for a while after it. The bar shows it, so
+  // that no message covers the words that the editor types.
+  saveNote?: SaveNote;
+  setSaveNote: (note: SaveNote | undefined) => void;
   // The text of the frame: whether it has the caret, and how to leave the
   // text. The frame sets them.
   text?: TextControls;

@@ -169,10 +169,12 @@ test("at 1440px, the edit hint and the save message cover no heading at the top"
     page.getByRole("status").getByText("Type to edit. Press Esc to leave."),
   ).toBeVisible();
   await page.keyboard.type(" now");
-  const saved = page.locator("[data-sonner-toast]", { hasText: "Undo" });
-  await expect(saved).toBeVisible({ timeout: 15_000 });
+  // The save says what it changed in the bar, with Undo, and no toast.
+  const undo = page.getByRole("button", { name: "Undo", exact: true });
+  await expect(undo).toBeVisible({ timeout: 15_000 });
   await page.waitForTimeout(400);
   expect(await toastsOver(page, (await heading.boundingBox())!)).toBe(false);
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
 });
 
 test("the offer of changes made elsewhere waits in the bar, and the placement hint shows", async ({

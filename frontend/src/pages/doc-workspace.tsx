@@ -37,6 +37,7 @@ import {
   type CommentPosition,
   type DocContextValue,
   type PendingSelection,
+  type SaveNote,
   type SaveState,
   type TextControls,
   type UnanchoredKind,
@@ -166,10 +167,12 @@ export function DocWorkspace({
     documentPrinterRef.current?.();
   }, []);
   const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [saveNote, setSaveNote] = useState<SaveNote>();
   const [text, setText] = useState<TextControls>();
   const [frameReady, setFrameReady] = useState(false);
   useEffect(() => {
     setSaveState("idle");
+    setSaveNote(undefined);
   }, [docId]);
   const documentScrollerRef = useRef<((top: number) => void) | null>(null);
   const registerDocumentScroller = useCallback(
@@ -491,6 +494,8 @@ export function DocWorkspace({
       editable,
       saveState,
       setSaveState,
+      saveNote,
+      setSaveNote,
       text,
       setText,
       frameReady,
@@ -532,6 +537,7 @@ export function DocWorkspace({
       onUnfollowCursor,
       editable,
       saveState,
+      saveNote,
       text,
       frameReady,
       stayOnVersion,
