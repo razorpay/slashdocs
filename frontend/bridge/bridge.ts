@@ -2302,9 +2302,18 @@ type Theme = "dark" | "light";
         }
       }
       // In the document editor every key types while the text has the
-      // caret, as in Google Docs. Esc leaves the text, so it and the keys
-      // after it work as shortcuts.
-      if (ev.key === "Escape" && ev.target === d.body) d.body.blur();
+      // caret, as in Google Docs. Esc leaves the text, so the keys after it
+      // work as shortcuts. That Esc also closes the open thread in the app,
+      // but it arms no chord, so Esc, then C places a pin.
+      if (ev.key === "Escape" && ev.target === d.body && isEditableTarget(d, d.body)) {
+        d.body.blur();
+        if (watched)
+          parent.postMessage(
+            { type: "slashdocs:keydown", key: "Escape" },
+            targetOrigin(),
+          );
+        return;
+      }
       if (ev.defaultPrevented || isEditableTarget(d, ev.target)) {
         vimGArmed = false;
         clearTimeout(vimGTimer);
