@@ -1,9 +1,12 @@
 package db_test
 
 import (
+	"context"
 	"database/sql"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/pressly/goose/v3"
 
@@ -97,4 +100,52 @@ func versionsIndexes(t *testing.T, database *sql.DB) []string {
 		out = append(out, n)
 	}
 	return out
+}
+
+// TestBooksMigrationGivesUpOnABusyVersionsTable checks that migration 34
+// waits a bounded time for its locks on versions. Without lock_timeout, an
+// old pod's long read on versions would queue the ALTER TABLE, and every new
+// versions read would queue behind it, stalling document views until the read
+// ends. With it, the migration fails, the server does not start, and the
+// deploy retries.
+func TestBooksMigrationGivesUpOnABusyVersionsTable(t *testing.T) {
+	databaseURL := testdb.New(t)
+	database, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if err := aidb.Migrate(databaseURL); err != nil {
+		t.Fatal(err)
+	}
+	setMigrationTestFS(t)
+	if err := goose.SetDialect("postgres"); err != nil {
+		t.Fatal(err)
+	}
+	if err := goose.DownTo(database, "migrations", 33); err != nil {
+		t.Fatalf("down to 33: %v", err)
+	}
+
+	reader, err := database.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.Exec(`LOCK TABLE versions IN ACCESS SHARE MODE`); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	err = goose.UpToContext(ctx, database, "migrations", 34)
+	if err == nil {
+		t.Fatal("migration 34 applied while versions was locked")
+	}
+	if ctx.Err() != nil || !strings.Contains(err.Error(), "lock timeout") {
+		t.Fatalf("migration 34 waited for the lock instead of timing out: %v", err)
+	}
+	if err := reader.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := goose.UpTo(database, "migrations", 34); err != nil {
+		t.Fatalf("retry 34 after the read ended: %v", err)
+	}
 }

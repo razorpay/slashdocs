@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/razorpay/slashdocs/api/internal/auth"
 	"github.com/razorpay/slashdocs/api/internal/blob"
 	"github.com/razorpay/slashdocs/api/internal/books"
@@ -318,13 +321,111 @@ func TestCreateBookIndexesChaptersConcurrently(t *testing.T) {
 		}
 		entries, versions = append(entries, books.Entry{Doc: d.ID}), append(versions, v.ID)
 	}
-	bb.arm(len(versions))
+	bb.arm(min(len(versions), s.indexAfterCommitLimit()))
 	if _, err := s.CreateBook(ctx, f.ID, books.Outline{Title: "Book", Parts: []books.Part{{Chapters: entries}}}, owner); err != nil {
 		t.Fatalf("CreateBook: %v", err)
 	}
 	for _, v := range versions {
 		if !versionIndexed(t, s, v) {
 			t.Errorf("version %s not indexed: CreateBook read its chapters' blobs one at a time", v)
+		}
+	}
+}
+
+// probeBlobs records, on each Get, how many pooled connections are in use and
+// whether the version row whose blob is read can be locked by another
+// session, so a test can tell whether the reader holds a transaction across
+// the blob read.
+type probeBlobs struct {
+	blob.Store
+	pool     interface{ Stat() *pgxpool.Stat }
+	tryLock  func(key string) error
+	mu       sync.Mutex
+	acquired []int32
+	lockErrs []error
+}
+
+func (p *probeBlobs) Get(ctx context.Context, key string) ([]byte, string, error) {
+	if p.tryLock != nil {
+		acquired := p.pool.Stat().AcquiredConns()
+		err := p.tryLock(key)
+		p.mu.Lock()
+		p.acquired, p.lockErrs = append(p.acquired, acquired), append(p.lockErrs, err)
+		p.mu.Unlock()
+	}
+	return p.Store.Get(ctx, key)
+}
+
+// On-demand indexing reads the version's blob before it opens a transaction,
+// so a slow S3 read holds neither a pooled connection nor the version row
+// lock that DeleteDocument and other indexers wait on.
+func TestEnsureVersionSectionsReadsBlobOutsideTransaction(t *testing.T) {
+	ctx := context.Background()
+	pb := &probeBlobs{Store: blob.NewMemory()}
+	s, err := ConnectWithBlob(ctx, testdb.New(t), pb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	owner, err := s.EnsureUserByEmail(ctx, "blob-outside-tx@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, v, err := s.CreateDocument(ctx, owner, "Loose", []byte(`<h2>H</h2><p>words</p>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if versionIndexed(t, s, v.ID) {
+		t.Fatal("a document outside a book was indexed at publish")
+	}
+	other, err := pgx.Connect(ctx, s.Pool().Config().ConnString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = other.Close(context.Background()) })
+	pb.pool = s.Pool()
+	pb.tryLock = func(key string) error {
+		tx, err := other.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback(context.Background()) }()
+		var id string
+		return tx.QueryRow(ctx, `SELECT id FROM versions WHERE html_blob_key=$1 FOR NO KEY UPDATE NOWAIT`, key).Scan(&id)
+	}
+	if err := s.EnsureVersionSections(ctx, v.ID); err != nil {
+		t.Fatalf("EnsureVersionSections: %v", err)
+	}
+	if !versionIndexed(t, s, v.ID) {
+		t.Fatal("version not indexed")
+	}
+	if len(pb.acquired) != 1 {
+		t.Fatalf("blob reads = %d, want 1", len(pb.acquired))
+	}
+	if pb.acquired[0] != 0 {
+		t.Errorf("pooled connections in use during the blob read = %d, want 0", pb.acquired[0])
+	}
+	if pb.lockErrs[0] != nil {
+		t.Errorf("version row was locked during the blob read: %v", pb.lockErrs[0])
+	}
+	// An indexed version is not read again.
+	if err := s.EnsureVersionSections(ctx, v.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(pb.acquired) != 1 {
+		t.Errorf("an indexed version was read again: %d blob reads", len(pb.acquired))
+	}
+}
+
+// After-commit indexing runs well below the pool size, so "Make this a book"
+// on a large folder leaves connections for every other request.
+func TestIndexAfterCommitLimitStaysBelowThePool(t *testing.T) {
+	for _, tc := range []struct {
+		maxConns int32
+		want     int
+	}{{1, 1}, {4, 1}, {8, 2}, {16, 4}, {64, 8}} {
+		if got := indexLimitFor(tc.maxConns); got != tc.want {
+			t.Errorf("indexLimitFor(%d) = %d, want %d", tc.maxConns, got, tc.want)
 		}
 	}
 }

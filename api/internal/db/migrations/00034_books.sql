@@ -1,4 +1,10 @@
 -- +goose Up
+-- Wait at most 5 s for each lock (goose runs this file in one transaction).
+-- Otherwise a long read on versions from an old pod would queue the ALTER
+-- TABLE below, and every new versions read would queue behind it. On a
+-- timeout the migration fails, the server does not start, and the deploy
+-- retries.
+SET LOCAL lock_timeout = '5s';
 -- A book is a folder read in order. Its outline is versioned like documents.
 CREATE TABLE books (
   id TEXT PRIMARY KEY,

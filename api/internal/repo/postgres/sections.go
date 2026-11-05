@@ -105,19 +105,29 @@ func (s *Store) trySections(ctx context.Context, tx pgx.Tx, versionID string, ht
 	return true, sp.Commit(ctx)
 }
 
-// indexAfterCommitLimit bounds the blob reads indexAfterCommit runs at once.
-const indexAfterCommitLimit = 8
+// maxIndexAfterCommit bounds the versions indexAfterCommit indexes at once.
+const maxIndexAfterCommit = 8
+
+// indexLimitFor is how many versions indexAfterCommit indexes at once on a
+// pool of maxConns connections: a quarter of the pool, at least one and at
+// most maxIndexAfterCommit, so that a large book leaves connections for every
+// other request on the server.
+func indexLimitFor(maxConns int32) int {
+	return max(1, min(maxIndexAfterCommit, int(maxConns)/4))
+}
+
+func (s *Store) indexAfterCommitLimit() int { return indexLimitFor(s.db.Config().MaxConns) }
 
 // indexAfterCommit indexes versions best-effort once the caller's
 // transaction has committed, outside the folder-tree lock, so that a blob
 // read never runs under that lock and a failure never fails the caller. It
-// indexes up to indexAfterCommitLimit versions at once, so a large book does
-// not pay one blob read per chapter in series. A version that fails stays
-// unindexed for EnsureVersionSections and the backfill; one deleted meanwhile
-// is skipped.
+// indexes a few versions at once (indexAfterCommitLimit), so a large book
+// does not pay one blob read per chapter in series. A version that fails
+// stays unindexed for EnsureVersionSections and the backfill; one deleted
+// meanwhile is skipped.
 func (s *Store) indexAfterCommit(ctx context.Context, versionIDs ...string) {
 	var g errgroup.Group
-	g.SetLimit(indexAfterCommitLimit)
+	g.SetLimit(s.indexAfterCommitLimit())
 	for _, id := range versionIDs {
 		if ctx.Err() != nil {
 			break
@@ -139,16 +149,20 @@ func pgText(s string) string {
 	return strings.ReplaceAll(strings.ToValidUTF8(s, "\uFFFD"), "\x00", "")
 }
 
-// ensureSections indexes the version through q when it is not indexed yet.
-// It locks the version row, so that concurrent callers insert its sections
+// EnsureVersionSections indexes the version's sections when it is not
+// indexed yet. It reads the blob before it opens a transaction, so that a
+// slow blob read holds neither a pooled connection nor the version row lock
+// (which DeleteDocument and other indexers wait on). It then locks the row,
+// re-checks, and inserts, so that concurrent callers insert the sections
 // once. A missing blob indexes as an empty document, like search indexing.
-func (s *Store) ensureSections(ctx context.Context, q *dbsqlc.Queries, versionID string) error {
-	v, err := q.GetVersionSectionsForUpdate(ctx, versionID)
+func (s *Store) EnsureVersionSections(ctx context.Context, versionID string) error {
+	// Outside a transaction the row lock lasts only for this statement.
+	v, err := s.q.GetVersionSectionsForUpdate(ctx, versionID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return repo.ErrNotFound
 	}
 	if err != nil {
-		return fmt.Errorf("lock version %s: %w", versionID, err)
+		return fmt.Errorf("read version %s: %w", versionID, err)
 	}
 	if v.SectionsIndexed {
 		return nil
@@ -157,16 +171,23 @@ func (s *Store) ensureSections(ctx context.Context, q *dbsqlc.Queries, versionID
 	if err != nil && !errors.Is(err, blob.ErrNotFound) {
 		return fmt.Errorf("read version %s: %w", versionID, err)
 	}
-	return insertSections(ctx, q, versionID, doc)
-}
-
-func (s *Store) EnsureVersionSections(ctx context.Context, versionID string) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer rollback(ctx, tx)
-	if err := s.ensureSections(ctx, s.q.WithTx(tx), versionID); err != nil {
+	q := s.q.WithTx(tx)
+	locked, err := q.GetVersionSectionsForUpdate(ctx, versionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return repo.ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lock version %s: %w", versionID, err)
+	}
+	if locked.SectionsIndexed {
+		return nil // another caller indexed it meanwhile
+	}
+	if err := insertSections(ctx, q, versionID, doc); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
