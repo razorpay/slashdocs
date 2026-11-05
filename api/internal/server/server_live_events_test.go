@@ -234,3 +234,35 @@ func TestDocumentCursorRejectsInvalidInput(t *testing.T) {
 		})
 	}
 }
+
+// Every change to the approvers or their decisions tells open viewers, so
+// that the owner sees a decision as soon as the approver makes it.
+func TestApprovalChangesAnnounceApprovals(t *testing.T) {
+	e := newTestEnv(t)
+	ts := httptest.NewServer(e.h)
+	defer ts.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	reader, _ := openLiveStream(ctx, t, ts, e.doc.ID, "", fixtureOwner)
+	next := func(by auth.Principal) {
+		t.Helper()
+		got := readLiveEvent(t, reader)
+		if got.name != repo.DocumentEventApprovals || got.event.UpdatedBy.ID != by.ID {
+			t.Fatalf("event = %#v, want an approvals event by %s", got, by.ID)
+		}
+	}
+
+	request := mustAssignApprover(t, e, e.doc.ID, "viewer@example.com", fixtureOwner)
+	next(fixtureOwner)
+	rr := submitApproval(t, e, e.doc.ID, e.ver.ID, "approved", fixtureViewer)
+	assertStatus(t, rr, http.StatusCreated)
+	next(fixtureViewer)
+	assertStatus(t, do(t, e.h, http.MethodDelete, "/v1/documents/"+e.doc.ID+"/approvals/"+jsonField(t, rr.Body.Bytes(), "id"), "", map[string]string{
+		"X-Test-Principal": principalHeader(fixtureViewer),
+	}), http.StatusNoContent)
+	next(fixtureViewer)
+	assertStatus(t, do(t, e.h, http.MethodDelete, "/v1/documents/"+e.doc.ID+"/approvers/"+request, "", map[string]string{
+		"X-Test-Principal": principalHeader(fixtureOwner),
+	}), http.StatusNoContent)
+	next(fixtureOwner)
+}

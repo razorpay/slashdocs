@@ -14,6 +14,7 @@ import { createCursorBatch } from "@/lib/live-cursors";
 import { principalColor, principalLabel, samePrincipal } from "@/lib/principals";
 import type { RemoteCursor } from "../../bridge/cursors";
 import { randomId } from "@/lib/uuid";
+import { useInvalidateApprovals } from "./use-invalidate-approvals";
 
 // The server lists a viewer for 45 seconds after their last report.
 const PRESENCE_TTL = 45_000;
@@ -32,7 +33,14 @@ export type Viewer = {
 export type DocumentKVListener = (event: DocumentKVEvent) => void;
 export type CursorListener = (cursor: RemoteCursor) => void;
 
-const EVENT_KINDS = ["kv", "document", "comments", "presence", "cursor"] as const;
+const EVENT_KINDS = [
+  "kv",
+  "document",
+  "comments",
+  "approvals",
+  "presence",
+  "cursor",
+] as const;
 
 type DocumentEventHandlers = Partial<
   Record<(typeof EVENT_KINDS)[number], DocumentKVListener>
@@ -93,8 +101,8 @@ export function useDocumentEvents(
 }
 
 // useDocumentStream is the document page's view of the event stream. It
-// passes KV changes to subscribers, refreshes comments and the document when
-// they change, and reports and tracks who is viewing and where they point.
+// passes KV changes to subscribers, refreshes comments, approvals and the
+// document when they change, and reports and tracks who is viewing and where they point.
 export function useDocumentStream({
   docId,
   enabled,
@@ -111,6 +119,7 @@ export function useDocumentStream({
   onDocumentChange: (by?: Principal) => void;
 }) {
   const q = useQueryClient();
+  const invalidateApprovals = useInvalidateApprovals(docId);
   const [session] = useState(() => randomId());
   const kvListeners = useRef(new Set<DocumentKVListener>());
   const [sessions, setSessions] = useState<ReadonlyMap<string, Viewer>>(new Map());
@@ -142,9 +151,11 @@ export function useDocumentStream({
       },
       kv: (event) => kvListeners.current.forEach((listener) => listener(event)),
       comments: () => q.invalidateQueries({ queryKey: queryKeys.comments(docId) }),
+      approvals: invalidateApprovals,
+      // A new version can reset the approvals, so it refreshes them too.
       document: (event) => {
         onDocumentChange(event.updated_by);
-        q.invalidateQueries({ queryKey: queryKeys.document(docId) });
+        invalidateApprovals();
         q.invalidateQueries({ queryKey: queryKeys.versions(docId) });
       },
       presence: (event) => {

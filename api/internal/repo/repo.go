@@ -470,11 +470,12 @@ type DocumentKVPatchResult struct {
 // the other kinds share the KV revision sequence and carry optional Data.
 // Cursor events are relayed but never stored, so they carry no revision.
 const (
-	DocumentEventKV       = "kv"
-	DocumentEventDocument = "document"
-	DocumentEventComments = "comments"
-	DocumentEventPresence = "presence"
-	DocumentEventCursor   = "cursor"
+	DocumentEventKV        = "kv"
+	DocumentEventDocument  = "document"
+	DocumentEventComments  = "comments"
+	DocumentEventApprovals = "approvals"
+	DocumentEventPresence  = "presence"
+	DocumentEventCursor    = "cursor"
 )
 
 type DocumentKVEvent struct {
