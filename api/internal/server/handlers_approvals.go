@@ -219,7 +219,7 @@ func (h handlers) approverHasAccess(c *gin.Context, approver auth.Principal) boo
 		return false
 	}
 	if !atLeast(role, repo.RoleViewer) {
-		badRequest(c, "approver must have at least viewer access on this document")
+		c.JSON(http.StatusBadRequest, errorResponse("approver_no_access", "That person can't open this document. Share it with them first.", nil))
 		return false
 	}
 	return true
