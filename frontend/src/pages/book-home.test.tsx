@@ -153,6 +153,26 @@ describe("BookHomePage", () => {
     expect(screen.queryByRole("link", { name: /edit outline/i })).toBeNull();
   });
 
+  it("puts Updated inside the chapter row and its name", async () => {
+    vi.spyOn(booksApi, "manifest").mockResolvedValue(manifest([1, 2]));
+    vi.spyOn(booksApi, "state").mockResolvedValue(
+      state({
+        chapters: {
+          doc_1: {
+            state: "read",
+            updated: true,
+            seen_version_id: "",
+            furthest_progression: 1,
+          },
+        },
+      }),
+    );
+    renderHome();
+    const row = await screen.findByRole("link", { name: /^1\s*Title 1\s*Updated/ });
+    expect(row).toHaveAttribute("href", "/app/b/b1/c/doc_1");
+    expect(within(row).getByText("Updated")).toBeTruthy();
+  });
+
   it("says so quietly when the reading state cannot be loaded", async () => {
     vi.spyOn(booksApi, "manifest").mockResolvedValue(manifest([1, 2]));
     const st = vi

@@ -19,6 +19,7 @@ import { Page } from "@/components/layout/page";
 import { StateDot } from "./book-state-dot";
 import {
   STATE_LABEL,
+  isUpdated,
   rowState,
   useBookState,
   useChapterChanges,
@@ -215,7 +216,15 @@ function ContinueCard({ manifest, state }: { manifest: Manifest; state: BookStat
   );
 }
 
-function ChapterRow({ link, state }: { link: ManifestLink; state: RowState }) {
+function ChapterRow({
+  link,
+  state,
+  updated,
+}: {
+  link: ManifestLink;
+  state: RowState;
+  updated: boolean;
+}) {
   const p = link.properties;
   const inner = (
     <>
@@ -223,6 +232,11 @@ function ChapterRow({ link, state }: { link: ManifestLink; state: RowState }) {
         {p?.number}
       </span>
       <span className="min-w-0 flex-1 truncate">{link.title}</span>
+      {updated ? (
+        <span className="shrink-0 rounded-full bg-[var(--color-surface-muted)] px-2 py-0.5 text-xs text-[var(--color-fg-muted)]">
+          Updated
+        </span>
+      ) : null}
       <span className="flex shrink-0 items-center gap-1.5 text-xs text-[var(--color-fg-muted)]">
         <Dot state={state} />
         {STATE_LABEL[state]}
@@ -274,22 +288,14 @@ function PartSection({
         </span>
       </summary>
       <div className="border-t border-[var(--color-border)] py-1">
-        {rows.map((l) => {
-          const s = rowState(l, state);
-          const updated =
-            !!l.properties?.documentId &&
-            !!state?.chapters[l.properties.documentId]?.updated;
-          return (
-            <div key={l.properties?.number} className="relative">
-              <ChapterRow link={l} state={s} />
-              {updated ? (
-                <span className="pointer-events-none absolute right-28 top-1/2 -translate-y-1/2 rounded-full bg-[var(--color-surface-muted)] px-2 py-0.5 text-xs text-[var(--color-fg-muted)]">
-                  Updated
-                </span>
-              ) : null}
-            </div>
-          );
-        })}
+        {rows.map((l) => (
+          <ChapterRow
+            key={l.properties?.number}
+            link={l}
+            state={rowState(l, state)}
+            updated={isUpdated(l, state)}
+          />
+        ))}
       </div>
     </details>
   );

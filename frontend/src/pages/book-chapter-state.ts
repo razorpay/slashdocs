@@ -35,6 +35,12 @@ const retry = (count: number, err: unknown) =>
   count < MAX_RETRIES && readingWriteFailure(err) === "retry";
 const retryDelay = (attempt: number) => 500 * 2 ** attempt;
 
+// The chapter has a version the reader has not seen.
+export function isUpdated(l: ManifestLink, s: BookState | undefined): boolean {
+  const id = l.properties?.documentId;
+  return !!id && !!s?.chapters[id]?.updated;
+}
+
 // The book's manifest and this reader's state. Both refetch when the window
 // regains focus, so another device's reading shows up (A18).
 export function useManifest(bookId: string) {
