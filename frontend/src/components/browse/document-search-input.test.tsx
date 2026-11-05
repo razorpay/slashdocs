@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DocumentSearchInput } from "./document-search-input";
@@ -24,7 +24,12 @@ function setup(responses: Record<string, unknown> = {}) {
   vi.stubGlobal("fetch", fetchMock);
   function Harness() {
     const [value, setValue] = useState("");
-    return <DocumentSearchInput value={value} onChange={setValue} />;
+    return (
+      <>
+        <DocumentSearchInput value={value} onChange={setValue} />
+        <button type="button">After</button>
+      </>
+    );
   }
   render(
     <QueryClientProvider
@@ -123,5 +128,50 @@ describe("DocumentSearchInput", () => {
     await user.type(input, "in:prod");
     await user.click(await screen.findByRole("option", { name: /Product Specs/ }));
     expect(input).toHaveValue('in:"Product Specs" ');
+  });
+
+  it("leaves on Tab when no token is typed, and keeps the options out of the tab order", async () => {
+    const { user, input } = setup();
+    await user.click(input);
+    expect(screen.getByRole("listbox")).toBeVisible();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "After" })).toHaveFocus();
+  });
+
+  it("closes the list on Escape, and Down opens it again", async () => {
+    const { user, input } = setup();
+    await user.type(input, "du");
+    await user.keyboard("{Escape}");
+    expect(input).toHaveAttribute("aria-expanded", "false");
+    await user.keyboard("{ArrowDown}");
+    expect(input).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("option", { name: /during:/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("shows no people of an older lookup while the new one waits", async () => {
+    const { user, input } = setup({
+      "/v1/users?q=ali": {
+        items: [
+          { type: "user", id: "usr_alice", email: "alice@example.com", name: "Alice" },
+        ],
+      },
+    });
+    await user.type(input, "from:ali");
+    await screen.findByRole("option", { name: /alice@example\.com/i });
+    await user.type(input, "x");
+    expect(screen.queryByRole("option", { name: /alice@example\.com/i })).toBeNull();
+    expect(await screen.findByText("No matching people")).toBeVisible();
+  });
+
+  it("keeps Retry out of the list, which holds only options", async () => {
+    const { user, input, fetchMock } = setup();
+    fetchMock.mockImplementation(async () => new Response("{}", { status: 503 }));
+    await user.type(input, "from:ali");
+    expect(await screen.findByText("Could not search people")).toBeVisible();
+    expect(within(screen.getByRole("listbox")).queryByRole("button")).toBeNull();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
   });
 });

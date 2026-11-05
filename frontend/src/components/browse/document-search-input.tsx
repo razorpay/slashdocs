@@ -52,6 +52,9 @@ export function DocumentSearchInput({
   const token = useMemo(() => searchTokenAt(value, cursor), [value, cursor]);
   const lookup = remoteQuery(token);
   const lookupText = useDebounced(lookup.query, 150);
+  // While the lookup waits for the words typed last, it shows no older people
+  // or folders.
+  const settled = lookupText === lookup.query;
 
   const people = useQuery({
     queryKey: queryKeys.userSearch(lookupText),
@@ -71,7 +74,7 @@ export function DocumentSearchInput({
   const remote =
     lookup.key === "from" ? people : lookup.key === "in" ? folders : undefined;
   const suggestions = suggestionsFor(token, value, {
-    people: people.data?.items.map((person) => ({
+    people: (settled ? people.data : undefined)?.items.map((person) => ({
       label: person.name || person.email || person.id,
       detail: person.name ? person.email : undefined,
       icon: (
@@ -84,7 +87,7 @@ export function DocumentSearchInput({
       ),
       replacement: `from:${person.email || person.id}`,
     })),
-    folders: folders.data?.items.flatMap(({ folder }) =>
+    folders: (settled ? folders.data : undefined)?.items.flatMap(({ folder }) =>
       folder
         ? [
             {
@@ -96,7 +99,7 @@ export function DocumentSearchInput({
           ]
         : [],
     ),
-    searching: people.isFetching || folders.isFetching,
+    searching: !settled || people.isFetching || folders.isFetching,
     failed: !!remote?.isError,
   });
   const items = suggestions?.items || [];
@@ -147,6 +150,10 @@ export function DocumentSearchInput({
           setDismissed(false);
         }}
         onKeyDown={(event) => {
+          if (event.key === "ArrowDown" && dismissed) {
+            event.preventDefault();
+            setDismissed(false);
+          }
           if (!open) return;
           if (event.key === "Escape") {
             event.preventDefault();
@@ -168,7 +175,7 @@ export function DocumentSearchInput({
         aria-label="Search documents"
         aria-autocomplete="list"
         aria-expanded={open}
-        aria-controls={open ? "document-search-suggestions" : undefined}
+        aria-controls={open ? "document-search-options" : undefined}
         aria-activedescendant={
           open && items.length > 0
             ? `document-search-suggestion-${activeIndex}`
@@ -201,38 +208,46 @@ export function DocumentSearchInput({
         </Button>
       ) : null}
       {open ? (
-        <div
-          id="document-search-suggestions"
-          role="listbox"
-          aria-label={suggestions.heading}
-          className="absolute inset-x-0 top-[calc(100%+8px)] z-50 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-1 text-left shadow-[var(--shadow-pop)] dark:border-transparent"
-        >
-          <p className="px-3 pb-1 pt-2 text-xs font-medium text-[var(--color-fg-muted)]">
+        // Only options go in the list. The heading names it, and the status
+        // with Retry follows it.
+        <div className="absolute inset-x-0 top-[calc(100%+8px)] z-50 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-1 text-left shadow-[var(--shadow-pop)] dark:border-transparent">
+          <p
+            id="document-search-heading"
+            className="px-3 pb-1 pt-2 text-xs font-medium text-[var(--color-fg-muted)]"
+          >
             {suggestions.heading}
           </p>
-          {items.map((item, index) => (
-            <button
-              id={`document-search-suggestion-${index}`}
-              key={item.replacement}
-              type="button"
-              role="option"
-              aria-selected={index === activeIndex}
-              className="flex min-h-10 w-full items-center gap-3 rounded-sm px-3 py-2 text-left transition-[background-color,color] duration-150 ease-out hover:bg-[var(--color-highlight)] aria-selected:bg-[var(--color-highlight)]"
-              onMouseDown={(event) => event.preventDefault()}
-              onMouseEnter={() => setActiveIndex(index)}
-              onClick={() => choose(index)}
-            >
-              <span className="flex h-5 w-5 shrink-0 items-center justify-center text-[var(--color-fg-muted)]">
-                {item.icon}
-              </span>
-              <span className="min-w-0 truncate text-sm font-medium">{item.label}</span>
-              {item.detail ? (
-                <span className="ml-auto min-w-0 shrink truncate text-xs text-[var(--color-fg-muted)]">
-                  {item.detail}
+          <div
+            id="document-search-options"
+            role="listbox"
+            aria-labelledby="document-search-heading"
+          >
+            {items.map((item, index) => (
+              // The field keeps the focus, so an option is no tab stop.
+              <div
+                id={`document-search-suggestion-${index}`}
+                key={item.replacement}
+                role="option"
+                aria-selected={index === activeIndex}
+                className="flex min-h-10 w-full cursor-pointer items-center gap-3 rounded-sm px-3 py-2 text-left transition-[background-color,color] duration-150 ease-out hover:bg-[var(--color-highlight)] aria-selected:bg-[var(--color-highlight)]"
+                onMouseDown={(event) => event.preventDefault()}
+                onMouseEnter={() => setActiveIndex(index)}
+                onClick={() => choose(index)}
+              >
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center text-[var(--color-fg-muted)]">
+                  {item.icon}
                 </span>
-              ) : null}
-            </button>
-          ))}
+                <span className="min-w-0 truncate text-sm font-medium">
+                  {item.label}
+                </span>
+                {item.detail ? (
+                  <span className="ml-auto min-w-0 shrink truncate text-xs text-[var(--color-fg-muted)]">
+                    {item.detail}
+                  </span>
+                ) : null}
+              </div>
+            ))}
+          </div>
           {suggestions.status ? (
             <div className="flex items-center gap-3 px-3 py-2 text-sm text-[var(--color-fg-muted)]">
               <p className="min-w-0 flex-1">{suggestions.status}</p>
