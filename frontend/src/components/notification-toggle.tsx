@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, BellOff } from "lucide-react";
+import { Bell, BellOff, RotateCw } from "lucide-react";
 import { toast } from "sonner";
 import { api, type NotificationPreferences } from "@/api";
 import { errorMessage } from "@/lib/errors";
 import { Button } from "@/components/ui/button";
+import { LoadErrorLine } from "@/components/error-state";
 import { cn } from "@/lib/cn";
 
 export function NotificationToggle({ documentId }: { documentId?: string }) {
@@ -32,12 +33,25 @@ export function NotificationToggle({ documentId }: { documentId?: string }) {
   const enabled = prefs.data?.enabled ?? false;
   const label = documentId ? "Notifications for this document" : "Chat notifications";
   const disabled = prefs.isLoading || !!prefs.error;
-  const title = prefs.error
-    ? "Could not load notification settings"
-    : documentId && enabled && !prefs.data?.effective_enabled
+  const title =
+    documentId && enabled && !prefs.data?.effective_enabled
       ? "Notifications are disabled in your profile"
       : label;
   if (documentId) {
+    // A switch that did not load does not guess: it loads again on a click.
+    if (prefs.error)
+      return (
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Notification settings did not load. Retry"
+          disabled={prefs.isFetching}
+          onClick={() => prefs.refetch()}
+          className="h-10 w-10 shrink-0 text-[var(--color-fg-muted)]"
+        >
+          <RotateCw className="h-4 w-4" />
+        </Button>
+      );
     const Icon = prefs.data?.effective_enabled ? Bell : BellOff;
     return (
       <Button
@@ -65,9 +79,9 @@ export function NotificationToggle({ documentId }: { documentId?: string }) {
           from their comments panel.
         </p>
         {prefs.error && (
-          <p className="mt-1 text-sm text-[var(--color-danger)]">
-            Could not load settings. Reload to try again.
-          </p>
+          <LoadErrorLine query={prefs} className="mt-2">
+            Could not load your notification settings.
+          </LoadErrorLine>
         )}
       </div>
       <button

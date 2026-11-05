@@ -51,3 +51,42 @@ it("moves the switch at once, and back when the save fails", async () => {
   failSave();
   await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "false"));
 });
+
+it("offers Retry when the settings do not load, in the profile and in a document", async () => {
+  let fail = true;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      fail
+        ? new Response(JSON.stringify({ error: { message: "down" } }), {
+            status: 503,
+            headers: { "Content-Type": "application/json" },
+          })
+        : new Response(JSON.stringify({ enabled: true, effective_enabled: true }), {
+            headers: { "Content-Type": "application/json" },
+          }),
+    ),
+  );
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <NotificationToggle />
+      <NotificationToggle documentId="doc_1" />
+    </QueryClientProvider>,
+  );
+
+  const retry = await screen.findByRole("button", { name: "Retry" });
+  expect(screen.getByText("Could not load your notification settings.")).toBeVisible();
+  const docRetry = await screen.findByRole("button", {
+    name: "Notification settings did not load. Retry",
+  });
+  fail = false;
+  await userEvent.click(retry);
+  await userEvent.click(docRetry);
+  expect(
+    await screen.findByRole("switch", { name: "Chat notifications" }),
+  ).toBeChecked();
+  expect(
+    await screen.findByRole("switch", { name: "Notifications for this document" }),
+  ).toBeChecked();
+});
