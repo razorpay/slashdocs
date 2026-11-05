@@ -274,6 +274,8 @@ async function installFakeWorkspace(page: Page, state: WorkspaceState) {
       return json(route, { items: [{ id: "ver_1", number: 1 }] });
     }
     if (path === "/v1/documents/doc_1/comments") return json(route, { items: [] });
+    if (path === "/v1/documents/doc_1/access-requests")
+      return json(route, { items: [] });
     if (path === "/v1/documents/doc_1/versions/ver_1/render-token") {
       return json(route, { token: "fake", url: `${url.origin}/fake-render` });
     }

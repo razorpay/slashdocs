@@ -280,7 +280,10 @@ it("shows a new comment as sending, with the field clear for more words", async 
   expect(open("c9")).toBe("c9");
 });
 
-it("keeps the thread closed when Esc closes a comment that sends", async () => {
+it.each([
+  ["opens the posted thread where its composer stays open", false, "c2"],
+  ["keeps the thread closed when Esc closes a comment that sends", true, undefined],
+])("%s", async (_, esc, opened) => {
   let settle!: (value: Comment) => void;
   vi.spyOn(api, "createComment").mockReturnValueOnce(
     new Promise<Comment>((resolve) => (settle = resolve)),
@@ -307,7 +310,9 @@ it("keeps the thread closed when Esc closes a comment that sends", async () => {
             setActiveComment: setActive,
             unanchoredComments: new Set(["d1"]),
             saveDraft: () => {},
-            discardDraft: () => {},
+            // As the workspace does, it closes the draft that is still open.
+            discardDraft: (id: string) =>
+              setActive((now) => (now === id ? undefined : now)),
           } as unknown as DocContextValue
         }
       >
@@ -330,9 +335,9 @@ it("keeps the thread closed when Esc closes a comment that sends", async () => {
     </QueryClientProvider>,
   );
   await userEvent.type(screen.getByPlaceholderText("Add a comment…"), "Sent{Enter}");
-  await userEvent.keyboard("{Escape}");
+  if (esc) await userEvent.keyboard("{Escape}");
   settle({ id: "c2" } as Comment);
-  await vi.waitFor(() => expect(renders.at(-1)).toBeUndefined());
+  await vi.waitFor(() => expect(renders.at(-1)).toBe(opened));
   await new Promise((r) => setTimeout(r, 50));
-  expect(renders).not.toContain("c2");
+  expect(renders.at(-1)).toBe(opened);
 });
