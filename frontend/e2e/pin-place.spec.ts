@@ -32,6 +32,10 @@ function documentHTML(title: string, intro = true) {
 async function placeAt(page: Page, at: { x: number; y: number }, body: string) {
   await page.getByRole("button", { name: "Comments", exact: true }).click();
   await page.getByRole("button", { name: "Comment on a spot" }).click();
+  // The frame places pins once it says so, a moment after the click.
+  await expect(
+    bridge(page).getByText("Click to place a comment. Esc to cancel."),
+  ).toBeVisible();
   const frame = await page.locator('iframe[title="Rendered document"]').boundingBox();
   const spot = { x: frame!.x + at.x, y: frame!.y + at.y };
   await page.mouse.click(spot.x, spot.y);
