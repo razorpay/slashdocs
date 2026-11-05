@@ -50,6 +50,31 @@ function Quote({ text }: { text: string }) {
 // A small header action, which grows to a 40px target on a touch screen.
 const HEADER_ACTION = "h-7 w-7 pointer-coarse:h-10 pointer-coarse:w-10";
 
+// PlacementBadge tells that a thread is not where it was made, in the version
+// on screen: its text or element is not found, or its pin's element is gone
+// and the pin shows at its spot in the page.
+function PlacementBadge({
+  lost,
+  moved,
+  className,
+}: {
+  lost: boolean;
+  moved: boolean;
+  className: string;
+}) {
+  if (moved)
+    return (
+      <Badge variant="muted" className={className}>
+        Moved: its element is gone
+      </Badge>
+    );
+  return lost ? (
+    <Badge variant="warning" className={className}>
+      Not found in this version
+    </Badge>
+  ) : null;
+}
+
 function CloseButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <Button
@@ -125,7 +150,9 @@ export function CommentComposer({ draft }: { draft: CommentDraft }) {
             Not found in this version
           </Badge>
         )}
-        <Quote text={draft.quote} />
+        <Quote
+          text={anchorLabel({ selected_text: draft.quote, anchor: draft.anchor })}
+        />
         {isAgentRequest(text.body) ? (
           <p className="mt-1 text-xs text-[var(--color-fg-muted)]">
             Agents with access to this document read comments.
@@ -150,7 +177,7 @@ export function CommentComposer({ draft }: { draft: CommentDraft }) {
 // CommentThread is a whole thread, for its popover: the first comment with
 // the thread's actions, the replies set in under it, and the reply field.
 export function CommentThread({ c, onClose }: { c: Comment; onClose: () => void }) {
-  const { docId, signIn, unanchoredComments } = useDoc();
+  const { docId, signIn, unanchoredComments, movedPins } = useDoc();
   const ref = useRef<HTMLElement>(null);
   const [params] = useSearchParams();
   const linked = params.get("comment");
@@ -164,11 +191,11 @@ export function CommentThread({ c, onClose }: { c: Comment; onClose: () => void 
   const resolved = c.status === COMMENT_STATUS.resolved;
   return (
     <article ref={ref} data-comment-id={c.id} className="px-3 py-3">
-      {unanchoredComments.has(c.id) && (
-        <Badge variant="warning" className="mb-2">
-          Not found in this version
-        </Badge>
-      )}
+      <PlacementBadge
+        lost={unanchoredComments.has(c.id)}
+        moved={movedPins.has(c.id)}
+        className="mb-2"
+      />
       <Message
         c={c}
         docId={docId}
@@ -243,6 +270,7 @@ export function CommentsList({
     principal,
     signIn,
     unanchoredComments,
+    movedPins,
     activeComment,
     drafts,
     discardDraft,
@@ -260,6 +288,8 @@ export function CommentsList({
   const lost = (c: Comment) =>
     unanchoredComments.has(c.id) ||
     (showsLatest && c.current_placement?.status === "orphaned");
+  const moved = (c: Comment) =>
+    movedPins.has(c.id) || (showsLatest && c.current_placement?.status === "moved");
   const items = comments.filter((c) =>
     filter === "for you"
       ? mentions(c, principal)
@@ -412,7 +442,7 @@ export function CommentsList({
                         <RelativeTime iso={c.created_at} />
                       </span>
                     ) : null}
-                    <AgentRequestBadge body={c.body} />
+                    <AgentRequestBadge c={c} />
                     {c.status === COMMENT_STATUS.resolved ? (
                       <span className="ml-auto shrink-0 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
                         Resolved
@@ -424,11 +454,7 @@ export function CommentsList({
                     <span className="mt-1 block">
                       <CommentBody text={c.body} mentions={c.mentions} preview />
                     </span>
-                    {lost(c) ? (
-                      <Badge variant="warning" className="mt-1">
-                        Not found in this version
-                      </Badge>
-                    ) : null}
+                    <PlacementBadge lost={lost(c)} moved={moved(c)} className="mt-1" />
                     {c.replies?.length ? (
                       <span className="mt-0.5 block text-xs text-[var(--color-fg-muted)]">
                         {c.replies.length}{" "}

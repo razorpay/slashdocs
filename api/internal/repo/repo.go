@@ -375,16 +375,24 @@ type Anchor struct {
 }
 
 // AnchorPoint is a spot in a rendered document: the element under it and
-// fractions of that element's box. Target is the element's
-// data-slashdocs-target value or id, when it has one. Path is the element's
-// child-index path under the body, as live cursors name places. Label names
-// the element for lists, such as an image's alt text or its tag.
+// fractions of that element's box, below 0 or above 1 for a spot outside the
+// box. Target is the element's data-slashdocs-target value or id, when it has
+// one. Path is the element's child-index path under the body, as live cursors
+// name places. A point with neither is on the body. Label names the element
+// for lists, such as an image's alt text, a section's heading, or its tag.
+//
+// PageX and PageY are the spot in CSS pixels from the top left of the page,
+// in a viewport ViewportW pixels wide. They place the pin, marked as moved,
+// in a version that no longer has the element. Old points do not have them.
 type AnchorPoint struct {
-	Target string  `json:"target,omitempty"`
-	Path   string  `json:"path,omitempty"`
-	Label  string  `json:"label,omitempty"`
-	X      float64 `json:"x"`
-	Y      float64 `json:"y"`
+	Target    string   `json:"target,omitempty"`
+	Path      string   `json:"path,omitempty"`
+	Label     string   `json:"label,omitempty"`
+	X         float64  `json:"x"`
+	Y         float64  `json:"y"`
+	PageX     *float64 `json:"page_x,omitempty"`
+	PageY     *float64 `json:"page_y,omitempty"`
+	ViewportW *float64 `json:"viewport_w,omitempty"`
 }
 
 type CLICredential struct {

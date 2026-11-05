@@ -63,6 +63,10 @@ export type DocContextValue = {
   // on screen; replaced wholesale on every repaint.
   unanchoredComments: ReadonlySet<string>;
   setUnanchoredComments: (kind: UnanchoredKind, ids: ReadonlySet<string>) => void;
+  // Ids of point comments whose element is not in the version on screen,
+  // which the bridge shows at their spot in the page.
+  movedPins: ReadonlySet<string>;
+  setMovedPins: (ids: ReadonlySet<string>) => void;
   commentPositions: ReadonlyMap<string, CommentPosition>;
   setCommentPositions: (positions: ReadonlyMap<string, CommentPosition>) => void;
   // The scroll height of the document, in which commentPositions lie.

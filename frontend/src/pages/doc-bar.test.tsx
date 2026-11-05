@@ -24,6 +24,8 @@ const mockDocContext: DocContextValue = {
   setActiveComment: vi.fn(),
   unanchoredComments: new Set(),
   setUnanchoredComments: vi.fn(),
+  movedPins: new Set(),
+  setMovedPins: vi.fn(),
   commentPositions: new Map(),
   setCommentPositions: vi.fn(),
   documentHeight: 1,
