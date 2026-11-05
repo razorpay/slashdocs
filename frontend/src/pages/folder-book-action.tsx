@@ -2,7 +2,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BookOpen } from "lucide-react";
 import { toast } from "sonner";
-import { api } from "@/api";
+import { api, APIError } from "@/api";
 import { errorMessage } from "@/lib/errors";
 import { booksApi } from "@/lib/books";
 import { queryKeys } from "@/lib/queryKeys";
@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 
 // The folder header's book action: "Read as book" when the folder has a book,
 // "Make this a book" for folder editors when it does not. Nothing at all when
-// the server has books turned off.
+// the server has books turned off, or when the lookup failed.
 export function FolderBookAction({
   folderId,
   canEdit,
@@ -31,6 +31,8 @@ export function FolderBookAction({
     queryFn: () => booksApi.folderBook(folderId),
     enabled,
     retry: false,
+    // 404 is the usual answer: most folders are not books.
+    meta: { suppressGlobalError: true },
   });
   const create = useMutation({
     mutationFn: () => booksApi.createBook(folderId),
@@ -57,7 +59,10 @@ export function FolderBookAction({
       </Button>
     );
   }
-  if (!canEdit) return null;
+  // Only a 404 means "no book"; after any other error the folder may well
+  // have one.
+  const noBook = book.error instanceof APIError && book.error.status === 404;
+  if (!canEdit || !noBook) return null;
   return (
     <Button
       variant="outline"

@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
@@ -21,7 +21,15 @@ function Where() {
   );
 }
 
-function setup(opts: { enabled: boolean; canEdit: boolean; book?: boolean }) {
+// Errors the app's global query handler would toast (main.tsx).
+let globalErrors: ReturnType<typeof vi.fn>;
+
+function setup(opts: {
+  enabled: boolean;
+  canEdit: boolean;
+  book?: boolean;
+  lookupError?: APIError;
+}) {
   vi.spyOn(api, "getConfig").mockResolvedValue({
     books_enabled: opts.enabled,
   } as ServerConfig);
@@ -30,9 +38,17 @@ function setup(opts: { enabled: boolean; canEdit: boolean; book?: boolean }) {
     .mockImplementation(() =>
       opts.book
         ? Promise.resolve({ book_id: "b1" })
-        : Promise.reject(new APIError(404, "not_found", "no book")),
+        : Promise.reject(opts.lookupError ?? new APIError(404, "not_found", "no book")),
     );
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  globalErrors = vi.fn();
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+    queryCache: new QueryCache({
+      onError: (e, q) => {
+        if (!q.meta?.suppressGlobalError) globalErrors(e);
+      },
+    }),
+  });
   render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={["/app/folders/f1"]}>
@@ -55,6 +71,24 @@ describe("FolderBookAction", () => {
     expect(
       await screen.findByRole("button", { name: "Make this a book" }),
     ).toBeTruthy();
+  });
+
+  it("raises no error for a folder that is not a book", async () => {
+    setup({ enabled: true, canEdit: true });
+    await screen.findByRole("button", { name: "Make this a book" });
+    expect(globalErrors).not.toHaveBeenCalled();
+  });
+
+  it("offers Make this a book only when the folder has no book", async () => {
+    const lookup = setup({
+      enabled: true,
+      canEdit: true,
+      lookupError: new APIError(503, "unavailable", "down"),
+    });
+    await waitFor(() => expect(lookup).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole("button", { name: "Make this a book" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Read as book" })).toBeNull();
   });
 
   it("hides Make this a book from non-editors", async () => {
