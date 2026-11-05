@@ -4,6 +4,7 @@ import {
   textLinkFragment,
   TEXT_LINK_PREFIX,
 } from "../../bridge/text-link";
+import { READER_KEYS, RESTORE_METHODS, type RestoreMethod } from "../../bridge/reading";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "react-router-dom";
@@ -15,7 +16,7 @@ import { Center } from "@/components/ui/misc";
 import { CHORD_KEYS } from "@/lib/esc-chord";
 import { cursorsShownStore, parseCursorSpot } from "@/lib/live-cursors";
 import { useDocumentExport } from "./use-document-export";
-import { useDoc } from "./doc-context";
+import { useDoc, type PositionTarget } from "./doc-context";
 import { useBridgeHost } from "./use-bridge-host";
 
 const FORWARDED_KEYS = new Set<string>([
@@ -24,6 +25,8 @@ const FORWARDED_KEYS = new Set<string>([
   ...CHORD_KEYS.map((item) => item.key),
 ]);
 const VIM_KEYS = new Set(["j", "k", "g", "G"]);
+const READER_KEY_SET = new Set<string>(READER_KEYS);
+const RESTORE_METHOD_SET = new Set<string>(RESTORE_METHODS);
 
 // Renders the sandboxed document iframe for the document page. useBridgeHost
 // serves the theme and KV; this adds comments, selection, zoom, and links.
@@ -51,7 +54,12 @@ export function RenderFrame() {
     moveCursor,
     subscribeCursors,
     followedCursor,
+    reader,
+    registerPositionRestorer,
   } = useDoc();
+  // Handlers read the latest reader options without re-registering.
+  const readerRef = useRef(reader);
+  readerRef.current = reader;
   const cursorsShown = cursorsShownStore.useStore();
   const versionRef = useRef(version);
   versionRef.current = version;
@@ -67,6 +75,7 @@ export function RenderFrame() {
     docId,
     token.data?.url,
     signIn,
+    reader?.settings?.theme,
   );
   // Paint results from a frame that is navigating away (its WindowProxy
   // survives navigation) must not bring back the state reset below.
@@ -105,6 +114,74 @@ export function RenderFrame() {
     setCommentViewport,
   ]);
 
+  // A position asked for before the frame is ready waits for it. It goes
+  // before the hash navigation below, so an explicit link still wins.
+  const pendingRestore = useRef<PositionTarget | null>(null);
+  const sendRestore = useCallback(
+    (target: PositionTarget) =>
+      postToFrame({ ...target, type: "slashdocs:navigate-position" }),
+    [postToFrame],
+  );
+  const restorePosition = useCallback(
+    (target: PositionTarget) => {
+      if (!readyRef.current) {
+        pendingRestore.current = target;
+        return;
+      }
+      pendingRestore.current = null;
+      sendRestore(target);
+    },
+    [sendRestore],
+  );
+  useEffect(() => {
+    if (!registerPositionRestorer) return;
+    registerPositionRestorer(restorePosition);
+    return () => registerPositionRestorer(null);
+  }, [registerPositionRestorer, restorePosition]);
+  useEffect(() => {
+    if (!ready || !pendingRestore.current) return;
+    const target = pendingRestore.current;
+    pendingRestore.current = null;
+    sendRestore(target);
+  }, [ready, sendRestore]);
+
+  // Reader styles go to the frame only in book mode. Once sent, clearing
+  // them sends an empty value so the frame drops the style.
+  const readerSettings = reader?.settings;
+  const settingsSent = useRef(false);
+  useEffect(() => {
+    if (!ready) {
+      settingsSent.current = false;
+      return;
+    }
+    if (!readerSettings && !settingsSent.current) return;
+    settingsSent.current = !!readerSettings;
+    postToFrame({
+      type: "slashdocs:reader-settings",
+      settings: readerSettings ?? null,
+    });
+  }, [ready, readerSettings, postToFrame]);
+  // Keyed by content: a new array with the same ids is not a change.
+  const markHeadings = reader?.markHeadings;
+  const markHeadingsRef = useRef(markHeadings);
+  markHeadingsRef.current = markHeadings;
+  const markKey = markHeadings ? JSON.stringify(markHeadings) : "";
+  const marksSent = useRef(false);
+  useEffect(() => {
+    if (!ready) {
+      marksSent.current = false;
+      return;
+    }
+    if (!markKey && !marksSent.current) return;
+    marksSent.current = !!markKey;
+    postToFrame({
+      type: "slashdocs:mark-headings",
+      ids: markHeadingsRef.current ?? [],
+    });
+  }, [ready, markKey, postToFrame]);
+
+  // An empty hash cancels an earlier link navigation; the bridge does not
+  // let it cancel a waiting position restore.
   useEffect(() => {
     if (!ready) return;
     if (location.hash.startsWith(TEXT_LINK_PREFIX)) {
@@ -302,7 +379,34 @@ export function RenderFrame() {
         if (quote) startDraft({ quote, anchor, top });
       }
       if (e.data?.type === "slashdocs:viewport") {
-        reportViewport(textLinkAnchor(e.data.anchor) ?? undefined);
+        const anchor = textLinkAnchor(e.data.anchor) ?? undefined;
+        reportViewport(anchor);
+        const onViewport = readerRef.current?.onViewport;
+        if (onViewport) {
+          const section =
+            typeof e.data.section === "string" && e.data.section.length <= 1024
+              ? e.data.section
+              : "";
+          const progression =
+            typeof e.data.progression === "number" &&
+            Number.isFinite(e.data.progression)
+              ? Math.min(1, Math.max(0, e.data.progression))
+              : 0;
+          onViewport({
+            anchor,
+            section,
+            progression,
+            fits: e.data.fits === true,
+            restoring: e.data.restoring === true,
+          });
+        }
+      }
+      if (
+        e.data?.type === "slashdocs:position-restored" &&
+        typeof e.data.method === "string" &&
+        RESTORE_METHOD_SET.has(e.data.method)
+      ) {
+        readerRef.current?.onRestored?.(e.data.method as RestoreMethod);
       }
       if (e.data?.type === "slashdocs:pointer") {
         moveCursor(parseCursorSpot(e.data.spot));
@@ -407,6 +511,13 @@ export function RenderFrame() {
       if (
         e.data?.type === "slashdocs:keydown" &&
         typeof e.data.key === "string" &&
+        e.data.reader === true
+      ) {
+        // Book-mode keys, ignored outside book mode.
+        if (READER_KEY_SET.has(e.data.key)) readerRef.current?.onKey?.(e.data.key);
+      } else if (
+        e.data?.type === "slashdocs:keydown" &&
+        typeof e.data.key === "string" &&
         FORWARDED_KEYS.has(e.data.key)
       ) {
         window.dispatchEvent(new KeyboardEvent("keydown", { key: e.data.key }));
@@ -490,7 +601,7 @@ export function RenderFrame() {
       >
         <iframe
           ref={ref}
-          title="Rendered document"
+          title={reader?.frameTitle || "Rendered document"}
           style={{
             position: "absolute",
             top: 0,

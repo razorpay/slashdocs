@@ -2,16 +2,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, APIError, type DocumentKVEvent } from "@/api";
 import { useResolvedTheme } from "@/lib/theme";
 import { errorMessage } from "@/lib/errors";
+import { documentTheme, type ReaderSettings } from "../../bridge/reading";
 
 // useBridgeHost is the app side of the render bridge that every embedded
 // document needs, wherever it is shown. It passes the theme, answers the
 // document's KV and GitHub requests, and forwards KV changes to the frame.
 // Message origins are checked on both ends. A signed-out reader who writes
-// KV data goes to signIn instead.
+// KV data goes to signIn instead. A book reader's theme setting can render
+// the document light in a dark app.
 export function useBridgeHost(
   docId: string,
   renderURL: string | undefined,
   signIn?: () => void,
+  readerTheme?: ReaderSettings["theme"],
 ) {
   const ref = useRef<HTMLIFrameElement>(null);
   // The frame is ready only for the URL it loaded. A new URL is not ready
@@ -20,7 +23,7 @@ export function useBridgeHost(
   const ready = !!renderURL && readyURL === renderURL;
   const renderURLRef = useRef(renderURL);
   renderURLRef.current = renderURL;
-  const theme = useResolvedTheme();
+  const theme = documentTheme(readerTheme, useResolvedTheme());
   // Stable handlers read the latest theme and readiness from refs. Handlers
   // that re-register can miss a slashdocs:ready sent during the teardown.
   const themeRef = useRef(theme);

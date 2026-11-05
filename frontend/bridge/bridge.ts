@@ -14,6 +14,21 @@ import {
   refreshSVGRects,
 } from "./highlight.ts";
 import { createCursorLayer, trackPointer } from "./cursors.ts";
+import {
+  applyChangeDots,
+  CHANGE_DOT_CSS,
+  markedHeadingIds,
+  progression,
+  READER_KEYS,
+  readerSettingsCSS,
+  restoreMethod,
+  scrollProgression,
+  sectionAt,
+  type ReaderSettings,
+  type ScrollBox,
+  type RestoreMethod,
+} from "./reading.ts";
+import { createPositionRestore } from "./position-restore.ts";
 import { CHORD_KEYS } from "../src/lib/esc-chord.ts";
 import {
   reduceVimScroll,
@@ -615,6 +630,51 @@ type Theme = "dark" | "light";
     (d.head || d.documentElement).appendChild(s);
   }
 
+  // Book-mode styles and change dots from the reader, kept so a newly loaded
+  // document gets them too. Empty CSS removes the style.
+  let readerCSS = "";
+  let markedIds: string[] = [];
+  function replaceStyle(id: string, css: string): void {
+    const d = doc();
+    if (!d) return;
+    d.getElementById(id)?.remove();
+    if (!css) return;
+    const s = d.createElement("style");
+    s.id = id;
+    s.textContent = css;
+    (d.head || d.documentElement).appendChild(s);
+  }
+  function applyReaderStyles(): void {
+    replaceStyle("slashdocs-reader-style", readerCSS);
+    applyMarks();
+  }
+  function setReaderSettings(value: unknown): void {
+    readerCSS =
+      value && typeof value === "object"
+        ? readerSettingsCSS(value as ReaderSettings)
+        : "";
+    replaceStyle("slashdocs-reader-style", readerCSS);
+  }
+  function setMarkedHeadings(value: unknown): void {
+    markedIds = markedHeadingIds(value);
+    applyMarks();
+  }
+  function applyMarks(): void {
+    replaceStyle("slashdocs-mark-style", markedIds.length ? CHANGE_DOT_CSS : "");
+    refreshChangeDots();
+  }
+  // Our own dots must not look like document changes to the observer.
+  function refreshChangeDots(): void {
+    const d = doc();
+    if (!d) return;
+    suspendMutationObserver();
+    try {
+      applyChangeDots(d, markedIds);
+    } finally {
+      resumeMutationObserver();
+    }
+  }
+
   // The last paint payload, kept so document mutations can re-anchor without
   // a round-trip to the parent (documents that render content with JS after
   // load would otherwise never get their highlights).
@@ -772,10 +832,70 @@ type Theme = "dark" | "light";
     const d = doc();
     const view = d?.defaultView;
     if (!d?.body || !view) return;
+    const p = readingProgression(d, view);
     parent.postMessage(
-      { type: "slashdocs:viewport", anchor: viewportAnchor(d, view) },
+      {
+        type: "slashdocs:viewport",
+        anchor: viewportAnchor(d, view),
+        section: viewportSection(d, view),
+        // fits: nothing scrolls, so progression says nothing about reading.
+        progression: p ?? 0,
+        fits: p === null,
+        // A restore still waiting for content will move the page.
+        restoring: positionRestore.pending(),
+      },
       targetOrigin(),
     );
+  }
+
+  // The element the reader last scrolled other than the page itself.
+  let nestedScroller: Element | null = null;
+  function noteScroll(ev: Event): void {
+    const target = ev.target as Node | null;
+    if (target?.nodeType === 1 && target !== doc()?.scrollingElement) {
+      nestedScroller = target as Element;
+    }
+    scheduleViewport();
+  }
+
+  // How far through the chapter the reader is: the page's scroll, else that
+  // of the nested scroller last scrolled or the one under the middle of the
+  // viewport. Null when nothing scrolls.
+  function readingProgression(d: Document, view: Window): number | null {
+    const root = d.scrollingElement || d.documentElement;
+    const box = (el: Element | null): ScrollBox | null =>
+      el
+        ? { top: el.scrollTop, height: el.scrollHeight, client: el.clientHeight }
+        : null;
+    const page = progression(view.scrollY, root.scrollHeight, root.clientHeight);
+    if (page !== null) return page;
+    let centre: Element | null = null;
+    for (
+      let el = d.elementFromPoint(view.innerWidth / 2, view.innerHeight / 2);
+      el && el !== root;
+      el = el.parentElement
+    ) {
+      if (
+        el.scrollHeight > el.clientHeight &&
+        /(auto|scroll|overlay)/.test(view.getComputedStyle(el).overflowY)
+      ) {
+        centre = el;
+        break;
+      }
+    }
+    const last = nestedScroller?.isConnected ? nestedScroller : null;
+    return scrollProgression([box(last), box(centre)]);
+  }
+
+  // The section being read: the last heading above a line 20% down the
+  // viewport. Hidden headings have no position, so they are skipped.
+  function viewportSection(d: Document, view: Window): string {
+    const headings: { id: string; top: number }[] = [];
+    d.querySelectorAll("h1,h2,h3,h4,h5,h6").forEach((heading) => {
+      if (!heading.id || !heading.getClientRects().length) return;
+      headings.push({ id: heading.id, top: heading.getBoundingClientRect().top });
+    });
+    return sectionAt(headings, view.innerHeight * 0.2);
   }
 
   // Probe points from the middle of the viewport outward for text. Text
@@ -995,6 +1115,9 @@ type Theme = "dark" | "light";
     if (mutationObserver) mutationObserver.disconnect();
     mutationObserver = new MutationObserver(() => {
       prepareHeadings(d);
+      // A document that re-renders a changed heading gets its dot back.
+      if (markedIds.length) refreshChangeDots();
+      positionRestore.mutated();
       scheduleTextNavigation();
       scheduleMutationScan();
       scheduleCommentPositions();
@@ -1454,6 +1577,11 @@ type Theme = "dark" | "light";
   let setupDoc: Document | null = null;
 
   let pendingHeading = "";
+  // A saved reading position waiting for late content (navigatePosition).
+  const positionRestore = createPositionRestore({
+    resolve: resolvePosition,
+    finish: finishPosition,
+  });
   let headingFlash: Animation | undefined;
   function prepareHeadings(d: Document): void {
     const used = new Set(Array.from(d.querySelectorAll("[id]")).map((el) => el.id));
@@ -1499,19 +1627,26 @@ type Theme = "dark" | "light";
     if (pendingHeading) navigateHeading(pendingHeading);
   }
 
+  // Open the <details> around a heading; true when it then has a layout box.
+  function revealHeading(target: Element): boolean {
+    for (let el = target.parentElement; el; el = el.parentElement) {
+      if (el.tagName === "DETAILS") (el as HTMLDetailsElement).open = true;
+    }
+    return target.getClientRects().length > 0;
+  }
+
   function navigateHeading(id: string): void {
     pendingText = null;
     textVisibilityObserver?.disconnect();
     clearTimeout(textNoticeTimer);
+    // An empty id only cancels an earlier link navigation; the document
+    // page sends one on every ready, which must not cancel a restore.
+    if (id) positionRestore.cancel();
     pendingHeading = id;
     const d = doc();
     if (!d || !id) return;
     const target = d.getElementById(id);
-    if (!target) return;
-    for (let el = target.parentElement; el; el = el.parentElement) {
-      if (el.tagName === "DETAILS") (el as HTMLDetailsElement).open = true;
-    }
-    if (!(target as HTMLElement).getClientRects().length) return;
+    if (!target || !revealHeading(target)) return;
     pendingHeading = "";
     target.scrollIntoView({ block: "start", behavior: "instant" });
     headingFlash?.cancel();
@@ -1546,6 +1681,7 @@ type Theme = "dark" | "light";
   function navigateText(value: unknown): void {
     pendingHeading = "";
     pendingText = textLinkAnchor(value);
+    if (pendingText) positionRestore.cancel();
     textVisibilityObserver?.disconnect();
     clearTimeout(textNoticeTimer);
     doc()
@@ -1629,10 +1765,111 @@ type Theme = "dark" | "light";
       });
   }
 
+  // navigate-text stays exact-match for deep links; a reading position may
+  // point at text that has changed, so its quote is fuzzy-matched.
+  type PositionTarget = { anchor?: unknown; section?: unknown; progression?: unknown };
+  type PositionPlan = {
+    method: RestoreMethod;
+    range: Range | null;
+    section: string;
+    share: number | null;
+    waitForContent: boolean;
+  };
+  function firstLine(range: Range): DOMRect | undefined {
+    return Array.from(range.getClientRects()).find((r) => r.width && r.height);
+  }
+
+  // Where a saved position is in the document as it is now. Opening the
+  // <details> around its heading is the only change this makes.
+  function resolvePosition(data: PositionTarget): PositionPlan {
+    const section =
+      typeof data.section === "string" && data.section.length <= 1024
+        ? data.section
+        : "";
+    const share =
+      typeof data.progression === "number" && Number.isFinite(data.progression)
+        ? data.progression
+        : null;
+    const d = doc();
+    if (!d?.body) {
+      return { method: "none", range: null, section, share, waitForContent: true };
+    }
+    const root = d.scrollingElement || d.documentElement;
+    const anchor = textLinkAnchor(data.anchor);
+    const range = anchor ? resolveAnchor(d.body, anchor) : null;
+    const line = range ? firstLine(range) : undefined;
+    // A heading still hidden after opening its <details> cannot be
+    // scrolled to, so the restore falls through to progression.
+    const heading = !line && section ? d.getElementById(section) : null;
+    const method = restoreMethod({
+      quoteResolved: !!line,
+      sectionExists: !!heading && revealHeading(heading),
+      progression: share,
+    });
+    return {
+      method,
+      range: line ? range : null,
+      section,
+      share,
+      waitForContent: root.scrollHeight <= root.clientHeight,
+    };
+  }
+
+  function finishPosition(plan: PositionPlan): void {
+    const d = doc();
+    const view = d?.defaultView;
+    if (d && view) {
+      if (plan.method === "section") {
+        navigateHeading(plan.section);
+      } else if (plan.method === "quote" && plan.range) {
+        // Into view first, which also scrolls a nested container, then
+        // centre the first line exactly.
+        const start = plan.range.startContainer;
+        const el = start.nodeType === 1 ? (start as Element) : start.parentElement;
+        el?.scrollIntoView({ block: "center", behavior: "instant" });
+        const line = firstLine(plan.range);
+        if (line) {
+          view.scrollBy({
+            top: line.top + line.height / 2 - view.innerHeight / 2,
+            behavior: "instant",
+          });
+        }
+      } else if (plan.method === "progression") {
+        const root = d.scrollingElement || d.documentElement;
+        view.scrollTo({
+          top: plan.share! * Math.max(0, root.scrollHeight - root.clientHeight),
+          behavior: "instant",
+        });
+      }
+    }
+    parent.postMessage(
+      { type: "slashdocs:position-restored", method: plan.method },
+      targetOrigin(),
+    );
+    // Every restore is followed by a report of where it landed, even when it
+    // did not scroll (a chapter that fits on screen posts nothing else).
+    scheduleViewport();
+  }
+
+  // Restore a saved reading position: the fuzzy-matched quote, else its
+  // section heading, else the scroll share. A chapter that renders its body
+  // with script may not have the quote yet, so the restore waits briefly
+  // while the document changes (position-restore.ts). It replaces any
+  // earlier pending link navigation; a later link navigation cancels it.
+  function navigatePosition(data: PositionTarget): void {
+    pendingHeading = "";
+    pendingText = null;
+    textVisibilityObserver?.disconnect();
+    clearTimeout(textNoticeTimer);
+    positionRestore.start(data);
+  }
+
   function setupFrame(): void {
     const d = doc();
     if (!d || !d.documentElement || !d.body || setupDoc === d) return;
     setupDoc = d;
+    nestedScroller = null;
+    positionRestore.cancel();
     pendingText = null;
     textVisibilityObserver?.disconnect();
     clearTimeout(textRetryTimer);
@@ -1655,6 +1892,7 @@ type Theme = "dark" | "light";
     observeMutations(d);
     resetKVHistory();
     injectStyles();
+    applyReaderStyles();
     installSlashdocsAPI();
     dismissSelectionAction();
     actionRange = null;
@@ -1728,6 +1966,7 @@ type Theme = "dark" | "light";
       selTimer = setTimeout(selection, 350);
     });
     const chordKeys: string[] = CHORD_KEYS.map((item) => item.key);
+    const readerKeys: readonly string[] = READER_KEYS;
     let chordArmedAt = 0;
     let vimGArmed = false;
     let vimGTimer = 0;
@@ -1804,6 +2043,7 @@ type Theme = "dark" | "light";
         return;
       }
 
+      let chordRan = false;
       if (ev.key === "Escape") {
         chordArmedAt = modified ? 0 : Date.now();
         parent.postMessage(
@@ -1815,8 +2055,23 @@ type Theme = "dark" | "light";
         chordArmedAt = 0;
         const key = ev.key.toLowerCase();
         if (withinWindow && !modified && chordKeys.includes(key)) {
+          chordRan = true;
           parent.postMessage({ type: "slashdocs:keydown", key }, targetOrigin());
         }
+      }
+      // Book-mode keys are flagged, so the host never mistakes a reader "t"
+      // for the Esc-then-T chord. Held keys do not repeat page turns.
+      if (
+        !chordRan &&
+        !modified &&
+        !ev.repeat &&
+        readerKeys.includes(ev.key) &&
+        !isTextEditingTarget(ev.target)
+      ) {
+        parent.postMessage(
+          { type: "slashdocs:keydown", key: ev.key, reader: true },
+          targetOrigin(),
+        );
       }
       if (ev.key === "?" && !modified) {
         parent.postMessage({ type: "slashdocs:keydown", key: "?" }, targetOrigin());
@@ -1875,7 +2130,7 @@ type Theme = "dark" | "light";
     });
     d.defaultView?.addEventListener("resize", scheduleCommentPositions);
     // Capture scrolls of nested containers too, not only the window.
-    d.addEventListener("scroll", scheduleViewport, { capture: true, passive: true });
+    d.addEventListener("scroll", noteScroll, { capture: true, passive: true });
     d.addEventListener("scroll", cursors.refresh, { capture: true, passive: true });
     d.defaultView?.addEventListener("resize", cursors.refresh);
     trackPointer(d, (spot) =>
@@ -1964,6 +2219,12 @@ type Theme = "dark" | "light";
       navigateText(e.data.anchor);
     } else if (e.data.type === "slashdocs:navigate-heading") {
       navigateHeading(String(e.data.id || ""));
+    } else if (e.data.type === "slashdocs:navigate-position") {
+      navigatePosition(e.data);
+    } else if (e.data.type === "slashdocs:reader-settings") {
+      setReaderSettings(e.data.settings);
+    } else if (e.data.type === "slashdocs:mark-headings") {
+      setMarkedHeadings(e.data.ids);
     } else if (e.data.type === "slashdocs:request-comment-positions") {
       scheduleCommentPositions();
     } else if (

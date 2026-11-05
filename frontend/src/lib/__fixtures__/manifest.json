@@ -1,0 +1,72 @@
+{
+  "@context": "https://readium.org/webpub-manifest/context.jsonld",
+  "metadata": {
+    "identifier": "book_44blgq4ncme2egvw",
+    "title": "Guide",
+    "numberOfChapters": 2,
+    "outlineVersionId": "bov_qlzno2wmq76p6opu",
+    "canEdit": false
+  },
+  "links": [
+    {
+      "href": "/v1/books/book_44blgq4ncme2egvw",
+      "type": "application/json",
+      "title": "Manifest",
+      "rel": "self"
+    }
+  ],
+  "readingOrder": [
+    {
+      "href": "/app/b/book_44blgq4ncme2egvw/c/doc_oqbkdgfocgj3dgiq",
+      "type": "text/html",
+      "title": "01 · A",
+      "properties": {
+        "documentId": "doc_oqbkdgfocgj3dgiq",
+        "kind": "front",
+        "part": -1,
+        "versionId": "ver_rfzrl3wrrj64bzlu"
+      }
+    },
+    {
+      "href": "/app/b/book_44blgq4ncme2egvw/c/doc_nb5wxgou6vjnxhhk",
+      "type": "text/html",
+      "title": "C",
+      "properties": {
+        "documentId": "doc_nb5wxgou6vjnxhhk",
+        "kind": "chapter",
+        "number": 3,
+        "part": 0,
+        "versionId": "ver_xxjsoyddube6g57v",
+        "wordCount": 3
+      }
+    }
+  ],
+  "toc": [
+    {
+      "title": "Two",
+      "children": [
+        {
+          "title": "Later",
+          "properties": {
+            "kind": "planned",
+            "number": 2,
+            "part": 0
+          }
+        },
+        {
+          "href": "/app/b/book_44blgq4ncme2egvw/c/doc_nb5wxgou6vjnxhhk",
+          "type": "text/html",
+          "title": "C",
+          "properties": {
+            "documentId": "doc_nb5wxgou6vjnxhhk",
+            "kind": "chapter",
+            "number": 3,
+            "part": 0,
+            "versionId": "ver_xxjsoyddube6g57v",
+            "wordCount": 3
+          }
+        }
+      ]
+    }
+  ]
+}
