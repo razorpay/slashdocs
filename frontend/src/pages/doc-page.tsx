@@ -8,7 +8,7 @@ import {
   useSearchParams,
 } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Check, KeyRound, Send } from "lucide-react";
 import { api, APIError, currentVersionID, docTitle, versionID } from "@/api";
@@ -27,16 +27,24 @@ import { PreviewBanner } from "./doc-preview-banner";
 import { useDocumentStream } from "./use-document-stream";
 import { useFollowViewer } from "./use-follow-viewer";
 
-// A reader without access waits on the page. The document query asks again
-// while they wait (see waitingForAccess), so the page opens the document by
-// itself when someone grants access.
-function AccessDeniedState({
-  documentID,
-  retry,
-}: {
-  documentID: string;
-  retry: RetryQuery;
-}) {
+// A reader without access waits on the page. The page asks for the document
+// again while they wait, and on Check access, so it opens the document by
+// itself when someone grants access. It asks outside the document query,
+// whose state would show a load each time.
+function AccessDeniedState({ documentID }: { documentID: string }) {
+  const q = useQueryClient();
+  const recheck = useQuery({
+    queryKey: [...queryKeys.document(documentID), "access-check"],
+    queryFn: async () => {
+      const doc = await api.getDocument(documentID);
+      q.setQueryData(queryKeys.document(documentID), doc);
+      return doc;
+    },
+    refetchInterval: 5_000,
+    refetchOnWindowFocus: true,
+    retry: false,
+    meta: { suppressGlobalError: true },
+  });
   // The server keeps the reader's request, so it stays sent after a reload.
   const ownRequest = useQuery({
     queryKey: queryKeys.documentAccessRequests(documentID),
@@ -48,7 +56,7 @@ function AccessDeniedState({
     // The error shows under the button, not as a toast.
     onError: () => {},
   });
-  const check = useMutation({ mutationFn: async () => void (await retry.refetch()) });
+  const check = useMutation({ mutationFn: async () => void (await recheck.refetch()) });
   const sent = requestAccess.isSuccess || !!ownRequest.data?.items.length;
   return (
     <ErrorState
@@ -117,8 +125,7 @@ function DocumentError({
   retry: RetryQuery;
 }) {
   const apiError = error instanceof APIError ? error : undefined;
-  if (apiError?.status === 403)
-    return <AccessDeniedState documentID={documentID} retry={retry} />;
+  if (apiError?.status === 403) return <AccessDeniedState documentID={documentID} />;
   if (apiError?.status === 404) {
     return (
       <ErrorState
@@ -147,10 +154,6 @@ function DocumentError({
 
 const CHANGED_TOAST = "document-changed";
 
-// The reader has no access to the document yet, and may get it at any time.
-const waitingForAccess = ({ state }: { state: { error: Error | null } }) =>
-  state.error instanceof APIError && state.error.status === 403;
-
 export function DocumentPage() {
   const { id = "" } = useParams();
   const [searchParams] = useSearchParams();
@@ -159,8 +162,6 @@ export function DocumentPage() {
     queryKey: queryKeys.document(id),
     queryFn: () => api.getDocument(id),
     meta: { suppressGlobalError: true },
-    refetchInterval: (query) => (waitingForAccess(query) ? 5_000 : false),
-    refetchOnWindowFocus: waitingForAccess,
   });
   const me = useMe();
   const versions = useQuery({

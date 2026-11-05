@@ -88,7 +88,12 @@ describe("DocumentPage", () => {
     expect(
       await screen.findByText("You don't have access to this document"),
     ).toBeVisible();
-    expect(calls.filter((call) => call.url === "/v1/documents/doc_1")).toHaveLength(2);
+    // The load, Retry, and the first check of the page that waits for access.
+    await waitFor(() =>
+      expect(calls.filter((call) => call.url === "/v1/documents/doc_1")).toHaveLength(
+        3,
+      ),
+    );
   });
 
   it("checks access again on Check access, and says that it is still missing", async () => {
@@ -99,7 +104,7 @@ describe("DocumentPage", () => {
     renderPage();
     await userEvent.click(await screen.findByRole("button", { name: "Check access" }));
     expect(await screen.findByText(/You still don't have access/)).toBeVisible();
-    expect(calls.filter((call) => call.url === "/v1/documents/doc_1")).toHaveLength(2);
+    expect(calls.filter((call) => call.url === "/v1/documents/doc_1")).toHaveLength(3);
   });
 
   it("asks for the document again while the reader waits for access", async () => {
@@ -108,8 +113,10 @@ describe("DocumentPage", () => {
     renderPage();
     await screen.findByText("You don't have access to this document");
     const asked = () => calls.filter((call) => call.url === "/v1/documents/doc_1");
-    expect(asked()).toHaveLength(1);
-    await vi.advanceTimersByTimeAsync(5_000);
     await waitFor(() => expect(asked()).toHaveLength(2));
+    await vi.advanceTimersByTimeAsync(5_000);
+    await waitFor(() => expect(asked()).toHaveLength(3));
+    // The page that waits does not blink to a load while it asks.
+    expect(screen.getByText("You don't have access to this document")).toBeVisible();
   });
 });
