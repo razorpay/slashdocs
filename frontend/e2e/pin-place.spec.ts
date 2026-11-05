@@ -34,7 +34,7 @@ async function placeAt(page: Page, at: { x: number; y: number }, body: string) {
   await page.getByRole("button", { name: "Comment on a spot" }).click();
   // The frame places pins once it says so, a moment after the click.
   await expect(
-    bridge(page).getByText("Click to place a comment. Esc to cancel."),
+    bridge(page).getByText("Click a spot, or use Tab and Enter. Esc to cancel."),
   ).toBeVisible();
   const frame = await page.locator('iframe[title="Rendered document"]').boundingBox();
   const spot = { x: frame!.x + at.x, y: frame!.y + at.y };
@@ -51,11 +51,13 @@ async function placeAt(page: Page, at: { x: number; y: number }, body: string) {
   return spot;
 }
 
-// tipOf gives the spot that a pin marks: the bottom left of its button.
+// tipOf gives the spot that a pin marks: the bottom left of its button, or
+// the bottom right when its body turns left.
 async function tipOf(pin: ReturnType<FrameLocator["getByRole"]>) {
   let box: Awaited<ReturnType<typeof pin.boundingBox>> = null;
   await expect.poll(async () => (box = await pin.boundingBox())).not.toBeNull();
-  return { x: box!.x, y: box!.y + box!.height };
+  const left = (await pin.getAttribute("data-turn"))?.includes("left");
+  return { x: left ? box!.x + box!.width : box!.x, y: box!.y + box!.height };
 }
 
 test("a pin placed in the page margin stays at the click after a reload", async ({
@@ -65,11 +67,22 @@ test("a pin placed in the page margin stays at the click after a reload", async 
   const title = uniqueName("Margin pin");
   const document = await slashdocs.createDocument(title, documentHTML(title));
   await page.goto(`/app/d/${document.id}`);
-  await expect(renderedDocument(page).locator("#intro")).toBeVisible();
+  const intro = renderedDocument(page).locator("#intro");
+  const box = (await intro.boundingBox())!;
+  const frame = (await page
+    .locator('iframe[title="Rendered document"]')
+    .boundingBox())!;
 
-  const spot = await placeAt(page, { x: 120, y: 220 }, "Why this gap?");
+  // Left of the intro, in the margin, so on the intro and named as beside it.
+  const spot = await placeAt(
+    page,
+    { x: 120, y: box.y - frame.y + box.height / 2 },
+    "Why this gap?",
+  );
   await page.reload();
-  const pin = bridge(page).getByRole("button", { name: `Comment on ${title}` });
+  const pin = bridge(page).getByRole("button", {
+    name: "Comment beside “The introduction that a later version drops.”",
+  });
   const tip = await tipOf(pin);
   expect(Math.abs(tip.x - spot.x)).toBeLessThanOrEqual(2);
   expect(Math.abs(tip.y - spot.y)).toBeLessThanOrEqual(2);

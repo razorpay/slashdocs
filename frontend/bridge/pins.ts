@@ -11,7 +11,7 @@ import {
   scrollerOf,
   sharedElement,
 } from "./cursors.ts";
-import { scrollBehavior } from "./dom.ts";
+import { scrollBehavior, textCover } from "./dom.ts";
 
 // Comment pins: point comments drawn over the document, in the bridge window,
 // as live cursors are. A pin names an element and a spot in its box. On each
@@ -69,10 +69,26 @@ const PLACE_CURSOR = `url("data:image/svg+xml,${encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><path d="M1 14A13 13 0 0 1 27 14A13 13 0 0 1 14 27H4A3 3 0 0 1 1 24Z" fill="#2563eb" stroke="white" stroke-width="2"/><path d="M14 9.5v9M9.5 14h9" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>',
 )}") 1 27, crosshair`;
 const SVG_NS = "http://www.w3.org/2000/svg";
+// The label of a pin in a page margin starts so, and names the block beside it.
+const BESIDE = "Beside ";
+// These elements take a pin of their own, though they hold no text.
+const MEDIA = /^(img|svg|canvas|video|picture|iframe|object|embed)$/;
+// The sides that a pin's body can turn to from its tip, the first one first:
+// up and right, up and left, down and right, down and left.
+const TURNS = ["", "left", "down", "down left"];
+// The keys that move the ring of keyboard placing, and which way.
+const STEPS: Record<string, number> = {
+  ArrowDown: 1,
+  ArrowRight: 1,
+  ArrowUp: -1,
+  ArrowLeft: -1,
+};
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/g;
 
 const normalize = (s: string) => s.replace(/\s+/g, " ").trim();
+// A label is one line of at most MAX_LABEL characters, without control ones.
+const labelText = (s: string) => normalize(s.replace(CONTROL, " ")).slice(0, MAX_LABEL);
 const within = (n: unknown, min: number, max: number): n is number =>
   typeof n === "number" && Number.isFinite(n) && n >= min && n <= max;
 const fraction = (n: unknown): n is number =>
@@ -165,19 +181,28 @@ export function clusterPins<T extends { id: string; x: number; y: number }>(
   return clusters;
 }
 
-// pointAt names the spot under a point in the viewport: the innermost element
-// there, by its target and path, fractions of its box, a label, and the start
-// of its text, and the spot in the page. It is null outside the document.
-export function pointAt(d: Document, x: number, y: number): PinAnchor | null {
+// pointAt names the spot at a point in the viewport, on el or else on the
+// innermost element there: the element by its target and path, fractions of
+// its box, a label, and the start of its text, and the spot in the page. A
+// spot beside the blocks, as in a page margin, is on the block at its height,
+// named as beside it. It is null outside the document.
+export function pointAt(
+  d: Document,
+  x: number,
+  y: number,
+  at?: Element,
+): PinAnchor | null {
   const body = d.body;
   const view = d.defaultView;
   if (!body || !view || !d.elementFromPoint(x, y)) return null;
-  const el = spotElement(d, x, y);
+  const spot = at ?? spotElement(d, x, y);
+  const el = (spot === body && blockBeside(d, x, y)) || spot;
   const box = el.getBoundingClientRect();
   const named = el.getAttribute("data-slashdocs-target") || el.id;
   // The body is found by its empty path, and its text start changes often.
   const quote = (el !== body && elementQuote(body, el)) || { quote: "" };
-  const label = labelOf(el, !!quote.quote);
+  const name = labelOf(el, !!quote.quote);
+  const label = el === spot ? name : labelText(`${BESIDE}“${name || quote.quote}”`);
   return {
     ...quote,
     point: {
@@ -212,6 +237,44 @@ function spotElement(d: Document, x: number, y: number): Element {
   return body;
 }
 
+// blockBeside gives the block of d whose height holds y, nearest to x, if
+// any.
+function blockBeside(d: Document, x: number, y: number): Element | undefined {
+  const gap = (el: Element) => {
+    const box = el.getBoundingClientRect();
+    return box.top <= y && y <= box.bottom
+      ? Math.max(box.left - x, x - box.right, 0)
+      : Infinity;
+  };
+  const [nearest] = pinBlocks(d)
+    .map((el) => ({ el, gap: gap(el) }))
+    .filter((b) => b.gap < Infinity)
+    .sort((a, b) => a.gap - b.gap);
+  return nearest?.el;
+}
+
+// pinBlocks gives the blocks of a document that take a pin from the keyboard,
+// in document order: each element laid out as a block, at least MIN_PIN_BOX
+// on each side, with text of its own or no other block in it, and each image
+// or other media. The bridge's own controls are not blocks.
+export function pinBlocks(d: Document): Element[] {
+  const view = d.defaultView;
+  if (!view || !d.body) return [];
+  const block = (el: Element) =>
+    !/^(inline|contents|none)$/.test(view.getComputedStyle(el).display);
+  const ownText = (el: Element) =>
+    Array.from(el.childNodes).some((n) => n.nodeType === 3 && n.textContent!.trim());
+  return Array.from(d.body.querySelectorAll("*")).filter((el) => {
+    if (el.parentElement?.closest("svg")) return false;
+    if (el.closest('[class*="slashdocs-"],[data-slashdocs-injected]')) return false;
+    const box = el.getBoundingClientRect();
+    if (box.width < MIN_PIN_BOX || box.height < MIN_PIN_BOX) return false;
+    if (MEDIA.test(el.localName)) return true;
+    if (!block(el) || !el.textContent?.trim()) return false;
+    return ownText(el) || !Array.from(el.children).some(block);
+  });
+}
+
 // labelOf names an element for a reader: by its accessible name, or a
 // container, such as a section, a card or the body, by its first heading, or
 // the body by the start of its text, or an element without text, such as an
@@ -227,7 +290,7 @@ function labelOf(el: Element, hasText: boolean): string {
       ? ""
       : (el === el.ownerDocument.body && text(el).slice(0, QUOTE_LENGTH)) ||
         el.localName);
-  return normalize(label.replace(CONTROL, " ")).slice(0, MAX_LABEL);
+  return labelText(label);
 }
 
 // elementQuote describes the start of an element's text as a text anchor.
@@ -294,18 +357,22 @@ export function pinElement(d: Document, a: PinAnchor): Element | null {
 // height (text-box), so initials, digits and "+" sit in the optical middle.
 // Pins sit on the document, not on the app, so they keep this light frame in
 // both app themes.
+const FOCUS_RING = "outline:2px solid #2563eb;outline-offset:2px";
 const SHADOW =
   "0 0 0 .5px rgba(0,0,0,.14),0 1px 2px rgba(0,0,0,.12),0 3px 8px rgba(0,0,0,.1)";
 const CSS = `
 .sd-pins{position:fixed;inset:0;pointer-events:none;z-index:2147483645;overflow:hidden}
 .sd-pin,.sd-cluster{all:unset;position:absolute;left:0;top:0;box-sizing:border-box;width:${PIN_SIZE}px;height:${PIN_SIZE}px;margin-top:-${PIN_SIZE}px;padding:2px;border-radius:${PIN_SIZE / 2}px ${PIN_SIZE / 2}px ${PIN_SIZE / 2}px 3px;background:#fff;box-shadow:${SHADOW};pointer-events:auto;cursor:pointer;will-change:translate;transform-origin:0 100%;transition:box-shadow 150ms ease,scale 150ms cubic-bezier(.23,1,.32,1),opacity 150ms ease}
-.sd-pin:focus-visible,.sd-cluster:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
+.sd-pin[data-turn=left]{margin-left:-${PIN_SIZE}px;border-radius:${PIN_SIZE / 2}px ${PIN_SIZE / 2}px 3px ${PIN_SIZE / 2}px;transform-origin:100% 100%}
+.sd-pin[data-turn=down]{margin-top:0;border-radius:3px ${PIN_SIZE / 2}px ${PIN_SIZE / 2}px;transform-origin:0 0}
+.sd-pin[data-turn="down left"]{margin:0 0 0 -${PIN_SIZE}px;border-radius:${PIN_SIZE / 2}px 3px ${PIN_SIZE / 2}px ${PIN_SIZE / 2}px;transform-origin:100% 0}
+.sd-pin[data-moved]{outline:1.5px dashed var(--c,#6366f1);outline-offset:1.5px}
+.sd-pin:focus-visible,.sd-cluster:focus-visible{${FOCUS_RING}}
 .sd-pin>b,.sd-cluster>b{display:grid;place-items:center;width:100%;height:100%;border-radius:50%;background:var(--c,#6366f1);color:#fff;font:600 11px/1 system-ui,-apple-system,sans-serif;font-variant-numeric:tabular-nums;text-box:trim-both cap alphabetic}
 .sd-cluster{box-shadow:4px -4px 0 -1px #fff,4px -4px 0 0 rgba(0,0,0,.2),${SHADOW}}
 .sd-cluster[data-many]>b{font-size:9.5px;letter-spacing:-.02em}
 .sd-pin[data-active],.sd-cluster[data-active]{box-shadow:0 0 0 2px #fff,0 0 0 3.5px #2563eb,0 3px 10px rgba(37,99,235,.3)}
 .sd-pin[data-draft]>b{background:#fff;color:var(--c,#2563eb);box-shadow:inset 0 0 0 1.5px currentColor}
-.sd-pin[data-moved]>b{opacity:.6}
 .sd-pin>i{position:absolute;right:-5px;top:-4px;display:grid;place-items:center;min-width:14px;height:14px;padding:0 3px;box-sizing:border-box;border-radius:7px;background:#ef4444;color:#fff;font:600 9px/1 system-ui,-apple-system,sans-serif;font-style:normal;font-variant-numeric:tabular-nums;text-box:trim-both cap alphabetic;box-shadow:0 0 0 1.5px #fff}
 .sd-pin[data-pressed],.sd-cluster:active{scale:.96}
 .sd-pin[data-dragging]{cursor:grabbing;scale:1.1;transition:none;box-shadow:0 0 0 2px #fff,0 0 0 3.5px #2563eb,0 10px 22px rgba(0,0,0,.22)}
@@ -316,7 +383,8 @@ const CSS = `
 .sd-place-hint{position:fixed;left:50%;top:12px;z-index:2147483646;translate:-50% 0;padding:6px 12px;border-radius:999px;background:#18181b;color:#fff;font:500 12px/1.4 system-ui,-apple-system,sans-serif;white-space:nowrap;box-shadow:${SHADOW};pointer-events:none}
 @media (prefers-reduced-motion:no-preference){.sd-place-hint{animation:sd-place-hint-in 180ms cubic-bezier(.23,1,.32,1)}}
 @keyframes sd-place-hint-in{from{opacity:0;translate:-50% -4px}}
-@media print{.sd-pins,.sd-place-hint{display:none}}
+.sd-place-ring{position:fixed;left:0;top:0;z-index:2147483644;box-sizing:border-box;border-radius:4px;${FOCUS_RING};pointer-events:none}
+@media print{.sd-pins,.sd-place-hint,.sd-place-ring{display:none}}
 `;
 
 // plusIcon draws the "+" that an unsent pin shows.
@@ -339,14 +407,18 @@ function plusIcon(): SVGSVGElement {
 function pinLabel(pin: Pin, moved: boolean): string {
   if (pin.draft) return "Unsent comment";
   const on = pin.anchor.point.label || normalize(pin.anchor.quote ?? "").slice(0, 40);
-  const label = on ? ` on ${on}` : "";
+  const label = on.startsWith(BESIDE)
+    ? ` beside ${on.slice(BESIDE.length)}`
+    : on
+      ? ` on ${on}`
+      : "";
   const replies = pin.replies === 1 ? "1 reply" : `${pin.replies} replies`;
   return `Comment${label}${moved ? ", moved" : ""}${pin.replies ? `, ${replies}` : ""}`;
 }
 
 // A pin on screen: its element and the ancestors that clip it, or no element
-// when the pin shows at its page spot, and where its spot was on the last
-// frame.
+// when the pin shows at its page spot, where its spot was on the last frame,
+// and the side its body turns to, once it is known.
 type Placed = {
   pin: Pin;
   el: Element | null;
@@ -354,21 +426,60 @@ type Placed = {
   x: number;
   y: number;
   shown: boolean;
+  turn?: string;
 };
 
 // spotOf gives where a pin's spot is in the viewport: in its element's box,
 // or else at its page spot, whose x follows the viewport's width as the
-// fractions of a box do. It is null for a pin that has neither.
+// fractions of a box do. A spot outside the page, as in a margin that a
+// narrow screen does not have, or below a page that got shorter, shows at the
+// edge of the page. It is null for a pin that has neither.
 function spotOf(p: Placed, view: Window): { x: number; y: number } | null {
   const box = p.el?.getBoundingClientRect();
   const { x, y, page_x, page_y, viewport_w } = p.pin.anchor.point;
-  if (box && box.width > 0 && box.height > 0)
-    return { x: box.left + x * box.width, y: box.top + y * box.height };
-  if (page_x === undefined || page_y === undefined || !viewport_w) return null;
+  const spot =
+    box && box.width > 0 && box.height > 0
+      ? { x: box.left + x * box.width, y: box.top + y * box.height }
+      : page_x !== undefined && page_y !== undefined && viewport_w
+        ? {
+            x: (page_x * view.innerWidth) / viewport_w - view.scrollX,
+            y: page_y - view.scrollY,
+          }
+        : null;
+  if (!spot) return null;
+  const { scrollWidth, scrollHeight } = view.document.documentElement;
+  const clamp = (n: number, max: number) => Math.min(Math.max(n, 0), max);
   return {
-    x: (page_x * view.innerWidth) / viewport_w - view.scrollX,
-    y: page_y - view.scrollY,
+    x: clamp(spot.x + view.scrollX, scrollWidth) - view.scrollX,
+    y: clamp(spot.y + view.scrollY, scrollHeight) - view.scrollY,
   };
+}
+
+// turnOf gives the side of TURNS that a pin's body with its tip at x, y turns
+// to: the first one that stays in the page and covers the least text of d.
+function turnOf(d: Document, x: number, y: number): string {
+  const view = d.defaultView!;
+  const { scrollWidth, scrollHeight } = d.documentElement;
+  const page = new DOMRect(-view.scrollX, -view.scrollY, scrollWidth, scrollHeight);
+  const sides = TURNS.map((turn) => ({
+    turn,
+    box: new DOMRect(
+      turn.includes("left") ? x - PIN_SIZE : x,
+      turn.includes("down") ? y : y - PIN_SIZE,
+      PIN_SIZE,
+      PIN_SIZE,
+    ),
+  }));
+  const fits = sides.filter(
+    ({ box }) => inside(page, box.left, box.top) && inside(page, box.right, box.bottom),
+  );
+  let best = { turn: "", cover: Infinity };
+  for (const { turn, box } of fits.length ? fits : sides.slice(0, 1)) {
+    const cover = textCover(d, box, best.cover);
+    if (cover < best.cover) best = { turn, cover };
+    if (!cover) break;
+  }
+  return best.turn;
 }
 
 export type PinHost = {
@@ -401,6 +512,8 @@ export function createPinLayer(host: PinHost) {
     },
     { passive: false },
   );
+  // The keys of placing come to this window when the app gives it the focus.
+  window.addEventListener("keydown", (e) => placeKey(e), true);
 
   let d: Document | null = null;
   let pins: Pin[] = [];
@@ -427,8 +540,16 @@ export function createPinLayer(host: PinHost) {
   // The pin pressed last, which is already in view when the app opens it.
   let pressed: string | undefined;
   let placing = false;
+  // The pin that placing moves, or none to place a new one.
+  let moving: string | undefined;
   let placeStyle: HTMLStyleElement | null = null;
   let placeHint: HTMLElement | null = null;
+  // While placing from the keyboard: the blocks it steps through, the one in
+  // its ring, and the ring.
+  let blocks: Element[] | null = null;
+  let ringed: Element | null = null;
+  const ring = document.createElement("div");
+  ring.className = "sd-place-ring";
   let observer: MutationObserver | null = null;
   // Listeners on the current document, removed when another one loads.
   let detach = new AbortController();
@@ -482,7 +603,10 @@ export function createPinLayer(host: PinHost) {
         !!spot &&
         inside(new DOMRect(0, 0, view.innerWidth, view.innerHeight), p.x, p.y) &&
         p.clips.every((clip) => inside(clip.getBoundingClientRect(), p.x, p.y));
+      // Measured on screen, where the text under the pin can be found.
+      if (p.shown) p.turn ??= turnOf(view.document, p.x, p.y);
     }
+    placeRing();
     const positions = placed
       .map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`)
       .join(";");
@@ -498,7 +622,9 @@ export function createPinLayer(host: PinHost) {
       const at = byId.get(el.dataset.id ?? "");
       // The translate property, not transform: the scale used for hover,
       // press and drag then applies around the pin's tip.
-      if (at) el.style.translate = `${at.x}px ${at.y}px`;
+      if (!at) continue;
+      el.style.translate = `${at.x}px ${at.y}px`;
+      if (at.turn && el.classList.contains("sd-pin")) el.dataset.turn = at.turn;
     }
   }
 
@@ -705,13 +831,17 @@ export function createPinLayer(host: PinHost) {
   }
 
   // drop moves a pin to the spot under its tip, or puts it back where no
-  // element takes it. The move shows at once; the app saves it.
+  // element takes it.
   function drop(pin: Pin, at: { x: number; y: number }) {
     const anchor = d && pointAt(d, at.x, at.y);
-    if (!anchor) return;
-    pins = pins.map((p) => (p.id === pin.id ? { ...p, anchor } : p));
+    if (anchor) move(pin.id, anchor);
+  }
+
+  // move puts a pin at anchor. The move shows at once; the app saves it.
+  function move(id: string, anchor: PinAnchor) {
+    pins = pins.map((p) => (p.id === id ? { ...p, anchor } : p));
     layout();
-    host.post({ type: "slashdocs:pin-move", id: pin.id, anchor });
+    host.post({ type: "slashdocs:pin-move", id, anchor });
   }
 
   function tick() {
@@ -730,12 +860,17 @@ export function createPinLayer(host: PinHost) {
     frame ||= requestAnimationFrame(tick);
   }
 
-  function setPlacing(next: boolean) {
-    if (!d || placing === next) return;
+  // setPlacing starts or stops placing a pin: a new one, or the pin of the
+  // id in move.
+  function setPlacing(next: boolean, move?: string) {
+    const nextMoving = next ? move : undefined;
+    if (!d || (placing === next && moving === nextMoving)) return;
     placing = next;
+    moving = nextMoving;
     placeStyle?.remove();
     placeHint?.remove();
-    placeStyle = placeHint = null;
+    ring.remove();
+    placeStyle = placeHint = blocks = ringed = null;
     if (placing) {
       placeStyle = d.createElement("style");
       placeStyle.setAttribute("data-slashdocs-injected", "");
@@ -744,10 +879,58 @@ export function createPinLayer(host: PinHost) {
       placeHint = document.createElement("div");
       placeHint.className = "sd-place-hint";
       placeHint.setAttribute("role", "status");
-      placeHint.textContent = "Click to place a comment. Esc to cancel.";
+      placeHint.textContent = `Click ${moving ? "the new spot" : "a spot"}, or use Tab and Enter. Esc to cancel.`;
       layer.after(placeHint);
     }
-    host.post({ type: "slashdocs:pin-placing", on: placing });
+    host.post({ type: "slashdocs:pin-placing", on: placing, move: moving });
+  }
+
+  // place ends placing with a pin at anchor: a new one, or the moved one.
+  function place(anchor: PinAnchor | null) {
+    const id = moving;
+    setPlacing(false);
+    if (anchor && id) move(id, anchor);
+    else if (anchor) host.post({ type: "slashdocs:pin-place", anchor });
+  }
+
+  // placeKey places from the keyboard: Tab and the arrow keys move a ring
+  // over the blocks that a click could choose, Enter places the pin on the
+  // block in the ring, and Esc stops placing.
+  function placeKey(ev: KeyboardEvent) {
+    if (!placing || !d) return;
+    const step = ev.key === "Tab" ? (ev.shiftKey ? -1 : 1) : (STEPS[ev.key] ?? 0);
+    if (!step && ev.key !== "Enter" && ev.key !== "Escape") return;
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    if (ev.key === "Escape") return setPlacing(false);
+    if (ev.key === "Enter") {
+      if (!ringed) return;
+      // At the top left corner, from where the pin's body covers the least
+      // of the block.
+      const box = ringed.getBoundingClientRect();
+      return place(pointAt(d, box.left, box.top, ringed));
+    }
+    const list = (blocks ??= pinBlocks(d));
+    if (!list.length) return;
+    // The first step goes to the first block in view, or back to the last.
+    const at = ringed ? list.indexOf(ringed) : -1;
+    const inView = (el: Element) => el.getBoundingClientRect().bottom > 0;
+    const next =
+      at >= 0 ? at + step : step > 0 ? Math.max(0, list.findIndex(inView)) : -1;
+    ringed = list[(next + list.length) % list.length];
+    ringed.scrollIntoView({ block: "nearest", behavior: scrollBehavior(d) });
+    layer.after(ring);
+    placeRing();
+    schedule();
+  }
+
+  // placeRing draws the ring around the block it is on.
+  function placeRing() {
+    if (!ringed) return;
+    const box = ringed.getBoundingClientRect();
+    ring.style.translate = `${box.left}px ${box.top}px`;
+    ring.style.width = `${box.width}px`;
+    ring.style.height = `${box.height}px`;
   }
 
   // start draws the pins of a newly loaded document.
@@ -777,7 +960,17 @@ export function createPinLayer(host: PinHost) {
     const options = { capture: true, passive: true, signal };
     for (const type of ["scroll", "wheel", "transitionend", "animationend"])
       doc.addEventListener(type, schedule, options);
-    view?.addEventListener("resize", schedule, { signal });
+    // Text moves on a resize, so each pin finds its side again.
+    view?.addEventListener(
+      "resize",
+      () => {
+        for (const p of placed) p.turn = undefined;
+        lastPositions = null;
+        schedule();
+      },
+      { signal },
+    );
+    doc.addEventListener("keydown", placeKey, { capture: true, signal });
     void doc.fonts?.ready.then(schedule);
     // While placing, a press is not a click into the document: it neither
     // moves the editor's caret nor starts a selection.
@@ -795,9 +988,7 @@ export function createPinLayer(host: PinHost) {
         if (!placing) return;
         e.preventDefault();
         e.stopImmediatePropagation();
-        const anchor = pointAt(doc, e.clientX, e.clientY);
-        setPlacing(false);
-        if (anchor) host.post({ type: "slashdocs:pin-place", anchor });
+        place(pointAt(doc, e.clientX, e.clientY));
       },
       { capture: true, signal },
     );

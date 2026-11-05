@@ -4,6 +4,7 @@ import {
   clusterPins,
   createPinLayer,
   parsePins,
+  pinBlocks,
   pinElement,
   pointAt,
 } from "../bridge/pins.ts";
@@ -92,12 +93,30 @@ test("500 random pins leave every member within the radius of its seed", () => {
       assert.ok(Math.hypot(m.x - c.seed.x, m.y - c.seed.y) <= CLUSTER_RADIUS);
 });
 
-// jsdom has no layout: give every element the same box.
+// jsdom has no layout: give every element the same box, in a page of
+// 1280 by 2000.
 function layout() {
   document.elementFromPoint = (() =>
     document.querySelector("#card h3")) as typeof document.elementFromPoint;
   Element.prototype.getBoundingClientRect = function () {
     return new DOMRect(100, 200, 400, 100);
+  };
+  pageSize(1280, 2000);
+}
+
+function pageSize(width: number, height: number) {
+  for (const [key, value] of [
+    ["scrollWidth", width],
+    ["scrollHeight", height],
+  ] as const)
+    Object.defineProperty(document.documentElement, key, { value, configurable: true });
+}
+
+// boxes gives each element with an id the box of that id, and every other
+// element an empty box.
+function boxes(byId: Record<string, DOMRect>) {
+  Element.prototype.getBoundingClientRect = function (this: Element) {
+    return byId[this.id] ?? new DOMRect();
   };
 }
 
@@ -133,7 +152,7 @@ test("a pin finds its element by target, else by path, else by its text", () => 
   assert.strictEqual(at({ path: "0.1" }, "Nowhere in it"), null);
 });
 
-test("a spot in the page margin stays where it is, on the body", () => {
+test("a spot beside no block, as below a short body, stays where it is, on the body", () => {
   document.body.innerHTML =
     '<main id="page"><h1>Pricing</h1><p>Wide margins</p></main>';
   document.elementFromPoint = (() =>
@@ -317,7 +336,7 @@ test("placing a pin shows a hint until it ends", () => {
   layer.setPlacing(true);
   assert.strictEqual(
     document.querySelector(".sd-place-hint")?.textContent,
-    "Click to place a comment. Esc to cancel.",
+    "Click a spot, or use Tab and Enter. Esc to cancel.",
   );
   layer.setPlacing(false);
   assert.strictEqual(document.querySelector(".sd-place-hint"), null);
@@ -359,4 +378,209 @@ test("a cluster keeps the open pin and wears its first pin's color, and a pin th
     document.querySelector<HTMLElement>(`.sd-pin[data-id="${id}"]`)!.dataset;
   assert.ok("new" in shown("a"), "the pin that left the cluster pops in");
   assert.ok(!("new" in shown("far")), "the pin that stayed alone does not");
+});
+
+test("a spot in the page margin is on the block at its height, named as beside it", () => {
+  document.body.innerHTML =
+    '<main id="page"><h1 id="title">Pricing</h1><h2 id="steps">Steps</h2><p id="p">Do this.</p></main>';
+  document.elementFromPoint = (() =>
+    document.documentElement) as typeof document.elementFromPoint;
+  boxes({
+    page: new DOMRect(300, 0, 600, 400),
+    title: new DOMRect(300, 0, 600, 100),
+    steps: new DOMRect(300, 200, 600, 40),
+    p: new DOMRect(300, 240, 600, 40),
+  });
+  Object.defineProperty(document.body, "getBoundingClientRect", {
+    value: () => new DOMRect(300, 0, 600, 400),
+    configurable: true,
+  });
+  try {
+    const spot = pointAt(document, 120, 220)!;
+    assert.deepEqual(spot.point, {
+      target: "steps",
+      path: "0.1",
+      label: "Beside “Steps”",
+      x: -0.3,
+      y: 0.5,
+      page_x: 120,
+      page_y: 220,
+      viewport_w: window.innerWidth,
+    });
+    assert.strictEqual(pinElement(document, spot)?.id, "steps");
+    const layer = createPinLayer({
+      doc: () => document,
+      post: () => {},
+      laidOut: () => {},
+    });
+    layer.start(document);
+    layer.setPins(parsePins([{ id: "c1", anchor: spot }]));
+    assert.strictEqual(
+      document.querySelector('.sd-pin[data-id="c1"]')?.getAttribute("aria-label"),
+      "Comment beside “Steps”",
+    );
+  } finally {
+    delete (document.body as Partial<HTMLElement>).getBoundingClientRect;
+  }
+});
+
+test("a pin whose spot is off the page shows at the edge of the page", () => {
+  document.body.innerHTML = '<main><p id="steps">Steps</p></main>';
+  layout();
+  pageSize(390, 600);
+  boxes({ steps: new DOMRect(10, 100, 370, 40) });
+  const layer = createPinLayer({
+    doc: () => document,
+    post: () => {},
+    laidOut: () => {},
+  });
+  layer.start(document);
+  const gone = { target: "intro", x: 0, y: 0 };
+  layer.setPins(
+    parsePins([
+      // Placed in a desktop margin, left of a wide block.
+      {
+        id: "margin",
+        anchor: { quote: "", point: { target: "steps", x: -0.43, y: 0.5 } },
+      },
+      // Its element is gone, and the page got shorter than its spot.
+      {
+        id: "below",
+        anchor: {
+          quote: "",
+          point: { ...gone, page_x: 100, page_y: 1367, viewport_w: window.innerWidth },
+        },
+      },
+    ]),
+  );
+  assert.deepEqual(layer.rect("margin"), { left: 0, top: 92, width: 28, height: 28 });
+  assert.deepEqual(layer.rect("below"), { left: 100, top: 572, width: 28, height: 28 });
+  // The stored spots stay as they are.
+  assert.strictEqual(layer.tops().find((t) => t.id === "below")?.top, 600);
+});
+
+test("a moved pin keeps its color and wears a dashed ring", () => {
+  createPinLayer({ doc: () => document, post: () => {}, laidOut: () => {} });
+  const css = Array.from(document.querySelectorAll("style"), (s) => s.textContent).join(
+    "",
+  );
+  assert.match(css, /\.sd-pin\[data-moved\]\{outline:1\.5px dashed var\(--c/);
+  assert.notMatch(css, /data-moved[^{]*\{[^}]*opacity/);
+});
+
+test("a pin turns its body away from the text beside its tip", () => {
+  document.body.innerHTML = '<main><p id="badge">Pending</p></main>';
+  layout();
+  boxes({ badge: new DOMRect(200, 190, 80, 40) });
+  // Text lies on the badge only.
+  const word = document.querySelector("#badge")!.firstChild!;
+  document.caretRangeFromPoint = (x: number, y: number) => {
+    const range = document.createRange();
+    range.setStart(x >= 200 && y >= 190 && y <= 230 ? word : document.body, 0);
+    return range;
+  };
+  Range.prototype.getClientRects = function () {
+    return [new DOMRect(200, 190, 80, 40)] as unknown as DOMRectList;
+  };
+  try {
+    const layer = createPinLayer({
+      doc: () => document,
+      post: () => {},
+      laidOut: () => {},
+    });
+    layer.start(document);
+    layer.setPins(
+      parsePins([
+        {
+          id: "c1",
+          anchor: { quote: "", point: { target: "badge", x: 0.05, y: 0.5 } },
+        },
+      ]),
+    );
+    const pin = document.querySelector<HTMLElement>('.sd-pin[data-id="c1"]')!;
+    assert.strictEqual(pin.dataset.turn, "left");
+    // The tip stays at the spot.
+    assert.deepEqual(layer.rect("c1"), { left: 204, top: 182, width: 28, height: 28 });
+  } finally {
+    delete (document as Partial<Document>).caretRangeFromPoint;
+    delete (Range.prototype as Partial<Range>).getClientRects;
+  }
+});
+
+test("the blocks that take a pin from the keyboard are the innermost text blocks and media", () => {
+  document.body.innerHTML = `<section id="card"><h3 id="h">Plan</h3><p id="p">Ship <b>it</b>.</p></section>
+    <ul id="list"><li id="li">One<ul><li id="inner">Two</li></ul></li></ul>
+    <img id="img"><div id="empty"></div><button class="slashdocs-heading-link" id="ctl">#</button>`;
+  Element.prototype.getBoundingClientRect = () => new DOMRect(0, 0, 100, 20);
+  assert.deepEqual(
+    pinBlocks(document).map((el) => el.id),
+    ["h", "p", "li", "inner", "img"],
+  );
+});
+
+test("Tab and the arrow keys ring the blocks while placing, Enter places, and Esc stops", () => {
+  document.body.innerHTML = '<main><h2 id="a">Steps</h2><p id="b">Do this.</p></main>';
+  layout();
+  boxes({ a: new DOMRect(100, 100, 400, 30), b: new DOMRect(100, 140, 400, 60) });
+  document.elementFromPoint = (() => document.body) as typeof document.elementFromPoint;
+  Element.prototype.scrollIntoView = () => {};
+  window.matchMedia = (() => ({ matches: false })) as unknown as typeof matchMedia;
+  const posted: Record<string, unknown>[] = [];
+  const layer = createPinLayer({
+    doc: () => document,
+    post: (m) => posted.push(m),
+    laidOut: () => {},
+  });
+  layer.start(document);
+  const key = (key: string, shiftKey = false) => {
+    const ev = new KeyboardEvent("keydown", {
+      key,
+      shiftKey,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.body.dispatchEvent(ev);
+    return ev.defaultPrevented;
+  };
+  const ring = () => document.querySelector<HTMLElement>(".sd-place-ring");
+
+  assert.ok(!key("Tab"), "Tab is the page's own while not placing");
+  layer.setPlacing(true);
+  assert.ok(key("Tab"));
+  assert.strictEqual(ring()?.style.translate, "100px 100px");
+  key("ArrowDown");
+  assert.strictEqual(ring()?.style.height, "60px");
+  key("Tab", true);
+  assert.strictEqual(ring()?.style.width, "400px");
+  assert.strictEqual(ring()?.style.translate, "100px 100px");
+  key("Enter");
+  const placed = posted.find((m) => m.type === "slashdocs:pin-place");
+  assert.deepEqual((placed?.anchor as { point: unknown }).point, {
+    target: "a",
+    path: "0.0",
+    x: 0,
+    y: 0,
+    page_x: 100,
+    page_y: 100,
+    viewport_w: window.innerWidth,
+  });
+  assert.ok(!layer.isPlacing());
+  assert.strictEqual(ring(), null);
+
+  // Moving a pin places that pin, and Esc stops.
+  layer.setPins(parsePins([{ id: "c1", anchor: placed!.anchor }]));
+  layer.setPlacing(true, "c1");
+  assert.strictEqual(
+    document.querySelector(".sd-place-hint")?.textContent,
+    "Click the new spot, or use Tab and Enter. Esc to cancel.",
+  );
+  key("ArrowDown");
+  key("ArrowDown");
+  key("Enter");
+  const moved = posted.find((m) => m.type === "slashdocs:pin-move");
+  assert.strictEqual(moved?.id, "c1");
+  assert.strictEqual((moved?.anchor as { point: { path: string } }).point.path, "0.1");
+  layer.setPlacing(true);
+  key("Escape");
+  assert.ok(!layer.isPlacing());
 });
