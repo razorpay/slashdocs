@@ -62,6 +62,9 @@ const BEATS: Beat[] = [
 ];
 
 export const BEAT_COUNT = BEATS.length;
+// The demo opens on the first output line, under its prompt, so the terminal
+// has words in it before the loop plays.
+export const OPENING = BEATS.findIndex((b) => b.line && !isTyped(b.line));
 export const beatMs = (i: number) => BEATS[i].ms;
 
 export function sceneAt(i: number) {
