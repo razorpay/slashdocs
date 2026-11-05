@@ -8,6 +8,8 @@ import {
   ChevronRight,
   Folder as FolderIcon,
   FolderInput,
+  KeyRound,
+  Link2,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -17,7 +19,7 @@ import {
 import { Page } from "@/components/layout/page";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Skeleton, EmptyState } from "@/components/ui/misc";
+import { Skeleton, EmptyState, RetryButton } from "@/components/ui/misc";
 import { ErrorState } from "@/components/error-state";
 import {
   Dropdown,
@@ -159,7 +161,9 @@ export function FolderPage() {
     const apiError = error instanceof APIError ? error : undefined;
     return (
       <Page backdrop={false}>
-        {apiError?.status === 404 ? (
+        {apiError?.status === 403 ? (
+          <FolderAccessDenied />
+        ) : apiError?.status === 404 ? (
           <ErrorState
             title="Folder not found"
             description="This folder may have been deleted, or the link may be incorrect."
@@ -441,6 +445,33 @@ export function FolderPage() {
   );
 }
 
+// Folders take no access requests, so the reader sends the link to the
+// person who shared it.
+function FolderAccessDenied() {
+  const copyLink = () =>
+    navigator.clipboard.writeText(window.location.href).then(
+      () => toast.success("Folder link copied."),
+      () => toast.error("Could not copy the folder link."),
+    );
+  return (
+    <ErrorState
+      title="You don't have access to this folder"
+      description="Ask the folder owner to share it with you. Copy the link to send with your request."
+      icon={<KeyRound aria-hidden="true" className="h-5 w-5" />}
+      action={
+        <div className="flex flex-wrap justify-center gap-2">
+          <Button onClick={copyLink}>
+            <Link2 className="h-4 w-4" /> Copy link
+          </Button>
+          <Button asChild variant="outline">
+            <Link to="/app/documents">Go to documents</Link>
+          </Button>
+        </div>
+      }
+    />
+  );
+}
+
 function FolderReadme({
   document,
 }: {
@@ -475,9 +506,15 @@ function FolderReadme({
           className="h-[min(70vh,760px)] w-full border-0"
           sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
         />
+      ) : token.error ? (
+        <EmptyState
+          title="Could not render README.html"
+          description={errorMessage(token.error)}
+          action={<RetryButton query={token} variant="outline" size="sm" />}
+        />
       ) : (
         <div className="p-6 text-sm text-[var(--color-fg-muted)]">
-          {token.error ? "Could not render README.html." : "Preparing README.html…"}
+          Preparing README.html…
         </div>
       )}
     </section>
