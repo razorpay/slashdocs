@@ -59,3 +59,23 @@ it("keeps both texts of a two-tab conflict after the field closes", () => {
   expect(readFieldDraft("reject:doc_1")).toMatchObject({ body: "Shared and mine" });
   expect(readFieldDraft("reject:doc_1")?.held).toBeUndefined();
 });
+
+it("saves the words typed just before the page goes, with no pause and no close", () => {
+  vi.useFakeTimers();
+  const { result } = renderHook(() => useFieldDraft("bot-name"));
+  act(() => void result.current.setText("release-bot"));
+  expect(readFieldDraft("bot-name")).toBeUndefined();
+  act(() => void window.dispatchEvent(new Event("pagehide")));
+  expect(readFieldDraft("bot-name")?.body).toBe("release-bot");
+  act(() => void result.current.setText("release-bot-2"));
+  Object.defineProperty(document, "visibilityState", {
+    value: "hidden",
+    configurable: true,
+  });
+  act(() => void document.dispatchEvent(new Event("visibilitychange")));
+  expect(readFieldDraft("bot-name")?.body).toBe("release-bot-2");
+  Object.defineProperty(document, "visibilityState", {
+    value: "visible",
+    configurable: true,
+  });
+});
