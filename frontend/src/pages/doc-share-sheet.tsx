@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState, type ComponentPropsWithoutRef } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentPropsWithoutRef,
+} from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { errorMessage } from "@/lib/errors";
@@ -171,6 +177,9 @@ export function ShareSheet({
     q.invalidateQueries({ queryKey: queryKeys.userSearchAll() });
   };
 
+  // The form is in the page only while the sheet is open. A share that ends
+  // after the sheet closed says so in a toast, as the form cannot.
+  const form = useRef<HTMLFormElement>(null);
   const m = useMutation({
     mutationFn: () => {
       if (shareMode === "groups") {
@@ -184,12 +193,16 @@ export function ShareSheet({
         : api.createGrant(id, address.trim(), role);
     },
     onSuccess: () => {
+      if (!form.current)
+        toast.success(`Shared with ${selectedGroup?.name || address.trim()}.`);
       setAddress("");
       setSelectedGroup(null);
       invalidateAccess();
     },
-    // The error shows under the field, not as a toast.
-    onError: () => {},
+    // The error shows under the field while the sheet is open.
+    onError: (e) => {
+      if (!form.current) toast.error(errorMessage(e, "Couldn't share."));
+    },
   });
   const updateGrant = useMutation({
     mutationFn: ({
@@ -471,6 +484,7 @@ export function ShareSheet({
               </div>
             ) : null}
             <form
+              ref={form}
               className={`space-y-3 ${canManageAccess ? "" : "opacity-55"}`}
               aria-describedby={readOnly ? "share-read-only-note" : undefined}
               onSubmit={(e) => {

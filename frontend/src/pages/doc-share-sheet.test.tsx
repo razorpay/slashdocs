@@ -8,7 +8,9 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { toast } from "sonner";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { api } from "@/api";
 import { Sheet } from "@/components/ui/sheet";
 import { ShareSheet } from "./doc-share-sheet";
 
@@ -507,4 +509,45 @@ describe("Google Group sharing", () => {
       { timeout: 2500 },
     );
   });
+});
+
+describe("A share that ends after the sheet closed", () => {
+  for (const [result, kind, text] of [
+    ["succeeds", "success", "Shared with ana@example.com."],
+    ["fails", "error", "No slashdocs user exists for that email."],
+  ] as const) {
+    it(`says so in a toast when it ${result}`, async () => {
+      installFetch({ groupsEnabled: false });
+      let answer!: { resolve: () => void; reject: (e: Error) => void };
+      vi.spyOn(api, "createGrant").mockReturnValue(
+        new Promise((resolve, reject) => {
+          answer = { resolve: () => resolve({} as never), reject };
+        }),
+      );
+      const shown = vi.spyOn(toast, kind);
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+      });
+      const sheet = (open: boolean) => (
+        <QueryClientProvider client={client}>
+          <Sheet open={open}>
+            <ShareSheet docId="doc_1" />
+          </Sheet>
+        </QueryClientProvider>
+      );
+      const { rerender } = render(sheet(true));
+      const user = userEvent.setup();
+      await user.type(
+        await screen.findByRole("combobox", { name: "Person or bot" }),
+        "ana@example.com",
+      );
+      await user.click(screen.getByRole("button", { name: "Share" }));
+      rerender(sheet(false));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+      if (kind === "success") answer.resolve();
+      else answer.reject(new Error(text));
+      await waitFor(() => expect(shown).toHaveBeenCalledWith(text));
+    });
+  }
 });
