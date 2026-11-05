@@ -253,6 +253,40 @@ it("counts the attempts of a save that fails, and offers a copy", async () => {
   );
 });
 
+it.each([403, 404])(
+  "names a failed read of the saved version (%i), tries it again, and copies the words",
+  async (status) => {
+    const error = vi.spyOn(toast, "error");
+    const edit = vi.spyOn(api, "editSource").mockResolvedValue(saved("ver_2"));
+    vi.mocked(api.getVersionHTML).mockRejectedValueOnce(
+      new APIError(status, "not_found", "gone"),
+    );
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    const { type, setState } = setup();
+
+    await type("Try it now.");
+
+    expect(setState).toHaveBeenLastCalledWith("failed");
+    expect(edit).not.toHaveBeenCalled();
+    const [message, options] = error.mock.lastCall!;
+    expect(message).toBe(
+      "The saved version of this document did not load, so your edits are not saved yet. Trying again (attempt 1)…",
+    );
+    const { action, cancel } = options as unknown as {
+      action: { label: string; onClick: (e: { preventDefault(): void }) => void };
+      cancel: { label: string };
+    };
+    expect(cancel.label).toBe("Try now");
+    await act(async () => action.onClick({ preventDefault() {} }));
+    expect(writeText).toHaveBeenCalledWith("Try it now.");
+
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(edit).toHaveBeenCalled();
+    expect(setState).toHaveBeenLastCalledWith("saved");
+  },
+);
+
 it("saves nothing when the edits cannot be written into the source", async () => {
   const error = vi.spyOn(toast, "error");
   const edit = vi.spyOn(api, "editSource");
