@@ -14,11 +14,12 @@ import { SheetHandle } from "@/components/ui/sheet";
 import { cn } from "@/lib/cn";
 import { EDGE, placeBeside, type Rect } from "@/lib/place-beside";
 import { anchorLabel } from "@/lib/comment-pins";
+import { useLostWords } from "@/lib/comment-drafts";
 import { principalLabel } from "@/lib/principals";
 import { useIsMobile } from "@/lib/use-media-query";
 import { popIn, sheetUp } from "@/lib/motion";
 import { useDoc } from "./doc-context";
-import { CommentComposer, CommentThread } from "./doc-comments";
+import { CommentComposer, CommentThread, DeletedThread } from "./doc-comments";
 import { PersonAvatar } from "./doc-comment-parts";
 import { CommentBody } from "./doc-comment-text";
 import { useFrameMessage } from "./use-frame-message";
@@ -181,8 +182,16 @@ export function CommentPopovers({
   ready: boolean;
   postToFrame: (message: Record<string, unknown>) => void;
 }) {
-  const { activeComment, setActiveComment, comments, drafts, unanchoredComments } =
-    useDoc();
+  const {
+    docId,
+    activeComment,
+    setActiveComment,
+    comments,
+    commentsLoading,
+    commentsError,
+    drafts,
+    unanchoredComments,
+  } = useDoc();
   const [anchor, setAnchor] = useState<{
     id: string;
     rect: Rect | null;
@@ -238,6 +247,10 @@ export function CommentPopovers({
   const close = () => setActiveComment(undefined);
   const draft = drafts.find((d) => d.id === activeComment);
   const thread = comments.find((c) => c.id === activeComment);
+  // A thread that someone deleted keeps the words that the reader did not send.
+  const lost = useLostWords(docId, activeComment);
+  const deleted =
+    !draft && !thread && !commentsLoading && !commentsError && lost.length > 0;
   const placedAnchor = anchor?.id === activeComment ? anchor : undefined;
   const rect = placedAnchor?.rect ?? null;
   // Until the bridge reports the anchor, a thread waits, so it does not
@@ -246,7 +259,7 @@ export function CommentPopovers({
   const clustered = cluster && comments.filter((c) => cluster.ids.includes(c.id));
   return (
     <AnimatePresence>
-      {(draft || thread) && placed ? (
+      {((draft || thread) && placed) || deleted ? (
         <Popover
           key={activeComment}
           anchor={rect}
@@ -258,8 +271,10 @@ export function CommentPopovers({
         >
           {draft ? (
             <CommentComposer draft={draft} />
+          ) : thread ? (
+            <CommentThread c={thread} onClose={close} />
           ) : (
-            <CommentThread c={thread!} onClose={close} />
+            <DeletedThread id={activeComment!} texts={lost} onClose={close} />
           )}
         </Popover>
       ) : null}
