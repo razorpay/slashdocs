@@ -86,21 +86,24 @@ const CLEAR_STEP = 10;
 // covers none of lines and no text of d, with a margin of CLEAR_MARGIN around
 // it. It tries places, as [left, top], then the sides of lines, then the
 // bottom and the top of the viewport. When each place covers text, el sits at
-// the bottom or the top of the viewport, where it covers none of lines.
+// the bottom or the top of the viewport, where it covers none of lines. When
+// el sits at an edge of the viewport, placeClear gives that edge.
 export function placeClear(
   d: Document,
   el: HTMLElement,
   lines: DOMRect[],
   places: number[][],
-): void {
-  const view = d.defaultView!;
+): "bottom" | "top" | null {
+  // The viewport without its scroll bars.
+  const { clientWidth: viewWidth, clientHeight: viewHeight } =
+    d.scrollingElement ?? d.documentElement;
   const { offsetWidth: width, offsetHeight: height } = el;
   const span = lines.reduce(union, lines[0] ?? new DOMRect());
   const first = lines[0] ?? span;
   const beside = first.top + (first.height - height) / 2;
-  const center = (view.innerWidth - width) / 2;
+  const center = (viewWidth - width) / 2;
   const edges = [
-    [center, view.innerHeight],
+    [center, viewHeight],
     [center, 0],
   ];
   const boxes = [
@@ -110,25 +113,25 @@ export function placeClear(
     ...edges,
   ].map(([left, top]) =>
     DOMRect.fromRect({
-      x: Math.max(8, Math.min(left, view.innerWidth - width - 8)),
-      y: Math.max(8, Math.min(top, view.innerHeight - height - 8)),
+      x: Math.max(8, Math.min(left, viewWidth - width - 8)),
+      y: Math.max(8, Math.min(top, viewHeight - height - 8)),
       width,
       height,
     }),
   );
   const coversLines = (box: DOMRect) => lines.some((line) => overlap(box, line));
-  // The hit test for text skips el, so that el does not hide the text under
-  // it. el keeps its layout, and so the focus of a field in it.
-  el.style.setProperty("pointer-events", "none", "important");
+  // The hit test for text must not find el, so el waits out of the viewport.
+  // It keeps its layout there, and so the focus of a field in it.
+  el.style.setProperty("left", `${-width - viewWidth}px`, "important");
   const [bottom, top] = boxes.slice(-edges.length);
   const place =
     boxes.find((box) => {
       const room = grow(box, CLEAR_MARGIN);
       return !coversLines(room) && !coversText(d, room);
     }) ?? (coversLines(bottom) ? top : bottom);
-  el.style.removeProperty("pointer-events");
   el.style.setProperty("left", `${place.left}px`, "important");
   el.style.setProperty("top", `${place.top}px`, "important");
+  return place === bottom ? "bottom" : place === top ? "top" : null;
 }
 
 function union(a: DOMRect, b: DOMRect): DOMRect {
