@@ -59,11 +59,19 @@ function renderDocBar(
   requesters: unknown[] = [],
   role: "owner" | "editor" = "owner",
   props: Partial<ComponentProps<typeof DocBar>> = {},
+  // Paths that answer 503.
+  failing: string[] = [],
 ) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (failing.includes(url)) {
+        return new Response(JSON.stringify({ error: { code: "unavailable" } }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
       if (url === "/v1/config") {
         return new Response(
           JSON.stringify({
@@ -302,6 +310,15 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     expect(
       await screen.findByRole("button", { name: "Share, 1 request for access" }),
     ).toBeVisible();
+  });
+
+  it("marks the Share button when the requests for access did not load", async () => {
+    renderDocBar(true, [], [], "owner", {}, ["/v1/documents/doc_1/access-requests"]);
+    expect(
+      await screen.findByRole("button", {
+        name: "Share, requests for access did not load",
+      }),
+    ).toHaveTextContent("!");
   });
 
   it("renames the document in place, and Esc keeps the old title", async () => {
