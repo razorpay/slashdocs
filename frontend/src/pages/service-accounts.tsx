@@ -4,11 +4,11 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { errorMessage } from "@/lib/errors";
-import { Bot, KeyRound, Plus, Power, Trash2 } from "lucide-react";
+import { Bot, CloudOff, KeyRound, Plus, Power, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { CodeBlock, EmptyState, Skeleton } from "@/components/ui/misc";
+import { CodeBlock, EmptyState, RetryButton, Skeleton } from "@/components/ui/misc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
@@ -75,9 +75,12 @@ export function ServiceAccountsPage() {
               <Skeleton className="h-12 w-full" />
             </>
           ) : sas.error ? (
-            <div className="rounded-md border border-dashed border-[var(--color-border)] p-6 text-center text-sm text-[var(--color-danger)]">
-              Could not load bots.
-            </div>
+            <EmptyState
+              icon={<CloudOff className="h-5 w-5" />}
+              title="Could not load bots"
+              description="Check your connection, then try again."
+              action={<RetryButton query={sas} variant="outline" size="sm" />}
+            />
           ) : items.length === 0 ? (
             <div className="rounded-md border border-dashed border-[var(--color-border)] p-6 text-center text-sm text-[var(--color-fg-muted)]">
               No bots yet. Create one to share docs with it.
@@ -110,16 +113,9 @@ export function ServiceAccountsPage() {
           )}
         </div>
 
+        {/* The first bot is selected when any loaded, so there is no prompt to pick one. */}
         <div className="min-w-0">
-          {selected ? (
-            <ServiceAccountDetail sa={selected} />
-          ) : (
-            <EmptyState
-              icon={<Bot className="h-5 w-5" />}
-              title="No bot selected"
-              description="Pick one on the left to manage its keys."
-            />
-          )}
+          {selected && <ServiceAccountDetail sa={selected} />}
         </div>
       </div>
     </Page>
@@ -254,7 +250,7 @@ function ServiceAccountDetail({ sa }: { sa: ServiceAccount }) {
                       <Button
                         variant="ghost"
                         size="icon"
-                        aria-label="Revoke"
+                        aria-label={`Revoke key ${k.name}`}
                         className="text-[var(--color-fg-muted)] hover:text-[var(--color-danger)]"
                       >
                         <Trash2 className="h-3.5 w-3.5" />

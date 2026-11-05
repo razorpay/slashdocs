@@ -7,6 +7,20 @@ import { api } from "@/api";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ServiceAccountsPage } from "./service-accounts";
 
+function renderPage() {
+  render(
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+    >
+      <TooltipProvider>
+        <MemoryRouter>
+          <ServiceAccountsPage />
+        </MemoryRouter>
+      </TooltipProvider>
+    </QueryClientProvider>,
+  );
+}
+
 describe("ServiceAccountsPage", () => {
   beforeEach(() => {
     // jsdom has no media queries.
@@ -70,5 +84,40 @@ describe("ServiceAccountsPage", () => {
     await user.type(name, "n8n@ops.team");
     expect(name).toBeInvalid();
     expect(name).toHaveAccessibleDescription(/Addresses must end in/);
+  });
+
+  it("offers Retry when the bots do not load, and no selection prompt", async () => {
+    const user = userEvent.setup();
+    const list = vi
+      .spyOn(api, "listServiceAccounts")
+      .mockRejectedValueOnce(new Error("unavailable"))
+      .mockResolvedValue({ items: [] });
+    renderPage();
+
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    expect(screen.queryByText("No bot selected")).not.toBeInTheDocument();
+    await user.click(retry);
+    expect(await screen.findByText(/No bots yet/)).toBeInTheDocument();
+    expect(list).toHaveBeenCalledTimes(2);
+  });
+
+  it("names each Revoke button by its key", async () => {
+    vi.spyOn(api, "listServiceAccounts").mockResolvedValue({
+      items: [{ id: "sa_1", name: "n8n@bots.bot" }],
+    } as Awaited<ReturnType<typeof api.listServiceAccounts>>);
+    vi.spyOn(api, "listServiceAccountKeys").mockResolvedValue({
+      items: [
+        { id: "key_1", name: "First key" },
+        { id: "key_2", name: "Second review key" },
+      ],
+    } as Awaited<ReturnType<typeof api.listServiceAccountKeys>>);
+    renderPage();
+
+    expect(
+      await screen.findByRole("button", { name: "Revoke key Second review key" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Revoke key First key" }),
+    ).toBeInTheDocument();
   });
 });
