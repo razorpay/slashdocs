@@ -82,3 +82,11 @@ export function useDebounced<T>(value: T, delay: number): T {
   }, [value, delay]);
   return debounced;
 }
+
+// useLastDefined is the value, or while it is undefined the last value that
+// was defined, so that a dialog keeps what it shows through its exit.
+export function useLastDefined<T>(value: T | undefined): T | undefined {
+  const [last, setLast] = useState(value);
+  if (value !== undefined && value !== last) setLast(value);
+  return value ?? last;
+}

@@ -33,6 +33,10 @@ import { api, type ServiceAccount } from "@/api";
 import { publicURL } from "@/lib/config";
 import { queryKeys } from "@/lib/queryKeys";
 import { BOT_DOMAIN_SUFFIX } from "@/lib/constants";
+import { useLastDefined } from "@/lib/hooks";
+
+// A key that shows once: the default key of a new bot, or a named key.
+type NewKey = { bot: string; keyName?: string; token: string };
 
 export function ServiceAccountsPage() {
   useTitle("Bots");
@@ -42,6 +46,11 @@ export function ServiceAccountsPage() {
     queryFn: api.listServiceAccounts,
   });
   const [creating, setCreating] = useState(false);
+  // The page, not the form that asked, keeps each new key until the reader
+  // closes it, so that a key that comes after Cancel or after another bot
+  // was selected still shows, and for the bot it belongs to.
+  const [newKeys, setNewKeys] = useState<NewKey[]>([]);
+  const reveal = (k: NewKey) => setNewKeys((ks) => [...ks, k]);
   const items = sas.data?.items || [];
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = items.find((s) => s.id === selectedId) || items[0] || null;
@@ -64,7 +73,12 @@ export function ServiceAccountsPage() {
         onCreated={(sa) => {
           q.invalidateQueries({ queryKey: queryKeys.serviceAccounts() });
           setSelectedId(sa.id);
+          reveal({ bot: sa.name, token: sa.key.token });
         }}
+      />
+      <NewKeyDialog
+        newKey={newKeys[0]}
+        onDone={() => setNewKeys((ks) => ks.slice(1))}
       />
 
       {/* minmax(0, 1fr) keeps long IDs and code from widening the columns. */}
@@ -111,14 +125,25 @@ export function ServiceAccountsPage() {
 
         {/* The first bot is selected when any loaded, so there is no prompt to pick one. */}
         <div className="min-w-0">
-          {selected && <ServiceAccountDetail sa={selected} />}
+          {selected && (
+            <ServiceAccountDetail key={selected.id} sa={selected} onKey={reveal} />
+          )}
         </div>
       </div>
     </Page>
   );
 }
 
-function ServiceAccountDetail({ sa }: { sa: ServiceAccount }) {
+// The detail mounts for one bot, so its field and the callbacks of its
+// mutations belong to that bot even when the reader selects another before
+// a response comes. Those callbacks run after it unmounts too.
+function ServiceAccountDetail({
+  sa,
+  onKey,
+}: {
+  sa: ServiceAccount;
+  onKey: (k: NewKey) => void;
+}) {
   const { id, name, disabled = false } = sa;
   const q = useQueryClient();
   const url = publicURL();
@@ -126,32 +151,30 @@ function ServiceAccountDetail({ sa }: { sa: ServiceAccount }) {
     queryKey: queryKeys.serviceAccountKeys(id),
     queryFn: () => api.listServiceAccountKeys(id),
   });
-  const [revealToken, setRevealToken] = useState<{
-    token: string;
-    keyName: string;
-  } | null>(null);
   const [keyName, setKeyName] = useState("");
   const createKey = useMutation({
-    mutationFn: () => api.createServiceAccountKey(id, keyName.trim()),
-    onSuccess: (r) => {
-      setRevealToken({ token: r.token, keyName: keyName.trim() });
-      setKeyName("");
+    mutationFn: (sent: string) => api.createServiceAccountKey(id, sent),
+    onSuccess: (r, sent) => {
+      onKey({ bot: name, keyName: sent, token: r.token });
+      // A name typed while the key was made stays for the next key.
+      setKeyName((now) => (now.trim() === sent ? "" : now));
       q.invalidateQueries({ queryKey: queryKeys.serviceAccountKeys(id) });
     },
     onError: (e) => toast.error(errorMessage(e, "Failed")),
   });
   const revokeKey = useMutation({
-    mutationFn: (keyID: string) => api.revokeServiceAccountKey(id, keyID),
-    onSuccess: () => {
-      toast.success("Key revoked.");
+    mutationFn: (key: { id: string; name: string }) =>
+      api.revokeServiceAccountKey(id, key.id),
+    onSuccess: (_, key) => {
+      toast.success(`Revoked key “${key.name}” of ${name}.`);
       q.invalidateQueries({ queryKey: queryKeys.serviceAccountKeys(id) });
     },
     onError: (e) => toast.error(errorMessage(e, "Could not revoke key")),
   });
   const toggle = useMutation({
-    mutationFn: () => api.updateServiceAccount(id, name, !disabled),
-    onSuccess: () => {
-      toast.success(disabled ? "Enabled." : "Disabled.");
+    mutationFn: (off: boolean) => api.updateServiceAccount(id, name, off),
+    onSuccess: (_, off) => {
+      toast.success(`${off ? "Disabled" : "Enabled"} ${name}.`);
       q.invalidateQueries({ queryKey: queryKeys.serviceAccounts() });
     },
     onError: (e) => toast.error(errorMessage(e, "Could not update bot")),
@@ -187,7 +210,7 @@ function ServiceAccountDetail({ sa }: { sa: ServiceAccount }) {
               </AlertDialogDescription>
               <AlertDialogFooter>
                 <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction onClick={() => toggle.mutate()}>
+                <AlertDialogAction onClick={() => toggle.mutate(!disabled)}>
                   {disabled ? "Enable" : "Disable"}
                 </AlertDialogAction>
               </AlertDialogFooter>
@@ -207,7 +230,7 @@ function ServiceAccountDetail({ sa }: { sa: ServiceAccount }) {
             className="flex flex-wrap gap-2"
             onSubmit={(e) => {
               e.preventDefault();
-              createKey.mutate();
+              createKey.mutate(keyName.trim());
             }}
           >
             <Input
@@ -259,7 +282,7 @@ function ServiceAccountDetail({ sa }: { sa: ServiceAccount }) {
                         <AlertDialogCancel>Cancel</AlertDialogCancel>
                         <AlertDialogAction
                           variant="danger"
-                          onClick={() => revokeKey.mutate(k.id)}
+                          onClick={() => revokeKey.mutate(k)}
                         >
                           Revoke
                         </AlertDialogAction>
@@ -292,33 +315,6 @@ function ServiceAccountDetail({ sa }: { sa: ServiceAccount }) {
   ${url}/v1/documents`}</CodeBlock>
         </CardContent>
       </Card>
-
-      <Dialog open={!!revealToken} onOpenChange={(o) => !o && setRevealToken(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Copy this key now</DialogTitle>
-            <DialogDescription>
-              This is the only time the secret token will be shown. Store it somewhere
-              safe.
-            </DialogDescription>
-          </DialogHeader>
-          {revealToken && (
-            <>
-              <div className="mb-1 text-xs font-medium text-[var(--color-fg-muted)]">
-                {revealToken.keyName}
-              </div>
-              <CodeBlock>{revealToken.token}</CodeBlock>
-              <div className="mb-1 mt-4 text-xs text-[var(--color-fg-muted)]">
-                Use it as a bearer token from your headless agent, or with the CLI:
-              </div>
-              <CodeBlock>{headlessCLI(url, revealToken.token)}</CodeBlock>
-            </>
-          )}
-          <DialogFooter>
-            <Button onClick={() => setRevealToken(null)}>Done</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
@@ -338,7 +334,7 @@ function NewBotDialog({
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  onCreated: (sa: { id: string; name: string }) => void;
+  onCreated: (sa: CreatedBot) => void;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -349,17 +345,18 @@ function NewBotDialog({
   );
 }
 
+type CreatedBot = Awaited<ReturnType<typeof api.createServiceAccount>>;
+
 // The form mounts each time the dialog opens, however it closed, so a new bot
-// starts from an empty name and does not show the key of the last one.
+// starts from an empty name. The page shows the key of the bot.
 function NewBotForm({
   onCreated,
   onClose,
 }: {
-  onCreated: (sa: { id: string; name: string }) => void;
+  onCreated: (sa: CreatedBot) => void;
   onClose: () => void;
 }) {
   const [value, setValue] = useState("");
-  const [result, setResult] = useState<{ name: string; token: string } | null>(null);
   const trimmed = value.trim();
   const at = trimmed.indexOf("@");
   const label = at >= 0 ? trimmed.slice(0, at) : trimmed;
@@ -370,13 +367,11 @@ function NewBotForm({
   const domainLooksValid = !hasDomain || domain.endsWith(BOT_DOMAIN_SUFFIX);
   const create = useMutation({
     mutationFn: () => api.createServiceAccount(label, hasDomain ? domain : undefined),
-    onSuccess: (r) => {
-      setResult({ name: r.name, token: r.key.token });
-      onCreated({ id: r.id, name: r.name });
-    },
+    // It runs after Cancel too, so the key reaches the page.
+    onSuccess: onCreated,
     onError: (e) => toast.error(errorMessage(e, "Failed")),
   });
-  return !result ? (
+  return (
     <>
       <DialogHeader>
         <DialogTitle>New bot</DialogTitle>
@@ -388,7 +383,8 @@ function NewBotForm({
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          if (label) create.mutate();
+          // The form closes only if it is still open: a later form stays.
+          if (label) create.mutate(undefined, { onSuccess: onClose });
         }}
         className="space-y-4"
       >
@@ -431,31 +427,47 @@ function NewBotForm({
         </DialogFooter>
       </form>
     </>
-  ) : (
-    <>
-      <DialogHeader>
-        <DialogTitle>Meet {result.name}</DialogTitle>
-        <DialogDescription>
-          Share docs with this address to let your bot read or edit them.
-        </DialogDescription>
-      </DialogHeader>
-      <CodeBlock>{result.name}</CodeBlock>
-      <div className="mt-5 rounded-sm border border-[var(--color-warning)]/40 bg-[var(--color-warning)]/10 p-3">
-        <div className="mb-1 text-xs font-medium uppercase tracking-wide text-[var(--color-fg-muted)]">
-          Bot key
-        </div>
-        <div className="mb-2 text-sm font-semibold text-[var(--color-warning)]">
-          Copy this key now — you won't see it again.
-        </div>
-        <CodeBlock>{result.token}</CodeBlock>
-      </div>
-      <div className="mb-1 mt-4 text-xs text-[var(--color-fg-muted)]">
-        Use it with the CLI:
-      </div>
-      <CodeBlock>{headlessCLI(publicURL(), result.token)}</CodeBlock>
-      <DialogFooter>
-        <Button onClick={onClose}>Done</Button>
-      </DialogFooter>
-    </>
+  );
+}
+
+// The dialog keeps the key that it shows through its exit.
+function NewKeyDialog({ newKey, onDone }: { newKey?: NewKey; onDone: () => void }) {
+  const shown = useLastDefined(newKey);
+  return (
+    <Dialog open={!!newKey} onOpenChange={(o) => !o && onDone()}>
+      <DialogContent>
+        {shown && (
+          <>
+            <DialogHeader>
+              <DialogTitle className="break-all">
+                {shown.keyName ? `New key for ${shown.bot}` : `Meet ${shown.bot}`}
+              </DialogTitle>
+              <DialogDescription>
+                {shown.keyName
+                  ? "Agents that use this key act as this bot."
+                  : "Share docs with this address to let your bot read or edit them."}
+              </DialogDescription>
+            </DialogHeader>
+            <CodeBlock>{shown.bot}</CodeBlock>
+            <div className="mt-5 rounded-sm border border-[var(--color-warning)]/40 bg-[var(--color-warning)]/10 p-3">
+              <div className="mb-1 break-all text-xs font-medium uppercase tracking-wide text-[var(--color-fg-muted)]">
+                {shown.keyName || "Bot key"}
+              </div>
+              <div className="mb-2 text-sm font-semibold text-[var(--color-warning)]">
+                Copy this key now — you won't see it again.
+              </div>
+              <CodeBlock>{shown.token}</CodeBlock>
+            </div>
+            <div className="mb-1 mt-4 text-xs text-[var(--color-fg-muted)]">
+              Use it with the CLI:
+            </div>
+            <CodeBlock>{headlessCLI(publicURL(), shown.token)}</CodeBlock>
+            <DialogFooter>
+              <Button onClick={onDone}>Done</Button>
+            </DialogFooter>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
