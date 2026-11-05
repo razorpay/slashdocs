@@ -467,6 +467,31 @@ describe("script text", () => {
     expect(replaceText).toHaveBeenLastCalledWith("Run it.", "Try it.");
   });
 
+  it("saves text typed back to its loaded text, and changes its other places back", async () => {
+    const edit = vi.spyOn(api, "editSource").mockResolvedValue(saved("ver_2"));
+    const { frame, probe, pause, replaceText } = setup();
+    probe.mockImplementation(render());
+    frame.scripts = [change];
+    await pause();
+
+    edit.mockResolvedValue(saved("ver_3"));
+    frame.scripts = [{ ...change, after: "Try it." }];
+    await pause();
+
+    expect(probe).toHaveBeenCalledTimes(2);
+    expect(edit).toHaveBeenLastCalledWith(
+      "doc_1",
+      expect.objectContaining({
+        base_version_id: "ver_2",
+        replacements: [
+          { start: literalAt, end: literalAt + 4, old_html: '"Run', new_html: '"Try' },
+        ],
+        change_summary: "Changed “Run it.” to “Try it.” in 2 places",
+      }),
+    );
+    expect(replaceText).toHaveBeenLastCalledWith("Run it.", "Try it.");
+  });
+
   it("refuses a change that does not show where the reader typed it, and saves the rest", async () => {
     const error = vi.spyOn(toast, "error");
     const edit = vi.spyOn(api, "editSource").mockResolvedValue(saved("ver_2"));

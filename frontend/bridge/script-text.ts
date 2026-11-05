@@ -19,10 +19,11 @@ export interface ScriptText {
   // Draws the eye to the hint that shows, and tells whether one shows.
   pulse(): boolean;
   // Shows to in every place of the page that shows from, as a load of the
-  // saved source would, and gives the texts that changed.
+  // saved source would, and gives the texts that changed. The reader can
+  // then type in each of those places.
   replace(from: string, to: string): Text[];
-  // The script text that the reader changed since editing started. A
-  // change of white space at the ends only does not count.
+  // Each script string that the reader typed in since editing started, with
+  // its text at the start and its text now, which can be the same again.
   take(): ScriptChange[];
   stop(): void;
 }
@@ -40,6 +41,8 @@ const NOT_SHOWN = "script,style,template,noscript,title";
 // The sentence for script text that cannot change here. The app says the
 // same when there is no hint.
 const SCRIPT_WRITES = "A script on the page writes this text.";
+// What a screen reader says about script text that the reader can change.
+const EDITABLE = "A script on the page writes this text. You can change it here.";
 
 // The bridge's own elements carry a slashdocs- class or id, or are marked as
 // injected. A locator skips them, so that it finds the same element in a page
@@ -94,15 +97,24 @@ export function startScriptText(
 ): ScriptText {
   let requests = 0;
   let asked: { requestId: string; el: Element; locator: Locator } | null = null;
-  // The script text that the reader can type in: its locator, its text
-  // before the first key, and the contenteditable value it had.
-  const edits = new Map<
-    Element,
-    { locator: Locator; before: string; was: string | null }
-  >();
+  // The script text that the reader can type in: the locator and the text
+  // before the first key of its string, the contenteditable value it had,
+  // and when the reader last typed there. The places of one string share
+  // the locator of the place that the app checked.
+  type Edit = { locator: Locator; before: string; was: string | null; typed: number };
+  const edits = new Map<Element, Edit>();
+  let keys = 0;
   // The hint or note that shows at script text, and that text.
   let hint: { box: HTMLElement; el: Element } | null = null;
-  const typing = new MutationObserver(onChange);
+  const typing = new MutationObserver((records) => {
+    for (const { target } of records) {
+      const el = target.nodeType === Node.ELEMENT_NODE ? target : target.parentNode;
+      const place = (el as Element | null)?.closest(`[${EDIT_ATTR}]`);
+      const edit = place && edits.get(place);
+      if (edit) edit.typed = ++keys;
+    }
+    onChange();
+  });
 
   // ask starts at the element of the clicked or focused text. The bridge's
   // own wrappers, such as comment highlights, are not that element.
@@ -148,14 +160,7 @@ export function startScriptText(
         askAbout(el),
       );
     if (!editable) return readOnlyHint(el);
-    edits.set(el, {
-      locator,
-      before: el.textContent ?? "",
-      was: el.getAttribute("contenteditable"),
-    });
-    el.setAttribute("contenteditable", "true");
-    el.setAttribute(EDIT_ATTR, "");
-    typing.observe(el, { characterData: true, childList: true, subtree: true });
+    allowTyping(el, { locator, before: el.textContent ?? "" });
     (el as HTMLElement).focus();
     d.getSelection()?.collapse(el, el.childNodes.length);
     // A change goes to every place that shows the same string, so the note
@@ -167,6 +172,16 @@ export function startScriptText(
       `This text shows in ${others.length + 1} places. Your change goes to all of them.`,
     );
     mark(others);
+  }
+
+  // allowTyping lets the reader type in el, a place of the string at
+  // locator, and names it as script text that they can change.
+  function allowTyping(el: Element, edit: Pick<Edit, "locator" | "before">): void {
+    edits.set(el, { ...edit, was: el.getAttribute("contenteditable"), typed: 0 });
+    el.setAttribute("contenteditable", "true");
+    el.setAttribute(EDIT_ATTR, "");
+    el.setAttribute("aria-description", EDITABLE);
+    typing.observe(el, { characterData: true, childList: true, subtree: true });
   }
 
   function readOnlyHint(el: Element): void {
@@ -284,11 +299,11 @@ export function startScriptText(
     style.textContent = `
       .slashdocs-script-hint{all:initial!important;position:fixed!important;z-index:2147483647!important;display:flex!important;align-items:center!important;gap:8px!important;max-width:min(360px,calc(100vw - 16px))!important;box-sizing:border-box!important;padding:6px 6px 6px 12px!important;border-radius:10px!important;background:#fff!important;color:#52525b!important;box-shadow:0 0 0 1px #0001,0 4px 16px #0002!important;font:13px/1.4 system-ui,sans-serif!important;transform-origin:top left!important;animation:slashdocs-hint-in .15s ease-out!important}
       @keyframes slashdocs-hint-in{from{opacity:0;transform:scale(.97)}}
-      .slashdocs-script-hint span{all:initial!important;color:inherit!important;font:inherit!important}
+      .slashdocs-script-hint span{all:initial!important;color:inherit!important;font:inherit!important;text-wrap:balance!important}
       .slashdocs-script-hint button{all:initial!important;flex:none!important;padding:6px 10px!important;border-radius:8px!important;background:#f4f4f5!important;color:#18181b!important;font:500 13px/1 system-ui,sans-serif!important;cursor:pointer!important}
       .slashdocs-script-hint button:hover{background:#e4e4e7!important}
       .slashdocs-script-hint button:focus-visible{outline:2px solid #6366f1!important;outline-offset:-2px!important}
-      ::highlight(${SAME_TEXT}){background-color:rgba(250,204,21,.4)}
+      ::highlight(${SAME_TEXT}){text-decoration:underline 2px rgba(234,179,8,.9);text-underline-offset:3px}
       [data-slashdocs-surface=dark] .slashdocs-script-hint{background:#27272a!important;color:#d4d4d8!important;box-shadow:0 0 0 1px #fff2,0 4px 16px #0004!important}
       [data-slashdocs-surface=dark] .slashdocs-script-hint button{background:#3f3f46!important;color:#fff!important}
       @media(prefers-reduced-motion:reduce){.slashdocs-script-hint{animation:none!important}}
@@ -323,24 +338,38 @@ export function startScriptText(
     pulse,
     replace(from, to) {
       const texts = textsShowing(from);
+      // The string of the place that the reader typed in.
+      const edit =
+        texts.map((t) => edits.get(t.parentElement!)).find(Boolean) ??
+        [...edits].find(([el]) => el.textContent?.trim() === to.trim())?.[1];
       for (const t of texts) {
         const data = t.data;
         const lead = data.slice(0, data.length - data.trimStart().length);
         t.data = lead + to.trim() + data.slice(data.trimEnd().length);
+        // The other places are the same string, so the reader can type there
+        // too, and the next save changes every place again.
+        const el = t.parentElement!;
+        if (edit && !edits.has(el)) allowTyping(el, edit);
       }
       return texts;
     },
-    take: () =>
-      [...edits]
+    // The places of one string give one change: the text of the place that
+    // the reader typed in last.
+    take: () => {
+      const strings = new Map<string, Edit & { el: Element }>();
+      for (const [el, edit] of edits) {
         // A script can replace the element: its text is then not the reader's.
-        .filter(([el]) => el.isConnected)
-        .map(([el, { locator, before }]) => ({
-          locator,
-          before,
-          after: el.textContent ?? "",
-        }))
-        // The app trims the text, so a change at the ends only is no change.
-        .filter(({ before, after }) => before.trim() !== after.trim()),
+        if (!el.isConnected) continue;
+        const key = JSON.stringify(edit.locator);
+        if (edit.typed >= (strings.get(key)?.typed ?? -1))
+          strings.set(key, { ...edit, el });
+      }
+      return [...strings.values()].map(({ locator, before, el }) => ({
+        locator,
+        before,
+        after: el.textContent ?? "",
+      }));
+    },
     stop() {
       d.removeEventListener("click", ask, true);
       d.removeEventListener("focusin", ask, true);
@@ -351,6 +380,7 @@ export function startScriptText(
       typing.disconnect();
       for (const [el, { was }] of edits) {
         el.removeAttribute(EDIT_ATTR);
+        el.removeAttribute("aria-description");
         if (was === null) el.removeAttribute("contenteditable");
         else el.setAttribute("contenteditable", was);
       }

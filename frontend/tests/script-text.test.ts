@@ -81,8 +81,9 @@ test("a click on script text asks the app, and its answer lets the reader type t
   expect(el("t").getAttribute("contenteditable")).toBe("true");
   expect(el("t").hasAttribute(EDIT_ATTR)).toBe(true);
   expect(document.activeElement).toBe(el("t"));
-  el("t").textContent = " Try it. ";
-  expect(scriptText!.take()).toEqual([]);
+  expect(el("t").getAttribute("aria-description")).toBe(
+    "A script on the page writes this text. You can change it here.",
+  );
 
   el("t").textContent = "Run it.";
   await Promise.resolve();
@@ -179,6 +180,40 @@ test("a saved string shows its new text in every place, and a hint pulses in pla
   el("t").click();
   scriptText!.answer("script-1", false);
   expect(scriptText!.pulse()).toBe(true);
+});
+
+test("after a save, every place of the string takes keys, and the place typed in last gives the change", async () => {
+  const el = render(
+    `<div ${SOURCE_ATTR}="0" contenteditable="false"><b id="a">Needs a look</b><b id="b">Needs a look</b><b id="c">Needs a look</b></div>`,
+  );
+  start();
+  el("b").click();
+  scriptText!.answer("script-1", true);
+  el("b").textContent = "Needs a lookx";
+  await Promise.resolve();
+  scriptText!.replace("Needs a look", "Needs a lookx");
+  expect(el("a").hasAttribute(EDIT_ATTR)).toBe(true);
+  expect(el("c").getAttribute("contenteditable")).toBe("true");
+
+  // Back to the loaded text in the place typed in: one change, which the
+  // app saves and shows in the other places.
+  el("b").firstChild!.textContent = "Needs a look";
+  await Promise.resolve();
+  const change = {
+    locator: { at: 0, path: [1] },
+    before: "Needs a look",
+    after: "Needs a look",
+  };
+  expect(scriptText!.take()).toEqual([change]);
+  scriptText!.replace("Needs a lookx", "Needs a look");
+  expect(document.querySelector("div")!.textContent).toBe(
+    "Needs a lookNeeds a lookNeeds a look",
+  );
+
+  // A key in another place gives its text as the change of the string.
+  el("a").firstChild!.textContent = "Needs a lookq";
+  await Promise.resolve();
+  expect(scriptText!.take()).toEqual([{ ...change, after: "Needs a lookq" }]);
 });
 
 test("script text with elements in it shows the hint without a question", () => {

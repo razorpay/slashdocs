@@ -127,7 +127,7 @@ export function useTextAutosave(options: {
   const checks = useRef(
     new Map<string, Promise<{ places: number } | { refused: string }>>(),
   );
-  const shown = useRef(new Map<string, string>());
+  const shown = useRef(new Map<string, Pick<ScriptSave, "to" | "places">>());
 
   // keep puts the draft in storage, so that it outlives the page while it
   // cannot save. forget removes it when it saved or the reader dropped it.
@@ -221,14 +221,22 @@ export function useTextAutosave(options: {
       let refused: string | undefined;
       const changes: ScriptSave[] = [];
       for (const change of scripts) {
+        const key = JSON.stringify(change.locator);
+        const last = shown.current.get(key);
+        // Text typed back to its loaded text writes nothing into the source,
+        // but its other places still show the last save.
+        if (change.before.trim() === change.after.trim()) {
+          if (last)
+            changes.push({ key, from: last.to, to: change.after, places: last.places });
+          continue;
+        }
         const checked = await check(change);
         if (checked && "refused" in checked) refused ??= checked.refused;
         if (!checked || "refused" in checked) continue;
         const written = await writeScriptChange(html, change.before, change.after);
         if (!written) continue;
         html = written;
-        const key = JSON.stringify(change.locator);
-        const from = shown.current.get(key) ?? change.before;
+        const from = last?.to ?? change.before;
         changes.push({ key, from, to: change.after, places: checked.places });
       }
       return { html, regions: applied.html, scripts: changes, refused };
@@ -421,7 +429,7 @@ export function useTextAutosave(options: {
         const set = (from: "from" | "to", to: "from" | "to") => {
           for (const s of scripts) {
             latest.current.replaceText(s[from], s[to]);
-            shown.current.set(s.key, s[to]);
+            shown.current.set(s.key, { to: s[to], places: s.places });
           }
         };
         set("from", "to");
