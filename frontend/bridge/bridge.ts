@@ -1558,9 +1558,12 @@ type Theme = "dark" | "light";
     if (!d.getElementById("slashdocs-icon-tooltip-style")) {
       const style = d.createElement("style");
       style.id = "slashdocs-icon-tooltip-style";
+      // A hidden tip has no box, so that it never widens the page, as near
+      // its right edge on a phone. It fades in from its starting style.
       style.textContent = `
-        [data-slashdocs-tooltip]::after{all:initial!important;content:attr(data-slashdocs-tooltip)!important;position:absolute!important;z-index:2147483647!important;top:var(--slashdocs-tip-top,auto)!important;bottom:var(--slashdocs-tip-bottom,calc(100% + 6px))!important;left:var(--slashdocs-tip-left,50%)!important;transform:translate(var(--slashdocs-tip-shift,-50%),var(--slashdocs-tip-enter-y,3px))!important;width:max-content!important;max-width:min(220px,calc(100vw - 16px))!important;box-sizing:border-box!important;padding:6px 10px!important;border-radius:6px!important;background:#18181b!important;color:#fff!important;font:500 12px/1.4 system-ui,sans-serif!important;white-space:normal!important;text-wrap:balance!important;text-align:center!important;box-shadow:0 2px 8px #0003!important;pointer-events:none!important;visibility:hidden!important;opacity:0!important;transition:opacity .1s ease-out,transform .14s ease-out,visibility 0s linear .1s!important}
-        [data-slashdocs-tooltip]:hover::after,[data-slashdocs-tooltip]:focus-visible::after{visibility:visible!important;opacity:1!important;transform:translate(var(--slashdocs-tip-shift,-50%),0)!important;transition:opacity .14s ease-out .5s,transform .14s ease-out .5s,visibility 0s linear .5s!important}
+        [data-slashdocs-tooltip]::after{all:initial!important;content:attr(data-slashdocs-tooltip)!important;position:absolute!important;z-index:2147483647!important;top:var(--slashdocs-tip-top,auto)!important;bottom:var(--slashdocs-tip-bottom,calc(100% + 6px))!important;left:var(--slashdocs-tip-left,50%)!important;transform:translate(var(--slashdocs-tip-shift,-50%),var(--slashdocs-tip-enter-y,3px))!important;width:max-content!important;max-width:min(220px,calc(100vw - 16px))!important;box-sizing:border-box!important;padding:6px 10px!important;border-radius:6px!important;background:#18181b!important;color:#fff!important;font:500 12px/1.4 system-ui,sans-serif!important;white-space:normal!important;text-wrap:balance!important;text-align:center!important;box-shadow:0 2px 8px #0003!important;pointer-events:none!important;display:none!important;opacity:0!important;transition:opacity .1s ease-out,transform .14s ease-out,display .1s allow-discrete!important}
+        [data-slashdocs-tooltip]:hover::after,[data-slashdocs-tooltip]:focus-visible::after{display:block!important;opacity:1!important;transform:translate(var(--slashdocs-tip-shift,-50%),0)!important;transition:opacity .14s ease-out .5s,transform .14s ease-out .5s,display .14s allow-discrete .5s!important}
+        @starting-style{[data-slashdocs-tooltip]:hover::after,[data-slashdocs-tooltip]:focus-visible::after{opacity:0!important;transform:translate(var(--slashdocs-tip-shift,-50%),var(--slashdocs-tip-enter-y,3px))!important}}
         [data-slashdocs-tooltip]:focus-visible::after{transition-delay:0s!important}
         @media(prefers-reduced-motion:reduce){[data-slashdocs-tooltip]::after{transition-duration:0s!important;transform:translateX(var(--slashdocs-tip-shift,-50%))!important}}
         @media print{[data-slashdocs-tooltip]::after{display:none!important}}`;
@@ -2606,7 +2609,10 @@ type Theme = "dark" | "light";
         typeof e.data.active === "string" ? e.data.active : undefined,
       );
     } else if (e.data.type === "slashdocs:pin-placing") {
-      pins.setPlacing(e.data.on === true);
+      pins.setPlacing(
+        e.data.on === true,
+        typeof e.data.move === "string" ? e.data.move : undefined,
+      );
     } else if (e.data.type === "slashdocs:pins-release") {
       pins.releaseOutside();
     } else if (e.data.type === "slashdocs:watch") {
