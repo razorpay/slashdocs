@@ -11,6 +11,9 @@ import { errorMessage } from "@/lib/errors";
 import { Check, ChevronDown, Copy, LockKeyhole, UsersRound, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
+import { Segmented, tabPanel } from "@/components/ui/segmented";
+import { DraftNotice } from "@/components/draft-notice";
+import { Notice, NoticeAction } from "@/components/ui/notice";
 import { Skeleton, useCopy } from "@/components/ui/misc";
 import { LoadErrorLine } from "@/components/error-state";
 import { RelativeTime } from "@/components/ui/relative-time";
@@ -37,6 +40,7 @@ import {
   type Principal,
 } from "@/api";
 import { cn } from "@/lib/cn";
+import { useEditDraft } from "@/lib/edit-drafts";
 import { publicURL } from "@/lib/config";
 import { queryKeys } from "@/lib/queryKeys";
 import {
@@ -53,6 +57,16 @@ const GENERAL_ACCESS_OPTIONS = [
   { value: GENERAL_ACCESS_NONE, label: "No access" },
   ...ROLES,
 ];
+
+type ShareMode = "people" | "groups";
+
+// What a share sends: the mode, recipient and role that the reader chose.
+type Share = {
+  mode: ShareMode;
+  address: string;
+  group: GoogleGroup | null;
+  role: string;
+};
 
 type PendingChange = {
   label: string;
@@ -98,10 +112,20 @@ export function ShareSheet({
     queryFn: () => api.getConfig(),
     staleTime: Infinity,
   });
-  const [address, setAddress] = useState("");
+  // Each target type keeps its own words, as a draft of the resource, so a
+  // change of type, a close and a reload lose nothing. A picked group counts
+  // only while the field holds its address, and only in its own type.
+  const [shareMode, setShareMode] = useState<ShareMode>("people");
+  const drafts = {
+    people: useEditDraft(`share:${resourceType}:${id}`, ""),
+    groups: useEditDraft(`share-group:${resourceType}:${id}`, ""),
+  };
+  const draft = drafts[shareMode];
+  const address = draft.value;
+  const [picked, setPicked] = useState<GoogleGroup | null>(null);
+  const selectedGroup =
+    shareMode === "groups" && picked?.email === address ? picked : null;
   const [debouncedAddress, setDebouncedAddress] = useState("");
-  const [shareMode, setShareMode] = useState<"people" | "groups">("people");
-  const [selectedGroup, setSelectedGroup] = useState<GoogleGroup | null>(null);
   const [role, setRole] = useState(DEFAULT_ROLE);
   const [pendingChange, setPendingChange] = useState<PendingChange | null>(null);
   const link = useCopy<HTMLParagraphElement>();
@@ -181,22 +205,21 @@ export function ShareSheet({
   // after the sheet closed says so in a toast, as the form cannot.
   const form = useRef<HTMLFormElement>(null);
   const m = useMutation({
-    mutationFn: () => {
-      if (shareMode === "groups") {
-        if (!selectedGroup) throw new Error("Select a verified Google Group.");
+    mutationFn: ({ mode, address, group, role }: Share) => {
+      if (mode === "groups") {
+        if (!group) throw new Error("Select a verified Google Group.");
         return isFolder
-          ? api.createFolderGoogleGroupGrant(id, selectedGroup.email, role)
-          : api.createGoogleGroupGrant(id, selectedGroup.email, role);
+          ? api.createFolderGoogleGroupGrant(id, group.email, role)
+          : api.createGoogleGroupGrant(id, group.email, role);
       }
       return isFolder
-        ? api.createFolderGrant(id, address.trim(), role)
-        : api.createGrant(id, address.trim(), role);
+        ? api.createFolderGrant(id, address, role)
+        : api.createGrant(id, address, role);
     },
-    onSuccess: () => {
-      if (!form.current)
-        toast.success(`Shared with ${selectedGroup?.name || address.trim()}.`);
-      setAddress("");
-      setSelectedGroup(null);
+    // Only the words that were sent go from their field.
+    onSuccess: (_, { mode, address, group }) => {
+      if (!form.current) toast.success(`Shared with ${group?.name || address}.`);
+      drafts[mode].sent(address);
       invalidateAccess();
     },
     // The error shows under the field while the sheet is open.
@@ -281,8 +304,18 @@ export function ShareSheet({
     onError: (e) => toast.error(errorMessage(e, "Couldn't update general access.")),
   });
 
+  // The inherited grant of a pending change, as the access list says now.
+  // Someone else can change or remove it before the reader confirms.
+  const pendingNow =
+    pendingChange &&
+    items
+      .flatMap((i) => i.sources ?? [])
+      .find((s) => s.grant_id === pendingChange.source.grant_id);
+  const pendingMoved =
+    !!pendingChange && pendingNow?.role !== pendingChange.source.role;
+
   const confirmPending = () => {
-    if (!canManageAccess || !pendingChange) return;
+    if (!canManageAccess || !pendingChange || !pendingNow) return;
     const { source, action, newRole } = pendingChange;
     if (action === "revoke") {
       revokeGrant.mutate({
@@ -414,10 +447,9 @@ export function ShareSheet({
         : isPublic
           ? "Enter a full email, or add a bot by its address. People you share with appear as you type."
           : "Search existing slashdocs users by email, or add a bot by its address.";
-  const changeMode = (mode: typeof shareMode) => {
+  const changeMode = (mode: ShareMode) => {
     setShareMode(mode);
-    setAddress("");
-    setSelectedGroup(null);
+    setPicked(null);
     m.reset();
   };
 
@@ -445,6 +477,15 @@ export function ShareSheet({
                 ? " Removing it will affect everyone who accesses items through that folder."
                 : " Changing it will affect everyone who accesses items through that folder."}
             </p>
+            {pendingMoved ? (
+              <Notice
+                say={`This access changed elsewhere. It is ${pendingNow ? `${pendingNow.role} now` : "removed now"}.`}
+              >
+                <NoticeAction onClick={() => setPendingChange(null)}>
+                  Cancel the change
+                </NoticeAction>
+              </Notice>
+            ) : null}
             <div className="flex gap-2">
               <Button
                 size="sm"
@@ -455,7 +496,8 @@ export function ShareSheet({
               </Button>
               <Button
                 size="sm"
-                disabled={updateGrant.isPending || revokeGrant.isPending}
+                disabled={!pendingNow}
+                busy={updateGrant.isPending || revokeGrant.isPending}
                 onClick={confirmPending}
               >
                 {pendingChange.action === "revoke"
@@ -489,8 +531,13 @@ export function ShareSheet({
               aria-describedby={readOnly ? "share-read-only-note" : undefined}
               onSubmit={(e) => {
                 e.preventDefault();
-                if (!canManageAccess) return;
-                m.mutate();
+                if (!canManageAccess || m.isPending) return;
+                m.mutate({
+                  mode: shareMode,
+                  address: address.trim(),
+                  group: selectedGroup,
+                  role,
+                });
               }}
             >
               <fieldset
@@ -498,32 +545,20 @@ export function ShareSheet({
                 className="space-y-3"
               >
                 {config.data?.google_groups_enabled ? (
-                  <div
-                    className="grid grid-cols-2 gap-1 rounded-lg bg-[var(--color-surface-muted)] p-1"
-                    role="tablist"
-                    aria-label="Share target type"
-                  >
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={shareMode === "people"}
-                      className={`rounded-md px-2 py-1.5 text-xs font-medium ${shareMode === "people" ? "bg-[var(--color-surface)] shadow-sm" : "text-[var(--color-fg-muted)]"}`}
-                      onClick={() => changeMode("people")}
-                    >
-                      People and bots
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={shareMode === "groups"}
-                      className={`rounded-md px-2 py-1.5 text-xs font-medium ${shareMode === "groups" ? "bg-[var(--color-surface)] shadow-sm" : "text-[var(--color-fg-muted)]"}`}
-                      onClick={() => changeMode("groups")}
-                    >
-                      Google Groups
-                    </button>
-                  </div>
+                  <Segmented
+                    label="Share target type"
+                    value={shareMode}
+                    options={[
+                      { value: "people", label: "People and bots" },
+                      { value: "groups", label: "Google Groups" },
+                    ]}
+                    onChange={changeMode}
+                    panel="share-target"
+                  />
                 ) : null}
-                <div>
+                <div
+                  {...(config.data?.google_groups_enabled && tabPanel("share-target"))}
+                >
                   <Combobox
                     aria-label={
                       shareMode === "groups" ? "Google Group" : "Person or bot"
@@ -536,14 +571,13 @@ export function ShareSheet({
                     }
                     value={address}
                     onValueChange={(next) => {
-                      setAddress(next);
+                      draft.setValue(next);
                       m.reset();
-                      if (shareMode === "groups") setSelectedGroup(null);
                     }}
                     options={suggestions}
                     onPick={(s) => {
-                      setSelectedGroup(s.group);
-                      setAddress(s.address);
+                      setPicked(s.group);
+                      draft.setValue(s.address);
                     }}
                   />
                   {m.error ? (
@@ -598,6 +632,10 @@ export function ShareSheet({
                       No verified organization groups matched that search.
                     </div>
                   ) : null}
+                  <DraftNotice
+                    draft={draft}
+                    cameBack="Your words from earlier came back. Nothing is shared yet."
+                  />
                 </div>
                 <RoleMenu
                   label="Access role"
@@ -613,9 +651,9 @@ export function ShareSheet({
                     !canManageAccess ||
                     (shareMode === "groups"
                       ? !selectedGroup
-                      : !ADDRESS_PATTERN.test(address.trim()) || noAccount) ||
-                    m.isPending
+                      : !ADDRESS_PATTERN.test(address.trim()) || noAccount)
                   }
+                  busy={m.isPending}
                 >
                   Share
                 </Button>
@@ -891,6 +929,7 @@ function AccessRequestRow({
           variant="outline"
           className="shrink-0"
           disabled={!address || busy}
+          busy={share.isPending}
           aria-label={`Share with ${address}`}
           onClick={() => share.mutate()}
         >
@@ -903,6 +942,7 @@ function AccessRequestRow({
           className="h-8 w-8 shrink-0"
           tooltip="Decline"
           disabled={busy}
+          busy={decline.isPending}
           aria-label={`Decline ${address}`}
           onClick={() => decline.mutate()}
         >

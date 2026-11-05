@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/api";
 import { Sheet } from "@/components/ui/sheet";
+import { clearFieldDrafts } from "@/lib/field-drafts";
 import { ShareSheet } from "./doc-share-sheet";
 
 type FetchOptions = {
@@ -25,6 +26,8 @@ type FetchOptions = {
   requesters?: Array<{ type: string; id: string; email?: string; name?: string }>;
   grantError?: string;
   deployment?: "org" | "public";
+  // The grant from the parent folder is gone, as after a remote revoke.
+  inheritedGone?: boolean;
 };
 
 function installFetch(options: FetchOptions = {}) {
@@ -125,24 +128,28 @@ function installFetch(options: FetchOptions = {}) {
                 },
               ],
             },
-            {
-              principal: {
-                type: "google_group",
-                id: "groups/inherited",
-                email: "inherited@example.com",
-                name: "Inherited group",
-              },
-              effective_role: "viewer",
-              sources: [
-                {
-                  resource_type: "folder",
-                  resource_id: "fld_parent",
-                  resource_title: "Parent folder",
-                  role: "viewer",
-                  grant_id: "gr_inherited",
-                },
-              ],
-            },
+            ...(options.inheritedGone
+              ? []
+              : [
+                  {
+                    principal: {
+                      type: "google_group",
+                      id: "groups/inherited",
+                      email: "inherited@example.com",
+                      name: "Inherited group",
+                    },
+                    effective_role: "viewer",
+                    sources: [
+                      {
+                        resource_type: "folder",
+                        resource_id: "fld_parent",
+                        resource_title: "Parent folder",
+                        role: "viewer",
+                        grant_id: "gr_inherited",
+                      },
+                    ],
+                  },
+                ]),
             {
               principal: {
                 type: "user",
@@ -190,19 +197,21 @@ function renderShare(canManageAccess = true) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
+  const view = render(
     <QueryClientProvider client={client}>
       <Sheet open>
         <ShareSheet docId="doc_1" canManageAccess={canManageAccess} />
       </Sheet>
     </QueryClientProvider>,
   );
+  return { ...view, client };
 }
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.useRealTimers();
+  clearFieldDrafts();
 });
 
 describe("Google Group sharing", () => {
@@ -508,6 +517,72 @@ describe("Google Group sharing", () => {
       () => expect(screen.getByRole("button", { name: "Copy link" })).toBeVisible(),
       { timeout: 2500 },
     );
+  });
+});
+
+describe("the words of a share", () => {
+  it("keeps the words of each target type through a change, and no group of the other", async () => {
+    installFetch();
+    renderShare();
+    const user = userEvent.setup();
+    const people = await screen.findByRole("tab", { name: "People and bots" });
+    await user.type(screen.getByRole("combobox", { name: "Person or bot" }), "ana@");
+    // The target types are one tab stop, and the arrow keys move between them.
+    people.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getByRole("tab", { name: "Google Groups" })).toHaveFocus();
+    const group = screen.getByRole("combobox", { name: "Google Group" });
+    expect(group).toHaveValue("");
+    await user.type(group, "plat");
+    await user.click(await screen.findByText("Platform"));
+    expect(screen.getByRole("button", { name: "Share" })).toBeEnabled();
+
+    await user.click(screen.getByRole("tab", { name: "People and bots" }));
+    expect(screen.getByRole("combobox", { name: "Person or bot" })).toHaveValue("ana@");
+    await user.click(screen.getByRole("tab", { name: "Google Groups" }));
+    expect(screen.getByRole("combobox", { name: "Google Group" })).toHaveValue(
+      "platform@example.com",
+    );
+    expect(screen.getByRole("button", { name: "Share" })).toBeDisabled();
+  });
+
+  it("says when an inherited grant changed elsewhere before its change is confirmed", async () => {
+    const options: FetchOptions = {};
+    installFetch(options);
+    const { client } = renderShare();
+    const user = userEvent.setup();
+    const row = (await screen.findByText("Inherited group")).closest(
+      "div.flex.justify-between",
+    );
+    await user.click(
+      within(row as HTMLElement).getByRole("button", { name: "Access role: Viewer" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Remove access" }));
+    expect(await screen.findByText("Remove access for Inherited group?")).toBeTruthy();
+
+    options.inheritedGone = true;
+    await client.invalidateQueries();
+    expect(
+      await screen.findByText("This access changed elsewhere. It is removed now."),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Remove from folder" })).toBeDisabled();
+  });
+
+  it("keeps an unsent address through a close, and says that it came back", async () => {
+    installFetch({ groupsEnabled: false });
+    const first = renderShare();
+    const user = userEvent.setup();
+    await user.type(
+      await screen.findByRole("combobox", { name: "Person or bot" }),
+      "ana@example.com",
+    );
+    first.unmount();
+    renderShare();
+    expect(await screen.findByRole("combobox", { name: "Person or bot" })).toHaveValue(
+      "ana@example.com",
+    );
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+    expect(screen.getByRole("combobox", { name: "Person or bot" })).toHaveValue("");
   });
 });
 
