@@ -194,12 +194,13 @@ export function DocBar({
   const hasApprovals =
     !!shownApprovals.status || !!shownApprovals.pending || !!shownApprovals.failed;
   const shareFrameFocusRef = useRef<HTMLIFrameElement | null>(null);
+  // The toast names the document, so that it reaches a reader who left. Only
+  // a reader who stays on the document goes back.
   const del = useMutation({
     mutationFn: () => api.deleteDocument(docId),
     onSuccess: () => {
-      toast.success("Document deleted.");
+      toast.success(`Deleted “${title}”.`);
       q.invalidateQueries({ queryKey: queryKeys.documents() });
-      nav(backTo);
     },
     onError: (e) => toast.error(errorMessage(e, "Delete failed")),
   });
@@ -490,7 +491,7 @@ export function DocBar({
             title={title}
             open={deleteOpen}
             onOpenChange={setDeleteOpen}
-            onConfirm={() => del.mutate()}
+            onConfirm={() => del.mutate(undefined, { onSuccess: () => nav(backTo) })}
           />
         </>
       ) : null}
