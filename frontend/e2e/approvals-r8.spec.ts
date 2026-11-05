@@ -23,9 +23,8 @@ test("Share as viewer and add is the primary action, and confirms the share", as
   ).toBeVisible();
   await expect(dialog.getByText(/Anyone who edited it/)).toBeHidden();
 
-  // The rule is one Tab away, in a tooltip. Add is off while the field is
-  // empty, so Tab passes it.
-  await page.keyboard.press("Tab");
+  // The rule is one Tab away, in a tooltip on the line of the hint.
+  await page.keyboard.press("Shift+Tab");
   await expect(dialog.getByRole("button", { name: "Who can approve?" })).toBeFocused();
   await expect(page.getByRole("tooltip")).toContainText(
     "Anyone who edited it, in the browser, by upload, or by an agent",
