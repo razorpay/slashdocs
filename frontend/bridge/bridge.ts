@@ -2473,7 +2473,9 @@ type Theme = "dark" | "light";
       scriptText = null;
       setTextEditing(true);
     }
-    parent.postMessage({ type: "slashdocs:ready" }, targetOrigin());
+    // The address says which document is ready, so that the app does not
+    // take a late ready of the document before it as this one's.
+    parent.postMessage({ type: "slashdocs:ready", href: location.href }, targetOrigin());
     scheduleViewport();
     hydrateKV();
     // A document that reloads by itself keeps clear of the panel.
