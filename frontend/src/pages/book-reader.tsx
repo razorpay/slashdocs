@@ -398,6 +398,9 @@ function BookReader({
     meta: { suppressGlobalError: true },
   });
 
+  // A note or chip that goes away takes focus with it; the chapter title
+  // keeps the reader's place for the keyboard and screen readers.
+  const refocus = () => titleRef.current?.focus();
   const dismissOffer = () => {
     if (offer) handleOffer(offerKey(bookId, offer));
     setOffer(null);
@@ -408,6 +411,7 @@ function BookReader({
     if (offer.document_id === docId) {
       setBack(here());
       restoreSaved(toTarget(offer));
+      refocus();
       return;
     }
     const to = manifest.readingOrder.find(
@@ -421,8 +425,10 @@ function BookReader({
   const goBack = () => {
     if (!back) return;
     setBack(null);
-    if (back.docId === docId) restoreSaved(back.target);
-    else nav(back.href, { state: { restore: back.target } satisfies ArrivalState });
+    if (back.docId === docId) {
+      restoreSaved(back.target);
+      refocus();
+    } else nav(back.href, { state: { restore: back.target } satisfies ArrivalState });
   };
   const openResult = (to: string, resultDoc: string) => {
     setSearchOpen(false);
@@ -474,10 +480,16 @@ function BookReader({
               restoreRef={restoreRef}
               offer={offer && <OfferNote offer={offer} manifest={manifest} />}
               onGoOffer={goOffer}
-              onDismissOffer={dismissOffer}
+              onDismissOffer={() => {
+                dismissOffer();
+                refocus();
+              }}
               back={!!back}
               onBack={goBack}
-              onDismissBack={() => setBack(null)}
+              onDismissBack={() => {
+                setBack(null);
+                refocus();
+              }}
               end={
                 atEnd ? (
                   <EndOfChapter
@@ -504,6 +516,7 @@ function BookReader({
               onContents={() => setPinned(true)}
               onSearch={() => setSearchOpen(true)}
               onJump={(id) => jumpWithin({ section: id })}
+              onChipDismissed={refocus}
               headings={headings.data?.items}
               section={section}
               user={me.data?.user || me.data?.principal}

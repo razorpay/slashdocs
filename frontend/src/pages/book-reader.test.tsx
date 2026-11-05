@@ -286,6 +286,18 @@ describe("BookReader", () => {
     const note = await screen.findByRole("group", { name: "Other device" });
     await user.click(within(note).getByRole("button", { name: "Dismiss" }));
     expect(screen.queryByRole("group", { name: "Other device" })).toBeNull();
+    // Focus goes to the chapter title, not the page body.
+    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
+  });
+
+  it("keeps focus when the back note is dismissed", async () => {
+    const user = userEvent.setup();
+    renderReader();
+    await screen.findByTestId("workspace");
+    await user.click(await screen.findByRole("button", { name: "Setting up" }));
+    const note = await screen.findByRole("group", { name: "Back" });
+    await user.click(within(note).getByRole("button", { name: "Dismiss" }));
+    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
   });
 
   it("remembers a dismissed other-device note across chapters", async () => {

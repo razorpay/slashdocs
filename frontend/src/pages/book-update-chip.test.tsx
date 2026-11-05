@@ -28,7 +28,7 @@ const changes: ChapterChanges = {
   ],
 };
 
-function renderChip(updated: boolean, onOpenSection = vi.fn()) {
+function renderChip(updated: boolean, onOpenSection = vi.fn(), onDismissed = vi.fn()) {
   vi.spyOn(booksApi, "state").mockResolvedValue(bookState({ doc_1: { updated } }));
   vi.spyOn(booksApi, "changes").mockResolvedValue(changes);
   const seen = vi.spyOn(booksApi, "seen").mockResolvedValue(undefined);
@@ -40,6 +40,7 @@ function renderChip(updated: boolean, onOpenSection = vi.fn()) {
         doc="doc_1"
         versionId="ver_3"
         onOpenSection={onOpenSection}
+        onDismissed={onDismissed}
       />
     </QueryClientProvider>,
   );
@@ -89,5 +90,14 @@ describe("BookUpdateChip", () => {
     const { seen } = renderChip(true);
     await user.click(await screen.findByRole("button", { name: "Dismiss update" }));
     await waitFor(() => expect(seen).toHaveBeenCalledWith("b1", "doc_1", "ver_3"));
+  });
+
+  it("hands focus back when it hides with focus inside", async () => {
+    const user = userEvent.setup();
+    const onDismissed = vi.fn();
+    renderChip(true, vi.fn(), onDismissed);
+    await user.click(await screen.findByRole("button", { name: "Dismiss update" }));
+    await waitFor(() => expect(onDismissed).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("button", { name: "Dismiss update" })).toBeNull();
   });
 });

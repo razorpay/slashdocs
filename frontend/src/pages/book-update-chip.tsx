@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { booksApi } from "@/lib/books";
@@ -110,26 +110,37 @@ export function BookUpdateChip({
   doc,
   versionId,
   onOpenSection,
+  onDismissed,
 }: {
   bookId: string;
   doc: string;
   // The version being read. Seeing it never marks a newer one seen (A7).
   versionId: string;
   onOpenSection: (section: string) => void;
+  // Called as the chip hides with focus inside it, so the page can move
+  // focus somewhere stable instead of letting it drop to the body.
+  onDismissed?: () => void;
 }) {
   const qc = useQueryClient();
+  const root = useRef<HTMLSpanElement>(null);
   const [open, setOpen] = useState(false);
   // Hidden at once, before the state is fetched again.
   const [seenVersion, setSeenVersion] = useState<string>();
   const state = useBookState(bookId);
   const seen = useMutation({
     mutationFn: () => booksApi.seen(bookId, doc, versionId),
-    onSuccess: () => setSeenVersion(versionId),
+    onSuccess: () => {
+      if (root.current?.contains(document.activeElement)) onDismissed?.();
+      setSeenVersion(versionId);
+    },
     onSettled: () => qc.invalidateQueries({ queryKey: queryKeys.book(bookId) }),
   });
   if (!state.data?.chapters[doc]?.updated || seenVersion === versionId) return null;
   return (
-    <span className="inline-flex shrink-0 items-center rounded-full bg-[color-mix(in_srgb,var(--color-warning)_12%,transparent)] text-xs text-[var(--color-fg)]">
+    <span
+      ref={root}
+      className="inline-flex shrink-0 items-center rounded-full bg-[color-mix(in_srgb,var(--color-warning)_12%,transparent)] text-xs text-[var(--color-fg)]"
+    >
       <Popover
         open={open}
         onOpenChange={setOpen}

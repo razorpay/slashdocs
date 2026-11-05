@@ -205,6 +205,7 @@ export function ReaderBar({
   onContents,
   onSearch,
   onJump,
+  onChipDismissed,
   headings,
   section,
   user,
@@ -219,6 +220,7 @@ export function ReaderBar({
   onContents: () => void;
   onSearch: () => void;
   onJump: (id: string) => void;
+  onChipDismissed: () => void;
   headings?: ChapterHeading[];
   section: string;
   user?: Principal;
@@ -268,6 +270,7 @@ export function ReaderBar({
           doc={docId}
           versionId={version}
           onOpenSection={onJump}
+          onDismissed={onChipDismissed}
         />
         <Button
           variant="ghost"
