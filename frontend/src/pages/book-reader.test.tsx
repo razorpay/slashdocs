@@ -152,6 +152,23 @@ describe("BookReader", () => {
     expect(
       await screen.findByText("That chapter is not available in this book."),
     ).toBeInTheDocument();
+    // The chapter route has no top bar, so the screen offers the way out.
+    expect(screen.getByRole("link", { name: "Back to the book" })).toHaveAttribute(
+      "href",
+      "/app/b/b1",
+    );
+  });
+
+  it("offers a way out when the book cannot be loaded", async () => {
+    vi.spyOn(booksApi, "manifest").mockRejectedValue(
+      new APIError(404, "not_found", "nope"),
+    );
+    renderReader();
+    expect(await screen.findByText("Book not found")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Go to Documents" })).toHaveAttribute(
+      "href",
+      "/app/documents",
+    );
   });
 
   it("opens the chapter with the version being read and shows the breadcrumb", async () => {

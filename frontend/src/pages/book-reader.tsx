@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Link,
   Navigate,
   useLocation,
   useNavigate,
@@ -58,13 +59,25 @@ type Back = { href: string; docId: string; target: PositionTarget };
 // where the jump came from.
 type ArrivalState = { restore?: PositionTarget; back?: Back } | null;
 
-const NOT_IN_BOOK = (
-  <Center>
-    <p className="text-sm text-[var(--color-fg-muted)]">
-      That chapter is not available in this book.
-    </p>
-  </Center>
-);
+// The chapter route hides the top bar, so its error screens carry the way out.
+function NotInBook({ bookId }: { bookId: string }) {
+  return (
+    <Center>
+      <div className="text-center text-sm">
+        <p className="text-[var(--color-fg-muted)]">
+          That chapter is not available in this book.
+        </p>
+        <Link
+          to={`/app/b/${encodeURIComponent(bookId)}`}
+          className="mt-3 inline-block text-[var(--color-accent)] underline-offset-4 hover:underline"
+        >
+          Back to the book
+        </Link>
+      </div>
+    </Center>
+  );
+}
+const TO_DOCUMENTS = { to: "/app/documents", label: "Go to Documents" };
 
 // /app/b/:bookId/:number resolves through the manifest to the canonical
 // chapter URL (A11).
@@ -74,7 +87,7 @@ export function BookNumberRoute() {
   if (q.isLoading) return <Skeleton className="m-6 h-40" />;
   if (!q.data) return <BookError error={q.error} onRetry={() => void q.refetch()} />;
   const link = chapterByNumber(q.data, Number(number));
-  if (!link?.href) return NOT_IN_BOOK;
+  if (!link?.href) return <NotInBook bookId={bookId} />;
   return <Navigate to={link.href} replace />;
 }
 
@@ -95,12 +108,18 @@ export function BookReaderRoute() {
   }
   // A failed refetch (say a 429 on window focus) keeps the chapter open.
   if (!manifest.data) {
-    return <BookError error={manifest.error} onRetry={() => void manifest.refetch()} />;
+    return (
+      <BookError
+        error={manifest.error}
+        onRetry={() => void manifest.refetch()}
+        exit={TO_DOCUMENTS}
+      />
+    );
   }
   const link = manifest.data.readingOrder.find(
     (l) => l.properties?.documentId === docId && l.href,
   );
-  if (!link) return NOT_IN_BOOK;
+  if (!link) return <NotInBook bookId={bookId} />;
   return <BookReader bookId={bookId} manifest={manifest.data} link={link} />;
 }
 

@@ -36,9 +36,12 @@ function Dot({ state }: { state: RowState }) {
 export function BookError({
   error,
   onRetry,
+  exit,
 }: {
   error: unknown;
   onRetry?: () => void;
+  // A way out, for pages without the top bar (the chapter route).
+  exit?: { to: string; label: string };
 }) {
   let title = "Could not load this book";
   let description = "Something went wrong. Please try again.";
@@ -75,6 +78,16 @@ export function BookError({
           <Button variant="outline" size="sm" className="mt-4" onClick={onRetry}>
             Try again
           </Button>
+        ) : null}
+        {exit ? (
+          <p className="mt-4 text-sm">
+            <Link
+              to={exit.to}
+              className="text-[var(--color-accent)] underline-offset-4 hover:underline"
+            >
+              {exit.label}
+            </Link>
+          </p>
         ) : null}
       </div>
     </Center>
