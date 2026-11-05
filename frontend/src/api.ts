@@ -140,6 +140,9 @@ export type CommentPatch = {
   mentions?: CommentMention[];
   // Moves a point comment to a new spot.
   anchor?: Anchor & { point: AnchorPoint };
+  // The body that an edit started from. The server refuses the edit with 409
+  // when the body is no longer this.
+  base_body?: string;
 };
 
 const COMMENT_MENTIONS_MEDIA_TYPE = "application/vnd.slashdocs.comment-mentions+json";

@@ -290,7 +290,7 @@ it("keeps the words typed while a comment posts, as a reply to the new thread", 
     .spyOn(api, "createComment")
     .mockReturnValue(new Promise((resolve) => (settle = resolve)));
   const { ctx, box } = renderComposer();
-  await userEvent.type(box, "Fix this{Enter} KEEP THE LATER WORDS");
+  await userEvent.type(box, "Fix this{Enter}KEEP THE LATER WORDS");
   expect(post).toHaveBeenCalledWith(
     "doc-1",
     "v1",

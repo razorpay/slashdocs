@@ -21,7 +21,9 @@ import { queryKeys } from "@/lib/queryKeys";
 import { anchorLabel, canMovePin } from "@/lib/comment-pins";
 import { isAgentRequest } from "@/lib/agent-request";
 import {
+  forgetWords,
   saveReplyDraft,
+  sentBack,
   unsentText,
   useDraftText,
   type CommentDraft,
@@ -33,12 +35,14 @@ import { useDoc } from "./doc-context";
 import {
   AgentRequestBadge,
   ComposeField,
+  LostWords,
   Message,
   MoreMenu,
   PersonAvatar,
   ReplyRow,
   Replies,
   ResolveButton,
+  SendingMessage,
 } from "./doc-comment-parts";
 import { CommentBody } from "./doc-comment-text";
 
@@ -108,7 +112,7 @@ export function CommentComposer({ draft }: { draft: CommentDraft }) {
     principal,
   } = useDoc();
   const q = useQueryClient();
-  const [text, edit] = useDraftText(
+  const [text, edit, conflict] = useDraftText(
     { body: draft.body, mentions: draft.mentions },
     (next) => saveDraft(draft.id, next),
   );
@@ -123,25 +127,33 @@ export function CommentComposer({ draft }: { draft: CommentDraft }) {
         draft.anchor,
         sent.mentions,
       ),
-    onSuccess: (created, sent) => {
-      // Words typed while it was sent wait as a reply to the new thread,
-      // which opens where the draft was.
-      const rest = edit((now) => unsentText(now, sent));
-      saveReplyDraft(docId, created.id, rest);
+    // It shows as sending until the new thread loads. Then the words typed
+    // since (edit gives back the text now) wait as a reply to the thread,
+    // which opens where the draft was.
+    onSuccess: async (created) => {
+      await q.invalidateQueries({ queryKey: queryKeys.comments(docId) });
+      saveReplyDraft(
+        docId,
+        created.id,
+        edit((now) => now),
+      );
       discardDraft(draft.id);
       setActiveComment(created.id);
-      q.invalidateQueries({ queryKey: queryKeys.comments(docId) });
     },
-    // The text stays in the field, and the toast sends it again.
-    onError: (e, sent) =>
+    // The words go back in the field, and the toast sends them again.
+    onError: (e, sent) => {
+      edit((now) => sentBack(sent, now));
       toast.error(errorMessage(e, "Could not add comment"), {
         id: draft.id,
         action: { label: "Retry", onClick: () => post(sent) },
-      }),
+      });
+    },
   });
-  // A new send makes the Retry of an earlier one go, so it cannot post twice.
+  // The words leave the field at once, and show above it as sending. A new
+  // send makes the Retry of an earlier one go, so it cannot post twice.
   const post = (sent = text) => {
     toast.dismiss(draft.id);
+    edit((now) => unsentText(now, sent));
     create.mutate(sent);
   };
 
@@ -168,6 +180,11 @@ export function CommentComposer({ draft }: { draft: CommentDraft }) {
         <Quote
           text={anchorLabel({ selected_text: draft.quote, anchor: draft.anchor })}
         />
+        {create.isPending ? (
+          <div className="mt-2">
+            <SendingMessage text={create.variables} />
+          </div>
+        ) : null}
         {isAgentRequest(text.body) ? (
           <p className="mt-1 text-xs text-[var(--color-fg-muted)]">
             Agents with access to this document read comments.
@@ -183,6 +200,7 @@ export function CommentComposer({ draft }: { draft: CommentDraft }) {
           placeholder="Add a comment…"
           sendLabel="Post comment"
           autoFocus
+          conflict={conflict}
         />
       </div>
     </div>
@@ -259,6 +277,32 @@ export function CommentThread({ c, onClose }: { c: Comment; onClose: () => void 
         </div>
       ) : null}
     </article>
+  );
+}
+
+// DeletedThread is a thread that someone deleted while the reader wrote in
+// it. It keeps their words to copy, until they dismiss them.
+export function DeletedThread({
+  id,
+  texts,
+  onClose,
+}: {
+  id: string;
+  texts: MentionDraft[];
+  onClose: () => void;
+}) {
+  const { docId } = useDoc();
+  return (
+    <div className="px-3 pb-3 pt-1">
+      <LostWords
+        what="This thread was deleted."
+        texts={texts}
+        onDismiss={() => {
+          forgetWords(docId, { id });
+          onClose();
+        }}
+      />
+    </div>
   );
 }
 

@@ -231,3 +231,46 @@ it("tells the frame how much of it a sheet covers, while the sheet is open", asy
     iframe.remove();
   }
 });
+
+it("keeps the words of an edit and a reply when someone deletes the thread", async () => {
+  localStorage.clear();
+  const user = userEvent.setup();
+  const writeText = vi.spyOn(navigator.clipboard, "writeText");
+  const mine = { ...c, author: { type: "user", id: "me" } } as Comment;
+  const ctx = {
+    principal: { type: "user", id: "me" },
+    signIn: undefined,
+    comments: [mine],
+  } as Partial<DocContextValue>;
+  const view = render(<Thread {...ctx} />);
+  await user.type(screen.getByPlaceholderText("Reply…"), "UNSENT REPLY");
+  await user.click(screen.getByRole("button", { name: "More actions" }));
+  await user.click(screen.getByRole("menuitem", { name: "Edit" }));
+  await user.type(
+    await screen.findByRole("combobox", { name: "Edit comment" }),
+    " UNSAVED EDIT",
+  );
+  view.rerender(<Thread {...ctx} comments={[]} />);
+  const notice = await screen.findByRole("status");
+  expect(notice).toHaveTextContent(
+    "This thread was deleted. Your words were not sent:Look here UNSAVED EDITUNSENT REPLY",
+  );
+  await user.click(screen.getByRole("button", { name: "Copy my text" }));
+  expect(writeText).toHaveBeenCalledWith("Look here UNSAVED EDIT\n\nUNSENT REPLY");
+});
+
+it("shows a new comment as sending, with the field clear for more words", async () => {
+  let settle!: (value: Comment) => void;
+  vi.spyOn(api, "createComment").mockReturnValueOnce(
+    new Promise<Comment>((resolve) => (settle = resolve)),
+  );
+  const ctx = renderDraft();
+  const field = screen.getByPlaceholderText("Add a comment…");
+  await userEvent.type(field, "First words{Enter}");
+  expect(field).toHaveValue("");
+  expect(screen.getByText("Sending…").closest("[aria-busy]")).toHaveTextContent(
+    "First words",
+  );
+  settle({ id: "c2" } as Comment);
+  await vi.waitFor(() => expect(ctx.setActiveComment).toHaveBeenCalledWith("c2"));
+});
