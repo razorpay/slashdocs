@@ -196,6 +196,13 @@ describe("BookReader", () => {
     expect(screen.getByTestId("workspace")).toBeInTheDocument();
   });
 
+  it("does not refetch the manifest after opening a chapter", async () => {
+    const { open } = renderReader();
+    await waitFor(() => expect(open).toHaveBeenCalled());
+    await act(() => new Promise((r) => setTimeout(r, 50)));
+    expect(booksApi.manifest).toHaveBeenCalledTimes(1);
+  });
+
   it("passes a live document stream", async () => {
     renderReader();
     await screen.findByTestId("workspace");

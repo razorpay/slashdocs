@@ -44,7 +44,12 @@ import { BookRail } from "./book-rail";
 import { BookSearch } from "./book-search";
 import { ReaderBar } from "./book-reader-bar";
 import { EndOfChapter, OfferNote, ReaderOverlay } from "./book-reader-notes";
-import { useBookState, useChapterChanges, useManifest } from "./book-chapter-state";
+import {
+  invalidateReading,
+  useBookState,
+  useChapterChanges,
+  useManifest,
+} from "./book-chapter-state";
 import { useReaderKeys } from "./book-keys";
 import { useHeldVersion } from "./book-held-version";
 
@@ -180,6 +185,10 @@ function BookReader({
     () => qc.invalidateQueries({ queryKey: queryKeys.book(bookId) }),
     [qc, bookId],
   );
+  const refreshReading = useCallback(
+    () => void invalidateReading(qc, bookId),
+    [qc, bookId],
+  );
 
   // Switching to a newer version keeps the reader's place: the quote anchor
   // resolves fuzzily in the new version, once its frame is ready.
@@ -229,7 +238,7 @@ function BookReader({
     versionId: current,
     // Saving needs no state; only the restore waits for it.
     enabled: !!current,
-    onReachedEnd: invalidateBook,
+    onReachedEnd: refreshReading,
   });
   const [section, setSection] = useState("");
   // The end strip shows once the reader reaches the end and then stays for
@@ -301,8 +310,8 @@ function BookReader({
   useEffect(() => {
     if (!current || opened.current === docId) return;
     opened.current = docId;
-    booksApi.open(bookId, docId, current).then(invalidateBook, () => {});
-  }, [bookId, docId, current, invalidateBook]);
+    booksApi.open(bookId, docId, current).then(refreshReading, () => {});
+  }, [bookId, docId, current, refreshReading]);
   useEffect(() => {
     setEndStrip("hidden");
     // A restore the old frame never reported (a link cancelled it) is over.

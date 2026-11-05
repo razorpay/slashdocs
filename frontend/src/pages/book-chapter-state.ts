@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, type QueryClient } from "@tanstack/react-query";
 import {
   booksApi,
   readingWriteFailure,
@@ -63,6 +63,16 @@ export function useBookState(bookId: string) {
     refetchOnWindowFocus: true,
     meta: { suppressGlobalError: true },
   });
+}
+
+// After a reading write (open, seen, done, reached end): the reader's state
+// and changes moved, the manifest did not. Refetching it would only bring
+// version churn.
+export function invalidateReading(qc: QueryClient, bookId: string) {
+  return Promise.all([
+    qc.invalidateQueries({ queryKey: queryKeys.bookState(bookId) }),
+    qc.invalidateQueries({ queryKey: [...queryKeys.book(bookId), "changes"] }),
+  ]);
 }
 
 // The changes since the reader last saw this chapter.

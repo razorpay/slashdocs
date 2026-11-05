@@ -15,6 +15,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
 import { useDoc, type PositionTarget } from "./doc-context";
+import { invalidateReading } from "./book-chapter-state";
 
 // The chapter reader's notes, which float over the rendered chapter inside
 // the document context, and the end-of-chapter strip under it.
@@ -182,7 +183,7 @@ export function EndOfChapter({
   const done = state?.chapters[docId]?.state === "done";
   const toggle = useMutation({
     mutationFn: (value: boolean) => booksApi.done(bookId, docId, value),
-    onSettled: () => qc.invalidateQueries({ queryKey: queryKeys.book(bookId) }),
+    onSettled: () => invalidateReading(qc, bookId),
   });
   const pressed = toggle.isPending ? !!toggle.variables : done;
   const part = link.properties?.part;

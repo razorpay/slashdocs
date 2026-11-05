@@ -11,7 +11,6 @@ import {
   type Manifest,
   type ManifestLink,
 } from "@/lib/books";
-import { queryKeys } from "@/lib/queryKeys";
 import { useTitle } from "@/lib/use-title";
 import { Button } from "@/components/ui/button";
 import { Center, Skeleton } from "@/components/ui/misc";
@@ -19,6 +18,7 @@ import { Page } from "@/components/layout/page";
 import { StateDot } from "./book-state-dot";
 import {
   STATE_LABEL,
+  invalidateReading,
   isUpdated,
   rowState,
   useBookState,
@@ -156,7 +156,7 @@ function UpdatedGroup({
   );
   const markAll = useMutation({
     mutationFn: () => booksApi.seenAll(bookId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.bookState(bookId) }),
+    onSuccess: () => invalidateReading(qc, bookId),
   });
   if (updated.length === 0) return null;
   return (

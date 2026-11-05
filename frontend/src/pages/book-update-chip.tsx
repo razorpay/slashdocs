@@ -2,10 +2,13 @@ import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { booksApi } from "@/lib/books";
-import { queryKeys } from "@/lib/queryKeys";
 import { changeSummaryLines } from "@/lib/change-summary";
 import { Popover } from "@/components/ui/popover";
-import { useBookState, useChapterChanges } from "./book-chapter-state";
+import {
+  invalidateReading,
+  useBookState,
+  useChapterChanges,
+} from "./book-chapter-state";
 
 function ChangesPanel({
   bookId,
@@ -133,7 +136,7 @@ export function BookUpdateChip({
       if (root.current?.contains(document.activeElement)) onDismissed?.();
       setSeenVersion(versionId);
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: queryKeys.book(bookId) }),
+    onSettled: () => invalidateReading(qc, bookId),
   });
   if (!state.data?.chapters[doc]?.updated || seenVersion === versionId) return null;
   return (
