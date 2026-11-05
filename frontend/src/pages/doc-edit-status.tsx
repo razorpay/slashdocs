@@ -72,16 +72,25 @@ const ACCESS: Record<"commenter" | "viewer", Status> = {
 // their edits are saved. There is no edit mode to enter: they type. Other
 // readers see what they may do. A narrow bar, short of room for the title,
 // shows only the icon of a save. A screen reader hears only that edits are
-// not saved, not each save of a pause.
+// not saved, not each save of a pause. For a while after a save that can be
+// undone, the bar says what it changed, with Undo, where it covers no words.
 export function EditStatus({ access }: { access?: keyof typeof ACCESS }) {
-  const { editable, saveState, text, frameReady } = useDoc();
+  const { editable, saveState, saveNote, text, frameReady } = useDoc();
   const hint = useEditHint(!!text?.focused);
   const status = editable ? STATUS[saveState] : access && ACCESS[access];
   if (!status) return null;
   const { title, Icon } = status;
   const failed = editable && Icon === AlertCircle;
-  const hinted = editable && hint && !failed;
-  const label = hinted ? (
+  // The note of a save is news, and takes the place of the hint.
+  const note = editable && !failed ? saveNote : undefined;
+  const hinted = editable && hint && !failed && !note;
+  // A later state of a save says itself. Undo stays for its while.
+  const noted = !!note && saveState === "saved";
+  const label = noted ? (
+    <span className="block max-w-[32ch] truncate" title={note.said}>
+      {note.said}
+    </span>
+  ) : hinted ? (
     <>
       <span className="pointer-coarse:hidden">Type to edit. Press Esc to leave.</span>
       <span className="hidden pointer-coarse:inline">
@@ -103,45 +112,58 @@ export function EditStatus({ access }: { access?: keyof typeof ACCESS }) {
     );
   const fade = "transition-opacity duration-150 ease-out motion-reduce:transition-none";
   return (
-    // A phone has no Esc key to leave the text, so a touch screen shows Done
-    // while the text has the caret. On a narrow bar Done takes the place of
-    // the status. The place keeps its width in every state, so that the
-    // title does not move. It shows once the document takes edits.
-    <span
-      aria-hidden={!frameReady || undefined}
-      className={cn(
-        "grid shrink-0 items-center justify-items-center *:col-start-1 *:row-start-1 sm:flex sm:gap-2",
-        fade,
-        !frameReady && "invisible opacity-0",
-      )}
-    >
-      <Status
-        label={label}
-        title={title}
-        Icon={Icon}
-        failed={failed}
-        live={hinted}
+    <>
+      {/* A phone has no Esc key to leave the text, so a touch screen shows
+          Done while the text has the caret. On a narrow bar Done takes the
+          place of the status. The place keeps its width in every state, so
+          that the title does not move. It shows once the document takes
+          edits. */}
+      <span
+        aria-hidden={!frameReady || undefined}
         className={cn(
-          "inline-flex",
+          "grid shrink-0 items-center justify-items-center *:col-start-1 *:row-start-1 sm:flex sm:gap-2",
           fade,
-          // Faded, it still paints over Done, so taps go through it.
-          text?.focused &&
-            "max-sm:pointer-coarse:pointer-events-none max-sm:pointer-coarse:opacity-0",
+          !frameReady && "invisible opacity-0",
         )}
-      />
-      <Button
-        size="sm"
-        variant="secondary"
-        className={cn(
-          "hidden max-sm:px-2 max-sm:text-xs pointer-coarse:inline-flex",
-          fade,
-          !text?.focused && "invisible opacity-0",
-        )}
-        onClick={text?.leave}
       >
-        Done
-      </Button>
-    </span>
+        <Status
+          label={label}
+          title={title}
+          Icon={Icon}
+          failed={failed}
+          live={hinted || noted}
+          className={cn(
+            "inline-flex",
+            fade,
+            // Faded, it still paints over Done, so taps go through it.
+            text?.focused &&
+              "max-sm:pointer-coarse:pointer-events-none max-sm:pointer-coarse:opacity-0",
+          )}
+        />
+        <Button
+          size="sm"
+          variant="secondary"
+          className={cn(
+            "hidden max-sm:px-2 max-sm:text-xs pointer-coarse:inline-flex",
+            fade,
+            !text?.focused && "invisible opacity-0",
+          )}
+          onClick={text?.leave}
+        >
+          Done
+        </Button>
+      </span>
+      {note?.undo ? (
+        <Button
+          size="sm"
+          variant="ghost"
+          className="enter shrink-0 max-sm:px-2 max-sm:text-xs"
+          onClick={note.undo}
+        >
+          Undo
+        </Button>
+      ) : null}
+    </>
   );
 }
 

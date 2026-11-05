@@ -47,6 +47,7 @@ const mockDocContext: DocContextValue = {
   editable: false,
   saveState: "idle",
   setSaveState: vi.fn(),
+  setSaveNote: vi.fn(),
   setText: vi.fn(),
   frameReady: true,
   setFrameReady: vi.fn(),
@@ -477,6 +478,27 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     expect(status("saved")).toEqual(["Saved", "off"]);
     expect(status("failed")).toEqual(["Not saved", "polite"]);
     expect(status("refused")).toEqual(["Not saved", "polite"]);
+  });
+
+  it("says what a save changed, with its Undo, in the bar, not over the words", async () => {
+    const undo = vi.fn();
+    render(
+      <DocProvider
+        value={{
+          ...mockDocContext,
+          editable: true,
+          saveState: "saved",
+          saveNote: { said: "Added “three”.", undo },
+        }}
+      >
+        <EditStatus />
+      </DocProvider>,
+    );
+    const region = screen.getByRole("status");
+    expect(region).toHaveTextContent("Added “three”.");
+    expect(region).toHaveAttribute("aria-live", "polite");
+    await userEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(undo).toHaveBeenCalled();
   });
 
   it("keeps the status and Done in place in every state, with no Undo of its own", async () => {

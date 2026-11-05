@@ -94,6 +94,7 @@ export function RenderFrame({
     onUnfollowCursor,
     editable,
     setSaveState,
+    setSaveNote,
     setText,
     setFrameReady,
     stayOnVersion,
@@ -296,6 +297,7 @@ export function RenderFrame({
     loaded,
     take: takeTextEdits,
     setState: setSaveState,
+    note: setSaveNote,
     // A clean save holds what is on screen, so the editor stays on it rather
     // than on the latest, which may hold changes from elsewhere.
     onSaved: (saved, clean) => {
