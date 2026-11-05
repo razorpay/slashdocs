@@ -15,6 +15,18 @@ describe("Keycast", () => {
     expect(screen.getByRole("progressbar", { hidden: true })).toBeInTheDocument();
   });
 
+  it("puts the legend on the dark surface of the keys, so it reads over any document", () => {
+    const { container } = render(
+      <Keycast state={{ phase: "armed" }} available={["c"]} />,
+    );
+    const esc = screen.getByText("ESC").parentElement!;
+    const legend = container.querySelector("kbd")!.closest("div")!;
+    for (const surface of ["bg-neutral-700/95", "dark:bg-neutral-800/95"]) {
+      expect(esc).toHaveClass(surface);
+      expect(legend).toHaveClass(surface);
+    }
+  });
+
   it("names the chord that ran, without the letters or the time", () => {
     const { container } = render(
       <Keycast

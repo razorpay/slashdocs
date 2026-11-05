@@ -1,4 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
+import { cn } from "@/lib/cn";
 import {
   CHORD_KEYS,
   CHORD_WINDOW_MS,
@@ -9,7 +10,10 @@ import {
 // Keycast shows that Esc waits for a letter: the letters and what they do,
 // and a line that runs out with the time to press one. After that time, a
 // letter is a plain key again, so C places a comment instead of opening the
-// comments.
+// comments. The keys and the legend sit on one dark surface, so that they
+// read over any document, light or dark.
+const SURFACE = "bg-neutral-700/95 text-white shadow-lg dark:bg-neutral-800/95";
+
 export function Keycast({
   state,
   available,
@@ -33,7 +37,12 @@ export function Keycast({
           className="pointer-events-none absolute bottom-6 left-5 z-30 select-none"
           aria-hidden="true"
         >
-          <div className="inline-flex items-center gap-2 rounded-xl bg-neutral-700/95 px-4 py-2.5 font-mono text-lg font-medium tracking-wide text-white shadow-lg dark:bg-neutral-800/95">
+          <div
+            className={cn(
+              "inline-flex items-center gap-2 rounded-xl px-4 py-2.5 font-mono text-lg font-medium tracking-wide",
+              SURFACE,
+            )}
+          >
             <span>ESC</span>
             {resolvedKey ? (
               <>
@@ -52,16 +61,21 @@ export function Keycast({
               className="mt-1 h-0.5 origin-left rounded-full bg-[var(--color-fg-muted)] motion-reduce:hidden"
             />
           )}
-          <div className="mt-1.5 pl-1 text-xs text-[var(--color-fg-muted)]">
+          <div
+            className={cn(
+              "mt-1.5 w-fit rounded-lg px-2.5 py-1.5 text-xs text-white/75",
+              SURFACE,
+            )}
+          >
             {resolvedKey
               ? label
               : CHORD_KEYS.filter((item) => available.includes(item.key)).map(
                   (item) => (
                     <span
                       key={item.key}
-                      className="mr-3 inline-block whitespace-nowrap"
+                      className="mr-3 inline-block whitespace-nowrap last:mr-0"
                     >
-                      <kbd className="mr-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-1 font-mono font-medium text-[var(--color-fg)]">
+                      <kbd className="mr-1 rounded bg-white/15 px-1 font-mono font-medium text-white">
                         {item.key.toUpperCase()}
                       </kbd>
                       {item.hint}
