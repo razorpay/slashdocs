@@ -88,6 +88,10 @@ export function PersonAvatar({ who, size = 20 }: { who: Principal; size?: number
 }
 
 const muted = "text-[var(--color-fg-muted)]";
+// A small action of a message that shows on hover or focus, and always on a
+// touch screen.
+const onHover =
+  "-my-1 h-7 w-7 opacity-0 focus-visible:opacity-100 group-hover/msg:opacity-100 data-[state=open]:opacity-100 touch:opacity-100";
 
 function copyLink(commentId: string) {
   const url = new URL(window.location.pathname, window.location.origin);
@@ -240,9 +244,12 @@ export function Message({
             c={c}
             docId={docId}
             thread={false}
-            className="-my-1 ml-auto h-7 w-7 opacity-0 focus-visible:opacity-100 group-hover/msg:opacity-100 data-[state=open]:opacity-100"
+            className={cn("ml-auto", onHover)}
           />
         ) : null}
+        {c.reactions?.length ? null : (
+          <ReactionBar c={c} docId={docId} triggerClassName={onHover} />
+        )}
       </div>
       <div className="mt-0.5 pl-7">
         {thread && anchorLabel(c) ? (

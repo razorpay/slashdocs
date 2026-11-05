@@ -483,3 +483,14 @@ it("shows a reply once when a live update brings it before its send ends", async
   expect(screen.getByText("1 reply")).toBeVisible();
   expect(screen.queryByText("Sending…")).toBeNull();
 });
+
+it("offers the first reaction on a message that has none, in its header", async () => {
+  const user = userEvent.setup();
+  const react = vi
+    .spyOn(api, "setCommentReaction")
+    .mockResolvedValue(undefined as never);
+  renderMessage({ ...mine, reactions: [] });
+  await user.click(screen.getByRole("button", { name: "Add reaction" }));
+  await user.click(await screen.findByRole("menuitemcheckbox", { name: "Thumbs up" }));
+  expect(react).toHaveBeenCalledWith("doc-1", mine.id, expect.any(String), true);
+});
