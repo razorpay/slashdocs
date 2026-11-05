@@ -90,3 +90,44 @@ it("offers Retry when the settings do not load, in the profile and in a document
     await screen.findByRole("switch", { name: "Notifications for this document" }),
   ).toBeChecked();
 });
+
+it("saves the last choice when an earlier write ends after a later click", async () => {
+  let saved = false;
+  let release: () => void = () => {};
+  const writes: boolean[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "PUT") {
+        const { enabled } = JSON.parse(String(init.body));
+        writes.push(enabled);
+        if (writes.length === 1) await new Promise<void>((r) => (release = r));
+        saved = enabled;
+      }
+      return new Response(
+        JSON.stringify({ enabled: saved, effective_enabled: saved }),
+        {
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }),
+  );
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={client}>
+      <NotificationToggle />
+    </QueryClientProvider>,
+  );
+  const toggle = screen.getByRole("switch", { name: "Chat notifications" });
+  await waitFor(() => expect(toggle).toBeEnabled());
+  await userEvent.click(toggle);
+  await userEvent.click(toggle);
+  expect(toggle).toHaveAttribute("aria-checked", "false");
+  release();
+  await waitFor(() => expect(writes).toEqual([true, false]));
+  await waitFor(() => expect(client.isMutating()).toBe(0));
+  expect(saved).toBe(false);
+  expect(toggle).toHaveAttribute("aria-checked", "false");
+});

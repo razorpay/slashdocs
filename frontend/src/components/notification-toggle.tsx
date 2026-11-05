@@ -15,7 +15,12 @@ export function NotificationToggle({ documentId }: { documentId?: string }) {
     queryFn: () => api.notificationPreferences(documentId),
   });
   // The switch moves at once, and moves back if the server does not save it.
+  // Writes go one after another, so that the last choice is the one saved.
+  // Only the last write moves the switch back or reads the saved value.
+  const last = () => qc.isMutating({ mutationKey: queryKey }) === 1;
   const update = useMutation({
+    mutationKey: queryKey,
+    scope: { id: queryKey.join(":") },
     mutationFn: (enabled: boolean) =>
       api.setNotificationPreferences(enabled, documentId),
     onMutate: async (enabled) => {
@@ -25,10 +30,10 @@ export function NotificationToggle({ documentId }: { documentId?: string }) {
       return { previous };
     },
     onError: (e, _enabled, context) => {
-      qc.setQueryData(queryKey, context?.previous);
+      if (last()) qc.setQueryData(queryKey, context?.previous);
       toast.error(errorMessage(e, "Could not save notification settings"));
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: ["notifications"] }),
+    onSettled: () => last() && qc.invalidateQueries({ queryKey: ["notifications"] }),
   });
   const enabled = prefs.data?.enabled ?? false;
   const label = documentId ? "Notifications for this document" : "Chat notifications";
