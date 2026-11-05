@@ -11,6 +11,7 @@ import {
 } from "react";
 import { AnimatePresence, motion, useIsPresent } from "framer-motion";
 import { SheetHandle } from "@/components/ui/sheet";
+import { keepToastsAbove } from "@/components/ui/toaster";
 import { cn } from "@/lib/cn";
 import { EDGE, placeBeside, type Rect } from "@/lib/place-beside";
 import { anchorLabel } from "@/lib/comment-pins";
@@ -127,6 +128,7 @@ function Popover({
       onCover(sheet, 0);
     };
   }, [mobile, present, sheet, onCover]);
+  useEffect(() => (present ? keepToastsAbove(ref.current) : undefined), [present]);
   const closeOnEscape = (e: KeyboardEvent) => {
     if (e.key !== "Escape") return;
     e.stopPropagation();

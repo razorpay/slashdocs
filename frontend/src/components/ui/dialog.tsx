@@ -2,6 +2,7 @@ import * as React from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { openFocus, SheetHandle } from "./sheet";
+import { keepToastsAbove } from "./toaster";
 import { Tooltip } from "./tooltip";
 import { cn } from "@/lib/cn";
 
@@ -26,6 +27,7 @@ export function DialogContent({
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay className="sheet-overlay fixed inset-0 z-50 bg-[hsl(218_30%_12%/0.24)] backdrop-blur-[2px] dark:bg-black/60" />
       <DialogPrimitive.Content
+        ref={keepToastsAbove}
         className={cn(
           "dialog-content fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-[var(--shadow-pop)] dark:border-transparent focus:outline-none",
           anchor === "top" &&

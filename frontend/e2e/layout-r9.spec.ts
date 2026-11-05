@@ -205,13 +205,9 @@ test("a toast covers no open thread", async ({ page, slashdocs }) => {
   const thread = page.getByRole("dialog", { name: "Comment thread" });
   await expect(thread.getByText("Reply 5.")).toBeAttached();
 
-  await slashdocs.pushVersion(
-    document.id,
-    html.replace("Paragraph 0.", "Paragraph zero."),
-  );
-  const toast = page.locator("[data-sonner-toast]", {
-    hasText: "This document changed elsewhere.",
-  });
+  await thread.getByRole("button", { name: "More actions" }).first().click();
+  await page.getByRole("menuitem", { name: "Copy link" }).click();
+  const toast = page.locator("[data-sonner-toast]", { hasText: "comment link" });
   await expect(toast).toBeVisible();
   await page.waitForTimeout(400);
   expect(overlaps((await toast.boundingBox())!, (await thread.boundingBox())!)).toBe(
