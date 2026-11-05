@@ -718,6 +718,28 @@ test.describe("saving", () => {
           chip.contains(chip.ownerDocument.getSelection()!.anchorNode),
         ),
     ).toBe(true);
+
+    // A typo and its fix save, and every place shows the saved text.
+    let next = nextSave(page, document.id);
+    await page.keyboard.type("x");
+    expect((await next).status()).toBe(201);
+    await expect(chips).toHaveText(["Needs a lookx", "Needs a lookx", "Needs a lookx"]);
+    next = nextSave(page, document.id);
+    await page.keyboard.press("Backspace");
+    expect((await next).status()).toBe(201);
+    await expect(chips).toHaveText(["Needs a look", "Needs a look", "Needs a look"]);
+    expect(await latestSource(page, document.id)).toContain('LABEL = "Needs a look"');
+
+    // Another place is the same string, so the reader can type there too.
+    await chips.nth(0).click();
+    await expect(
+      renderedDocument(page).getByText("A script on the page writes this text."),
+    ).toHaveCount(0);
+    next = nextSave(page, document.id);
+    await placeCaret(page, "#chips b", "look", { nth: 0, collapse: true });
+    await page.keyboard.type("s");
+    expect((await next).status()).toBe(201);
+    await expect(chips).toHaveText(["Needs a looks", "Needs a looks", "Needs a looks"]);
   });
 
   test("Esc twice in the text leaves it and keeps the page", async ({
