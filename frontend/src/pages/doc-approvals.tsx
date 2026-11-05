@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Check, ClipboardCheck, Clock, X } from "lucide-react";
+import { Check, ClipboardCheck, Clock, CloudOff, X } from "lucide-react";
 
 import {
   api,
@@ -9,6 +9,7 @@ import {
   type Comment,
   type ApprovalDecision,
   type ApprovalListItem,
+  type ApprovalRequest,
   type ApprovalStatus,
 } from "@/api";
 import { Badge } from "@/components/ui/badge";
@@ -24,14 +25,16 @@ import {
 import { Textarea } from "@/components/ui/input";
 import { Tooltip } from "@/components/ui/tooltip";
 import { RetryButton, revealOnHover, Skeleton } from "@/components/ui/misc";
-import { ErrorState } from "@/components/error-state";
+import { ErrorState, LoadErrorLine } from "@/components/error-state";
 import { cn } from "@/lib/cn";
 import { ADDRESS_PATTERN, COMMENT_STATUS } from "@/lib/constants";
 import { errorMessage } from "@/lib/errors";
 import { queryKeys } from "@/lib/queryKeys";
+import { loadFailed } from "@/lib/query-retry";
 import { samePrincipal } from "@/lib/principals";
 import { useDoc } from "./doc-context";
 import { useInvalidateApprovals } from "./use-invalidate-approvals";
+import { useShownApprovals } from "./use-shown-approvals";
 import { PersonAvatar } from "./doc-comment-parts";
 
 const STATUS_BADGE: Record<
@@ -118,90 +121,78 @@ export function ApprovalsDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const { docId, version } = useDoc();
-  const doc = useQuery({
-    queryKey: queryKeys.document(docId),
-    queryFn: () => api.getDocument(docId),
-  });
-  // The props describe the document's *current* version. When an older
-  // version is on screen the dialog lists that version's decisions, so the
-  // chip has to be scoped the same way or the two contradict each other.
-  const latest = doc.data?.current_version_id;
-  const viewingOlder = !!version && !!latest && version !== latest;
-  const scoped = useQuery({
-    queryKey: queryKeys.approvals(docId, version),
-    queryFn: () => api.listApprovals(docId, version),
-    enabled: !!docId && viewingOlder,
-  });
-  // Fall back to the document-level numbers until the scoped ones land, so
-  // the chip does not blink out while an older version loads.
-  const shownStatus = (viewingOlder ? scoped.data?.status : status) ?? status;
-  const shownApproved =
-    (viewingOlder ? scoped.data?.summary.approved : approved) ?? approved;
-  const shownTotal = (viewingOlder ? scoped.data?.summary.total : total) ?? total;
+  // The props describe the document's *current* version. The dialog lists
+  // the decisions on the version on screen, so the chip does too.
+  const shown = useShownApprovals({ status, approved, total });
 
   // With no approvers the API omits the status entirely. The owner still
   // needs a way in, because this dialog is the only place approvers can be
   // assigned; without a trigger the first approver could never be added. It is
   // a real button, not a chip: asking for a review is the point of the feature.
-  if (!shownStatus) {
-    if (!isOwner) return null;
-    return (
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogTrigger asChild>
-          {/* On a phone only the icon shows, so it looks like the other icons
-              of the bar and not like a pressed toggle. */}
-          <Button
-            variant="outline"
-            size="sm"
-            className="hidden shrink-0 xs:inline-flex max-sm:bg-transparent max-sm:shadow-none"
-            aria-label="Request approval"
-          >
-            <ClipboardCheck className="h-4 w-4" />
-            <span className="hidden sm:inline">Request approval</span>
-          </Button>
-        </DialogTrigger>
-        <ApprovalsDialogBody onClose={() => setOpen(false)} />
-      </Dialog>
-    );
-  }
+  const unassigned = !shown.status && !shown.failed && !shown.pending;
+  if (unassigned && !isOwner) return null;
 
+  // The dialog stays mounted while the chip changes, so an open dialog stays
+  // open when the status of an older version loads.
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        {/* The pseudo-element makes a 40px tall target. */}
-        <button
-          type="button"
-          aria-label={`${badgeAria(shownStatus, shownApproved, shownTotal)}. Open approvals`}
-          className="relative hidden shrink-0 rounded-full transition-transform xs:block duration-150 ease-out active:scale-[0.97] after:absolute after:inset-x-0 after:-inset-y-2"
-        >
-          <ApprovalStatusBadge
-            status={shownStatus}
-            approved={shownApproved}
-            total={shownTotal}
-            narrow
-            className="cursor-pointer hover:opacity-90"
-          />
-        </button>
-      </DialogTrigger>
-      <ApprovalsDialogBody onClose={() => setOpen(false)} />
+      {shown.pending ? (
+        <Skeleton className="hidden h-5 w-24 shrink-0 rounded-full xs:block" />
+      ) : (
+        <DialogTrigger asChild>
+          {unassigned ? (
+            // On a phone only the icon shows, so it looks like the other icons
+            // of the bar and not like a pressed toggle.
+            <Button
+              variant="outline"
+              size="sm"
+              className="hidden shrink-0 xs:inline-flex max-sm:bg-transparent max-sm:shadow-none"
+              aria-label="Request approval"
+            >
+              <ClipboardCheck className="h-4 w-4" />
+              <span className="hidden sm:inline">Request approval</span>
+            </Button>
+          ) : (
+            // The pseudo-element makes a 40px tall target.
+            <button
+              type="button"
+              aria-label={`${shown.status ? badgeAria(shown.status, shown.approved, shown.total) : "Approvals did not load"}. Open approvals`}
+              className="relative hidden shrink-0 rounded-full transition-transform xs:block duration-150 ease-out active:scale-[0.97] after:absolute after:inset-x-0 after:-inset-y-2"
+            >
+              {shown.status ? (
+                <ApprovalStatusBadge
+                  status={shown.status}
+                  approved={shown.approved}
+                  total={shown.total}
+                  narrow
+                  className="cursor-pointer hover:opacity-90"
+                />
+              ) : (
+                // The dialog says that they did not load, with Retry.
+                <Badge
+                  variant="muted"
+                  className="cursor-pointer gap-1 hover:opacity-90"
+                >
+                  <CloudOff className="h-3 w-3" aria-hidden="true" />
+                  <span className="hidden sm:inline">Approvals unknown</span>
+                </Badge>
+              )}
+            </button>
+          )}
+        </DialogTrigger>
+      )}
+      <DialogContent
+        anchor="top"
+        className="max-w-lg overflow-hidden p-0"
+        aria-describedby={undefined}
+      >
+        {/* The content has no padding, so the lists run edge to edge. */}
+        <DialogHeader className="px-6 pt-6">
+          <DialogTitle>Approvals</DialogTitle>
+        </DialogHeader>
+        <Approvals onClose={() => setOpen(false)} />
+      </DialogContent>
     </Dialog>
-  );
-}
-
-function ApprovalsDialogBody({ onClose }: { onClose: () => void }) {
-  return (
-    <DialogContent
-      anchor="top"
-      className="max-w-lg overflow-hidden p-0"
-      aria-describedby={undefined}
-    >
-      {/* The content has no padding, so the lists run edge to edge. */}
-      <DialogHeader className="px-6 pt-6">
-        <DialogTitle>Approvals</DialogTitle>
-      </DialogHeader>
-      <Approvals onClose={onClose} />
-    </DialogContent>
   );
 }
 
@@ -514,12 +505,22 @@ export function Approvals({ onClose }: { onClose?: () => void }) {
     queryFn: () => api.listApprovals(docId, version),
     enabled: !!docId,
   });
+  // The owner removes an approver by the ID of its assignment, which only
+  // this list gives.
+  const approvers = useQuery({
+    queryKey: queryKeys.approvers(docId),
+    queryFn: () => api.listApprovers(docId),
+    enabled: isOwner,
+    staleTime: 30_000,
+  });
 
   const summary = approvals.data?.summary;
+  const items = approvals.data?.items;
 
   return (
-    <div className="flex max-h-[70vh] flex-col">
-      <div className="flex min-h-9 items-center justify-between gap-2 border-b border-[var(--color-border)] px-6 pb-3">
+    // The parts divide by lines, so a part that is not there leaves no line.
+    <div className="flex max-h-[70vh] flex-col divide-y divide-[var(--color-border)]">
+      <div className="flex min-h-9 items-center justify-between gap-2 px-6 pb-3">
         {summary ? (
           <>
             <p className="text-xs text-[var(--color-fg-muted)]">
@@ -537,35 +538,42 @@ export function Approvals({ onClose }: { onClose?: () => void }) {
           </>
         ) : null}
       </div>
-      <div className="flex-1 space-y-1 overflow-y-auto px-4 py-3">
-        {approvals.isPending ? (
-          <>
-            <Skeleton className="h-9 w-full" />
-            <Skeleton className="h-9 w-full" />
-          </>
-        ) : approvals.isError ? (
-          <ErrorState
-            title="Could not load approvals"
-            description={errorMessage(approvals.error, "Try again in a moment.")}
-            action={<RetryButton query={approvals} />}
-          />
-        ) : (
-          approvals.data.items.map((item) => (
-            <ApproverRow
-              key={item.approver.type + ":" + item.approver.id}
-              item={item}
-              docId={docId}
-              isOwner={isOwner}
-              current={isCurrentVersion}
-              onChanged={invalidate}
+      {items?.length === 0 ? null : (
+        <div className="flex-1 space-y-1 overflow-y-auto px-4 py-3">
+          {approvals.isPending ? (
+            <>
+              <Skeleton className="h-9 w-full" />
+              <Skeleton className="h-9 w-full" />
+            </>
+          ) : approvals.isError ? (
+            <ErrorState
+              title="Could not load approvals"
+              description={errorMessage(approvals.error, "Try again in a moment.")}
+              action={<RetryButton query={approvals} />}
             />
-          ))
-        )}
-      </div>
-      <ReviewActions
-        className="border-t border-[var(--color-border)] px-6 py-3"
-        onNavigate={onClose}
-      />
+          ) : (
+            <>
+              {approvals.data.items.map((item) => (
+                <ApproverRow
+                  key={item.approver.type + ":" + item.approver.id}
+                  item={item}
+                  docId={docId}
+                  isOwner={isOwner}
+                  assignments={approvers.data?.items}
+                  current={isCurrentVersion}
+                  onChanged={invalidate}
+                />
+              ))}
+              {isOwner && loadFailed(approvers) ? (
+                <LoadErrorLine query={approvers} className="px-2 pt-1">
+                  Could not load the approvers. Remove waits until they load.
+                </LoadErrorLine>
+              ) : null}
+            </>
+          )}
+        </div>
+      )}
+      <ReviewActions className="px-6 py-3" onNavigate={onClose} />
       {isOwner ? <AddApprover docId={docId} onAdded={invalidate} /> : null}
     </div>
   );
@@ -575,22 +583,19 @@ function ApproverRow({
   item,
   docId,
   isOwner,
+  assignments,
   current,
   onChanged,
 }: {
   item: ApprovalListItem;
   docId: string;
   isOwner: boolean;
+  // The owner's list of approvers, once it loads.
+  assignments?: ApprovalRequest[];
   // The list is about the current version.
   current: boolean;
   onChanged: () => void;
 }) {
-  const approvers = useQuery({
-    queryKey: queryKeys.approvers(docId),
-    queryFn: () => api.listApprovers(docId),
-    enabled: isOwner,
-    staleTime: 30_000,
-  });
   const remove = useMutation({
     mutationFn: (approverId: string) => api.deleteApprover(docId, approverId),
     onSuccess: () => {
@@ -598,9 +603,7 @@ function ApproverRow({
     },
     onError: (e) => toast.error(errorMessage(e, "Could not remove approver")),
   });
-  const request = approvers.data?.items.find((r) =>
-    samePrincipal(r.approver, item.approver),
-  );
+  const request = assignments?.find((r) => samePrincipal(r.approver, item.approver));
   const label = item.approver.name || item.approver.email || item.approver.id;
   return (
     <div className="group flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-[var(--color-surface-muted)]">
@@ -620,14 +623,16 @@ function ApproverRow({
           </p>
         ) : null}
       </div>
-      {isOwner && request ? (
+      {/* Until the list of approvers loads, Remove shows, but is off. */}
+      {isOwner && (request || !assignments) ? (
         <Button
           size="icon"
           variant="ghost"
           className={cn("h-6 w-6 transition-opacity", revealOnHover)}
           aria-label={`Remove ${label} as approver`}
-          disabled={remove.isPending}
-          onClick={() => remove.mutate(request.id)}
+          tooltip={request ? undefined : "Remove waits until the approvers load"}
+          disabled={!request || remove.isPending}
+          onClick={() => request && remove.mutate(request.id)}
         >
           <X className="h-3.5 w-3.5" />
         </Button>
@@ -688,7 +693,7 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
     }));
   return (
     <form
-      className="border-t border-[var(--color-border)] px-6 py-3"
+      className="px-6 py-3"
       onSubmit={(e) => {
         e.preventDefault();
         // Send the raw address so the server resolves either a user email or a
@@ -697,12 +702,26 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
         if (ADDRESS_PATTERN.test(trimmed)) add.mutate({ addr: trimmed });
       }}
     >
-      <p className="mb-2 text-xs text-[var(--color-fg-muted)]">
-        Add someone who did not edit this document.
-      </p>
+      {/* The help sits on the line of the hint, so the messages under the
+          field do not move it. */}
+      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-xs">
+        <p className="text-[var(--color-fg-muted)]">
+          Add someone who did not edit this document.
+        </p>
+        <Tooltip label={WHO_CAN_APPROVE} help>
+          <button
+            type="button"
+            className="shrink-0 rounded-sm text-[var(--color-fg-muted)] underline decoration-dotted underline-offset-2 hover:text-[var(--color-fg)]"
+          >
+            Who can approve?
+          </button>
+        </Tooltip>
+      </div>
       <div className="flex gap-2">
         <div className="flex-1">
           <Combobox
+            // The dialog opens with the focus in the field, not on its help.
+            autoFocus
             aria-label="Approver"
             placeholder="Email or bot address"
             aria-invalid={!!add.error || undefined}
@@ -714,6 +733,7 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
             options={options}
             onPick={(u) => setAddress(u.address)}
             listAbove
+            busy={suggestions.isFetching}
           />
         </div>
         {/* Add cannot work for a person without access, so Share as viewer
@@ -726,34 +746,29 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
           Add
         </Button>
       </div>
-      {/* The help comes after the field, so the dialog opens with the focus
-          in the field. */}
-      <div className="mt-1.5 flex flex-wrap items-start gap-2 text-xs">
-        {add.error ? (
+      {add.error ? (
+        <div className="mt-1.5 flex flex-wrap items-start gap-2 text-xs">
           <p role="alert" className="text-[var(--color-danger)]">
             {errorMessage(add.error, "Could not assign approver.")}
           </p>
-        ) : null}
-        {noAccess ? (
-          <Button
-            type="button"
-            size="sm"
-            className="shrink-0"
-            disabled={add.isPending}
-            onClick={() => add.mutate({ addr: trimmed, share: true })}
-          >
-            Share as viewer and add
-          </Button>
-        ) : null}
-        <Tooltip label={WHO_CAN_APPROVE}>
-          <button
-            type="button"
-            className="ml-auto shrink-0 rounded-sm text-[var(--color-fg-muted)] underline decoration-dotted underline-offset-2 hover:text-[var(--color-fg)]"
-          >
-            Who can approve?
-          </button>
-        </Tooltip>
-      </div>
+          {noAccess ? (
+            <Button
+              type="button"
+              size="sm"
+              className="shrink-0"
+              disabled={add.isPending}
+              onClick={() => add.mutate({ addr: trimmed, share: true })}
+            >
+              Share as viewer and add
+            </Button>
+          ) : null}
+        </div>
+      ) : loadFailed(suggestions) ? (
+        // A failed search keeps its line while Retry runs.
+        <LoadErrorLine query={suggestions} className="mt-1.5">
+          Could not search people. You can still enter a full address.
+        </LoadErrorLine>
+      ) : null}
     </form>
   );
 }

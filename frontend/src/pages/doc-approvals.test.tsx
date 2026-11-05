@@ -35,6 +35,9 @@ type FetchOptions = {
   approvalsStatus?: number;
   // The approver cannot open the document until it is shared with them.
   noAccess?: boolean;
+  // The approvers list, and the user search, fail with these statuses.
+  approversStatus?: number;
+  usersStatus?: number;
 };
 
 // Decisions the page posted, in order.
@@ -97,6 +100,13 @@ function installFetch(options: FetchOptions = {}, posted: PostedDecision[] = [])
         shared = true;
         return jsonResponse({ id: "grt_1", role: "viewer" }, 201);
       }
+      if (url.startsWith("/v1/documents/doc_1/approvers") && options.approversStatus)
+        return jsonResponse(
+          { error: { code: "unavailable" } },
+          options.approversStatus,
+        );
+      if (url.startsWith("/v1/users") && options.usersStatus)
+        return jsonResponse({ error: { code: "unavailable" } }, options.usersStatus);
       if (url.startsWith("/v1/documents/doc_1/approvers")) {
         if (init?.method === "POST" && options.noAccess && !shared)
           return jsonResponse(
@@ -117,7 +127,14 @@ function installFetch(options: FetchOptions = {}, posted: PostedDecision[] = [])
             },
             201,
           );
-        return jsonResponse({ items: [] });
+        return jsonResponse({
+          items: Object.values(options.approvalsByVersion ?? {}).flatMap((v) =>
+            (v.items ?? []).map((item, i) => ({
+              id: `apr_${i}`,
+              approver: item.approver,
+            })),
+          ),
+        });
       }
       if (url.startsWith("/v1/users"))
         return jsonResponse({ items: options.users ?? [] });
@@ -252,10 +269,73 @@ describe("ApprovalsDialog", () => {
     ).toBeVisible();
     expect(screen.queryByText(/Anyone who edited it/)).toBeNull();
     const who = screen.getByRole("button", { name: "Who can approve?" });
-    while (document.activeElement !== who) await userEvent.tab();
+    // The help sits on the line of the field's hint, so an error under the
+    // field does not move it.
+    expect(who.parentElement).toHaveTextContent(
+      "Add someone who did not edit this document.",
+    );
+    // With no approvers there is no empty list between the status and the
+    // field.
+    expect(
+      screen.getByText("No approvers assigned").parentElement?.nextElementSibling
+        ?.tagName,
+    ).toBe("FORM");
+    await userEvent.tab({ shift: true });
+    expect(who).toHaveFocus();
     expect(await screen.findByRole("tooltip", { hidden: true })).toHaveTextContent(
       /Anyone who edited it, in the browser/,
     );
+  });
+
+  it("shows who can approve on a click or a tap, and Esc closes only the help", async () => {
+    installFetch();
+    renderDialog({ isOwner: true, defaultOpen: true });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Who can approve?" }));
+    expect(await screen.findByRole("tooltip", { hidden: true })).toHaveTextContent(
+      /Anyone who edited it, in the browser/,
+    );
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("tooltip", { hidden: true })).toBeNull(),
+    );
+    expect(screen.getByRole("dialog")).toBeVisible();
+  });
+
+  it("says that the people search failed, with Retry, and keeps a full address", async () => {
+    installFetch({ usersStatus: 503 });
+    renderDialog({ isOwner: true, defaultOpen: true });
+    const user = userEvent.setup();
+    const input = await screen.findByRole("combobox", { name: "Approver" });
+    await user.type(input, "rev");
+    expect(await screen.findByText(/Could not search people/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+    await user.type(input, "iewer@example.com");
+    expect(screen.getByRole("button", { name: "Add" })).toBeEnabled();
+  });
+
+  it("says that the approvers did not load, and keeps Remove off with the reason", async () => {
+    const reviewer: Principal = { type: "user", id: "rev", name: "Rev" };
+    installFetch({
+      approversStatus: 503,
+      approvalsByVersion: {
+        ver_2: {
+          status: "pending",
+          approved: 0,
+          total: 1,
+          items: [{ approver: reviewer, decision: null }],
+        },
+      },
+    });
+    renderDialog({ status: "pending", approved: 0, total: 1, isOwner: true });
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Open approvals/ }),
+    );
+    expect(await screen.findByText(/Could not load the approvers/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: /Remove Rev as approver/ }),
+    ).toBeDisabled();
   });
 
   it("picks an approver from the suggestions with the keyboard", async () => {
@@ -402,6 +482,19 @@ describe("ApprovalsDialog", () => {
 
     expect(await screen.findByText("Rejected · 0 of 1 approved")).toBeTruthy();
     expect(screen.queryByText("1 of 1 approved")).toBeNull();
+  });
+
+  it("never shows the current counts for an older version whose approvals fail", async () => {
+    installFetch({ currentVersionID: "ver_3", approvalsStatus: 503 });
+    renderDialog({ status: "pending", approved: 0, total: 1 }, "ver_2");
+
+    const chip = await screen.findByRole("button", {
+      name: "Approvals did not load. Open approvals",
+    });
+    expect(screen.queryByText(/0 of 1 approved/)).toBeNull();
+    await userEvent.click(chip);
+    expect(await screen.findByText("Could not load approvals")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
   });
 
   it("uses the document status when the latest version is on screen", async () => {
