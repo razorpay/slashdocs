@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Check, ChevronDown, History, RotateCcw } from "lucide-react";
@@ -250,8 +250,6 @@ export function RestoreButton({
   const q = useQueryClient();
   const showSaved = useShowSaved();
   const newest = useVersions(docId).data?.items.at(-1);
-  const previewed = useRef(version?.id);
-  previewed.current = version?.id;
   const restoreTo = async (v: Version) => {
     const restored = await api.restoreVersion(docId, v.id);
     for (const queryKey of [
@@ -265,7 +263,7 @@ export function RestoreButton({
     return restored;
   };
   const undo = (previous: Version, title: string) =>
-    toast.promise(restoreTo(previous).then(showSaved), {
+    toast.promise(restoreTo(previous).then(showSaved()), {
       loading: "Undoing the restore…",
       success: `Undid the restore of “${title}”.`,
       error: (e) => errorMessage(e, "Could not undo the restore."),
@@ -295,10 +293,7 @@ export function RestoreButton({
             previous: newest,
             title: docTitle(q.getQueryData<Document>(queryKeys.document(docId)) ?? {}),
           },
-          {
-            onSuccess: (restored) =>
-              previewed.current === version.id && showSaved(restored),
-          },
+          { onSuccess: showSaved() },
         )
       }
     >

@@ -76,8 +76,8 @@ import { ApprovalsDialog } from "./doc-approvals";
 import { useShownApprovals } from "./use-shown-approvals";
 import { PersonAvatar } from "./doc-comment-parts";
 import { useDoc } from "./doc-context";
-import { useShowSaved } from "./use-show-saved";
 import { UploadVersionMenuItem, UploadVersionSheet } from "./doc-upload-version";
+import { useShowSaved } from "./use-show-saved";
 import { EditStatus } from "./doc-edit-status";
 import { HistoryDialog } from "./doc-history";
 import type { Viewer } from "./use-document-stream";
@@ -199,6 +199,7 @@ export function DocBar({
   const shareFrameFocusRef = useRef<HTMLIFrameElement | null>(null);
   // The toast names the document, so that it reaches a reader who left. Only
   // a reader who stays on the document goes back.
+  const showSaved = useShowSaved();
   const del = useMutation({
     mutationFn: () => api.deleteDocument(docId),
     onSuccess: () => {
@@ -207,7 +208,6 @@ export function DocBar({
     },
     onError: (e) => toast.error(errorMessage(e, "Delete failed")),
   });
-  const showSaved = useShowSaved();
   return (
     <DocBarFrame
       home="/app/documents"
@@ -491,7 +491,7 @@ export function DocBar({
           <UploadVersionSheet
             docId={docId}
             baseVersion={latest || current}
-            onUploaded={showSaved}
+            showSaved={showSaved}
             open={uploadOpen}
             onOpenChange={setUploadOpen}
           />
