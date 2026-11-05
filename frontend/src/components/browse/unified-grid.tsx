@@ -171,7 +171,7 @@ function GridCardActions({
   title: string;
   pinned?: boolean;
 }) {
-  const del = useDeleteResource(resourceType, resourceId);
+  const del = useDeleteResource(resourceType, resourceId, title);
   return (
     <div
       className={cn(

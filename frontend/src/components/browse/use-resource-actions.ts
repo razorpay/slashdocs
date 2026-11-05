@@ -38,8 +38,13 @@ export function useTogglePin(
   return { isPinned, togglePin };
 }
 
-// Delete mutation shared by every card/row action cluster.
-export function useDeleteResource(resourceType: ResourceType, resourceId: string) {
+// Delete mutation shared by every card/row action cluster. The toast names
+// the item, as its card is gone when the toast shows.
+export function useDeleteResource(
+  resourceType: ResourceType,
+  resourceId: string,
+  title: string,
+) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () =>
@@ -47,7 +52,7 @@ export function useDeleteResource(resourceType: ResourceType, resourceId: string
         ? api.deleteFolder(resourceId)
         : api.deleteDocument(resourceId),
     onSuccess: () => {
-      toast.success("Deleted.");
+      toast.success(`Deleted “${title}”.`);
       qc.invalidateQueries({ queryKey: queryKeys.foldersAll() });
       qc.invalidateQueries({ queryKey: queryKeys.documents() });
       qc.invalidateQueries({ queryKey: queryKeys.pins() });

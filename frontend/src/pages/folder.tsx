@@ -71,8 +71,14 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 
+// The route keeps the same element when only :id changes, so the key remounts
+// the page, and no dialog or late response carries over to another folder.
 export function FolderPage() {
   const { id = "" } = useParams();
+  return <FolderView key={id} id={id} />;
+}
+
+function FolderView({ id }: { id: string }) {
   const nav = useNavigate();
   const qc = useQueryClient();
 
@@ -118,26 +124,25 @@ export function FolderPage() {
   const [moveOpen, setMoveOpen] = useState(false);
   const [renameTitle, setRenameTitle] = useState("");
 
+  // A toast names the folder, so that it reaches a reader who left. Only a
+  // page that is still open closes its dialog or leaves.
   const delFolder = useMutation({
     mutationFn: () => api.deleteFolder(id),
     onSuccess: () => {
-      setDeleteOpen(false);
-      toast.success("Deleted folder.");
+      toast.success(`Deleted folder “${folder.data?.title}”.`);
       qc.invalidateQueries({ queryKey: queryKeys.foldersAll() });
       qc.invalidateQueries({ queryKey: queryKeys.documents() });
       qc.invalidateQueries({ queryKey: queryKeys.pins() });
       qc.removeQueries({ queryKey: queryKeys.folder(id) });
-      nav("/app/documents");
     },
     onError: (e) => toast.error(errorMessage(e, "Delete failed")),
   });
 
   const renameFolder = useMutation({
-    mutationFn: () => api.updateFolder(id, renameTitle),
-    onSuccess: () => {
-      setRenameOpen(false);
+    mutationFn: (title: string) => api.updateFolder(id, title),
+    onSuccess: (_, title) => {
       qc.invalidateQueries({ queryKey: queryKeys.folder(id) });
-      toast.success("Renamed.");
+      toast.success(`Renamed to “${title}”.`);
     },
     onError: (e) => toast.error(errorMessage(e, "Rename failed")),
   });
@@ -351,7 +356,12 @@ export function FolderPage() {
                 variant="danger"
                 onClick={(e) => {
                   e.preventDefault();
-                  delFolder.mutate();
+                  delFolder.mutate(undefined, {
+                    onSuccess: () => {
+                      setDeleteOpen(false);
+                      nav("/app/documents");
+                    },
+                  });
                 }}
               >
                 Delete
@@ -407,7 +417,10 @@ export function FolderPage() {
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                if (renameTitle.trim()) renameFolder.mutate();
+                if (renameTitle.trim())
+                  renameFolder.mutate(renameTitle, {
+                    onSuccess: () => setRenameOpen(false),
+                  });
               }}
             >
               <Input
