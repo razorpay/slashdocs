@@ -221,7 +221,8 @@ export function Message({
   c: Comment;
   docId: string;
   thread: boolean;
-  // actions sit at the end of the root message's line, as in the panel.
+  // actions sit at the end of the root message's line, as in the panel. The
+  // last one is the thread's Close.
   actions?: React.ReactNode;
 }) {
   return (
@@ -237,19 +238,22 @@ export function Message({
           </span>
         ) : null}
         <AgentRequestBadge c={c} />
-        {/* The thread's own actions sit in its header; a reply's on hover. */}
-        {actions}
-        {!thread ? (
-          <MoreMenu
-            c={c}
-            docId={docId}
-            thread={false}
-            className={cn("ml-auto", onHover)}
-          />
+        {thread && c.status === COMMENT_STATUS.resolved ? (
+          <span className="shrink-0 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+            Resolved
+          </span>
         ) : null}
-        {c.reactions?.length ? null : (
-          <ReactionBar c={c} docId={docId} triggerClassName={onHover} />
-        )}
+        {/* The end of the line: the first reaction, then the thread's own
+            actions, with Close last, or a reply's menu on hover. */}
+        <span className="-my-1 ml-auto flex shrink-0 items-center">
+          {c.reactions?.length ? null : (
+            <ReactionBar c={c} docId={docId} triggerClassName={onHover} />
+          )}
+          {actions}
+          {!thread ? (
+            <MoreMenu c={c} docId={docId} thread={false} className={onHover} />
+          ) : null}
+        </span>
       </div>
       <div className="mt-0.5 pl-7">
         {thread && anchorLabel(c) ? (

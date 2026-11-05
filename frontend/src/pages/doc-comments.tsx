@@ -254,7 +254,6 @@ export function CommentThread({
     ).find((el) => el.dataset.commentId === linked);
     target?.scrollIntoView({ block: "nearest" });
   }, [linked]);
-  const resolved = c.status === COMMENT_STATUS.resolved;
   return (
     <article ref={ref} data-comment-id={c.id} className="px-3 py-3">
       <div className="mb-2 flex items-center gap-2 empty:hidden">
@@ -278,18 +277,11 @@ export function CommentThread({
         thread
         actions={
           <>
-            {resolved ? (
-              <span className="shrink-0 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-                Resolved
-              </span>
+            {!signIn ? (
+              <ResolveButton c={c} docId={docId} className={HEADER_ACTION} />
             ) : null}
-            <span className="-my-1 ml-auto flex shrink-0 items-center">
-              {!signIn ? (
-                <ResolveButton c={c} docId={docId} className={HEADER_ACTION} />
-              ) : null}
-              <MoreMenu c={c} docId={docId} thread className={HEADER_ACTION} />
-              <CloseButton label="Close comment" onClick={onClose} />
-            </span>
+            <MoreMenu c={c} docId={docId} thread className={HEADER_ACTION} />
+            <CloseButton label="Close comment" onClick={onClose} />
           </>
         }
       />
