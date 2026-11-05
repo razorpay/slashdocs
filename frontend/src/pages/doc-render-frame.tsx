@@ -15,7 +15,6 @@ import { Center } from "@/components/ui/misc";
 import { LoadError } from "@/components/error-state";
 import { CHORD_KEYS } from "@/lib/esc-chord";
 import { cursorsShownStore, parseCursorSpot } from "@/lib/live-cursors";
-import { createPersistentStore } from "@/lib/persistent-store";
 import { agentRequestBody } from "@/lib/agent-request";
 import { principalColor } from "@/lib/principals";
 import { useDocumentExport } from "./use-document-export";
@@ -43,11 +42,8 @@ const FORWARDED_KEYS = new Set<string>([
 ]);
 const VIM_KEYS = new Set(["j", "k", "g", "G"]);
 
-const editHintSeen = createPersistentStore<boolean>("slashdocs:edit-hint-seen", false);
-const editHint = () =>
-  matchMedia("(pointer: coarse)").matches
-    ? "Type to edit. Tap Done to leave the text."
-    : "Type to edit. Press Esc to leave the text.";
+// How long a control in the document shows that it copied.
+const COPIED_MS = 1500;
 
 // Renders the sandboxed document iframe for the document page. useBridgeHost
 // serves the theme and KV; this adds comments, selection, zoom, and links.
@@ -391,6 +387,14 @@ export function RenderFrame({
   const MAX_SCALE = 4;
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
+  // What a screen reader hears of a control in the document that confirms
+  // in place.
+  const [said, setSaid] = useState("");
+  useEffect(() => {
+    if (!said) return;
+    const timer = setTimeout(() => setSaid(""), COPIED_MS);
+    return () => clearTimeout(timer);
+  }, [said]);
   const scaleRef = useRef(1);
   const cursorRef = useRef({ x: 0, y: 0 });
 
@@ -516,8 +520,14 @@ export function RenderFrame({
         url.searchParams.delete("comment");
         url.searchParams.delete("fullscreen");
         url.hash = e.data.id;
+        // The # control says Copied, over its heading. A toast would cover
+        // the words.
+        const id = e.data.id;
         void navigator.clipboard.writeText(url.toString()).then(
-          () => toast.success("Heading link copied."),
+          () => {
+            postToFrame({ type: "slashdocs:heading-copied", id });
+            setSaid("Heading link copied.");
+          },
           () => toast.error("Could not copy the heading link."),
         );
       }
@@ -536,12 +546,6 @@ export function RenderFrame({
       }
       if (e.data?.type === "slashdocs:document-click") {
         handleRenderedDocumentClick();
-        // An editor learns once, at the first click in the text, that it
-        // types and how to leave it.
-        if (editable && !editHintSeen.read()) {
-          editHintSeen.write(true);
-          toast.info(editHint(), { id: "edit-hint", duration: 8000 });
-        }
       }
       if (e.data?.type === "slashdocs:unfollowed") {
         onUnfollowCursor?.();
@@ -706,7 +710,6 @@ export function RenderFrame({
     setCommentPositions,
     setDocumentHeight,
     applyZoom,
-    editable,
     setText,
     textChanged,
     textDrafted,
@@ -840,6 +843,9 @@ export function RenderFrame({
         ready={ready}
         postToFrame={postToFrame}
       />
+      <p role="status" className="sr-only">
+        {said}
+      </p>
       {showZoomBadge && (
         <button
           type="button"

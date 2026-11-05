@@ -1565,6 +1565,7 @@ type Theme = "dark" | "light";
     const d = button.ownerDocument;
     if (!d.getElementById("slashdocs-icon-tooltip-style")) {
       const style = d.createElement("style");
+        [data-slashdocs-tooltip][data-slashdocs-copied]::after{content:"Copied"!important;display:block!important;opacity:1!important;transform:translate(var(--slashdocs-tip-shift,-50%),0)!important;transition-delay:0s!important}
       style.id = "slashdocs-icon-tooltip-style";
       // A hidden tip has no box, so that it never widens the page, as near
       // its right edge on a phone. It fades in from its starting style.
@@ -1862,7 +1863,7 @@ type Theme = "dark" | "light";
       // first line. Headings keep the height that the author gave them, so
       // readers, editors and previews lay out the document in the same way.
       // With no gutter, it follows the heading's last word.
-      style.textContent = `.slashdocs-heading-link{position:absolute!important;box-sizing:border-box!important;width:1.2em!important;margin:0!important;margin-inline-start:-1.2em!important;padding:0!important;border:0!important;border-radius:4px;background:transparent!important;color:inherit;font:inherit;text-align:center;cursor:pointer}.slashdocs-heading-link.slashdocs-heading-link-end{margin-inline-start:.25em!important}.slashdocs-heading-link::before{content:"#";opacity:0;transition:opacity .15s ease-out}:is(h1,h2,h3,h4,h5,h6):hover>.slashdocs-heading-link::before,.slashdocs-heading-link:focus-visible::before{opacity:.5}.slashdocs-heading-link:hover::before{opacity:.85}.slashdocs-heading-link:focus-visible{outline:2px solid currentColor}@media print{.slashdocs-heading-link{display:none!important}}`;
+      style.textContent = `.slashdocs-heading-link{position:absolute!important;box-sizing:border-box!important;width:1.2em!important;margin:0!important;margin-inline-start:-1.2em!important;padding:0!important;border:0!important;border-radius:4px;background:transparent!important;color:inherit;font:inherit;text-align:center;cursor:pointer}.slashdocs-heading-link.slashdocs-heading-link-end{margin-inline-start:.25em!important}.slashdocs-heading-link::before{content:"#";opacity:0;transition:opacity .15s ease-out}:is(h1,h2,h3,h4,h5,h6):hover>.slashdocs-heading-link::before,.slashdocs-heading-link:focus-visible::before{opacity:.5}.slashdocs-heading-link:hover::before{opacity:.85}.slashdocs-heading-link:focus-visible{outline:2px solid currentColor}:is(h1,h2,h3,h4,h5,h6)>.slashdocs-heading-link[data-slashdocs-copied]::before{content:"✓";opacity:1}@media print{.slashdocs-heading-link{display:none!important}}`;
       d.head.appendChild(style);
     }
     Array.from(d.querySelectorAll("h1,h2,h3,h4,h5,h6")).forEach((heading) => {
@@ -1913,6 +1914,25 @@ type Theme = "dark" | "light";
       }
       button.classList.toggle("slashdocs-heading-link-end", !fits);
       // A button after a last word at the page's edge would make the page
+  // The time that the link control of a heading says Copied.
+  const COPIED_MS = 1500;
+
+  // showCopied tells, on the link control of heading id, that its link is
+  // copied, in place of a toast that would cover the heading.
+  let copied: HTMLElement | undefined;
+  let copiedTimer: number | undefined;
+  function showCopied(id: string): void {
+    clearTimeout(copiedTimer);
+    if (copied) delete copied.dataset.slashdocsCopied;
+    copied =
+      doc()
+        ?.getElementById(id)
+        ?.querySelector<HTMLElement>(":scope > .slashdocs-heading-link") ?? undefined;
+    if (!copied) return;
+    copied.dataset.slashdocsCopied = "";
+    copiedTimer = window.setTimeout(() => showCopied(""), COPIED_MS);
+  }
+
       // wider. It moves back over that word, where only hover and focus show it.
       button.style.translate = "";
       const over = button.getBoundingClientRect().right - d.documentElement.clientWidth;
@@ -2678,6 +2698,8 @@ type Theme = "dark" | "light";
     } else if (e.data.type === "slashdocs:pins") {
       pins.setPins(
         parsePins(e.data.pins),
+    } else if (e.data.type === "slashdocs:heading-copied") {
+      if (typeof e.data.id === "string") showCopied(e.data.id);
         typeof e.data.active === "string" ? e.data.active : undefined,
       );
     } else if (e.data.type === "slashdocs:pin-placing") {
