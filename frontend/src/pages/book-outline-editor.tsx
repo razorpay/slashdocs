@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Link, useLocation, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   DndContext,
@@ -61,6 +61,7 @@ const CONFLICT_TEXT =
   "Someone changed the outline while you were editing. Reload to see their version.";
 
 type Errors = Map<RowKey, string[]>;
+type Placed = { placed: number; notInOutline: number };
 
 function plural(n: number, one: string, many: string) {
   return `${n} ${n === 1 ? one : many}`;
@@ -492,7 +493,7 @@ function Editor({
   data: OutlineResponse;
   titles: Map<string, string>;
   onReload: () => Promise<void>;
-  placed?: { placed: number; notInOutline: number };
+  placed?: Placed;
 }) {
   const qc = useQueryClient();
   const [draft, setDraft] = useState<Draft>(() =>
@@ -747,7 +748,19 @@ export function BookOutlineEditorPage() {
   const { bookId = "" } = useParams();
   const qc = useQueryClient();
   const loc = useLocation();
+  const nav = useNavigate();
   const [epoch, setEpoch] = useState(0);
+  // What Make this a book placed, sent once in the history state. Read it
+  // and clear it, so a refresh or a later visit does not show it again.
+  const [placed] = useState(() => {
+    const p = loc.state as Placed | null;
+    return p && typeof p.placed === "number" ? p : undefined;
+  });
+  useEffect(() => {
+    if (placed) nav(loc.pathname, { replace: true, state: null });
+    // Once, on arrival.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useTitle("Edit outline");
   const outline = useQuery({
     queryKey: queryKeys.bookOutline(bookId),
@@ -795,8 +808,6 @@ export function BookOutlineEditorPage() {
       );
     return <BookError error={e} onRetry={() => void outline.refetch()} />;
   }
-  const placed = (loc.state ?? undefined) as
-    { placed: number; notInOutline: number } | undefined;
   return (
     <Editor
       // A new version or a reload starts a fresh draft.
@@ -804,12 +815,11 @@ export function BookOutlineEditorPage() {
       bookId={bookId}
       data={outline.data}
       titles={titles}
-      placed={placed && typeof placed.placed === "number" ? placed : undefined}
+      // It describes the first version only; a save makes a new one.
+      placed={outline.data.number === 1 ? placed : undefined}
       onReload={async () => {
-        await Promise.all([
-          qc.invalidateQueries({ queryKey: queryKeys.bookOutline(bookId) }),
-          qc.invalidateQueries({ queryKey: queryKeys.book(bookId) }),
-        ]);
+        // The outline's key is under the book's, so this refetches both.
+        await qc.invalidateQueries({ queryKey: queryKeys.book(bookId) });
         setEpoch((n) => n + 1);
       }}
     />

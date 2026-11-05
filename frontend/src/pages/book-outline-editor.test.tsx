@@ -1,7 +1,7 @@
 import { QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { APIError } from "@/api";
 import {
@@ -76,6 +76,10 @@ function mockLoad(over: Partial<OutlineResponse> = {}, front: ManifestLink[] = [
   return vi.spyOn(booksApi, "outline").mockResolvedValue(response(over));
 }
 
+function HistoryState() {
+  return <div data-testid="state">{JSON.stringify(useLocation().state ?? null)}</div>;
+}
+
 // Errors the app's global query handler would toast (main.tsx).
 let globalErrors = vi.fn<(e: unknown) => void>();
 
@@ -93,7 +97,15 @@ function renderEditor(state?: unknown) {
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[{ pathname: "/app/b/b1/outline", state }]}>
         <Routes>
-          <Route path="/app/b/:bookId/outline" element={<BookOutlineEditorPage />} />
+          <Route
+            path="/app/b/:bookId/outline"
+            element={
+              <>
+                <BookOutlineEditorPage />
+                <HistoryState />
+              </>
+            }
+          />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -291,14 +303,25 @@ describe("BookOutlineEditorPage", () => {
     expect(await screen.findByRole("group", { name: "Theirs" })).toBeTruthy();
   });
 
-  it("reports what Make this a book placed", async () => {
-    mockLoad();
+  it("reports what Make this a book placed, until the outline is saved", async () => {
+    const load = mockLoad();
+    vi.spyOn(booksApi, "pushOutline").mockResolvedValue({
+      version_id: "bov_2",
+      number: 2,
+    });
+    const user = userEvent.setup();
     renderEditor({ placed: 2, notInOutline: 1 });
-    expect(
-      await screen.findByText(
-        "Placed 2 chapters; 1 document is not in the outline yet.",
-      ),
-    ).toBeTruthy();
+    const banner = "Placed 2 chapters; 1 document is not in the outline yet.";
+    expect(await screen.findByText(banner)).toBeTruthy();
+    // Read once: a refresh would not show it again.
+    await waitFor(() => expect(screen.getByTestId("state").textContent).toBe("null"));
+    expect(screen.getByText(banner)).toBeTruthy();
+
+    load.mockResolvedValue(response({ version_id: "bov_2", number: 2 }));
+    await user.click(screen.getByRole("button", { name: "Move Alpha down" }));
+    await user.click(screen.getByRole("button", { name: "Save outline" }));
+    expect(await screen.findByText(/^Version 2\./)).toBeTruthy();
+    expect(screen.queryByText(banner)).toBeNull();
   });
 
   it("keeps the editor when the outline cannot be refetched after a save", async () => {
