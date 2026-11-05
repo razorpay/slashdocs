@@ -281,3 +281,13 @@ func TestReplacementSummaryNamesAFormatFromItsStartTagToItsEndTag(t *testing.T) 
 		}
 	}
 }
+
+func TestChangeSummaryNamesTheFirstChangeOfAWholeDocument(t *testing.T) {
+	before := `<div class="card"><h2>Card A</h2></div><div class="card"><h2>Card B</h2></div><p>End</p>`
+	if got, want := ChangeSummary([]byte(before), []byte(`<div class="card"><h2>Card A</h2></div><p>End</p>`)), "Removed “Card B”"; got != want {
+		t.Fatalf("ChangeSummary = %q, want %q", got, want)
+	}
+	if got, want := ChangeSummary([]byte(before), []byte(before+"<p>New</p>")), "Added a paragraph: “New”"; got != want {
+		t.Fatalf("ChangeSummary = %q, want %q", got, want)
+	}
+}

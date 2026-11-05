@@ -141,7 +141,15 @@ func (h handlers) createVersion(c *gin.Context) {
 		return
 	}
 	observeHTML("version_create", len(html))
-	v, err := h.deps.repository.CreateVersion(c.Request.Context(), c.Param("id"), c.PostForm("base_version_id"), "", c.PostForm("change_summary"), html, *p)
+	ctx, docID, base := c.Request.Context(), c.Param("id"), c.PostForm("base_version_id")
+	summary := strings.TrimSpace(c.PostForm("change_summary"))
+	if summary == "" {
+		if summary, err = h.uploadedSummary(ctx, docID, base, html); err != nil {
+			internalErr(c, err)
+			return
+		}
+	}
+	v, err := h.deps.repository.CreateVersion(ctx, docID, base, "", summary, html, *p)
 	// A conflict means the base version was stale; report the current one.
 	if errors.Is(err, repo.ErrVersionConflict) {
 		versionConflict(c, err, "base_version_id is stale")
@@ -154,6 +162,26 @@ func (h handlers) createVersion(c *gin.Context) {
 	incVersion("created", actorType(c))
 	h.announce(c, repo.DocumentEventDocument)
 	c.JSON(http.StatusCreated, createVersionResponse{ID: v.ID, Number: v.Number, SHA256: v.SHA256, ChangeSummary: v.ChangeSummary})
+}
+
+// uploadedSummary names an upload without a change summary, by what a reader
+// sees change first from base, the version that it replaces. A base that is
+// not a version of the document gets no summary: the save then reports it as
+// stale.
+func (h handlers) uploadedSummary(ctx context.Context, docID, base string, html []byte) (string, error) {
+	r := h.deps.repository
+	v, err := r.GetVersion(ctx, base)
+	if errors.Is(err, repo.ErrNotFound) || err == nil && v.DocumentID != docID {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	old, err := r.GetVersionHTML(ctx, base)
+	if err != nil {
+		return "", err
+	}
+	return "Uploaded a new version. " + textedit.ChangeSummary(old, html), nil
 }
 
 // EditDocument godoc
