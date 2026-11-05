@@ -107,6 +107,18 @@ describe("DocumentPage", () => {
     expect(calls.filter((call) => call.url === "/v1/documents/doc_1")).toHaveLength(3);
   });
 
+  it("says that Check access failed, not that access is still missing", async () => {
+    installFetch(
+      [403, 403, 503],
+      [{ requester: { type: "user", id: "usr_reader" }, requested_at: "2026-11-01" }],
+    );
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Check access" }));
+    expect(await screen.findByText(/Could not check access/)).toBeVisible();
+    expect(screen.queryByText(/You still don't have access/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Check access" })).toBeEnabled();
+  });
+
   it("asks for the document again while the reader waits for access", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const { calls } = installFetch([403]);
