@@ -21,6 +21,7 @@ import {
   caretRange,
   isEditableTarget,
   markSurface,
+  paperOf,
   placeClear,
   reducedMotion,
   scrollBehavior,
@@ -152,7 +153,9 @@ type Theme = "dark" | "light";
   let chat: { open: () => boolean } | null = null;
   // A focused pin sits in this window, over the document, so its keys reach
   // this window, not the document. Give them the document's shortcuts (Esc,
-  // C, the Esc chords) but leave the button its own keys.
+  // C, the Esc chords) but leave the button its own keys. The same goes for
+  // the keys of this window's body, which has the focus when the app gives
+  // it back to the frame.
   let documentKeys: ((ev: KeyboardEvent) => void) | null = null;
   // The app shows the Esc chord, and says while it waits for a letter. An Esc
   // here arms it at once, as the app does, so that a letter right after it
@@ -167,7 +170,7 @@ type Theme = "dark" | "light";
   }
   document.addEventListener("keydown", (ev) => {
     const target = ev.target as Element | null;
-    if (!target?.closest?.(".sd-pins")) return;
+    if (target !== document.body && !target?.closest?.(".sd-pins")) return;
     if (ev.key === "Enter" || ev.key === " " || ev.key === "Tab") return;
     documentKeys?.(ev);
   });
@@ -1851,7 +1854,9 @@ type Theme = "dark" | "light";
       // The link button is out of flow, in the gutter before the heading's
       // first line. Headings keep the height that the author gave them, so
       // readers, editors and previews lay out the document in the same way.
-      style.textContent = `.slashdocs-heading-link{position:absolute!important;box-sizing:border-box!important;width:1.2em!important;margin:0!important;margin-inline-start:-1.2em!important;padding:0!important;border:0!important;border-radius:4px;background:transparent!important;color:inherit;font:inherit;text-align:center;cursor:pointer}.slashdocs-heading-link.slashdocs-heading-link-end{margin-inline-start:.25em!important}.slashdocs-heading-link::before{content:"#";opacity:0;transition:opacity .15s ease-out}:is(h1,h2,h3,h4,h5,h6):hover>.slashdocs-heading-link::before,.slashdocs-heading-link:focus-visible::before{opacity:.5}.slashdocs-heading-link:hover::before{opacity:.85}.slashdocs-heading-link:focus-visible{outline:2px solid currentColor}@media print{.slashdocs-heading-link{display:none!important}}`;
+      // With no gutter, it follows the text in the flow, so that it wraps
+      // with the words and never makes the page wider.
+      style.textContent = `.slashdocs-heading-link{position:absolute!important;box-sizing:border-box!important;width:1.2em!important;margin:0!important;margin-inline-start:-1.2em!important;padding:0!important;border:0!important;border-radius:4px;background:transparent!important;color:inherit;font:inherit;text-align:center;cursor:pointer}.slashdocs-heading-link.slashdocs-heading-link-end{position:static!important;display:inline-block!important;margin-inline-start:.25em!important}.slashdocs-heading-link::before{content:"#";opacity:0;transition:opacity .15s ease-out}:is(h1,h2,h3,h4,h5,h6):hover>.slashdocs-heading-link::before,.slashdocs-heading-link:focus-visible::before{opacity:.5}.slashdocs-heading-link:hover::before{opacity:.85}.slashdocs-heading-link:focus-visible{outline:2px solid currentColor}@media print{.slashdocs-heading-link{display:none!important}}`;
       d.head.appendChild(style);
     }
     Array.from(d.querySelectorAll("h1,h2,h3,h4,h5,h6")).forEach((heading) => {
@@ -1942,7 +1947,6 @@ type Theme = "dark" | "light";
     }
   }
 
-  let textFlashStarted = 0;
   let pendingText: CommentAnchor | null = null;
   let textRetryTimer: ReturnType<typeof setTimeout> | undefined;
   let textNoticeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -2001,7 +2005,6 @@ type Theme = "dark" | "light";
       top: line.top + line.height / 2 - d.defaultView!.innerHeight / 2,
       behavior: "instant",
     });
-    textFlashStarted = Date.now();
     flashRects(d, Array.from(range.getClientRects()), TEXT_FLASH);
   }
 
@@ -2025,21 +2028,24 @@ type Theme = "dark" | "light";
   };
 
   // flashRects puts a flash over each rectangle. Overlays that take no
-  // pointer events do not split text nodes or disturb comments.
+  // pointer events do not split text nodes or disturb comments. They sit on
+  // the page, not the window, so that they stay on their text through any
+  // scroll: the load, a scroll restore, an open pin, or the reader's own.
   function flashRects(
     d: Document,
     rects: DOMRect[],
     { keyframes, duration }: Flash,
   ): void {
     const reduced = reducedMotion(d);
+    const { scrollX, scrollY } = d.defaultView!;
     rects.slice(0, 200).forEach((r) => {
       if (!r.width || !r.height) return;
       const flash = d.createElement("span");
       flash.className = "slashdocs-text-flash";
       flash.setAttribute("aria-hidden", "true");
       // Keep opacity animatable: an important `all` reset overrides animation values.
-      flash.style.cssText = `all:initial;position:fixed!important;pointer-events:none!important;z-index:2147483646!important;left:${r.left}px!important;top:${r.top}px!important;width:${r.width}px!important;height:${r.height}px!important;background:rgba(56,189,248,.32)!important;box-shadow:0 0 0 1px rgba(14,165,233,.65)!important;border-radius:3px!important`;
-      d.body.appendChild(flash);
+      flash.style.cssText = `all:initial;position:absolute!important;pointer-events:none!important;z-index:2147483646!important;left:${r.left + scrollX}px!important;top:${r.top + scrollY}px!important;width:${r.width}px!important;height:${r.height}px!important;background:rgba(56,189,248,.32)!important;box-shadow:0 0 0 1px rgba(14,165,233,.65)!important;border-radius:3px!important`;
+      d.documentElement.appendChild(flash);
       const animation = flash.animate(
         reduced
           ? [{ opacity: 1 }, { opacity: 1, offset: 0.85 }, { opacity: 0 }]
@@ -2083,6 +2089,27 @@ type Theme = "dark" | "light";
     );
   }
 
+  // The margin that a document keeps at its left when it moves for a panel.
+  const ROOM_MARGIN = 16;
+  // roomFor tells how far left document d moves so that a panel over the
+  // right `covered` pixels of the window covers none of its content: 0 when the
+  // panel covers margin only, or null when the left margin is too narrow.
+  // The content is the boxes of the body's blocks, as a centered column.
+  function roomFor(d: Document, covered: number): number | null {
+    const view = d.defaultView!;
+    let left = Infinity;
+    let right = -Infinity;
+    for (const el of d.body.children) {
+      if (/^(absolute|fixed)$/.test(view.getComputedStyle(el).position)) continue;
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height) continue;
+      left = Math.min(left, r.left);
+      right = Math.max(right, r.right);
+    }
+    const shift = Math.max(0, Math.ceil(right - (view.innerWidth - covered)));
+    return left <= right && shift <= left - ROOM_MARGIN ? shift : null;
+  }
+
   function rectsOf(node: Node): DOMRect[] {
     const range = node.ownerDocument!.createRange();
     range.selectNodeContents(node);
@@ -2123,14 +2150,6 @@ type Theme = "dark" | "light";
     dismissSelectionAction();
     actionRange = null;
     selectionDismissed = false;
-    d.defaultView?.addEventListener(
-      "scroll",
-      () => {
-        if (Date.now() - textFlashStarted > 100)
-          d.querySelectorAll(".slashdocs-text-flash").forEach((el) => el.remove());
-      },
-      { passive: true },
-    );
     // The actions at the selection go on scroll. Docked ones stay, so that
     // the reader can scroll text out from under them.
     d.defaultView?.addEventListener(
@@ -2252,7 +2271,12 @@ type Theme = "dark" | "light";
         });
     };
     const onKey = (ev: KeyboardEvent) => {
-      if (ev.key === "Escape") dismissSelectionAction();
+      // An Esc that closes the actions at the selection is theirs alone.
+      if (ev.key === "Escape") {
+        const shown = !!selectionAction;
+        dismissSelectionAction();
+        if (shown) return;
+      }
       const modified = ev.metaKey || ev.ctrlKey || ev.altKey;
       if (ev.key === "Escape" && pins.isPlacing()) {
         ev.preventDefault();
@@ -2282,7 +2306,8 @@ type Theme = "dark" | "light";
 
       const key = ev.key.toLowerCase();
       if (ev.key === "Escape") {
-        armChord(!chordArmed);
+        // An Esc closes the open thread in the app, and arms no chord.
+        armChord(!chordArmed && !watched);
         parent.postMessage(
           { type: "slashdocs:keydown", key: "Escape" },
           targetOrigin(),
@@ -2553,6 +2578,22 @@ type Theme = "dark" | "light";
       else
         pending.reject(
           new Error((e.data.error && e.data.error.message) || "GitHub request failed"),
+        );
+    } else if (
+      e.data.type === "slashdocs:room" &&
+      typeof e.data.cover === "number" &&
+      Number.isFinite(e.data.cover)
+    ) {
+      // The app fills the room that the document leaves with its paper.
+      const d = doc();
+      if (d?.body)
+        parent.postMessage(
+          {
+            type: "slashdocs:room",
+            shift: roomFor(d, e.data.cover),
+            paper: `rgb(${paperOf(d).slice(0, 3)})`,
+          },
+          targetOrigin(),
         );
     } else if (e.data.type === "slashdocs:show-changes") {
       showChanges();
