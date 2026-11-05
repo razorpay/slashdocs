@@ -161,3 +161,73 @@ it("keeps the text of a comment that did not post, and posts it again", async ()
   expect(create).toHaveBeenCalledTimes(2);
   expect(create.mock.calls[1][2]).toBe("Try again");
 });
+
+it("tells the frame how much of it a sheet covers, while the sheet is open", async () => {
+  window.matchMedia = () =>
+    ({
+      matches: true,
+      addEventListener() {},
+      removeEventListener() {},
+    }) as unknown as MediaQueryList;
+  // Each sheet is 400px tall, and reports it as it opens. The frame is not
+  // scaled.
+  vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return this instanceof HTMLIFrameElement ? 712 : 400;
+  });
+  const stub = globalThis.ResizeObserver;
+  globalThis.ResizeObserver = class {
+    constructor(private fn: () => void) {}
+    observe() {
+      this.fn();
+    }
+    disconnect() {}
+  } as unknown as typeof ResizeObserver;
+  const iframe = document.body.appendChild(document.createElement("iframe"));
+  // The frame fills the 768px window below a 56px bar.
+  iframe.getBoundingClientRect = () => new DOMRect(0, 56, 1024, 712);
+  const frame = { current: iframe };
+  const posted: Record<string, unknown>[] = [];
+  function Sheet() {
+    const [client] = useState(() => new QueryClient());
+    const [active, setActive] = useState<string | undefined>("c1");
+    const ctx = {
+      docId: "doc-1",
+      comments: [c],
+      drafts: [],
+      activeComment: active,
+      setActiveComment: setActive,
+      unanchoredComments: new Set(["c1"]),
+      movedPins: new Set(),
+      signIn: () => {},
+    } as unknown as DocContextValue;
+    return (
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <DocProvider value={ctx}>
+            <CommentPopovers
+              frame={frame}
+              bounds={createRef()}
+              origin={null}
+              ready={false}
+              postToFrame={(m) => posted.push(m)}
+            />
+          </DocProvider>
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+  }
+  try {
+    render(<Sheet />);
+    expect(posted.at(-1)).toEqual({ type: "slashdocs:cover", bottom: 400 });
+    await userEvent.keyboard("{Escape}");
+    await vi.waitFor(() =>
+      expect(posted.at(-1)).toEqual({ type: "slashdocs:cover", bottom: 0 }),
+    );
+  } finally {
+    globalThis.ResizeObserver = stub;
+    vi.restoreAllMocks();
+    iframe.remove();
+  }
+});
