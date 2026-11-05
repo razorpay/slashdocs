@@ -74,8 +74,8 @@ const LINK_ENTER: Keyframe[] = [
 // would stop its animation.
 const LINK_STYLE = `
   .slashdocs-link-input,.slashdocs-link-input>i,.slashdocs-link-input>div *{all:initial!important}
-  .slashdocs-link-input>div{all:initial;position:fixed!important;z-index:2147483647!important;display:flex!important;flex-wrap:wrap!important;gap:4px!important;max-width:calc(100vw - 16px)!important;padding:4px!important;border-radius:10px!important;background:#fff!important;color:#18181b!important;box-shadow:0 0 0 1px #0001,0 4px 16px #0002!important;font:13px/1.4 system-ui,sans-serif!important}
-  .slashdocs-link-input input{box-sizing:border-box!important;width:min(280px,60vw)!important;height:40px!important;padding:0 8px!important;color:inherit!important;font:inherit!important}
+  .slashdocs-link-input>div{all:initial;position:fixed!important;z-index:2147483647!important;display:flex!important;flex-wrap:wrap!important;gap:4px!important;width:min(400px,calc(100vw - 24px))!important;padding:4px!important;border-radius:10px!important;background:#fff!important;color:#18181b!important;box-shadow:0 0 0 1px #0001,0 4px 16px #0002!important;font:13px/1.4 system-ui,sans-serif!important}
+  .slashdocs-link-input input{box-sizing:border-box!important;flex:1!important;min-width:0!important;height:40px!important;padding:0 8px!important;color:inherit!important;font:inherit!important}
   .slashdocs-link-input button{height:40px!important;padding:0 10px!important;border-radius:8px!important;color:#b91c1c!important;font:500 13px/40px system-ui,sans-serif!important;cursor:pointer!important}
   .slashdocs-link-input button:hover{background:#fef2f2!important}
   .slashdocs-link-input button:focus-visible{outline:2px solid #6366f1!important;outline-offset:-2px!important}
@@ -566,9 +566,6 @@ export function createStructure(e: Editor) {
       return target;
     };
     field.addEventListener("input", check);
-    // The card can grow a line for the note, so it finds a clear place again.
-    if (view?.ResizeObserver)
-      new view.ResizeObserver(() => place(card, words)).observe(card);
     card.addEventListener("keydown", (event) => {
       event.stopPropagation();
       if (event.key === "Enter" && event.target === field) {
@@ -608,16 +605,29 @@ export function createStructure(e: Editor) {
   }
 
   // place puts card where it covers no text: below the last line of words,
-  // else above the first line, else where placeClear finds room.
+  // else above the first line, else where placeClear finds room. It goes
+  // there once, with room for two lines of note, and its width is fixed, so
+  // it stays still while the reader types. Above the words, it grows up.
   function place(card: HTMLElement, words: Range) {
     // jsdom has no layout, and so no rectangles for ranges.
     const lines = [...(words.getClientRects?.() ?? [])];
     if (!lines.length) return;
     const [first, last] = [lines[0], lines.at(-1)!];
+    const note = card.querySelector("p")!;
+    note.innerText = "\u00a0\n\u00a0";
     placeClear(d, card, lines, [
       [last.left, last.bottom + LINK_GAP],
       [first.left, first.top - LINK_GAP - card.offsetHeight],
     ]);
+    const { bottom } = card.getBoundingClientRect();
+    note.textContent = "";
+    if (bottom > first.top) return;
+    card.style.setProperty("top", "auto", "important");
+    card.style.setProperty(
+      "bottom",
+      `${d.documentElement.clientHeight - bottom}px`,
+      "important",
+    );
   }
 
   function closeLink() {
