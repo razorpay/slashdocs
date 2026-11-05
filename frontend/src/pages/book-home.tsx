@@ -5,6 +5,7 @@ import { ArrowRight } from "lucide-react";
 import { APIError } from "@/api";
 import {
   booksApi,
+  chapterCrumb,
   latestPosition,
   minutesLeft,
   type BookState,
@@ -26,10 +27,6 @@ import {
   useManifest,
   type RowState,
 } from "./book-chapter-state";
-
-function Dot({ state }: { state: RowState }) {
-  return <StateDot state={state} />;
-}
 
 // Why a book or chapter could not be loaded. 404 and 403 read the same, so
 // a book's existence never shows; an outage or rate limit says it is
@@ -131,10 +128,7 @@ function UpdatedItem({ bookId, link }: { bookId: string; link: ManifestLink }) {
       onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
     >
       <summary className="cursor-pointer text-sm text-[var(--color-fg)]">
-        <span className="tabular-nums text-[var(--color-fg-muted)]">
-          {link.properties?.number}
-        </span>{" "}
-        {link.title}
+        {chapterCrumb(link)}
       </summary>
       {open && docId ? <ChangeSummary bookId={bookId} docId={docId} /> : null}
     </details>
@@ -151,9 +145,7 @@ function UpdatedGroup({
   state: BookState;
 }) {
   const qc = useQueryClient();
-  const updated = links.filter(
-    (l) => l.properties?.documentId && state.chapters[l.properties.documentId]?.updated,
-  );
+  const updated = links.filter((l) => isUpdated(l, state));
   const markAll = useMutation({
     mutationFn: () => booksApi.seenAll(bookId),
     onSuccess: () => invalidateReading(qc, bookId),
@@ -210,8 +202,7 @@ function ContinueCard({ manifest, state }: { manifest: Manifest; state: BookStat
           {at ? "Continue reading" : "Start reading"}
         </p>
         <p className="mt-1 truncate font-medium text-[var(--color-fg)]">
-          <span className="tabular-nums text-[var(--color-fg-muted)]">{p?.number}</span>{" "}
-          {target.title}
+          {chapterCrumb(target)}
         </p>
         {at && left > 0 ? (
           <p className="mt-0.5 text-sm text-[var(--color-fg-muted)]">
@@ -251,7 +242,7 @@ function ChapterRow({
         </span>
       ) : null}
       <span className="flex shrink-0 items-center gap-1.5 text-xs text-[var(--color-fg-muted)]">
-        <Dot state={state} />
+        <StateDot state={state} />
         {STATE_LABEL[state]}
       </span>
     </>
@@ -273,6 +264,15 @@ function ChapterRow({
     </Link>
   );
 }
+
+// The legend uses the same dots as the rows and part headers.
+const LEGEND: [RowState, string][] = [
+  ["not_started", ""],
+  ["reading", ""],
+  ["read", ""],
+  ["done", ""],
+  ["planned", "not written yet"],
+];
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
@@ -301,7 +301,7 @@ function PartSection({
         <span className="flex items-center gap-3 text-xs text-[var(--color-fg-muted)]">
           <span aria-hidden="true" className="flex gap-0.5">
             {rows.map((l, i) => (
-              <Dot key={i} state={rowState(l, state)} />
+              <StateDot key={i} state={rowState(l, state)} />
             ))}
           </span>
           {read} of {real.length} read
@@ -423,10 +423,19 @@ export function BookHomePage() {
         ))}
       </div>
 
-      <p className="mt-6 text-xs text-[var(--color-fg-muted)]">
-        Not started · Reading · Read · Done · Planned (not written yet) · Updated (a new
-        version of a chapter you read)
-      </p>
+      <ul
+        aria-label="Legend"
+        className="mt-6 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--color-fg-muted)]"
+      >
+        {LEGEND.map(([state, note]) => (
+          <li key={state} className="flex items-center gap-1.5">
+            <StateDot state={state} />
+            {STATE_LABEL[state]}
+            {note ? ` (${note})` : ""}
+          </li>
+        ))}
+        <li>Updated (a new version of a chapter you read)</li>
+      </ul>
     </Page>
   );
 }

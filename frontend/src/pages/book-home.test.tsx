@@ -198,7 +198,7 @@ describe("BookHomePage", () => {
     });
     renderHome();
     const group = await screen.findByRole("region", { name: "Updated chapters" });
-    await userEvent.click(within(group).getByText("Title 1"));
+    await userEvent.click(within(group).getByText(/Title 1/));
     const newest = await within(group).findByText(/Newest note/);
     const older = within(group).getByText(/Older note/);
     expect(

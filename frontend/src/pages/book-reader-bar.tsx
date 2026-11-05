@@ -10,6 +10,7 @@ import {
   Type,
 } from "lucide-react";
 import type { Principal } from "@/api";
+import { READER_SIZES, READER_THEMES, READER_WIDTHS } from "../../bridge/reading";
 import {
   chapterCrumb,
   type ChapterHeading,
@@ -29,21 +30,20 @@ import { BookUpdateChip } from "./book-update-chip";
 // The chapter reader's top bar: breadcrumb, update chip, search, reading
 // settings and comments, with the section tracker under it.
 
-const SIZE_OPTIONS = [
-  { value: "s", label: "Small" },
-  { value: "m", label: "Medium" },
-  { value: "l", label: "Large" },
-] as const;
-const WIDTH_OPTIONS = [
-  { value: "narrow", label: "Narrow" },
-  { value: "comfortable", label: "Comfortable" },
-  { value: "wide", label: "Wide" },
-] as const;
-const THEME_OPTIONS = [
-  { value: "light", label: "Light" },
-  { value: "paper", label: "Paper" },
-  { value: "system", label: "System" },
-] as const;
+// Built from the bridge's lists of allowed values, so every value has a label.
+const labelled = <T extends string>(values: readonly T[], labels: Record<T, string>) =>
+  values.map((value) => ({ value, label: labels[value] }));
+const SIZE_OPTIONS = labelled(READER_SIZES, { s: "Small", m: "Medium", l: "Large" });
+const WIDTH_OPTIONS = labelled(READER_WIDTHS, {
+  narrow: "Narrow",
+  comfortable: "Comfortable",
+  wide: "Wide",
+});
+const THEME_OPTIONS = labelled(READER_THEMES, {
+  light: "Light",
+  paper: "Paper",
+  system: "System",
+});
 
 function setSetting(patch: Partial<StoredReaderSettings>) {
   readerSettingsStore.write({ ...readerSettingsStore.read(), ...patch });
@@ -85,7 +85,7 @@ function ReadingSettings({ onShowShortcuts }: { onShowShortcuts: () => void }) {
             <Segmented
               label={label}
               value={s[key]}
-              options={[...options]}
+              options={options}
               onChange={(value) => setSetting({ [key]: value })}
             />
           </div>
