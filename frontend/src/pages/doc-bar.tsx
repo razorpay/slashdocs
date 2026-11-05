@@ -28,6 +28,7 @@ import {
   X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
+import { popIn } from "@/lib/motion";
 import { AccountMenu } from "@/components/layout/topbar";
 import { CommentsToggle, DocBarFrame } from "@/components/layout/doc-bar-frame";
 import { Button } from "@/components/ui/button";
@@ -251,19 +252,32 @@ export function DocBar({
         onUnfollow={onUnfollowViewer}
       />
       {viewers.length ? <CursorsToggle /> : null}
-      {behind ? (
-        <Button
-          variant="ghost"
-          size="sm"
-          title="Show the latest version"
-          aria-label="Show the latest version"
-          className="shrink-0 px-2"
-          onClick={onShowLatest}
-        >
-          <ArrowUpToLine className="h-4 w-4" />
-          <span className="hidden sm:inline">Latest</span>
-        </Button>
-      ) : null}
+      {/* The offer of the edits made elsewhere waits in the bar, where it
+          covers no words, until the reader takes it or reaches the latest
+          version on their own. */}
+      <span role="status" className="sr-only">
+        {behind ? "This document changed elsewhere." : ""}
+      </span>
+      <AnimatePresence initial={false}>
+        {behind ? (
+          <motion.span {...popIn} className="shrink-0">
+            <Button
+              variant="secondary"
+              size="sm"
+              title="This document changed elsewhere. Show the latest version."
+              aria-label="Show changes"
+              className="px-2"
+              onClick={onShowLatest}
+            >
+              <span className="relative">
+                <ArrowUpToLine className="h-4 w-4" />
+                <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-[var(--color-accent)] ring-2 ring-[var(--color-surface-muted)]" />
+              </span>
+              <span className="hidden sm:inline">Show changes</span>
+            </Button>
+          </motion.span>
+        ) : null}
+      </AnimatePresence>
       <HistoryDialog
         open={historyOpen}
         onOpenChange={setHistoryOpen}
