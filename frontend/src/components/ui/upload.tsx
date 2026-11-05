@@ -1,15 +1,8 @@
 import * as React from "react";
-import { useRef, useState } from "react";
+import { useRef } from "react";
 import { FileCode2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
-
-// HTML-file picking primitives shared by the backup-document and new-version
-// upload forms.
-export function useStagedFile() {
-  const [file, setFile] = useState<File | null>(null);
-  return { file, setFile, reset: () => setFile(null) };
-}
 
 function formatSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;

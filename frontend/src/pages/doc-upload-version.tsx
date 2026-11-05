@@ -13,7 +13,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { HtmlFileInput, useStagedFile } from "@/components/ui/upload";
+import { HtmlFileInput } from "@/components/ui/upload";
 import { api, type Version } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
 
@@ -29,11 +29,9 @@ export function UploadVersionMenuItem({ onSelect }: { onSelect: () => void }) {
 }
 
 export function UploadVersionSheet({
-  docId,
-  baseVersion,
-  onUploaded,
   open,
   onOpenChange,
+  ...form
 }: {
   docId: string;
   baseVersion: string;
@@ -41,17 +39,41 @@ export function UploadVersionSheet({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent>
+        <SheetHeader>
+          <SheetTitle>Replace with an HTML file</SheetTitle>
+        </SheetHeader>
+        <SheetBody>
+          <UploadVersionForm {...form} onClose={() => onOpenChange(false)} />
+        </SheetBody>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+// The form mounts each time the sheet opens. An upload that ends after the
+// sheet closed still says so, and does not close or clear a later form.
+function UploadVersionForm({
+  docId,
+  baseVersion,
+  onUploaded,
+  onClose,
+}: {
+  docId: string;
+  baseVersion: string;
+  onUploaded?: (uploaded: Version) => void;
+  onClose: () => void;
+}) {
   const q = useQueryClient();
   const [summary, setSummary] = useState("");
-  const { file, setFile, reset } = useStagedFile();
+  const [file, setFile] = useState<File | null>(null);
   const m = useMutation({
-    mutationFn: () => api.createVersion(docId, baseVersion, summary, file!),
+    mutationFn: (file: File) => api.createVersion(docId, baseVersion, summary, file),
     onSuccess: (uploaded) => {
       onUploaded?.(uploaded);
       toast.success("Uploaded. The previous content is in the history.");
-      onOpenChange(false);
-      setSummary("");
-      reset();
       q.invalidateQueries({ queryKey: queryKeys.versions(docId) });
       q.invalidateQueries({ queryKey: queryKeys.document(docId) });
       q.invalidateQueries({ queryKey: queryKeys.comments(docId) });
@@ -60,31 +82,22 @@ export function UploadVersionSheet({
     onError: (e) => toast.error(errorMessage(e, "Upload failed")),
   });
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent>
-        <SheetHeader>
-          <SheetTitle>Replace with an HTML file</SheetTitle>
-        </SheetHeader>
-        <SheetBody>
-          <form
-            className="space-y-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (file) m.mutate();
-            }}
-          >
-            <Input
-              placeholder="Change summary"
-              value={summary}
-              onChange={(e) => setSummary(e.target.value)}
-            />
-            <HtmlFileInput file={file} onFile={setFile} />
-            <Button type="submit" disabled={!file || m.isPending}>
-              {m.isPending ? "Uploading…" : "Upload"}
-            </Button>
-          </form>
-        </SheetBody>
-      </SheetContent>
-    </Sheet>
+    <form
+      className="space-y-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (file) m.mutate(file, { onSuccess: onClose });
+      }}
+    >
+      <Input
+        placeholder="Change summary"
+        value={summary}
+        onChange={(e) => setSummary(e.target.value)}
+      />
+      <HtmlFileInput file={file} onFile={setFile} />
+      <Button type="submit" disabled={!file || m.isPending}>
+        {m.isPending ? "Uploading…" : "Upload"}
+      </Button>
+    </form>
   );
 }
