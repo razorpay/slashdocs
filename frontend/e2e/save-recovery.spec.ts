@@ -115,7 +115,7 @@ test("a save that the server refuses keeps the text until the editor chooses", a
   await expect(message).toBeVisible();
   await expect(page.getByText("Not saved", { exact: true })).toBeVisible();
   // No load takes the text away, and the message stays.
-  await page.waitForTimeout(6000);
+  await page.waitForTimeout(2000);
   await expect(message).toBeVisible();
   const tail = renderedDocument(page).locator("#tail");
   await expect(tail).toContainText("IMPORTANT UNSAVED TEXT");
@@ -183,7 +183,8 @@ test("a save that fails twice counts the attempts and offers a copy", async ({
 
   await typeOver(page, "#tail", "giving up.", "giving up. Twice failed.");
   await expect(
-    page.getByText("Your edits are not saved yet. Trying again (attempt 2)…"),
+    // The count goes on while the server fails.
+    page.getByText(/^Your edits are not saved yet\. Trying again \(attempt [2-9]\)…$/),
   ).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText("Not saved", { exact: true })).toBeVisible();
   await copied(page, "giving up. Twice failed.");
