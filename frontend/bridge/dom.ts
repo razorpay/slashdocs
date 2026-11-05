@@ -65,16 +65,25 @@ export function blockOf(node: Node): Element | null {
 // the background of the body, else of the html element, else white. The
 // bridge's controls in the document take their colors from it.
 export function markSurface(d: Document) {
-  const view = d.defaultView;
-  const [r, g, b] = [d.body, d.documentElement]
-    .map((el) => (el && view?.getComputedStyle(el).backgroundColor) || "")
-    .map((color) => (/^rgba?\(/.test(color) ? color.match(/[\d.]+/g)!.map(Number) : []))
-    // A transparent background shows the one behind it.
-    .find((rgba) => rgba.length >= 3 && rgba[3] !== 0) ?? [255, 255, 255];
+  const [r, g, b] = paperOf(d);
   // The brightness of the color, from 0 to 255, with the sRGB weights.
   const surface = 0.2126 * r + 0.7152 * g + 0.0722 * b < 128 ? "dark" : "light";
   if (d.documentElement.getAttribute("data-slashdocs-surface") !== surface)
     d.documentElement.setAttribute("data-slashdocs-surface", surface);
+}
+
+// paperOf gives the color of the page behind the document, as [r, g, b].
+export function paperOf(d: Document): number[] {
+  const view = d.defaultView;
+  return (
+    [d.body, d.documentElement]
+      .map((el) => (el && view?.getComputedStyle(el).backgroundColor) || "")
+      .map((color) =>
+        /^rgba?\(/.test(color) ? color.match(/[\d.]+/g)!.map(Number) : [],
+      )
+      // A transparent background shows the one behind it.
+      .find((rgba) => rgba.length >= 3 && rgba[3] !== 0) ?? [255, 255, 255]
+  );
 }
 
 // The room that a control keeps clear of text on each side, and the distance
@@ -94,9 +103,7 @@ export function placeClear(
   lines: DOMRect[],
   places: number[][],
 ): "bottom" | "top" | null {
-  // The viewport without its scroll bars.
-  const { clientWidth: viewWidth, clientHeight: viewHeight } =
-    d.scrollingElement ?? d.documentElement;
+  const { width: viewWidth, height: viewHeight } = viewOf(d, true);
   const { offsetWidth: width, offsetHeight: height } = el;
   const span = lines.reduce(union, lines[0] ?? new DOMRect());
   const first = lines[0] ?? span;
@@ -154,30 +161,76 @@ function overlap(a: DOMRect, b: DOMRect): boolean {
 
 // coversText tells whether box, in the viewport, covers text of document d.
 function coversText(d: Document, box: DOMRect): boolean {
-  return textCover(d, box, 1) > 0;
+  return textLines(d, box).length > 0;
 }
 
-// textCover counts the points of box, in the viewport, that lie on text of
-// document d, up to most. It tests points on a grid of CLEAR_STEP, edges
-// included, which finds every line of text and every word that is taller and
-// wider than the step.
-export function textCover(d: Document, box: DOMRect, most = Infinity): number {
-  const words = d.createRange();
-  let count = 0;
-  for (const y of steps(box.top, box.bottom)) {
+// textLines gives the boxes of the lines of text of document d that overlap
+// box, in the viewport. It finds the text near points on a grid of
+// CLEAR_STEP, edges included, which finds every line of text and every word
+// that is taller and wider than the step.
+export function textLines(d: Document, box: DOMRect): DOMRect[] {
+  const nodes = new Set<Node>();
+  for (const y of steps(box.top, box.bottom))
     for (const x of steps(box.left, box.right)) {
       const node = caretRange(d, x, y)?.startContainer;
-      if (node?.nodeType !== Node.TEXT_NODE || !node.textContent!.trim()) continue;
-      words.selectNodeContents(node);
-      const at = DOMRect.fromRect({ x, y });
-      if (
-        Array.from(words.getClientRects()).some((line) => overlap(at, line)) &&
-        ++count >= most
-      )
-        return count;
+      if (node?.nodeType === Node.TEXT_NODE && node.textContent!.trim())
+        nodes.add(node);
     }
-  }
-  return count;
+  const words = d.createRange();
+  return Array.from(nodes).flatMap((node) => {
+    words.selectNodeContents(node);
+    return Array.from(words.getClientRects()).filter((line) => overlap(box, line));
+  });
+}
+
+// viewOf gives the viewport of document d without its scroll bars, and,
+// when clear, without the bottom that the app covers, as a comment sheet does.
+export function viewOf(d: Document, clear = false): DOMRect {
+  const { clientWidth, clientHeight } = d.scrollingElement ?? d.documentElement;
+  return new DOMRect(0, 0, clientWidth, clientHeight - (clear ? covered(d) : 0));
+}
+
+// covered gives how much of the bottom of the viewport of d the app covers.
+export function covered(d: Document): number {
+  return Number(d.getElementById(COVER)?.dataset.px) || 0;
+}
+
+const COVER = "slashdocs-cover";
+
+// cover tells document d that the app covers the bottom px of its viewport,
+// or none for 0. Its scroll padding then centers what comes into view above
+// that part, and as much room after the page lets the end of the page come
+// up above it.
+export function cover(d: Document, px: number) {
+  d.getElementById(COVER)?.remove();
+  if (!(px > 0)) return;
+  const style = d.createElement("style");
+  style.id = COVER;
+  style.dataset.px = String(px);
+  style.setAttribute("data-slashdocs-injected", "");
+  style.textContent = `html{scroll-padding-bottom:${px}px!important;padding-bottom:${px}px!important}`;
+  d.head.appendChild(style);
+}
+
+// settled calls fn once the view stops scrolling, as at the end of a smooth
+// scroll.
+export function settled(view: Window, fn: () => void) {
+  let last = NaN;
+  let still = 0;
+  const check = () => {
+    still = view.scrollY === last ? still + 1 : 0;
+    last = view.scrollY;
+    if (still < 2) requestAnimationFrame(check);
+    else fn();
+  };
+  requestAnimationFrame(check);
+}
+
+// holds tells whether box a holds all of box b.
+export function holds(a: DOMRect, b: DOMRect): boolean {
+  return (
+    b.left >= a.left && b.right <= a.right && b.top >= a.top && b.bottom <= a.bottom
+  );
 }
 
 // steps gives points from start to end, end included, at most CLEAR_STEP apart.

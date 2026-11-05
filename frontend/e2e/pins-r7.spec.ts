@@ -62,13 +62,14 @@ async function post(page: Page, body: string) {
   };
 }
 
-// tipOf gives the spot that a pin marks: the bottom left of its button, or
-// the bottom right when its body turns left.
+// tipOf gives the spot that a pin marks, which its transform origin is.
 async function tipOf(pin: Locator) {
   await expect(pin).toBeVisible();
   const box = (await pin.boundingBox())!;
-  const left = (await pin.getAttribute("data-turn"))?.includes("left");
-  return { x: left ? box.x + box.width : box.x, y: box.y + box.height };
+  const [x, y] = (await pin.evaluate((b) => getComputedStyle(b).transformOrigin))
+    .split(" ")
+    .map(parseFloat);
+  return { x: box.x + x, y: box.y + y };
 }
 
 test("a pin from a desktop margin is named by its block and stays on a phone screen", async ({

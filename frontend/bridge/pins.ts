@@ -11,7 +11,7 @@ import {
   scrollerOf,
   sharedElement,
 } from "./cursors.ts";
-import { scrollBehavior, textCover } from "./dom.ts";
+import { covered, holds, scrollBehavior, textLines, viewOf } from "./dom.ts";
 
 // Comment pins: point comments drawn over the document, in the bridge window,
 // as live cursors are. A pin names an element and a spot in its box. On each
@@ -63,6 +63,15 @@ const PRESS_SLOP = 4;
 // Pins closer than this on screen merge into one cluster.
 export const CLUSTER_RADIUS = 28;
 const PIN_SIZE = 28;
+// A face away from its tip is at least GAP and at most REACH from it.
+const GAP = 8;
+const REACH = PIN_SIZE * 3;
+// The rim of a face may lie this far into the box of a line of text, whose
+// top and bottom hold little ink.
+const SLACK = 4;
+// A tip that comes to the edge of the page stays this far in, so its pointer
+// shows.
+const EDGE = 4;
 // While placing, the cursor is a pin of the same size and shape as the pins
 // it leaves, whose tip (bottom left) marks the spot, with a crosshair fallback.
 const PLACE_CURSOR = `url("data:image/svg+xml,${encodeURIComponent(
@@ -73,9 +82,40 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 const BESIDE = "Beside ";
 // These elements take a pin of their own, though they hold no text.
 const MEDIA = /^(img|svg|canvas|video|picture|iframe|object|embed)$/;
-// The sides that a pin's body can turn to from its tip, the first one first:
-// up and right, up and left, down and right, down and left.
-const TURNS = ["", "left", "down", "down left"];
+// The face of a pin: where its box is from its tip, and its shape. A face
+// beside its tip turns from it, with that corner pointed: up and right
+// first, then up and left, down and right, and down and left. A face away
+// from its tip is round, with a pointer to the tip.
+type Face = { x: number; y: number; turn: string };
+const TURNS: Face[] = [
+  { x: 0, y: -PIN_SIZE, turn: "" },
+  { x: -PIN_SIZE, y: -PIN_SIZE, turn: "left" },
+  { x: 0, y: 0, turn: "down" },
+  { x: -PIN_SIZE, y: 0, turn: "down left" },
+];
+// The rows of a grid of 4px that faces away from a tip can lie on.
+const ROWS = Array.from(
+  { length: (PIN_SIZE + REACH * 2) / 4 + 1 },
+  (_, i) => i * 4 - PIN_SIZE - REACH,
+);
+
+// awayFaces gives the faces away from a tip, at most REACH from it, whose
+// tops are at the given rows from it, nearest first, then the higher, then
+// the more right.
+function awayFaces(rows: number[]): Face[] {
+  const faces: (Face & { gap: number })[] = [];
+  for (const y of rows)
+    for (const x of ROWS) {
+      // From the tip to the nearest point of the face.
+      const gap = Math.hypot(
+        Math.max(x, -x - PIN_SIZE, 0),
+        Math.max(y, -y - PIN_SIZE, 0),
+      );
+      if (gap >= GAP && gap <= REACH) faces.push({ x, y, turn: "away", gap });
+    }
+  return faces.sort((a, b) => a.gap - b.gap || a.y - b.y || b.x - a.x);
+}
+
 // The keys that move the ring of keyboard placing, and which way.
 const STEPS: Record<string, number> = {
   ArrowDown: 1,
@@ -351,9 +391,12 @@ export function pinElement(d: Document, a: PinAnchor): Element | null {
   );
 }
 
-// One shape for pins and clusters: a 28px bubble with its tip at the bottom
-// left, a 2px white rim, a 24px face. A cluster wears its first pin's color,
-// with a second rim behind it for the others. Glyphs are centred on their cap
+// One shape for pins and clusters: a 28px bubble with its tip at the corner
+// that its face turns from, or round with a pointer when its face is away
+// from its tip, a 2px white rim, a 24px face. A touch screen gets a 40px hit
+// area around it. A cluster wears its first pin's color, with a second rim
+// behind it for the others. An open moved pin wears one ring: the active one,
+// dashed. Glyphs are centred on their cap
 // height (text-box), so initials, digits and "+" sit in the optical middle.
 // Pins sit on the document, not on the app, so they keep this light frame in
 // both app themes.
@@ -362,16 +405,22 @@ const SHADOW =
   "0 0 0 .5px rgba(0,0,0,.14),0 1px 2px rgba(0,0,0,.12),0 3px 8px rgba(0,0,0,.1)";
 const CSS = `
 .sd-pins{position:fixed;inset:0;pointer-events:none;z-index:2147483645;overflow:hidden}
-.sd-pin,.sd-cluster{all:unset;position:absolute;left:0;top:0;box-sizing:border-box;width:${PIN_SIZE}px;height:${PIN_SIZE}px;margin-top:-${PIN_SIZE}px;padding:2px;border-radius:${PIN_SIZE / 2}px ${PIN_SIZE / 2}px ${PIN_SIZE / 2}px 3px;background:#fff;box-shadow:${SHADOW};pointer-events:auto;cursor:pointer;will-change:translate;transform-origin:0 100%;transition:box-shadow 150ms ease,scale 150ms cubic-bezier(.23,1,.32,1),opacity 150ms ease}
-.sd-pin[data-turn=left]{margin-left:-${PIN_SIZE}px;border-radius:${PIN_SIZE / 2}px ${PIN_SIZE / 2}px 3px ${PIN_SIZE / 2}px;transform-origin:100% 100%}
-.sd-pin[data-turn=down]{margin-top:0;border-radius:3px ${PIN_SIZE / 2}px ${PIN_SIZE / 2}px;transform-origin:0 0}
-.sd-pin[data-turn="down left"]{margin:0 0 0 -${PIN_SIZE}px;border-radius:${PIN_SIZE / 2}px 3px ${PIN_SIZE / 2}px ${PIN_SIZE / 2}px;transform-origin:100% 0}
+.sd-pin,.sd-cluster{all:unset;position:absolute;left:0;top:0;box-sizing:border-box;width:${PIN_SIZE}px;height:${PIN_SIZE}px;padding:2px;border-radius:${PIN_SIZE / 2}px ${PIN_SIZE / 2}px ${PIN_SIZE / 2}px 3px;background:#fff;box-shadow:${SHADOW};pointer-events:auto;cursor:pointer;will-change:translate;transition:box-shadow 150ms ease,scale 150ms cubic-bezier(.23,1,.32,1),opacity 150ms ease}
+:is(.sd-pin,.sd-cluster)[data-turn=left]{border-radius:${PIN_SIZE / 2}px ${PIN_SIZE / 2}px 3px ${PIN_SIZE / 2}px}
+:is(.sd-pin,.sd-cluster)[data-turn=down]{border-radius:3px ${PIN_SIZE / 2}px ${PIN_SIZE / 2}px}
+:is(.sd-pin,.sd-cluster)[data-turn="down left"]{border-radius:${PIN_SIZE / 2}px 3px ${PIN_SIZE / 2}px ${PIN_SIZE / 2}px}
+:is(.sd-pin,.sd-cluster)[data-turn=away]{border-radius:50%}
+.sd-pins s{display:none;position:absolute;z-index:-1;left:50%;top:50%;width:var(--len);height:1.5px;margin-top:-.75px;background:var(--c,#6366f1);transform-origin:0 50%;rotate:var(--angle);pointer-events:none}
+.sd-pins [data-turn=away]>s{display:block}
+.sd-pins s::after{content:"";position:absolute;right:-3px;top:-2.25px;width:6px;height:6px;border-radius:50%;background:inherit;box-shadow:0 0 0 1.5px #fff}
+@media (pointer:coarse),(max-width:639.98px){.sd-pin::before,.sd-cluster::before{content:"";position:absolute;inset:-6px;border-radius:50%}}
 .sd-pin[data-moved]{outline:1.5px dashed var(--c,#6366f1);outline-offset:1.5px}
 .sd-pin:focus-visible,.sd-cluster:focus-visible{${FOCUS_RING}}
 .sd-pin>b,.sd-cluster>b{display:grid;place-items:center;width:100%;height:100%;border-radius:50%;background:var(--c,#6366f1);color:#fff;font:600 11px/1 system-ui,-apple-system,sans-serif;font-variant-numeric:tabular-nums;text-box:trim-both cap alphabetic}
 .sd-cluster{box-shadow:4px -4px 0 -1px #fff,4px -4px 0 0 rgba(0,0,0,.2),${SHADOW}}
 .sd-cluster[data-many]>b{font-size:9.5px;letter-spacing:-.02em}
 .sd-pin[data-active],.sd-cluster[data-active]{box-shadow:0 0 0 2px #fff,0 0 0 3.5px #2563eb,0 3px 10px rgba(37,99,235,.3)}
+.sd-pin[data-moved][data-active]{outline:2px dashed #2563eb;box-shadow:${SHADOW}}
 .sd-pin[data-draft]>b{background:#fff;color:var(--c,#2563eb);box-shadow:inset 0 0 0 1.5px currentColor}
 .sd-pin>i{position:absolute;right:-5px;top:-4px;display:grid;place-items:center;min-width:14px;height:14px;padding:0 3px;box-sizing:border-box;border-radius:7px;background:#ef4444;color:#fff;font:600 9px/1 system-ui,-apple-system,sans-serif;font-style:normal;font-variant-numeric:tabular-nums;text-box:trim-both cap alphabetic;box-shadow:0 0 0 1.5px #fff}
 .sd-pin[data-pressed],.sd-cluster:active{scale:.96}
@@ -417,8 +466,8 @@ function pinLabel(pin: Pin, moved: boolean): string {
 }
 
 // A pin on screen: its element and the ancestors that clip it, or no element
-// when the pin shows at its page spot, where its spot was on the last frame,
-// and the side its body turns to, once it is known.
+// when the pin shows at its page spot, where its tip was on the last frame,
+// and its face, once it is known for sure.
 type Placed = {
   pin: Pin;
   el: Element | null;
@@ -426,60 +475,104 @@ type Placed = {
   x: number;
   y: number;
   shown: boolean;
-  turn?: string;
+  face?: Face;
+  sure?: boolean;
 };
 
-// spotOf gives where a pin's spot is in the viewport: in its element's box,
-// or else at its page spot, whose x follows the viewport's width as the
-// fractions of a box do. A spot outside the page, as in a margin that a
-// narrow screen does not have, or below a page that got shorter, shows at the
-// edge of the page. It is null for a pin that has neither.
+// spotOf gives where a pin's tip is in the viewport: at its spot in its
+// element's box, or else at its page spot, whose x follows the viewport's
+// width as the fractions of a box do. A spot off its element or off the page,
+// as in a margin that a narrow screen does not have, or below a page that got
+// shorter, comes to the nearest edge of the page in view. It is null for a
+// pin that has neither.
 function spotOf(p: Placed, view: Window): { x: number; y: number } | null {
   const box = p.el?.getBoundingClientRect();
   const { x, y, page_x, page_y, viewport_w } = p.pin.anchor.point;
-  const spot =
-    box && box.width > 0 && box.height > 0
-      ? { x: box.left + x * box.width, y: box.top + y * box.height }
-      : page_x !== undefined && page_y !== undefined && viewport_w
-        ? {
-            x: (page_x * view.innerWidth) / viewport_w - view.scrollX,
-            y: page_y - view.scrollY,
-          }
-        : null;
-  if (!spot) return null;
-  const { scrollWidth, scrollHeight } = view.document.documentElement;
-  const clamp = (n: number, max: number) => Math.min(Math.max(n, 0), max);
+  const onBox = box && box.width > 0 && box.height > 0;
+  const spot = onBox
+    ? { x: box.left + x * box.width, y: box.top + y * box.height }
+    : page_x !== undefined && page_y !== undefined && viewport_w
+      ? {
+          x: (page_x * view.innerWidth) / viewport_w - view.scrollX,
+          y: page_y - view.scrollY,
+        }
+      : null;
+  if (!spot || (onBox && x >= 0 && x <= 1 && y >= 0 && y <= 1)) return spot;
+  const room = roomOf(view.document);
+  const clamp = (n: number, min: number, max: number) =>
+    Math.min(Math.max(n, min), max);
   return {
-    x: clamp(spot.x + view.scrollX, scrollWidth) - view.scrollX,
-    y: clamp(spot.y + view.scrollY, scrollHeight) - view.scrollY,
+    x: clamp(spot.x, room.left + EDGE, room.right - EDGE),
+    y: clamp(spot.y, room.top, room.bottom),
   };
 }
 
-// turnOf gives the side of TURNS that a pin's body with its tip at x, y turns
-// to: the first one that stays in the page and covers the least text of d.
-function turnOf(d: Document, x: number, y: number): string {
+// roomOf gives the part of the page of d that a pin stays in: the page across
+// the viewport, and all of it down, without the room after it that the app
+// asks for.
+function roomOf(d: Document): DOMRect {
   const view = d.defaultView!;
   const { scrollWidth, scrollHeight } = d.documentElement;
-  const page = new DOMRect(-view.scrollX, -view.scrollY, scrollWidth, scrollHeight);
-  const sides = TURNS.map((turn) => ({
-    turn,
-    box: new DOMRect(
-      turn.includes("left") ? x - PIN_SIZE : x,
-      turn.includes("down") ? y : y - PIN_SIZE,
-      PIN_SIZE,
-      PIN_SIZE,
-    ),
-  }));
-  const fits = sides.filter(
-    ({ box }) => inside(page, box.left, box.top) && inside(page, box.right, box.bottom),
-  );
-  let best = { turn: "", cover: Infinity };
-  for (const { turn, box } of fits.length ? fits : sides.slice(0, 1)) {
-    const cover = textCover(d, box, best.cover);
-    if (cover < best.cover) best = { turn, cover };
-    if (!cover) break;
+  const left = Math.max(-view.scrollX, 0);
+  const right = Math.min(scrollWidth - view.scrollX, viewOf(d).right);
+  return new DOMRect(left, -view.scrollY, right - left, scrollHeight - covered(d));
+}
+
+// faceOf gives the face of a pin whose tip is at x, y, in the room of d: the
+// first turn that covers no text, else the nearest face away from the tip
+// that covers none, else the turn that covers the least. It is sure unless a
+// nearer face is off screen, where the text is not known.
+function faceOf(d: Document, x: number, y: number): { face: Face; sure: boolean } {
+  const screen = viewOf(d);
+  const room = roomOf(d);
+  const reach = PIN_SIZE + REACH;
+  const lines = textLines(d, new DOMRect(x - reach, y - reach, reach * 2, reach * 2));
+  const boxOf = (f: Face) => new DOMRect(x + f.x, y + f.y, PIN_SIZE, PIN_SIZE);
+  const cover = (f: Face) => {
+    const box = boxOf(f);
+    return lines.reduce((sum, line) => {
+      const w =
+        Math.min(box.right - SLACK, line.right) - Math.max(box.left + SLACK, line.left);
+      const h =
+        Math.min(box.bottom - SLACK, line.bottom) - Math.max(box.top + SLACK, line.top);
+      return sum + Math.max(w, 0) * Math.max(h, 0);
+    }, 0);
+  };
+  // Besides the grid, the faces whose rims lie in the slack of a line, as
+  // between two paragraphs, where a grid can miss the room.
+  const rows = lines.flatMap((line) => [
+    line.bottom - SLACK - y,
+    line.top + SLACK - PIN_SIZE - y,
+  ]);
+  let sure = true;
+  for (const face of TURNS.concat(awayFaces(ROWS.concat(rows)))) {
+    const box = boxOf(face);
+    if (!holds(room, box)) continue;
+    if (!holds(screen, box)) sure = false;
+    else if (!cover(face)) return { face, sure };
   }
-  return best.turn;
+  const fits = TURNS.filter((f) => holds(room, boxOf(f)));
+  const least = (fits.length ? fits : TURNS).reduce((a, b) =>
+    cover(b) < cover(a) ? b : a,
+  );
+  return { face: least, sure };
+}
+
+// faceBox gives the box of a placed pin's face in the viewport.
+function faceBox({ x, y, face = TURNS[0] }: { x: number; y: number; face?: Face }) {
+  return new DOMRect(x + face.x, y + face.y, PIN_SIZE, PIN_SIZE);
+}
+
+// put moves a pin's button so that its face is at face from the tip at x, y,
+// with its pointer to the tip, and hover, press and drag scale it around the
+// tip.
+function put(b: HTMLElement, x: number, y: number, face: Face) {
+  b.style.translate = `${x + face.x}px ${y + face.y}px`;
+  b.style.transformOrigin = `${-face.x}px ${-face.y}px`;
+  b.dataset.turn = face.turn;
+  const [dx, dy] = [-face.x - PIN_SIZE / 2, -face.y - PIN_SIZE / 2];
+  b.style.setProperty("--len", `${Math.hypot(dx, dy)}px`);
+  b.style.setProperty("--angle", `${Math.atan2(dy, dx)}rad`);
 }
 
 export type PinHost = {
@@ -595,20 +688,22 @@ export function createPinLayer(host: PinHost) {
   function draw() {
     const view = d?.defaultView;
     if (!view) return;
+    const screen = viewOf(view.document);
     for (const p of placed) {
       const spot = spotOf(p, view);
       p.x = spot?.x ?? 0;
       p.y = spot?.y ?? 0;
       p.shown =
         !!spot &&
-        inside(new DOMRect(0, 0, view.innerWidth, view.innerHeight), p.x, p.y) &&
+        inside(screen, p.x, p.y) &&
         p.clips.every((clip) => inside(clip.getBoundingClientRect(), p.x, p.y));
-      // Measured on screen, where the text under the pin can be found.
-      if (p.shown) p.turn ??= turnOf(view.document, p.x, p.y);
+      // Measured on screen, where the text around the pin can be found.
+      if (p.shown && !p.sure)
+        ({ face: p.face, sure: p.sure } = faceOf(view.document, p.x, p.y));
     }
     placeRing();
     const positions = placed
-      .map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`)
+      .map((p) => [p.x.toFixed(1), p.y.toFixed(1), p.face?.x, p.face?.y].join())
       .join(";");
     if (positions === lastPositions) {
       stable++;
@@ -620,11 +715,7 @@ export function createPinLayer(host: PinHost) {
     const byId = new Map(placed.map((p) => [p.pin.id, p]));
     for (const el of Array.from(layer.children) as HTMLElement[]) {
       const at = byId.get(el.dataset.id ?? "");
-      // The translate property, not transform: the scale used for hover,
-      // press and drag then applies around the pin's tip.
-      if (!at) continue;
-      el.style.translate = `${at.x}px ${at.y}px`;
-      if (at.turn && el.classList.contains("sd-pin")) el.dataset.turn = at.turn;
+      if (at) put(el, at.x, at.y, at.face ?? TURNS[0]);
     }
   }
 
@@ -705,7 +796,7 @@ export function createPinLayer(host: PinHost) {
     const face = document.createElement("b");
     if (pin.draft) face.appendChild(plusIcon());
     else face.textContent = pin.initials || "?";
-    b.appendChild(face);
+    b.append(document.createElement("s"), face);
     if (pin.replies > 0) {
       const count = document.createElement("i");
       count.textContent = String(pin.replies);
@@ -727,7 +818,7 @@ export function createPinLayer(host: PinHost) {
     const count = document.createElement("b");
     count.textContent = members.length > 99 ? "99+" : String(members.length);
     if (members.length > 99) b.dataset.many = "";
-    b.appendChild(count);
+    b.append(document.createElement("s"), count);
     b.setAttribute("aria-label", `${members.length} comment threads`);
     // The app lists the cluster's threads next to it.
     const open = () =>
@@ -801,7 +892,7 @@ export function createPinLayer(host: PinHost) {
         to = { x: from.x + dx, y: from.y + dy };
         delete b.dataset.pressed;
         b.dataset.dragging = "";
-        b.style.translate = `${to.x}px ${to.y}px`;
+        put(b, to.x, to.y, TURNS[0]);
         dragged = { id: pin.id, ...to };
       };
       const finish = () => {
@@ -964,7 +1055,7 @@ export function createPinLayer(host: PinHost) {
     view?.addEventListener(
       "resize",
       () => {
-        for (const p of placed) p.turn = undefined;
+        for (const p of placed) p.sure = false;
         lastPositions = null;
         schedule();
       },
@@ -995,6 +1086,23 @@ export function createPinLayer(host: PinHost) {
     layout();
   }
 
+  // reveal brings the face of a pin into the part of the view that the app
+  // leaves clear, unless all of it shows there already. It is false for a pin
+  // that is not on this version.
+  function reveal(id: string | undefined): boolean {
+    const p = placed.find((x) => x.pin.id === id);
+    const view = d?.defaultView;
+    if (!p || !d || !view) return false;
+    const clear = viewOf(d, true);
+    if (p.shown && holds(clear, faceBox(p))) return true;
+    const behavior = scrollBehavior(d);
+    // A block taller than the view, as the body, brings its spot into view.
+    if (p.el && p.el.getBoundingClientRect().height < clear.height)
+      p.el.scrollIntoView({ block: "center", inline: "nearest", behavior });
+    else view.scrollBy({ top: p.y - clear.height / 2, behavior });
+    return true;
+  }
+
   // rectOf gives an element's box in this window, which the app places
   // popovers by.
   function rectOf(el: Element): PinRect {
@@ -1015,16 +1123,9 @@ export function createPinLayer(host: PinHost) {
       active = nextActive;
       pressed = undefined;
       layout();
-      const open =
-        opened && placed.find((p) => p.pin.id === nextActive && !p.pin.draft);
-      const view = d?.defaultView;
-      if (!open || !view) return;
-      const behavior = scrollBehavior(d);
-      // The body is as tall as the page: its spot is what comes into view.
-      if (open.el && open.el !== d?.body)
-        open.el.scrollIntoView({ block: "center", inline: "nearest", behavior });
-      else view.scrollBy({ top: open.y - view.innerHeight / 2, behavior });
+      if (opened && !pins.find((p) => p.id === nextActive)?.draft) reveal(nextActive);
     },
+    reveal,
     // tops gives where the spot of each placed pin is, from the top of the
     // document, for the strip of comment ticks.
     tops(): { id: string; top: number }[] {
@@ -1040,7 +1141,8 @@ export function createPinLayer(host: PinHost) {
     rect(id: string): PinRect | null {
       const p = dragged?.id === id ? dragged : placed.find((x) => x.pin.id === id);
       if (!p) return null;
-      return { left: p.x, top: p.y - PIN_SIZE, width: PIN_SIZE, height: PIN_SIZE };
+      const { left, top, width, height } = faceBox(p);
+      return { left, top, width, height };
     },
     // releaseOutside puts a dragged pin back when the pointer was let go
     // outside the frame.
