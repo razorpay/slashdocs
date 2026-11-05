@@ -3,13 +3,22 @@ import { toast } from "sonner";
 import { APIError } from "@/api";
 import { errorMessage } from "@/lib/errors";
 
-// A failed query retries up to three times, but not when a retry cannot help:
-// the reader is signed out or has no access, or the resource does not exist.
+// A failed query retries once, after a second, so that a short drop of the
+// network shows nothing and a real outage shows its error state with Retry
+// soon. It does not retry when a retry cannot help: the reader is signed out
+// or has no access, or the resource does not exist.
 export function retryQuery(failureCount: number, error: Error) {
   if (error instanceof APIError && [401, 403, 404].includes(error.status)) {
     return false;
   }
-  return failureCount < 3;
+  return failureCount < 1;
+}
+
+// loadFailed is true when a query has no data because it failed. A query
+// with no data goes back to pending while Retry runs, so isError alone would
+// drop the error state, and its busy Retry, for a skeleton.
+export function loadFailed(query: { data: unknown; errorUpdatedAt: number }) {
+  return query.data === undefined && query.errorUpdatedAt > 0;
 }
 
 // A failed query toasts only when it already shows data, so that a failed

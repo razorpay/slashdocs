@@ -14,7 +14,7 @@ async function answer(page: Page, url: string, response: object) {
   return route;
 }
 
-// A query that fails with 503 retries three times before it shows an error.
+// A query that fails with 503 retries once before it shows an error.
 const afterRetries = { timeout: 15_000 };
 
 test("the bots page offers Retry when the bots do not load", async ({ page }) => {
