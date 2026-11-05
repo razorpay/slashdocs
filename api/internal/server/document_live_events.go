@@ -19,9 +19,9 @@ import (
 )
 
 // Live document events ride the document KV event stream. Writes announce
-// "document" and "comments" events, viewers publish "presence" events, and
-// pointers relay "cursor" events, so every open viewer on every server replica
-// sees them without polling.
+// "document", "comments" and "approvals" events, viewers publish "presence"
+// events, and pointers relay "cursor" events, so every open viewer on every
+// server replica sees them without polling.
 
 const (
 	maxPresenceBytes       = 4 * 1024
@@ -202,8 +202,9 @@ func (h handlers) leavePresence(c *gin.Context, docID, session string) {
 	}
 }
 
-// announce tells open viewers that a write changed the document or its
-// comments. The write already succeeded, so a failure here is only logged.
+// announce tells open viewers that a write changed the document, its
+// comments or its approvals. The write already succeeded, so a failure here
+// is only logged.
 func (h handlers) announce(c *gin.Context, kind string) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), liveEventWriteTimeout)
 	defer cancel()
