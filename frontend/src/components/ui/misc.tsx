@@ -38,9 +38,9 @@ export function Skeleton({ className, ...p }: React.HTMLAttributes<HTMLDivElemen
 
 const COPY_LABEL = { idle: "Copy", done: "Copied", failed: "Could not copy" };
 
-// useCopy copies text and keeps the result of the last copy for 1.5 s. A
-// failed copy selects the text in ref, so the reader can copy it with the
-// keyboard.
+// useCopy copies text, says whether it did, and keeps a success for 1.5 s.
+// A failed copy selects the text in ref, so the reader can copy it with the
+// keyboard, and it stays until the next try.
 export function useCopy<T extends HTMLElement>() {
   const [copied, setCopied] = React.useState<"done" | "failed" | null>(null);
   const ref = React.useRef<T>(null);
@@ -48,11 +48,13 @@ export function useCopy<T extends HTMLElement>() {
     try {
       await navigator.clipboard.writeText(text);
       setCopied("done");
+      setTimeout(() => setCopied((now) => (now === "done" ? null : now)), 1500);
+      return true;
     } catch {
       setCopied("failed");
       if (ref.current) window.getSelection()?.selectAllChildren(ref.current);
+      return false;
     }
-    setTimeout(() => setCopied(null), 1500);
   };
   return { copied, copy, ref };
 }
@@ -91,12 +93,17 @@ export function CodeBlock({
   children,
   copy = true,
   wrap = false,
+  onCopied,
   className,
 }: {
   children: string;
-  copy?: boolean;
-  // Wrap long lines. Use it for prose, such as a prompt, not for commands.
+  // "always" shows Copy without a hover, for a value that the reader must
+  // copy, such as a key that shows once.
+  copy?: boolean | "always";
+  // Wrap long lines, inside a word too. Use it for prose, such as a prompt,
+  // or for a value that must show whole, not for commands.
   wrap?: boolean;
+  onCopied?: () => void;
   className?: string;
 }) {
   const { copied, copy: copyText, ref: pre } = useCopy<HTMLPreElement>();
@@ -114,7 +121,9 @@ export function CodeBlock({
         style={{ maskImage: mask }}
         className={cn(
           "p-3 pr-10 leading-relaxed text-[var(--color-fg)]",
-          wrap ? "whitespace-pre-wrap" : "overflow-x-auto [scrollbar-width:none]",
+          wrap
+            ? "whitespace-pre-wrap [overflow-wrap:anywhere]"
+            : "overflow-x-auto [scrollbar-width:none]",
         )}
       >
         {children}
@@ -124,12 +133,12 @@ export function CodeBlock({
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => copyText(children)}
+            onClick={async () => (await copyText(children)) && onCopied?.()}
             // 32px tall at 6px from the top: centered on the first line, so a
             // one-line block centers it too.
             className={cn(
               "absolute right-1.5 top-1.5 h-8 min-h-8 w-8 rounded-md text-[var(--color-fg-muted)] transition-[background-color,color,opacity,transform] duration-150 ease-out active:scale-[0.96] hover:bg-[var(--color-border)] hover:text-[var(--color-fg)]",
-              revealOnHover,
+              copy !== "always" && revealOnHover,
             )}
             aria-label={COPY_LABEL[copied || "idle"]}
           >
@@ -141,10 +150,20 @@ export function CodeBlock({
               <Copy className="h-3.5 w-3.5" />
             )}
           </Button>
-          <span className="sr-only" role="status" aria-live="polite">
+          {/* A failed copy says how to copy by hand, in view. */}
+          <p
+            role="status"
+            aria-live="polite"
+            className={cn(
+              "font-sans",
+              copied === "failed" ? "px-3 pb-2 text-[var(--color-danger)]" : "sr-only",
+            )}
+          >
             {copied === "done" ? "Copied to clipboard" : ""}
-            {copied === "failed" ? "Could not copy. The text is selected." : ""}
-          </span>
+            {copied === "failed"
+              ? "Could not copy. The text is selected, so that you can copy it yourself."
+              : ""}
+          </p>
         </>
       )}
     </div>

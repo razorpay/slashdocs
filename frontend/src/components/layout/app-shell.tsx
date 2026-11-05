@@ -6,6 +6,7 @@ import { useSignInPath, useSignOut } from "@/lib/auth-state";
 import { Button } from "@/components/ui/button";
 import { Center, RetryButton } from "@/components/ui/misc";
 import { ErrorState } from "@/components/error-state";
+import { OneTimeKeyDialog } from "@/components/one-time-key-dialog";
 import { cn } from "@/lib/cn";
 
 // The app bar of every page but a document, which has its own bar. A
@@ -51,7 +52,7 @@ export function AppShell() {
               <RetryButton query={me} />
               <Button
                 variant="outline"
-                disabled={signOut.isPending}
+                busy={signOut.isPending}
                 onClick={() => signOut.mutate()}
               >
                 <LogOut className="h-4 w-4" /> Sign out
@@ -75,6 +76,8 @@ export function AppShell() {
     >
       {!documentPage && <AppBar />}
       <Outlet />
+      {/* A key that shows once reaches the reader on any page. */}
+      <OneTimeKeyDialog />
     </main>
   );
 }

@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "@/api";
 import { clearCommentDrafts } from "./comment-drafts";
 import { clearFieldDrafts } from "./field-drafts";
+import { clearOneTimeKeys } from "./one-time-keys";
 import { clearTextDrafts } from "./text-drafts";
 
 // Sign-out once only set this flag and kept the session cookie.
@@ -32,11 +33,12 @@ export function useSignOut() {
   return useMutation({
     mutationFn: api.logout,
     onSuccess: () => {
-      // Unsent comments and text must not outlive the session on a shared
-      // browser.
+      // Unsent comments and text, and keys that show once, must not outlive
+      // the session on a shared browser.
       clearCommentDrafts();
       clearFieldDrafts();
       clearTextDrafts();
+      clearOneTimeKeys();
       qc.clear();
       nav("/", { replace: true });
     },

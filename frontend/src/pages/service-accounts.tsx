@@ -1,6 +1,6 @@
 import { Page, PageHeader, SettingsNav } from "@/components/layout/page";
 import { useTitle } from "@/lib/use-title";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { errorMessage } from "@/lib/errors";
@@ -33,27 +33,33 @@ import { api, type ServiceAccount } from "@/api";
 import { publicURL } from "@/lib/config";
 import { queryKeys } from "@/lib/queryKeys";
 import { BOT_DOMAIN_SUFFIX } from "@/lib/constants";
-import { useLastDefined } from "@/lib/hooks";
+import { useFieldDraft } from "@/lib/field-drafts";
+import { headlessCLI, keepOneTimeKey } from "@/lib/one-time-keys";
+import { useIsMobile } from "@/lib/use-media-query";
 
-// A key that shows once: the default key of a new bot, or a named key.
-type NewKey = { bot: string; keyName?: string; token: string };
+// A bot address or a typed name: the label before the @, and the domain
+// after it, if there is one.
+function splitAddress(name: string) {
+  const at = name.indexOf("@");
+  return at < 0
+    ? { label: name, domain: undefined }
+    : { label: name.slice(0, at), domain: name.slice(at + 1) };
+}
 
 export function ServiceAccountsPage() {
   useTitle("Bots");
-  const q = useQueryClient();
   const sas = useQuery({
     queryKey: queryKeys.serviceAccounts(),
     queryFn: api.listServiceAccounts,
   });
   const [creating, setCreating] = useState(false);
-  // The page, not the form that asked, keeps each new key until the reader
-  // closes it, so that a key that comes after Cancel or after another bot
-  // was selected still shows, and for the bot it belongs to.
-  const [newKeys, setNewKeys] = useState<NewKey[]>([]);
-  const reveal = (k: NewKey) => setNewKeys((ks) => [...ks, k]);
   const items = sas.data?.items || [];
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = items.find((s) => s.id === selectedId) || items[0] || null;
+  // On a narrow screen the detail is under the list, so a bot that the
+  // reader picks brings its detail into view.
+  const stacked = useIsMobile();
+  const [picked, setPicked] = useState(false);
 
   return (
     <Page lane="focus">
@@ -70,15 +76,7 @@ export function ServiceAccountsPage() {
       <NewBotDialog
         open={creating}
         onOpenChange={setCreating}
-        onCreated={(sa) => {
-          q.invalidateQueries({ queryKey: queryKeys.serviceAccounts() });
-          setSelectedId(sa.id);
-          reveal({ bot: sa.name, token: sa.key.token });
-        }}
-      />
-      <NewKeyDialog
-        newKey={newKeys[0]}
-        onDone={() => setNewKeys((ks) => ks.slice(1))}
+        onCreated={(sa) => setSelectedId(sa.id)}
       />
 
       {/* minmax(0, 1fr) keeps long IDs and code from widening the columns. */}
@@ -100,19 +98,27 @@ export function ServiceAccountsPage() {
               {items.map((sa) => {
                 const id = sa.id;
                 const active = selected?.id === id;
+                // The name before the @ tells bots apart, so it comes first.
+                const { label, domain } = splitAddress(sa.name);
                 return (
                   <li key={id}>
                     <button
-                      onClick={() => setSelectedId(id)}
+                      onClick={() => {
+                        setSelectedId(id);
+                        setPicked(true);
+                      }}
                       aria-current={active || undefined}
+                      title={sa.name}
                       className="wash-link flex w-full items-center gap-3 rounded-sm px-3 py-2.5 text-left text-sm"
                     >
                       <Bot className="h-4 w-4 shrink-0 text-[var(--color-fg-muted)]" />
                       <div className="min-w-0 flex-1">
-                        <div className="truncate font-medium">{sa.name}</div>
-                        <div className="truncate font-mono text-[10px] text-[var(--color-fg-muted)]">
-                          {id}
-                        </div>
+                        <div className="truncate font-medium">{label}</div>
+                        {domain && (
+                          <div className="truncate font-mono text-[10px] text-[var(--color-fg-muted)]">
+                            @{domain}
+                          </div>
+                        )}
                       </div>
                       {sa.disabled && <Badge variant="warning">disabled</Badge>}
                     </button>
@@ -126,7 +132,11 @@ export function ServiceAccountsPage() {
         {/* The first bot is selected when any loaded, so there is no prompt to pick one. */}
         <div className="min-w-0">
           {selected && (
-            <ServiceAccountDetail key={selected.id} sa={selected} onKey={reveal} />
+            <ServiceAccountDetail
+              key={selected.id}
+              sa={selected}
+              reveal={picked && stacked}
+            />
           )}
         </div>
       </div>
@@ -136,31 +146,44 @@ export function ServiceAccountsPage() {
 
 // The detail mounts for one bot, so its field and the callbacks of its
 // mutations belong to that bot even when the reader selects another before
-// a response comes. Those callbacks run after it unmounts too.
-function ServiceAccountDetail({
-  sa,
-  onKey,
-}: {
-  sa: ServiceAccount;
-  onKey: (k: NewKey) => void;
-}) {
+// a response comes. Those callbacks run after it unmounts too. reveal brings
+// it into view as it mounts, with the focus on its heading.
+function ServiceAccountDetail({ sa, reveal }: { sa: ServiceAccount; reveal: boolean }) {
   const { id, name, disabled = false } = sa;
   const q = useQueryClient();
   const url = publicURL();
+  const heading = useRef<HTMLDivElement>(null);
+  const revealed = useRef(reveal);
+  useEffect(() => {
+    if (!revealed.current) return;
+    heading.current?.focus({ preventScroll: true });
+    heading.current?.scrollIntoView({
+      block: "start",
+      behavior: matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "auto"
+        : "smooth",
+    });
+  }, []);
   const keys = useQuery({
     queryKey: queryKeys.serviceAccountKeys(id),
     queryFn: () => api.listServiceAccountKeys(id),
   });
-  const [keyName, setKeyName] = useState("");
+  // The words of the field belong to this bot, so they never move to another.
+  const { text: keyName, setText: setKeyName } = useFieldDraft(`key-name:${id}`);
   const createKey = useMutation({
-    mutationFn: (sent: string) => api.createServiceAccountKey(id, sent),
-    onSuccess: (r, sent) => {
-      onKey({ bot: name, keyName: sent, token: r.token });
+    // The key reaches the reader on any page, under the bot and the name sent.
+    mutationFn: (sent: string) =>
+      keepOneTimeKey(api.createServiceAccountKey(id, sent), (r) => ({
+        bot: name,
+        keyName: sent,
+        token: r.token,
+      })),
+    onSuccess: (_, sent) => {
       // A name typed while the key was made stays for the next key.
       setKeyName((now) => (now.trim() === sent ? "" : now));
       q.invalidateQueries({ queryKey: queryKeys.serviceAccountKeys(id) });
     },
-    onError: (e) => toast.error(errorMessage(e, "Failed")),
+    onError: (e) => toast.error(errorMessage(e, `Could not make a key for ${name}`)),
   });
   const revokeKey = useMutation({
     mutationFn: (key: { id: string; name: string }) =>
@@ -184,7 +207,12 @@ function ServiceAccountDetail({
     <div className="space-y-4">
       <Card>
         <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
+          {/* The app bar covers the top 3.5rem of a scrolled page. */}
+          <div
+            ref={heading}
+            tabIndex={-1}
+            className="min-w-0 scroll-mt-16 rounded-sm outline-none"
+          >
             <CardTitle className="flex items-center gap-2 break-all">
               <Bot className="h-4 w-4 shrink-0" /> {name}
             </CardTitle>
@@ -194,7 +222,7 @@ function ServiceAccountDetail({
           </div>
           <AlertDialog>
             <AlertDialogTrigger asChild>
-              <Button variant="outline" size="sm">
+              <Button variant="outline" size="sm" busy={toggle.isPending}>
                 <Power className="h-3.5 w-3.5" />
                 {disabled ? "Enable" : "Disable"}
               </Button>
@@ -239,7 +267,7 @@ function ServiceAccountDetail({
               placeholder="Key name"
               className="min-w-0 flex-1 basis-40"
             />
-            <Button type="submit" disabled={!keyName.trim() || createKey.isPending}>
+            <Button type="submit" disabled={!keyName.trim()} busy={createKey.isPending}>
               <Plus className="h-4 w-4" /> New key
             </Button>
           </form>
@@ -268,6 +296,7 @@ function ServiceAccountDetail({
                         variant="ghost"
                         size="icon"
                         aria-label={`Revoke key ${k.name}`}
+                        busy={revokeKey.isPending && revokeKey.variables.id === k.id}
                         className="text-[var(--color-fg-muted)] hover:text-[var(--color-danger)]"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -319,14 +348,6 @@ function ServiceAccountDetail({
   );
 }
 
-// The CLI takes its server and token from SLASHDOCS_SERVER and SLASHDOCS_TOKEN,
-// so a headless agent needs no browser login.
-function headlessCLI(url: string, token: string) {
-  return `export SLASHDOCS_SERVER=${url}
-export SLASHDOCS_TOKEN=${token}
-slashdocs docs create report.html`;
-}
-
 function NewBotDialog({
   open,
   onOpenChange,
@@ -347,8 +368,9 @@ function NewBotDialog({
 
 type CreatedBot = Awaited<ReturnType<typeof api.createServiceAccount>>;
 
-// The form mounts each time the dialog opens, however it closed, so a new bot
-// starts from an empty name. The page shows the key of the bot.
+// The form mounts each time the dialog opens, however it closed. The name
+// that the reader did not send comes back, and a sent one does not. The app
+// shows the key of the bot, on any page.
 function NewBotForm({
   onCreated,
   onClose,
@@ -356,20 +378,28 @@ function NewBotForm({
   onCreated: (sa: CreatedBot) => void;
   onClose: () => void;
 }) {
-  const [value, setValue] = useState("");
+  const q = useQueryClient();
+  const { text: value, setText: setValue } = useFieldDraft("bot-name");
   const trimmed = value.trim();
-  const at = trimmed.indexOf("@");
-  const label = at >= 0 ? trimmed.slice(0, at) : trimmed;
-  const domain = at >= 0 ? trimmed.slice(at + 1) : "";
-  const hasDomain = at >= 0;
+  const { label, domain } = splitAddress(trimmed);
+  const hasDomain = domain !== undefined;
   // Lightweight inline hint mirroring the server's `.bot` address rule; the
   // server remains authoritative.
   const domainLooksValid = !hasDomain || domain.endsWith(BOT_DOMAIN_SUFFIX);
   const create = useMutation({
-    mutationFn: () => api.createServiceAccount(label, hasDomain ? domain : undefined),
-    // It runs after Cancel too, so the key reaches the page.
-    onSuccess: onCreated,
-    onError: (e) => toast.error(errorMessage(e, "Failed")),
+    mutationFn: (sent: string) => {
+      const { label, domain } = splitAddress(sent);
+      return keepOneTimeKey(api.createServiceAccount(label, domain), (sa) => ({
+        bot: sa.name,
+        token: sa.key.token,
+      }));
+    },
+    // It runs after Cancel too.
+    onSuccess: (_, sent) => {
+      setValue((now) => (now.trim() === sent ? "" : now));
+      q.invalidateQueries({ queryKey: queryKeys.serviceAccounts() });
+    },
+    onError: (e) => toast.error(errorMessage(e, `Could not create ${label}`)),
   });
   return (
     <>
@@ -383,8 +413,15 @@ function NewBotForm({
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          // The form closes only if it is still open: a later form stays.
-          if (label) create.mutate(undefined, { onSuccess: onClose });
+          // The form closes, and the page selects the bot, only while they
+          // are open: a later form stays.
+          if (label)
+            create.mutate(trimmed, {
+              onSuccess: (sa) => {
+                onCreated(sa);
+                onClose();
+              },
+            });
         }}
         className="space-y-4"
       >
@@ -420,54 +457,13 @@ function NewBotForm({
           </Button>
           <Button
             type="submit"
-            disabled={!label || !domainLooksValid || create.isPending}
+            disabled={!label || !domainLooksValid}
+            busy={create.isPending}
           >
             Create bot
           </Button>
         </DialogFooter>
       </form>
     </>
-  );
-}
-
-// The dialog keeps the key that it shows through its exit.
-function NewKeyDialog({ newKey, onDone }: { newKey?: NewKey; onDone: () => void }) {
-  const shown = useLastDefined(newKey);
-  return (
-    <Dialog open={!!newKey} onOpenChange={(o) => !o && onDone()}>
-      <DialogContent>
-        {shown && (
-          <>
-            <DialogHeader>
-              <DialogTitle className="break-all">
-                {shown.keyName ? `New key for ${shown.bot}` : `Meet ${shown.bot}`}
-              </DialogTitle>
-              <DialogDescription>
-                {shown.keyName
-                  ? "Agents that use this key act as this bot."
-                  : "Share docs with this address to let your bot read or edit them."}
-              </DialogDescription>
-            </DialogHeader>
-            <CodeBlock>{shown.bot}</CodeBlock>
-            <div className="mt-5 rounded-sm border border-[var(--color-warning)]/40 bg-[var(--color-warning)]/10 p-3">
-              <div className="mb-1 break-all text-xs font-medium uppercase tracking-wide text-[var(--color-fg-muted)]">
-                {shown.keyName || "Bot key"}
-              </div>
-              <div className="mb-2 text-sm font-semibold text-[var(--color-warning)]">
-                Copy this key now — you won't see it again.
-              </div>
-              <CodeBlock>{shown.token}</CodeBlock>
-            </div>
-            <div className="mb-1 mt-4 text-xs text-[var(--color-fg-muted)]">
-              Use it with the CLI:
-            </div>
-            <CodeBlock>{headlessCLI(publicURL(), shown.token)}</CodeBlock>
-            <DialogFooter>
-              <Button onClick={onDone}>Done</Button>
-            </DialogFooter>
-          </>
-        )}
-      </DialogContent>
-    </Dialog>
   );
 }
