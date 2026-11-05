@@ -22,6 +22,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/input";
+import { Tooltip } from "@/components/ui/tooltip";
 import { RetryButton, revealOnHover, Skeleton } from "@/components/ui/misc";
 import { ErrorState } from "@/components/error-state";
 import { cn } from "@/lib/cn";
@@ -548,12 +549,6 @@ export function Approvals({ onClose }: { onClose?: () => void }) {
             description={errorMessage(approvals.error, "Try again in a moment.")}
             action={<RetryButton query={approvals} />}
           />
-        ) : approvals.data.items.length === 0 ? (
-          isOwner ? (
-            <p className="px-2 text-xs text-[var(--color-fg-muted)]">
-              Add someone who has not worked on this document to request a review.
-            </p>
-          ) : null
         ) : (
           approvals.data.items.map((item) => (
             <ApproverRow
@@ -641,6 +636,9 @@ function ApproverRow({
   );
 }
 
+const WHO_CAN_APPROVE =
+  "Approvers need access to this document. Anyone who edited it, in the browser, by upload, or by an agent, can't approve it. This includes you. An edit that its author undid does not count.";
+
 // AddApprover assigns an approver. Its errors show under the field. A person
 // who cannot open the document can be shared with as a viewer and added in
 // one step.
@@ -663,9 +661,14 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
       if (share) await api.createGrant(docId, addr, "viewer");
       return api.createApprover(docId, addr);
     },
-    onSuccess: (_, { share }) => {
+    onSuccess: ({ approver }, { addr, share }) => {
       setAddress("");
-      if (share) q.invalidateQueries({ queryKey: queryKeys.documentAccess(docId) });
+      if (share) {
+        q.invalidateQueries({ queryKey: queryKeys.documentAccess(docId) });
+        toast.success(
+          `Shared with ${approver.name || addr} as viewer and added as approver.`,
+        );
+      }
       onAdded();
     },
     onError: () => {},
@@ -694,6 +697,9 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
         if (ADDRESS_PATTERN.test(trimmed)) add.mutate({ addr: trimmed });
       }}
     >
+      <p className="mb-2 text-xs text-[var(--color-fg-muted)]">
+        Add someone who did not edit this document.
+      </p>
       <div className="flex gap-2">
         <div className="flex-1">
           <Combobox
@@ -710,38 +716,44 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
             listAbove
           />
         </div>
+        {/* Add cannot work for a person without access, so Share as viewer
+            and add takes the primary place. */}
         <Button
           type="submit"
+          variant={noAccess ? "outline" : "primary"}
           disabled={!ADDRESS_PATTERN.test(trimmed) || add.isPending}
         >
           Add
         </Button>
       </div>
-      {add.error ? (
-        <div className="mt-1.5 flex items-start gap-2">
-          <p role="alert" className="text-xs text-[var(--color-danger)]">
+      {/* The help comes after the field, so the dialog opens with the focus
+          in the field. */}
+      <div className="mt-1.5 flex flex-wrap items-start gap-2 text-xs">
+        {add.error ? (
+          <p role="alert" className="text-[var(--color-danger)]">
             {errorMessage(add.error, "Could not assign approver.")}
           </p>
-          {noAccess ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="shrink-0"
-              disabled={add.isPending}
-              onClick={() => add.mutate({ addr: trimmed, share: true })}
-            >
-              Share as viewer and add
-            </Button>
-          ) : null}
-        </div>
-      ) : (
-        <p className="mt-1.5 text-xs text-[var(--color-fg-muted)]">
-          Approvers need access to this document. Anyone who edited it, in the browser,
-          by upload, or by an agent, can&apos;t approve it. This includes you. An edit
-          that its author undid does not count.
-        </p>
-      )}
+        ) : null}
+        {noAccess ? (
+          <Button
+            type="button"
+            size="sm"
+            className="shrink-0"
+            disabled={add.isPending}
+            onClick={() => add.mutate({ addr: trimmed, share: true })}
+          >
+            Share as viewer and add
+          </Button>
+        ) : null}
+        <Tooltip label={WHO_CAN_APPROVE}>
+          <button
+            type="button"
+            className="ml-auto shrink-0 rounded-sm text-[var(--color-fg-muted)] underline decoration-dotted underline-offset-2 hover:text-[var(--color-fg)]"
+          >
+            Who can approve?
+          </button>
+        </Tooltip>
+      </div>
     </form>
   );
 }

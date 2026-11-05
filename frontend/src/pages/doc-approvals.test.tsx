@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState, type ComponentProps } from "react";
+import { toast } from "sonner";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ApprovalListItem, ApprovalStatus, Principal } from "@/api";
@@ -108,7 +109,14 @@ function installFetch(options: FetchOptions = {}, posted: PostedDecision[] = [])
             },
             400,
           );
-        if (init?.method === "POST") return jsonResponse({ id: "apr_1" }, 201);
+        if (init?.method === "POST")
+          return jsonResponse(
+            {
+              id: "apr_1",
+              approver: { type: "user", id: "usr_rev", name: "Reviewer" },
+            },
+            201,
+          );
         return jsonResponse({ items: [] });
       }
       if (url.startsWith("/v1/users"))
@@ -233,9 +241,21 @@ describe("ApprovalsDialog", () => {
     // a trigger, since the dialog is the only place to assign the first one.
     const trigger = await screen.findByRole("button", { name: "Request approval" });
     await userEvent.click(trigger);
-    expect(await screen.findByRole("combobox", { name: "Approver" })).toBeTruthy();
-    // The form says who cannot approve, so the owner is not surprised by a 400.
-    expect(screen.getByText(/Anyone who edited it, in the browser/)).toBeTruthy();
+    // The dialog opens with the focus in the field, not on its help.
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Approver" })).toHaveFocus(),
+    );
+    // One line says who to add. The full rule waits in a tooltip that the
+    // keyboard reaches, so the owner is not surprised by a 400.
+    expect(
+      screen.getByText("Add someone who did not edit this document."),
+    ).toBeVisible();
+    expect(screen.queryByText(/Anyone who edited it/)).toBeNull();
+    const who = screen.getByRole("button", { name: "Who can approve?" });
+    while (document.activeElement !== who) await userEvent.tab();
+    expect(await screen.findByRole("tooltip", { hidden: true })).toHaveTextContent(
+      /Anyone who edited it, in the browser/,
+    );
   });
 
   it("picks an approver from the suggestions with the keyboard", async () => {
@@ -286,7 +306,14 @@ describe("ApprovalsDialog", () => {
       "That person can't open this document. Share it with them first.",
     );
     expect(input).toHaveAttribute("aria-invalid", "true");
-    await user.click(screen.getByRole("button", { name: "Share as viewer and add" }));
+    // Add cannot work now, so the fix is the primary action.
+    const shareAndAdd = screen.getByRole("button", { name: "Share as viewer and add" });
+    expect(shareAndAdd.className).toContain("bg-[var(--color-accent)]");
+    expect(screen.getByRole("button", { name: "Add" }).className).not.toContain(
+      "bg-[var(--color-accent)]",
+    );
+    const success = vi.spyOn(toast, "success");
+    await user.click(shareAndAdd);
 
     await waitFor(() => expect(input).toHaveValue(""));
     expect(calls.filter((c) => c.includes("reviewer@example.com"))).toEqual([
@@ -295,6 +322,9 @@ describe("ApprovalsDialog", () => {
       '/v1/documents/doc_1/approvers {"address":"reviewer@example.com"}',
     ]);
     expect(screen.queryByRole("alert")).toBeNull();
+    expect(success).toHaveBeenCalledWith(
+      "Shared with Reviewer as viewer and added as approver.",
+    );
   });
 
   it("picks the only match with one Enter", async () => {
