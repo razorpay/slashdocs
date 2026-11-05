@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import type { Comment } from "@/api";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { DocProvider, type DocContextValue } from "./doc-context";
@@ -35,12 +35,17 @@ it("lists only names or emails for users and service accounts, even with a share
   expect(rows[3]).toHaveTextContent(/^review@friendly\.otter\.bot$/);
 });
 
+const onOuterEscape = vi.fn();
+
 function renderBar(reactions: Comment["reactions"] = []) {
   render(
     <QueryClientProvider client={new QueryClient()}>
       <DocProvider value={{ principal: undefined } as unknown as DocContextValue}>
         <TooltipProvider>
-          <ReactionBar c={{ id: "c1", reactions } as Comment} docId="doc_1" />
+          {/* The thread around the bar closes on an Escape that reaches it. */}
+          <div onKeyDown={(e) => e.key === "Escape" && onOuterEscape()}>
+            <ReactionBar c={{ id: "c1", reactions } as Comment} docId="doc_1" />
+          </div>
         </TooltipProvider>
       </DocProvider>
     </QueryClientProvider>,
@@ -86,4 +91,5 @@ it("moves over the nine reactions as a 3x3 grid that wraps, and Escape gives the
   await user.keyboard("{Escape}");
   expect(screen.queryByRole("menu")).toBeNull();
   expect(trigger).toHaveFocus();
+  expect(onOuterEscape).not.toHaveBeenCalled();
 });

@@ -6,9 +6,16 @@ export const Dropdown = DM.Root;
 export const DropdownTrigger = DM.Trigger;
 export const DropdownGroup = DM.Group;
 
+// An Escape in a menu closes the menu only. Without this, React passes the
+// key through the portal to a layer around the menu's button, which closes too.
+export function keepEscape(event: React.KeyboardEvent) {
+  if (event.key === "Escape") event.stopPropagation();
+}
+
 export function DropdownContent({
   className,
   onCloseAutoFocus,
+  onKeyDown,
   ...p
 }: React.ComponentPropsWithoutRef<typeof DM.Content>) {
   // Focus goes back to the trigger only when the keyboard closed the menu.
@@ -23,6 +30,10 @@ export function DropdownContent({
         onPointerDownOutside={() => (closedByPointer.current = true)}
         onKeyDownCapture={() => (closedByPointer.current = false)}
         onEscapeKeyDown={() => (closedByPointer.current = false)}
+        onKeyDown={(event) => {
+          keepEscape(event);
+          onKeyDown?.(event);
+        }}
         onCloseAutoFocus={(event) => {
           onCloseAutoFocus?.(event);
           if (closedByPointer.current) event.preventDefault();

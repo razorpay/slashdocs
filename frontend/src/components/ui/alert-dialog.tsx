@@ -2,12 +2,15 @@ import * as React from "react";
 import * as AD from "@radix-ui/react-alert-dialog";
 import { cn } from "@/lib/cn";
 import { Button } from "./button";
+import { useLayerFocus } from "./sheet";
 
 export const AlertDialog = AD.Root;
 export const AlertDialogTrigger = AD.Trigger;
 
 export function AlertDialogContent({
   className,
+  onOpenAutoFocus,
+  onCloseAutoFocus,
   ...p
 }: React.ComponentPropsWithoutRef<typeof AD.Content>) {
   return (
@@ -18,6 +21,7 @@ export function AlertDialogContent({
           "dialog-content fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-[var(--shadow-pop)] dark:border-transparent focus:outline-none",
           className,
         )}
+        {...useLayerFocus({ onOpenAutoFocus, onCloseAutoFocus })}
         {...p}
       />
     </AD.Portal>

@@ -12,7 +12,7 @@ export const SheetClose = DialogPrimitive.Close;
 // its close button is its first control, so that it does not open with a
 // ring on Close. Tab then goes to Close. Other dialogs focus their first
 // control, as Radix does.
-export function openFocus(onOpenAutoFocus?: (event: Event) => void) {
+function openFocus(onOpenAutoFocus?: (event: Event) => void) {
   return (event: Event) => {
     onOpenAutoFocus?.(event);
     const content = event.currentTarget as HTMLElement;
@@ -25,11 +25,47 @@ export function openFocus(onOpenAutoFocus?: (event: Event) => void) {
   };
 }
 
+// The control that opened a layer. A menu goes as its dialog opens, so for an
+// item of a menu it is the button of the menu, which stays.
+function opener(): HTMLElement | null {
+  const active = document.activeElement as HTMLElement | null;
+  const menu = active?.closest('[role="menu"]');
+  const button =
+    menu && document.getElementById(menu.getAttribute("aria-labelledby") || "");
+  return button || active;
+}
+
+// useLayerFocus focuses a layer that opens as openFocus does. When the layer
+// closes, the focus goes back to the control that opened it, if it is still
+// there.
+export function useLayerFocus({
+  onOpenAutoFocus,
+  onCloseAutoFocus,
+}: {
+  onOpenAutoFocus?: (event: Event) => void;
+  onCloseAutoFocus?: (event: Event) => void;
+}) {
+  const back = React.useRef<HTMLElement | null>(null);
+  return {
+    onOpenAutoFocus: (event: Event) => {
+      back.current = opener();
+      openFocus(onOpenAutoFocus)(event);
+    },
+    onCloseAutoFocus: (event: Event) => {
+      onCloseAutoFocus?.(event);
+      if (event.defaultPrevented || !back.current?.isConnected) return;
+      event.preventDefault();
+      back.current.focus();
+    },
+  };
+}
+
 export function SheetContent({
   className,
   children,
   side = "right",
   onOpenAutoFocus,
+  onCloseAutoFocus,
   ...p
 }: React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
   side?: "right" | "left";
@@ -45,7 +81,7 @@ export function SheetContent({
             : "left-0 border-r sheet-left",
           className,
         )}
-        onOpenAutoFocus={openFocus(onOpenAutoFocus)}
+        {...useLayerFocus({ onOpenAutoFocus, onCloseAutoFocus })}
         {...p}
       >
         {children}
