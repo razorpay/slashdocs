@@ -102,7 +102,9 @@ export function EditStatus({ access }: { access?: keyof typeof ACCESS }) {
         className={cn(
           "inline-flex",
           fade,
-          text?.focused && "max-sm:pointer-coarse:opacity-0",
+          // Faded, it still paints over Done, so taps go through it.
+          text?.focused &&
+            "max-sm:pointer-coarse:pointer-events-none max-sm:pointer-coarse:opacity-0",
         )}
       />
       <Button
