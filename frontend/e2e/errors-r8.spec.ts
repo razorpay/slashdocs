@@ -26,9 +26,10 @@ test("the share sheet says that access is unknown while its list fails", async (
 }) => {
   const document = await slashdocs.createDocument(uniqueName("Share error"), HTML);
   await slashdocs.shareWithAnyone(document.id, "commenter");
-  await page.goto(`/app/d/${document.id}`);
-  // Answer the access list with 503 only from now: the bar has its role.
+  // The doc bar and the sheet share the access list, so it fails from the
+  // start: a list that loaded once stays on screen through a failed refresh.
   await answer(page, `**/v1/documents/${document.id}/access`, unavailable);
+  await page.goto(`/app/d/${document.id}`);
   await page.getByRole("button", { name: "Share", exact: true }).click();
 
   const sheet = page.getByRole("dialog");
