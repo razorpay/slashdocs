@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -309,12 +310,20 @@ func (h handlers) getBookLLMs(c *gin.Context) {
 }
 
 // llmsMarkdownEscaper escapes the characters that would let a title close
-// its link text or start a link of its own.
-var llmsMarkdownEscaper = strings.NewReplacer(`\`, `\\`, `[`, `\[`, `]`, `\]`, `(`, `\(`, `)`, `\)`)
+// its link text, start a link of its own, or open a CommonMark autolink
+// (<https://…>).
+var llmsMarkdownEscaper = strings.NewReplacer(`\`, `\\`, `[`, `\[`, `]`, `\]`, `(`, `\(`, `)`, `\)`, `<`, `\<`, `>`, `\>`)
+
+// llmsBareWWW finds a "www." that a GFM renderer would autolink.
+var llmsBareWWW = regexp.MustCompile(`(?i)\b(www)\.`)
 
 // llmsText makes a title safe for one line of llms.txt: line breaks fold
 // into spaces, so it cannot start a new line, and Markdown link syntax is
-// escaped, so it cannot add a link that agents would follow.
+// escaped, so it cannot add a link that agents would follow. A bare URL
+// would still be autolinked by GFM renderers, so the ":" of "://" and the
+// "." of "www." are escaped too; they read the same once rendered.
 func llmsText(s string) string {
-	return llmsMarkdownEscaper.Replace(strings.Join(strings.Fields(s), " "))
+	s = llmsMarkdownEscaper.Replace(strings.Join(strings.Fields(s), " "))
+	s = strings.ReplaceAll(s, "://", `\://`)
+	return llmsBareWWW.ReplaceAllString(s, `${1}\.`)
 }

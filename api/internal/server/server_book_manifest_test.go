@@ -264,11 +264,40 @@ func TestLLMsTxtEscapesTitles(t *testing.T) {
 	assertStatus(t, rr, http.StatusOK)
 	text := rr.Body.String()
 	for _, want := range []string{
-		"# \\[Guide\\]\\(https://evil.example/\\)\n",
-		"- [3 · x\\]\\(https://evil.example/steal\\) \\[y \\\\](/app/b/" + f.bookID + "/c/" + f.c + ")\n",
+		"# \\[Guide\\]\\(https\\://evil.example/\\)\n",
+		"- [3 · x\\]\\(https\\://evil.example/steal\\) \\[y \\\\](/app/b/" + f.bookID + "/c/" + f.c + ")\n",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("llms.txt missing %q:\n%s", want, text)
+		}
+	}
+}
+
+// A title cannot make an outside link through a CommonMark autolink
+// (<https://…>) or a GFM bare-URL autolink (https://…, www.…) either.
+func TestLLMsTxtNeutralisesAutolinksInTitles(t *testing.T) {
+	f := newManifestFixture(t)
+	for doc, title := range map[string]string{
+		f.a: "01 · see <https://evil.example/x>",
+		f.b: "02 · go to https://evil.example/y or WWW.evil.example",
+	} {
+		rr := do(t, f.e.h, http.MethodPatch, "/v1/documents/"+doc, `{"title":"`+title+`"}`, bkHeaders(f.owner))
+		assertStatus(t, rr, http.StatusOK)
+	}
+	rr := do(t, f.e.h, http.MethodGet, "/v1/books/"+f.bookID+"/llms.txt", "", bkHeaders(f.owner))
+	assertStatus(t, rr, http.StatusOK)
+	text := rr.Body.String()
+	for _, want := range []string{
+		"- [1 · see \\<https\\://evil.example/x\\>](/app/b/" + f.bookID + "/c/" + f.a + ")\n",
+		"- [2 · go to https\\://evil.example/y or WWW\\.evil.example](/app/b/" + f.bookID + "/c/" + f.b + ")\n",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("llms.txt missing %q:\n%s", want, text)
+		}
+	}
+	for _, bad := range []string{"see <https", "https://evil", "WWW.evil"} {
+		if strings.Contains(text, bad) {
+			t.Errorf("llms.txt keeps an autolink %q:\n%s", bad, text)
 		}
 	}
 }
