@@ -3,7 +3,8 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import { api, type Comment } from "@/api";
+import { toast } from "sonner";
+import { APIError, api, type Comment } from "@/api";
 import { emptyMentionDraft, type MentionDraft } from "@/lib/comment-mentions";
 import {
   AgentRequestBadge,
@@ -11,10 +12,14 @@ import {
   Message,
   MoreMenu,
   ReplyRow,
+  Replies,
 } from "./doc-comment-parts";
 import { DocProvider, type DocContextValue } from "./doc-context";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 function Field({
   onSubmit,
@@ -172,7 +177,7 @@ it("keeps the words typed while a reply posts, without the posted ones", async (
   const user = userEvent.setup();
   renderReply();
   const box = screen.getByPlaceholderText("Reply…");
-  await user.type(box, "Agreed{Enter} KEEP THE LATER WORDS");
+  await user.type(box, "Agreed{Enter}KEEP THE LATER WORDS");
   expect(post).toHaveBeenCalledWith("doc-1", "cmt_1", "Agreed", []);
   await act(async () => response.settle({} as Comment));
   expect(box).toHaveValue("KEEP THE LATER WORDS");
@@ -245,6 +250,7 @@ it("keeps an edit open with the words typed while it saved", async () => {
   expect(patch).toHaveBeenCalledWith("doc-1", "cmt_mine", {
     body: "Original words fixed",
     mentions: [],
+    base_body: "Original words",
   });
   update({ ...mine, body: "Original words fixed" });
   await act(async () => response.settle({} as Comment));
@@ -260,4 +266,131 @@ it("keeps an edit open with the words typed while it saved", async () => {
     expect(screen.queryByRole("combobox", { name: "Edit reply" })).toBeNull(),
   );
   expect(screen.getByText("Original words fixed KEEP")).toBeVisible();
+});
+
+// otherTab writes a reply draft as another tab does: to storage, with a
+// storage event.
+function otherTab(body: string) {
+  const key = "slashdocs.reply-drafts";
+  const value = JSON.stringify({
+    "doc-1": { cmt_1: { body, mentions: [], updatedAt: Date.now() } },
+  });
+  localStorage.setItem(key, value);
+  window.dispatchEvent(new StorageEvent("storage", { key, newValue: value }));
+}
+const pause = () => act(() => new Promise((resolve) => setTimeout(resolve, 350)));
+const storedReply = () =>
+  JSON.parse(localStorage.getItem("slashdocs.reply-drafts")!)["doc-1"]?.cmt_1?.body;
+
+it("takes a reply draft that another tab changed, and keeps both when both changed", async () => {
+  localStorage.clear();
+  const user = userEvent.setup();
+  renderReply();
+  const box = screen.getByPlaceholderText("Reply…");
+  await user.type(box, "TAB A INITIAL");
+  await pause();
+  act(() => otherTab("TAB A IMPORTANT NEW WORDS"));
+  expect(box).toHaveValue("TAB A IMPORTANT NEW WORDS");
+
+  await user.type(box, " AND MINE");
+  act(() => otherTab("NEWER IN THE OTHER TAB"));
+  expect(box).toHaveValue("TAB A IMPORTANT NEW WORDS AND MINE");
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "This draft changed in another tab. It now says:NEWER IN THE OTHER TAB",
+  );
+  // Until the reader chooses, the newer text stays saved.
+  await user.type(box, "!");
+  await pause();
+  expect(storedReply()).toBe("NEWER IN THE OTHER TAB");
+  await user.click(screen.getByRole("button", { name: "Keep mine" }));
+  expect(screen.queryByRole("status")).toBeNull();
+  expect(storedReply()).toBe("TAB A IMPORTANT NEW WORDS AND MINE!");
+
+  await user.type(box, "?");
+  act(() => otherTab("THEIRS AGAIN"));
+  await user.click(screen.getByRole("button", { name: "Use the new text" }));
+  expect(box).toHaveValue("THEIRS AGAIN");
+  await pause();
+  expect(storedReply()).toBe("THEIRS AGAIN");
+});
+
+function renderThreadReplies(c: Comment) {
+  const ctx = { principal: { type: "user", id: "u1", name: "Ana" } } as DocContextValue;
+  const client = new QueryClient();
+  const ui = (next: Comment) => (
+    <QueryClientProvider client={client}>
+      <DocProvider value={ctx}>
+        <Replies c={next} docId="doc-1" />
+        <ReplyRow c={next} docId="doc-1" />
+      </DocProvider>
+    </QueryClientProvider>
+  );
+  const view = render(ui(c));
+  return (next: Comment) => view.rerender(ui(next));
+}
+
+it("shows a reply as sending in the thread, clears it from the field, and puts it back if it fails", async () => {
+  localStorage.clear();
+  let fail!: (reason: Error) => void;
+  const response = new Promise<Comment>((_, reject) => (fail = reject));
+  vi.spyOn(api, "createCommentReply").mockReturnValueOnce(response);
+  const error = vi.spyOn(toast, "error");
+  const user = userEvent.setup();
+  renderThreadReplies(thread);
+  const box = screen.getByPlaceholderText("Reply…");
+  await user.type(box, "Double enter{Enter}");
+  expect(box).toHaveValue("");
+  const sending = screen.getByText("Sending…").closest("[aria-busy]");
+  expect(sending).toHaveTextContent("Double enter");
+
+  await user.type(box, "later");
+  act(() => fail(new Error("offline")));
+  await vi.waitFor(() => expect(error).toHaveBeenCalled());
+  expect(box).toHaveValue("Double enter later");
+  expect(screen.queryByText("Sending…")).toBeNull();
+});
+
+it("keeps the words of an edit when someone deletes its reply, with Copy my text", async () => {
+  const user = userEvent.setup();
+  const writeText = vi.spyOn(navigator.clipboard, "writeText");
+  const update = renderThreadReplies({ ...thread, replies: [mine] });
+  await user.click(screen.getByRole("button", { name: "Message actions" }));
+  await user.click(screen.getByRole("menuitem", { name: "Edit" }));
+  await user.type(
+    await screen.findByRole("combobox", { name: "Edit reply" }),
+    " UNSAVED EDIT",
+  );
+  update({ ...thread, replies: [] });
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "This reply was deleted. Your words were not sent:Original words UNSAVED EDIT",
+  );
+  await user.click(screen.getByRole("button", { name: "Copy my text" }));
+  expect(writeText).toHaveBeenCalledWith("Original words UNSAVED EDIT");
+  await user.click(screen.getByRole("button", { name: "Dismiss" }));
+  expect(screen.queryByRole("status")).toBeNull();
+});
+
+it("sends the text that an edit started from, so that a stale edit fails", async () => {
+  const user = userEvent.setup();
+  const patch = vi
+    .spyOn(api, "patchComment")
+    .mockRejectedValue(new APIError(409, "comment_changed", "changed"));
+  const error = vi.spyOn(toast, "error");
+  const update = renderMessage(mine);
+  const box = await startEdit(user);
+  await user.type(box, " MINE{Enter}");
+  expect(patch).toHaveBeenCalledWith("doc-1", "cmt_mine", {
+    body: "Original words MINE",
+    mentions: [],
+    base_body: "Original words",
+  });
+  update({ ...mine, body: "Newer words" });
+  await vi.waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "This reply changed while you edited. It now says:Newer words",
+    ),
+  );
+  expect(box).toHaveValue("Original words MINE");
+  expect(error).not.toHaveBeenCalled();
+  await user.keyboard("{Escape}");
 });
