@@ -6,7 +6,6 @@ import { toast } from "sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "./styles.css";
-import { APIError } from "@/api";
 import { errorMessage } from "@/lib/errors";
 import { ThemeProvider } from "@/lib/theme";
 import { AppShell } from "@/components/layout/app-shell";
@@ -20,12 +19,12 @@ import { DevelopersPage } from "@/pages/developers";
 import { ProfilePage } from "@/pages/profile";
 import { StartPage } from "@/pages/start";
 import { NotFoundPage } from "@/pages/not-found";
-import { retryQuery } from "@/lib/query-retry";
+import { retryQuery, toastQueryError } from "@/lib/query-retry";
 import { migrateLegacyStorage } from "@/lib/legacy-storage";
 import { finishLegacySignOut } from "@/lib/auth-state";
 
-// Query failures (other than auth, handled by route guards) and any mutation
-// without its own onError surface as a toast.
+// A failed refresh of shown data (other than auth, handled by route guards)
+// and any mutation without its own onError surface as a toast.
 const qc = new QueryClient({
   defaultOptions: {
     queries: { refetchOnWindowFocus: false, retry: retryQuery },
@@ -33,13 +32,7 @@ const qc = new QueryClient({
       onError: (e) => toast.error(errorMessage(e)),
     },
   },
-  queryCache: new QueryCache({
-    onError: (e, query) => {
-      if (query.meta?.suppressGlobalError) return;
-      if (e instanceof APIError && e.status === 401) return;
-      toast.error(errorMessage(e));
-    },
-  }),
+  queryCache: new QueryCache({ onError: toastQueryError }),
 });
 
 function App() {
