@@ -1,6 +1,6 @@
 import { assert, test } from "vitest";
 
-import { isEditableTarget, markSurface } from "../bridge/dom.ts";
+import { isEditableTarget, markSurface, placeClear } from "../bridge/dom.ts";
 
 // As in Google Docs, the editor's text takes every key only while it has the
 // caret. After Esc blurs it, the bridge's shortcuts work again.
@@ -32,4 +32,68 @@ test.each([
     document.documentElement.getAttribute("data-slashdocs-surface"),
     surface,
   );
+});
+
+// A page of text with no clear room: each place covers text.
+function textEverywhere(width: number, height: number) {
+  document.body.innerHTML = "<p>Words</p>";
+  const words = document.querySelector("p")!.firstChild!;
+  Object.defineProperty(document.documentElement, "clientWidth", {
+    value: width,
+    configurable: true,
+  });
+  Object.defineProperty(document.documentElement, "clientHeight", {
+    value: height,
+    configurable: true,
+  });
+  document.caretRangeFromPoint = () => {
+    const range = document.createRange();
+    range.setStart(words, 0);
+    return range;
+  };
+  Range.prototype.getClientRects = () =>
+    [new DOMRect(0, 0, width, height)] as unknown as DOMRectList;
+  const el = document.createElement("div");
+  Object.defineProperty(el, "offsetWidth", { value: 100 });
+  Object.defineProperty(el, "offsetHeight", { value: 40 });
+  document.body.append(el);
+  return el;
+}
+
+const place = (el: HTMLElement) => [el.style.left, el.style.top];
+
+// Near its words, over other text, not at an edge of the viewport. When the
+// first place covers the words, the next one takes it.
+test.each([
+  ["the first place", [[200, 300]]],
+  [
+    "the first place that covers none of the words",
+    [
+      [200, 90],
+      [200, 300],
+    ],
+  ],
+])("with no clear room, a control goes to %s", (_, places) => {
+  const el = textEverywhere(1000, 800);
+  try {
+    const words = [new DOMRect(200, 100, 60, 20)];
+    assert.isNull(placeClear(document, el, words, places));
+    assert.deepEqual(place(el), ["200px", "300px"]);
+  } finally {
+    delete (document as Partial<Document>).caretRangeFromPoint;
+    delete (Range.prototype as Partial<Range>).getClientRects;
+  }
+});
+
+// The actions at a selection dock at an edge of the viewport instead.
+test("with no clear room, a control that docks goes to the bottom of the viewport", () => {
+  const el = textEverywhere(1000, 800);
+  try {
+    const words = [new DOMRect(200, 100, 60, 20)];
+    assert.equal(placeClear(document, el, words, [[200, 300]], true), "bottom");
+    assert.deepEqual(place(el), ["450px", "752px"]);
+  } finally {
+    delete (document as Partial<Document>).caretRangeFromPoint;
+    delete (Range.prototype as Partial<Range>).getClientRects;
+  }
 });

@@ -1798,10 +1798,10 @@ type Theme = "dark" | "light";
     );
     // The actions sit where they cover no text: centered above the
     // selection, else below it, else after its last line, else beside its
-    // block, else where placeClear finds room. When placeClear puts them at
-    // an edge of the viewport, as in a narrow column of text, they dock
-    // there as a bar, and the document gets room to scroll out from under
-    // a bar at the bottom.
+    // block, else where placeClear finds room. When no place is clear, as
+    // in a narrow column of text, they dock at an edge of the viewport as a
+    // bar, and the document gets room to scroll out from under a bar at the
+    // bottom.
     const rect = range.getBoundingClientRect();
     const lines = Array.from(range.getClientRects()).filter((r) => r.width);
     const [first, last] = [lines[0] ?? rect, lines.at(-1) ?? rect];
@@ -1817,7 +1817,7 @@ type Theme = "dark" | "light";
       [block.right + gap, beside(first)],
       [block.left - gap - width, beside(first)],
     ];
-    const edge = placeClear(d, selectionAction, lines, places);
+    const edge = placeClear(d, selectionAction, lines, places, true);
     if (!edge) return;
     selectionAction.style.removeProperty("left");
     selectionAction.style.removeProperty("top");
