@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { CodeBlock } from "@/components/ui/misc";
 import {
@@ -10,7 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { publicURL } from "@/lib/config";
-import { useLastDefined } from "@/lib/hooks";
+import { useLastDefined, useWarnBeforeUnload } from "@/lib/hooks";
 import { closeOneTimeKey, headlessCLI, useOneTimeKeys } from "@/lib/one-time-keys";
 
 // OneTimeKeyDialog shows each key that came, the oldest first, on any page,
@@ -21,14 +21,8 @@ export function OneTimeKeyDialog() {
   const shown = useLastDefined(keys[0]);
   const [copied, setCopied] = useState<number>();
   const [asking, setAsking] = useState<number>();
-  const unresolved = keys.length > 0;
   // A reload or a closed tab loses the keys, so the browser asks first.
-  useEffect(() => {
-    if (!unresolved) return;
-    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [unresolved]);
+  useWarnBeforeUnload(keys.length > 0);
   if (!shown) return null;
   const close = () =>
     copied === shown.id ? closeOneTimeKey(shown.id) : setAsking(shown.id);
