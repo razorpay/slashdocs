@@ -81,7 +81,8 @@ export function AccessRequestsMenu() {
   const nav = useNavigate();
   const requests = useAccessRequests();
   const items = requests.data?.items ?? [];
-  const failed = requests.isError && !requests.data;
+  // A failed list stays failed while Retry runs, so the menu stays open.
+  const failed = !requests.data && requests.errorUpdatedAt > 0;
   if (!items.length && !failed) return null;
   const label = failed
     ? "Requests for access did not load"
