@@ -18,7 +18,7 @@ import { useMe } from "@/lib/hooks";
 import { principalColor } from "@/lib/principals";
 import { useTheme } from "@/lib/theme";
 import { useSignOut } from "@/lib/auth-state";
-import { api } from "@/api";
+import { api, type GitHubStatus } from "@/api";
 import { errorMessage } from "@/lib/errors";
 
 export function ProfilePage() {
@@ -38,8 +38,12 @@ export function ProfilePage() {
   const disconnectGitHub = useMutation({
     mutationFn: api.githubDisconnect,
     onSuccess: () => {
+      // The account that went, from the status before it loads again.
+      const login = qc.getQueryData<GitHubStatus>(["github-connection"])?.login;
       qc.invalidateQueries({ queryKey: ["github-connection"] });
-      toast.success("GitHub disconnected.");
+      toast.success(
+        login ? `Disconnected GitHub account ${login}.` : "GitHub disconnected.",
+      );
     },
     onError: (e) => toast.error(errorMessage(e, "Could not disconnect GitHub")),
   });
@@ -83,7 +87,7 @@ export function ProfilePage() {
           </div>
           <Button
             variant="outline"
-            disabled={signOut.isPending}
+            busy={signOut.isPending}
             onClick={() => signOut.mutate()}
           >
             <LogOut className="h-4 w-4" /> Sign out
@@ -148,7 +152,7 @@ export function ProfilePage() {
               <Button
                 variant="outline"
                 onClick={() => disconnectGitHub.mutate()}
-                disabled={disconnectGitHub.isPending}
+                busy={disconnectGitHub.isPending}
               >
                 Disconnect
               </Button>
