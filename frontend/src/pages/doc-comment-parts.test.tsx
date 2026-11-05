@@ -494,3 +494,24 @@ it("offers the first reaction on a message that has none, in its header", async 
   await user.click(await screen.findByRole("menuitemcheckbox", { name: "Thumbs up" }));
   expect(react).toHaveBeenCalledWith("doc-1", mine.id, expect.any(String), true);
 });
+
+it("keeps the thread's last action at the end of its header, after the first reaction", () => {
+  const ctx = { principal: { type: "user", id: "u1" } } as DocContextValue;
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <DocProvider value={ctx}>
+        <Message
+          c={{ ...mine, parent_comment_id: undefined }}
+          docId="doc-1"
+          thread
+          actions={<button type="button">Close comment</button>}
+        />
+      </DocProvider>
+    </QueryClientProvider>,
+  );
+  const names = screen
+    .getAllByRole("button")
+    .map((b) => b.getAttribute("aria-label") ?? b.textContent);
+  expect(names.at(-1)).toBe("Close comment");
+  expect(names).toContain("Add reaction");
+});
