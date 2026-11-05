@@ -81,7 +81,7 @@ func booksCmd(g *globals, out io.Writer) *cobra.Command {
 		return getBook(g, out, apiPath("/v1/books/%s/status", args[0]), renderBookStatus)
 	}}
 
-	del := mutate(g, out, "delete <book_id>", "Delete a book's outline (the documents stay)", "DELETE", "/v1/books/%s", 1, func(a []string) string { return "Deleted book " + a[0] + "." })
+	del := mutate(g, out, "delete <book_id>", "Permanently delete a book, all its outline versions and readers' saved places (the folder, documents and chapter progress stay)", "DELETE", "/v1/books/%s", 1, func(a []string) string { return "Deleted book " + a[0] + "." })
 
 	c.AddCommand(create, show, status, del, booksOutlineCmd(g, out))
 	return c
@@ -174,6 +174,20 @@ func writeTabbed(out io.Writer, text string) error {
 	return tw.Flush()
 }
 
+// bookLink is a readingOrder or toc entry of the manifest.
+type bookLink struct {
+	Title      string `json:"title"`
+	Properties *struct {
+		DocumentID string `json:"documentId"`
+		Number     int    `json:"number"`
+		Kind       string `json:"kind"`
+	} `json:"properties"`
+}
+
+// renderBookSummary prints GET /v1/books/{id}: the front matter, then each
+// part of the toc with its chapters and placeholders, then the back matter.
+// The toc is used for the chapters because placeholders are counted in
+// numberOfChapters but only the toc lists them.
 func renderBookSummary(out io.Writer, b []byte) error {
 	var m struct {
 		Metadata struct {
@@ -181,32 +195,58 @@ func renderBookSummary(out io.Writer, b []byte) error {
 			Title            string `json:"title"`
 			NumberOfChapters int    `json:"numberOfChapters"`
 		} `json:"metadata"`
-		ReadingOrder []struct {
-			Title      string `json:"title"`
-			Properties *struct {
-				DocumentID string `json:"documentId"`
-				Number     int    `json:"number"`
-				Kind       string `json:"kind"`
-			} `json:"properties"`
-		} `json:"readingOrder"`
+		ReadingOrder []bookLink `json:"readingOrder"`
+		TOC          []struct {
+			Title    string     `json:"title"`
+			Children []bookLink `json:"children"`
+		} `json:"toc"`
 	}
 	if err := json.Unmarshal(b, &m); err != nil {
 		return err
 	}
 	var tw strings.Builder
-	fmt.Fprintf(&tw, "%s (%s, %d chapters)\n", m.Metadata.Title, m.Metadata.Identifier, m.Metadata.NumberOfChapters)
-	for _, item := range m.ReadingOrder {
-		if item.Properties == nil {
-			fmt.Fprintf(&tw, "  %s\n", item.Title)
-			continue
-		}
-		slot := item.Properties.Kind
-		if item.Properties.Number > 0 {
-			slot = fmt.Sprint(item.Properties.Number)
-		}
-		fmt.Fprintf(&tw, "  %s\t%s\t%s\n", slot, item.Title, item.Properties.DocumentID)
+	chapters := "chapters"
+	if m.Metadata.NumberOfChapters == 1 {
+		chapters = "chapter"
 	}
+	fmt.Fprintf(&tw, "%s (%s, %d %s)\n", m.Metadata.Title, m.Metadata.Identifier, m.Metadata.NumberOfChapters, chapters)
+	matter := func(kind string) {
+		for _, item := range m.ReadingOrder {
+			if item.Properties != nil && item.Properties.Kind == kind {
+				writeBookLink(&tw, item)
+			}
+		}
+	}
+	matter("front")
+	for _, part := range m.TOC {
+		if part.Title != "" {
+			fmt.Fprintf(&tw, "  %s\n", part.Title)
+		}
+		for _, item := range part.Children {
+			writeBookLink(&tw, item)
+		}
+	}
+	matter("back")
 	return writeTabbed(out, tw.String())
+}
+
+// writeBookLink prints one manifest entry: its number (or front/back), its
+// title, and its document ID, or "planned" for a placeholder.
+func writeBookLink(tw *strings.Builder, item bookLink) {
+	p := item.Properties
+	if p == nil {
+		fmt.Fprintf(tw, "  %s\n", item.Title)
+		return
+	}
+	slot := p.Kind
+	if p.Number > 0 {
+		slot = fmt.Sprint(p.Number)
+	}
+	where := p.DocumentID
+	if p.Kind == "planned" || where == "" {
+		where = "planned"
+	}
+	fmt.Fprintf(tw, "  %s\t%s\t%s\n", slot, item.Title, where)
 }
 
 func booksOutlineCmd(g *globals, out io.Writer) *cobra.Command {
@@ -243,53 +283,62 @@ func booksOutlineCmd(g *globals, out io.Writer) *cobra.Command {
 	}}
 
 	var baseVersion, note string
-	push := &cobra.Command{Use: "push <book_id> <file>", Short: "Save an edited outline", Long: "Save an outline as a new version.\nThe file may be the JSON from `books outline pull` or a bare outline.\n--base-version is the version you edited; it defaults to the version_id in a pulled file.\nUse - to read the file from stdin.\n\nExample:\n  slashdocs books outline pull book_… outline.json\n  slashdocs books outline push book_… outline.json --note \"add chapter\"", Args: exactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
-		raw, _, err := readFileArg(args[1])
-		if err != nil {
-			return err
-		}
-		outline, fileVersion, err := parseOutlineFile(raw)
-		if err != nil {
-			return usageError{err}
-		}
-		base := baseVersion
-		if base == "" {
-			base = fileVersion
-		}
-		if base == "" {
-			return usageError{errors.New("--base-version is required when the file is not a pulled outline")}
-		}
-		body := map[string]any{"base_version_id": base, "outline": outline}
-		if note != "" {
-			body["note"] = note
-		}
-		book := args[0]
-		_, cx, _ := currentContext(g)
-		lastPushed := cx.Pulled[book]
-		return action(g, out, func(cl *Client) ([]byte, error) {
-			b, err := cl.doJSON("PUT", apiPath("/v1/books/%s/outline", book), body)
-			if err != nil {
-				return nil, explainOutlineError(err, book, base, lastPushed)
-			}
-			var saved struct {
-				VersionID string `json:"version_id"`
-			}
-			if json.Unmarshal(b, &saved) == nil {
-				// Remember our own push, so a later conflict with it can
-				// be told apart from someone else's change. The push has
-				// succeeded, so failing to remember it is not an error.
-				_ = recordBaseVersion(g, book, saved.VersionID)
-			}
-			return b, nil
-		}, func(m map[string]any) string {
-			return fmt.Sprintf("Saved outline version %v (%s).", value(m, "number"), fmt.Sprint(value(m, "version_id")))
-		})
+	push := &cobra.Command{Use: "push <book_id> <file>", Short: "Save an edited outline", Long: "Save an outline as a new version.\nThe file may be the JSON from `books outline pull` or a bare outline.\n--base-version is the version you edited; it defaults to the version_id in a pulled file.\nAfter a successful push, a pulled file's version_id and number move to the new version,\nso the same file can be edited and pushed again.\nUse - to read the file from stdin.\n\nExample:\n  slashdocs books outline pull book_… outline.json\n  slashdocs books outline push book_… outline.json --note \"add chapter\"", Args: exactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+		return pushOutline(g, out, args[0], args[1], baseVersion, note)
 	}}
 	push.Flags().StringVar(&baseVersion, "base-version", "", "outline version you edited (default: version_id in a pulled file)")
 	push.Flags().StringVar(&note, "note", "", "short note describing the change")
 
 	c.AddCommand(pull, push)
 	return c
+}
+
+// pushOutline saves the outline in path (a pulled file, a bare outline, or
+// - for stdin) as a new version of book. After a successful push from a
+// pulled file, it moves the file to the new version.
+func pushOutline(g *globals, out io.Writer, book, path, baseVersion, note string) error {
+	raw, _, err := readFileArg(path)
+	if err != nil {
+		return err
+	}
+	outline, fileVersion, err := parseOutlineFile(raw)
+	if err != nil {
+		return usageError{err}
+	}
+	base := baseVersion
+	if base == "" {
+		base = fileVersion
+	}
+	if base == "" {
+		return usageError{errors.New("--base-version is required when the file is not a pulled outline")}
+	}
+	body := map[string]any{"base_version_id": base, "outline": outline}
+	if note != "" {
+		body["note"] = note
+	}
+	// A pushed pulled file is moved to the version it created, so the
+	// same file can be edited and pushed again.
+	file := ""
+	if fileVersion != "" && path != "-" {
+		file = path
+	}
+	var fileErr error
+	return action(g, out, func(cl *Client) ([]byte, error) {
+		b, err := cl.doJSON("PUT", apiPath("/v1/books/%s/outline", book), body)
+		if err != nil {
+			return nil, explainOutlineError(err, book, base)
+		}
+		if file != "" {
+			fileErr = updatePulledFile(file, raw, b)
+		}
+		return b, nil
+	}, func(m map[string]any) string {
+		msg := fmt.Sprintf("Saved outline version %v (%s).", value(m, "number"), fmt.Sprint(value(m, "version_id")))
+		if fileErr != nil {
+			msg += fmt.Sprintf(" Could not update %s (%v); push it next time with --base-version %v.", file, fileErr, value(m, "version_id"))
+		}
+		return msg
+	})
 }
 
 // parseOutlineFile accepts a pulled outline ({"version_id", …, "outline"}) or
@@ -309,6 +358,61 @@ func parseOutlineFile(raw []byte) (outline json.RawMessage, versionID string, er
 	}
 	_ = json.Unmarshal(top["version_id"], &versionID)
 	return inner, versionID, nil
+}
+
+// updatePulledFile rewrites the version_id and number of the pulled outline
+// file at path to those of the version saved (the PUT response), keeping the
+// file's other fields and their order.
+func updatePulledFile(path string, raw, saved []byte) error {
+	var v struct {
+		VersionID string `json:"version_id"`
+		Number    int    `json:"number"`
+	}
+	if err := json.Unmarshal(saved, &v); err != nil {
+		return err
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	if _, err := dec.Token(); err != nil { // the opening brace
+		return err
+	}
+	var obj bytes.Buffer
+	obj.WriteByte('{')
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		var field json.RawMessage
+		if err := dec.Decode(&field); err != nil {
+			return err
+		}
+		switch key {
+		case "version_id":
+			field, err = json.Marshal(v.VersionID)
+		case "number":
+			field, err = json.Marshal(v.Number)
+		}
+		if err != nil {
+			return err
+		}
+		name, err := json.Marshal(key)
+		if err != nil {
+			return err
+		}
+		if obj.Len() > 1 {
+			obj.WriteByte(',')
+		}
+		obj.Write(name)
+		obj.WriteByte(':')
+		obj.Write(field)
+	}
+	obj.WriteByte('}')
+	var pretty bytes.Buffer
+	if err := json.Indent(&pretty, obj.Bytes(), "", "  "); err != nil {
+		return err
+	}
+	pretty.WriteByte('\n')
+	return os.WriteFile(path, pretty.Bytes(), 0o600)
 }
 
 // bookDoc is a folder document the outline does not place.
@@ -340,9 +444,7 @@ func explainBookExists(err error) error {
 
 // explainOutlineError turns a conflict or validation failure into text that
 // says what to do next while keeping the APIError status for exit codes.
-// lastPushed is the outline version this CLI last pushed for the book, so a
-// conflict with your own earlier push is not blamed on someone else.
-func explainOutlineError(err error, book, base, lastPushed string) error {
+func explainOutlineError(err error, book, base string) error {
 	var ae *APIError
 	if !errors.As(err, &ae) {
 		return err
@@ -359,13 +461,9 @@ func explainOutlineError(err error, book, base, lastPushed string) error {
 		_ = json.Unmarshal([]byte(ae.Body), &payload)
 		current := payload.Error.Details.CurrentVersionID
 		pull := fmt.Sprintf("`slashdocs books outline pull %s <new file>`", book)
-		switch {
-		case current != "" && current == lastPushed:
-			ae.Message = fmt.Sprintf("The outline is at version %s, which you pushed; this push is still based on %s, and no one has changed the outline since. "+
-				"If the file holds every change you want, push it again with --base-version %s. Otherwise run %s and re-apply your changes there.", current, base, current, pull)
-		case current != "":
+		if current != "" {
 			ae.Message = fmt.Sprintf("The outline changed since version %s (now %s). Run %s and re-apply your changes there.", base, current, pull)
-		default:
+		} else {
 			ae.Message = fmt.Sprintf("The outline changed since version %s. Run %s and re-apply your changes there.", base, pull)
 		}
 		return ae

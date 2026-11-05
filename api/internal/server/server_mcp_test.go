@@ -975,3 +975,33 @@ func TestMCPBookToolsAndStaleOutlineConflict(t *testing.T) {
 		t.Fatalf("delete_book = %#v", got)
 	}
 }
+
+// MCP get_book spends the same per-principal budget as GET /v1/books/:id, so
+// an agent in a loop cannot bypass the manifest's rate limit.
+func TestMCPGetBookIsRateLimitedLikeTheManifestRoute(t *testing.T) {
+	e := newMCPOAuthTestEnvConfig(t, func(cfg *server.Config) { cfg.BooksEnabled = true })
+	token := auth.NewMCPAccessToken(fixtureUser.ID, e.resource, oauthTestSigningMaterial, time.Minute)
+	folder := callMCPToolHTTP(t, e, token, "create_folder", map[string]any{"title": "Guide"})
+	var f struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(folder.Text), &f); err != nil || f.ID == "" {
+		t.Fatalf("create_folder = %#v (%v)", folder, err)
+	}
+	created := callMCPToolHTTP(t, e, token, "create_book", map[string]any{"folder_id": f.ID})
+	var b struct {
+		BookID string `json:"book_id"`
+	}
+	if created.IsError || json.Unmarshal([]byte(created.Text), &b) != nil || b.BookID == "" {
+		t.Fatalf("create_book = %#v", created)
+	}
+	for i := range 120 {
+		if got := callMCPToolHTTP(t, e, token, "get_book", map[string]any{"book_id": b.BookID}); strings.Contains(got.Text, "rate_limited") {
+			t.Fatalf("get_book call %d was rate limited", i+1)
+		}
+	}
+	got := callMCPToolHTTP(t, e, token, "get_book", map[string]any{"book_id": b.BookID})
+	if !got.IsError || !strings.Contains(got.Text, "rate_limited") {
+		t.Fatalf("121st get_book = %#v, want rate_limited", got)
+	}
+}

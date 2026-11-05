@@ -47,9 +47,9 @@ func registerMCPBookTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 
 	addMCPBookTool(server, api, mcp.NewTool("get_book", readOnlyOptions(
 		mcp.WithDescription("Get a book's manifest as a reader sees it: metadata (identifier is the book_id), reading order and table of contents. "+
-			"It lists only the chapters you can open, plus placeholders. Any reader can call it; the other book tools need editor access."),
+			"It lists only the chapters you can open, plus placeholders. Any reader can call it; the outline, status, create and delete tools need editor access."),
 		mcpBookID(),
-	)...), http.MethodGet, "", api.handlers.getManifest)
+	)...), http.MethodGet, "", mcpChain(api.handlers.deps.bookReadLimit, api.handlers.getManifest))
 
 	addMCPBookTool(server, api, mcp.NewTool("get_book_outline", readOnlyOptions(
 		mcp.WithDescription("Get a book's current outline with its version_id, the folder documents not in the outline, and removed chapters. "+
@@ -99,6 +99,23 @@ func registerMCPBookTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 
 // addMCPBookTool adds a tool whose only argument is book_id and which calls
 // GET or DELETE on /v1/books/{book_id}{suffix}.
+// mcpChain runs handlers in order like a gin route, stopping once one
+// aborts, so a tool can apply the same middleware (such as a rate limit) as
+// the REST route it mirrors. A nil handler is skipped.
+func mcpChain(handlers ...gin.HandlerFunc) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		for _, h := range handlers {
+			if h == nil {
+				continue
+			}
+			h(c)
+			if c.IsAborted() {
+				return
+			}
+		}
+	}
+}
+
 func addMCPBookTool(server *mcpserver.MCPServer, api mcpAPIAdapter, tool mcp.Tool, method, suffix string, handler gin.HandlerFunc) {
 	server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		book, invalid := mcpRequired(request, "book_id")

@@ -67,6 +67,9 @@ type readinessCheck struct {
 }
 
 type dependencies struct {
+	// bookReadLimit is the budget for book views, shared by the REST routes
+	// and the MCP tools that call the same handlers. routes sets it.
+	bookReadLimit             gin.HandlerFunc
 	commentNotificationSender notifications.Sender
 	authenticator             auth.Authenticator
 	repository                repo.Repository
@@ -234,6 +237,9 @@ func (unavailableDocumentKVEvents) Relay(context.Context, repo.DocumentKVEvent) 
 func (s *Server) Handler() http.Handler { return s.engine }
 
 func (s *Server) routes(deps dependencies) {
+	// Book views scan the outline and check each chapter's role, even for a
+	// caller who then gets 404; readers refetch them on focus.
+	deps.bookReadLimit = activityRateLimit(120)
 	h := handlers{deps: deps}
 	s.engine.GET("/.well-known/slashdocs.json", h.discovery)
 	s.engine.GET("/.well-known/aidocs.json", h.discovery) // pre-rename path
@@ -294,9 +300,7 @@ func (s *Server) routes(deps dependencies) {
 	// Readers report their position while scrolling (debounced) and on
 	// every page hide.
 	readingLimit := activityRateLimit(120)
-	// Book views scan the outline and check each chapter's role, even for a
-	// caller who then gets 404; readers refetch them on focus.
-	bookReadLimit := activityRateLimit(120)
+	bookReadLimit := deps.bookReadLimit
 	// Opening, finishing and dismissing updates happen once per chapter.
 	bookStateLimit := activityRateLimit(60)
 	authed.GET("/me", h.me)

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -110,9 +111,12 @@ func TestBooksOutlinePushConflictExitsFive(t *testing.T) {
 	}
 }
 
-func TestBooksOutlinePushTwiceExplainsYourOwnPush(t *testing.T) {
-	current := "bov_1"
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// outlineServer answers PUT /outline like the server: 409 outline_conflict
+// unless the base is the current version, else a new version.
+func outlineServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	current, number := "bov_1", 1
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Base string `json:"base_version_id"`
 		}
@@ -124,26 +128,72 @@ func TestBooksOutlinePushTwiceExplainsYourOwnPush(t *testing.T) {
 			_, _ = w.Write([]byte(`{"error":{"code":"outline_conflict","message":"Someone saved a newer outline. Reload it and apply your changes again.","details":{"current_version_id":"` + current + `"}}}`))
 			return
 		}
-		current = "bov_2"
-		_, _ = w.Write([]byte(`{"version_id":"bov_2","number":2}`))
+		number++
+		current = fmt.Sprintf("bov_%d", number)
+		_, _ = fmt.Fprintf(w, `{"version_id":%q,"number":%d}`, current, number)
 	}))
+}
+
+const pulledOutline = `{"version_id":"bov_1","number":1,"outline":{"title":"B","parts":[]},"not_in_outline":[],"removed":[]}`
+
+// A successful push moves the pulled file to the version it created, so the
+// same file can be edited and pushed again without a conflict.
+func TestBooksOutlinePushUpdatesThePulledFile(t *testing.T) {
+	srv := outlineServer(t)
 	defer srv.Close()
 	booksEnv(t, srv)
-	f := bookFile(t, "pulled.json", `{"version_id":"bov_1","number":1,"outline":{"title":"B","parts":[]},"not_in_outline":[],"removed":[]}`)
+	f := bookFile(t, "pulled.json", pulledOutline)
 	if _, err := Execute([]string{"books", "outline", "push", "book_1", f}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Execute([]string{"books", "outline", "push", "book_1", f})
-	if err == nil || ExitCode(err) != 5 {
-		t.Fatalf("second push err = %v, exit %d, want conflict", err, ExitCode(err))
+	b, err := os.ReadFile(f) //nolint:gosec // The test reads the file it wrote under t.TempDir.
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, want := range []string{"bov_2, which you pushed", "still based on bov_1", "--base-version bov_2", "slashdocs books outline pull book_1"} {
+	var got struct {
+		VersionID string          `json:"version_id"`
+		Number    int             `json:"number"`
+		Outline   json.RawMessage `json:"outline"`
+	}
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("pushed file is not JSON: %v\n%s", err, b)
+	}
+	if got.VersionID != "bov_2" || got.Number != 2 || !strings.Contains(string(got.Outline), `"title": "B"`) {
+		t.Fatalf("pushed file = %s, want version bov_2 (2) with the outline kept", b)
+	}
+	if strings.Index(string(b), `"version_id"`) > strings.Index(string(b), `"outline"`) {
+		t.Errorf("pushed file reorders its fields:\n%s", b)
+	}
+	if _, err := Execute([]string{"books", "outline", "push", "book_1", f}); err != nil {
+		t.Fatalf("second push of the same file: %v", err)
+	}
+}
+
+// Two files pulled at the same version: pushing the second after the first
+// is a real conflict, whoever pushed the first, so it gets the generic
+// message and no advice to force the push.
+func TestBooksOutlinePushFromAnotherFileGetsTheGenericConflict(t *testing.T) {
+	srv := outlineServer(t)
+	defer srv.Close()
+	booksEnv(t, srv)
+	a := bookFile(t, "a.json", pulledOutline)
+	bf := bookFile(t, "b.json", pulledOutline)
+	if _, err := Execute([]string{"books", "outline", "push", "book_1", a}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Execute([]string{"books", "outline", "push", "book_1", bf})
+	if err == nil || ExitCode(err) != 5 {
+		t.Fatalf("second file push err = %v, exit %d, want conflict", err, ExitCode(err))
+	}
+	for _, want := range []string{"changed since version bov_1 (now bov_2)", "slashdocs books outline pull book_1"} {
 		if !strings.Contains(err.Error(), want) {
-			t.Errorf("second push message lacks %q: %v", want, err)
+			t.Errorf("conflict message lacks %q: %v", want, err)
 		}
 	}
-	if strings.Contains(err.Error(), "Someone") {
-		t.Errorf("second push blames someone else: %v", err)
+	for _, bad := range []string{"--base-version", "you pushed"} {
+		if strings.Contains(err.Error(), bad) {
+			t.Errorf("conflict message says %q: %v", bad, err)
+		}
 	}
 }
 
@@ -186,7 +236,8 @@ func TestBooksCreateShowDelete(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 			writeTestJSON(t, w, map[string]any{"book_id": "book_1", "outline_version_id": "bov_1"})
 		case "GET /v1/books/book_1":
-			writeTestJSON(t, w, map[string]any{"metadata": map[string]any{"title": "Guide", "numberOfChapters": 1}, "readingOrder": []any{map[string]any{"title": "Intro", "properties": map[string]any{"documentId": "doc_a", "number": 1}}}})
+			intro := map[string]any{"title": "Intro", "properties": map[string]any{"documentId": "doc_a", "kind": "chapter", "number": 1}}
+			writeTestJSON(t, w, map[string]any{"metadata": map[string]any{"title": "Guide", "numberOfChapters": 1}, "readingOrder": []any{intro}, "toc": []any{map[string]any{"title": "", "children": []any{intro}}}})
 		case "DELETE /v1/books/book_1":
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -310,14 +361,15 @@ func TestBooksCreateOnABookNamesIt(t *testing.T) {
 }
 
 // bookManifestBody has the shape of the server's manifestResponse
-// (handlers_book_manifest.go): front matter and one chapter the reader can
-// open, and a placeholder in the toc.
+// (handlers_book_manifest.go): front and back matter, one chapter the reader
+// can open, and a placeholder, which only the toc lists.
 const bookManifestBody = `{"@context":"https://readium.org/webpub-manifest/context.jsonld",` +
 	`"metadata":{"identifier":"book_1","title":"Guide","numberOfChapters":2,"folderId":"fld_1","outlineVersionId":"bov_1","canEdit":true},` +
 	`"links":[{"href":"/v1/books/book_1","type":"application/json","title":"Manifest","rel":"self"}],` +
 	`"readingOrder":[` +
 	`{"href":"/app/b/book_1/c/doc_r","type":"text/html","title":"Roadmap","properties":{"documentId":"doc_r","kind":"front","part":-1,"versionId":"ver_r1"}},` +
-	`{"href":"/app/b/book_1/c/doc_a","type":"text/html","title":"Intro","properties":{"documentId":"doc_a","kind":"chapter","number":1,"part":0,"versionId":"ver_a2","wordCount":120}}],` +
+	`{"href":"/app/b/book_1/c/doc_a","type":"text/html","title":"Intro","properties":{"documentId":"doc_a","kind":"chapter","number":1,"part":0,"versionId":"ver_a2","wordCount":120}},` +
+	`{"href":"/app/b/book_1/c/doc_z","type":"text/html","title":"Afterword","properties":{"documentId":"doc_z","kind":"back","part":-1,"versionId":"ver_z1"}}],` +
 	`"toc":[{"title":"Basics","children":[{"href":"/app/b/book_1/c/doc_a","type":"text/html","title":"Intro","properties":{"documentId":"doc_a","kind":"chapter","number":1,"part":0}},` +
 	`{"title":"Pricing","properties":{"kind":"planned","number":2,"part":0}}]}]}`
 
@@ -348,7 +400,10 @@ func TestBooksShowFindsTheBookOfAFolder(t *testing.T) {
 	want := [][]string{
 		{"Guide", "(book_1,", "2", "chapters)"},
 		{"front", "Roadmap", "doc_r"},
+		{"Basics"},
 		{"1", "Intro", "doc_a"},
+		{"2", "Pricing", "planned"},
+		{"back", "Afterword", "doc_z"},
 	}
 	if len(lines) != len(want) {
 		t.Fatalf("got %d lines, want %d:\n%s", len(lines), len(want), out)
