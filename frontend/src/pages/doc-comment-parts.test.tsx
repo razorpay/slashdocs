@@ -463,3 +463,23 @@ it("closes the view on Esc but keeps a changed edit, and Cancel discards it", as
   expect(screen.queryByRole("combobox", { name: "Edit reply" })).toBeNull();
   expect(screen.getByText("Original words")).toBeVisible();
 });
+
+it("shows a reply once when a live update brings it before its send ends", async () => {
+  vi.spyOn(api, "createCommentReply").mockReturnValueOnce(new Promise(() => {}));
+  const user = userEvent.setup();
+  const update = renderThreadReplies(thread);
+  await user.type(screen.getByPlaceholderText("Reply…"), "First reply{Enter}");
+  update({
+    ...thread,
+    replies: [
+      {
+        ...mine,
+        id: "cmt_new",
+        author: { type: "user", id: "u1" },
+        body: "First reply",
+      },
+    ],
+  });
+  expect(screen.getByText("1 reply")).toBeVisible();
+  expect(screen.queryByText("Sending…")).toBeNull();
+});
