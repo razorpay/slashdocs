@@ -5,7 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Comment, Principal } from "@/api";
 import type { CommentDraft } from "@/lib/comment-drafts";
-import { CommentsList } from "./doc-comments";
+import { CommentThread, CommentsList } from "./doc-comments";
 import { DocProvider, type DocContextValue } from "./doc-context";
 
 const author: Principal & { type: "user" } = {
@@ -226,4 +226,31 @@ it("discards a draft from the list", async () => {
   const { ctx } = renderList({ drafts: [draft("draft:1", "Not sent yet")] });
   await userEvent.click(screen.getByRole("button", { name: "Discard" }));
   expect(ctx.discardDraft).toHaveBeenCalledWith("draft:1");
+});
+
+it("offers to move a moved pin to its author, in its thread", async () => {
+  const moved = thread("moved", "open", {
+    anchor: { quote: "", point: { label: "Intro", x: 0.5, y: 0.5 } },
+  });
+  const setPlacingPin = vi.fn();
+  const ctx = {
+    docId: "doc-1",
+    principal: author,
+    editable: false,
+    unanchoredComments: new Set<string>(),
+    movedPins: new Set(["moved"]),
+    setPlacingPin,
+  } as unknown as DocContextValue;
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter>
+        <DocProvider value={ctx}>
+          <CommentThread c={moved} onClose={vi.fn()} />
+        </DocProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+  expect(screen.getByText("Moved: its element is gone")).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Move pin" }));
+  expect(setPlacingPin).toHaveBeenCalledWith("moved");
 });

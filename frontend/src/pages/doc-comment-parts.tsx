@@ -10,6 +10,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
   Link2,
+  MapPin,
   MoreHorizontal,
   Pencil,
   RotateCcw,
@@ -24,7 +25,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import { principalColor, principalLabel, samePrincipal } from "@/lib/principals";
 import { COMMENT_STATUS } from "@/lib/constants";
 import { agentThatSaw, isAgentRequest } from "@/lib/agent-request";
-import { anchorLabel } from "@/lib/comment-pins";
+import { anchorLabel, canMovePin } from "@/lib/comment-pins";
 import { emptyMentionDraft, type MentionDraft } from "@/lib/comment-mentions";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { Badge } from "@/components/ui/badge";
@@ -110,11 +111,12 @@ export function MoreMenu({
   className?: string;
 }) {
   const q = useQueryClient();
-  const { principal } = useDoc();
+  const { principal, editable, setPlacingPin } = useDoc();
   const [confirming, setConfirming] = useState(false);
-  // The field opens after the menu gives back the focus, or the menu takes
-  // the focus from it as it closes.
-  const editOnClose = useRef(false);
+  // What takes the focus, as the edit field or the document frame, does so
+  // after the menu gives back the focus, or the menu takes the focus from it
+  // as it closes.
+  const afterClose = useRef<() => void>(undefined);
   const del = useMutation({
     mutationFn: () => api.deleteComment(docId, c.id),
     onSuccess: () => {
@@ -140,17 +142,27 @@ export function MoreMenu({
         <DropdownContent
           className="min-w-[180px]"
           onCloseAutoFocus={(event) => {
-            if (!editOnClose.current) return;
-            editOnClose.current = false;
+            const run = afterClose.current;
+            if (!run) return;
+            afterClose.current = undefined;
             event.preventDefault();
-            setEditing(c.id, true);
+            run();
           }}
         >
           <DropdownItem onSelect={() => copyLink(c.id)}>
             <Link2 className="h-4 w-4" /> Copy link
           </DropdownItem>
+          {thread && canMovePin(c, editable, principal) ? (
+            <DropdownItem
+              onSelect={() => (afterClose.current = () => setPlacingPin(c.id))}
+            >
+              <MapPin className="h-4 w-4" /> Move pin
+            </DropdownItem>
+          ) : null}
           {mine ? (
-            <DropdownItem onSelect={() => (editOnClose.current = true)}>
+            <DropdownItem
+              onSelect={() => (afterClose.current = () => setEditing(c.id, true))}
+            >
               <Pencil className="h-4 w-4" /> Edit
             </DropdownItem>
           ) : null}

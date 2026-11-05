@@ -1,4 +1,5 @@
-import type { Anchor, AnchorPoint } from "@/api";
+import type { Anchor, AnchorPoint, Comment, Principal } from "@/api";
+import { samePrincipal } from "@/lib/principals";
 
 // Point comments ("pins"): comments on a spot in an element instead of on
 // selected text. See AnchorPoint.
@@ -69,6 +70,16 @@ export function anchorLabel(c: {
 }): string {
   const quote = (c.selected_text || c.anchor?.quote || "").trim();
   return c.anchor?.point?.label || quote || c.anchor?.point?.target || "";
+}
+
+// canMovePin tells whether a reader may move a thread's pin: its author may,
+// and so may an editor of the document.
+export function canMovePin(
+  c: Pick<Comment, "anchor" | "author">,
+  editable: boolean,
+  reader?: Principal,
+): boolean {
+  return !!c.anchor?.point && (editable || samePrincipal(c.author, reader));
 }
 
 // initialsOf gives up to two initials of a name, for a pin's face.

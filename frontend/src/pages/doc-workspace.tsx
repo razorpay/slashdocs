@@ -136,7 +136,7 @@ export function DocWorkspace({
     meta: { suppressGlobalError: true },
   });
   const [activeComment, setActiveComment] = useState<string>();
-  const [placingPin, setPlacingPin] = useState(false);
+  const [placingPin, setPlacingPin] = useState<boolean | string>(false);
   const [unanchored, setUnanchored] = useState<
     Record<UnanchoredKind, ReadonlySet<string>>
   >({ text: new Set(), pins: new Set() });
