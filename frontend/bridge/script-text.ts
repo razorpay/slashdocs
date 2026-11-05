@@ -126,9 +126,15 @@ export function startScriptText(
         ? (target as Element)
         : target.parentElement;
     while (el && bridgeOwned(el)) el = el.parentElement;
-    if (!el || el.closest(`[${EDIT_ATTR}]`)) return;
+    if (!el || hint?.el === el) return;
+    // The reader can type in this place already: each entry says again
+    // where a change goes.
+    const place = el.closest(`[${EDIT_ATTR}]`);
+    if (place) {
+      if (hint?.el !== place) noteOthers(place);
+      return;
+    }
     if (!source.scriptOwned(el) || !el.textContent?.trim()) return;
-    if (hint?.el === el) return;
     askAbout(el);
   }
 
@@ -161,10 +167,14 @@ export function startScriptText(
       );
     if (!editable) return readOnlyHint(el);
     allowTyping(el, { locator, before: el.textContent ?? "" });
+    noteOthers(el);
     (el as HTMLElement).focus();
     d.getSelection()?.collapse(el, el.childNodes.length);
-    // A change goes to every place that shows the same string, so the note
-    // says so before the first key, and marks the other places.
+  }
+
+  // A change goes to every place that shows the same string, so when there
+  // are others, a note at el says so before the first key, and marks them.
+  function noteOthers(el: Element): void {
     const others = textsShowing(el.textContent ?? "").filter((t) => !el.contains(t));
     if (!others.length) return;
     showHint(
@@ -226,9 +236,21 @@ export function startScriptText(
     }
     injectStyle();
     d.body.append(box);
+    fitLines(text);
     el.setAttribute("aria-describedby", HINT_ID);
     hint = { box, el };
     place(box, el);
+  }
+
+  // fitLines makes text as wide as its widest line. CSS sizes a box to the
+  // text in one line, and so leaves room after balanced lines.
+  function fitLines(text: HTMLElement): void {
+    const range = d.createRange();
+    range.selectNodeContents(text);
+    const lines = [...(range.getClientRects?.() ?? [])];
+    if (lines.length < 2) return;
+    const widest = Math.max(...lines.map((line) => line.width));
+    text.style.setProperty("width", `${Math.ceil(widest)}px`, "important");
   }
 
   function dismissHint(): void {
