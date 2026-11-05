@@ -19,12 +19,14 @@ import { createPinLayer, parsePins, type PinRect } from "./pins.ts";
 import {
   blockOf,
   caretRange,
+  cover,
   isEditableTarget,
   markSurface,
   paperOf,
   placeClear,
   reducedMotion,
   scrollBehavior,
+  settled,
 } from "./dom.ts";
 import { startTextEditing, type TextEditor } from "./text-editing.ts";
 import { elementOf, REFUSED } from "./structure.ts";
@@ -2658,6 +2660,18 @@ type Theme = "dark" | "light";
       pins.releaseOutside();
     } else if (e.data.type === "slashdocs:watch") {
       watchAnchor(typeof e.data.id === "string" ? e.data.id : null);
+    } else if (e.data.type === "slashdocs:cover") {
+      // A comment sheet covers the bottom of the document. Once the document
+      // stops scrolling to the open thread, its pin or highlight comes up
+      // above the sheet.
+      const d = doc();
+      if (!d?.defaultView) return;
+      cover(d, typeof e.data.bottom === "number" ? e.data.bottom : 0);
+      settled(d.defaultView, () => {
+        const cid = watched && CSS.escape(watched);
+        const mark = cid && d.querySelector(`mark.slashdocs-mark[data-cid="${cid}"]`);
+        if (!pins.reveal(watched ?? undefined) && mark) reveal(mark);
+      });
     }
   });
 })();
