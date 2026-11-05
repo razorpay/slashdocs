@@ -21,13 +21,38 @@ function documentHTML(title: string, changed = "") {
 <body><h1>${title}</h1>${paragraphs}</body></html>`;
 }
 
-async function overlaps(a: Locator, b: Locator) {
-  const [x, y] = [await a.boundingBox(), await b.boundingBox()];
+type Box = { x: number; y: number; width: number; height: number };
+
+function overlap(x: Box, y: Box) {
   return (
-    x!.x < y!.x + y!.width &&
-    y!.x < x!.x + x!.width &&
-    x!.y < y!.y + y!.height &&
-    y!.y < x!.y + x!.height
+    x.x < y.x + y.width &&
+    y.x < x.x + x.width &&
+    x.y < y.y + y.height &&
+    y.y < x.y + x.height
+  );
+}
+
+async function overlaps(a: Locator, b: Locator) {
+  return overlap((await a.boundingBox())!, (await b.boundingBox())!);
+}
+
+// coversText tells whether a covers a line of the text of b. The lines go
+// from the viewport of b's frame to the page by the offset of b.
+async function coversText(a: Locator, b: Locator) {
+  const [box, block] = [(await a.boundingBox())!, (await b.boundingBox())!];
+  const lines = await b.evaluate((el) => {
+    const range = el.ownerDocument.createRange();
+    range.selectNodeContents(el);
+    const { left, top } = el.getBoundingClientRect();
+    return [...range.getClientRects()].map((line) => ({
+      x: line.left - left,
+      y: line.top - top,
+      width: line.width,
+      height: line.height,
+    }));
+  });
+  return lines.some((line) =>
+    overlap(box, { ...line, x: block.x + line.x, y: block.y + line.y }),
   );
 }
 
@@ -56,7 +81,7 @@ test("an editor sees who edits a block, beside it, until they leave the text", a
   const mark = bridge(page).getByText(/^reviewer.* is editing$/);
   await expect(mark).toBeVisible();
   const paragraph = renderedDocument(page).locator("#p12");
-  expect(await overlaps(mark, paragraph)).toBe(false);
+  expect(await coversText(mark, paragraph)).toBe(false);
   const [label, text] = [await mark.boundingBox(), await paragraph.boundingBox()];
   expect(Math.abs(label!.y - text!.y)).toBeLessThan(40);
 
