@@ -10,6 +10,7 @@ import { Field, Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { CodeBlock, Skeleton } from "@/components/ui/misc";
 import { LoadError } from "@/components/error-state";
+import { DraftNotice } from "@/components/draft-notice";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
@@ -33,7 +34,7 @@ import { api, type ServiceAccount } from "@/api";
 import { publicURL } from "@/lib/config";
 import { queryKeys } from "@/lib/queryKeys";
 import { BOT_DOMAIN_SUFFIX } from "@/lib/constants";
-import { useFieldDraft } from "@/lib/field-drafts";
+import { useEditDraft } from "@/lib/edit-drafts";
 import { headlessCLI, keepOneTimeKey } from "@/lib/one-time-keys";
 import { useIsMobile } from "@/lib/use-media-query";
 
@@ -59,7 +60,9 @@ export function ServiceAccountsPage() {
   // On a narrow screen the detail is under the list, so a bot that the
   // reader picks brings its detail into view.
   const stacked = useIsMobile();
-  const [picked, setPicked] = useState(false);
+  // reveal counts the picks on a narrow screen, so that each one, also of
+  // the bot that shows, brings the detail into view.
+  const [reveal, setReveal] = useState(0);
 
   return (
     <Page lane="focus">
@@ -105,7 +108,7 @@ export function ServiceAccountsPage() {
                     <button
                       onClick={() => {
                         setSelectedId(id);
-                        setPicked(true);
+                        if (stacked) setReveal((n) => n + 1);
                       }}
                       aria-current={active || undefined}
                       title={sa.name}
@@ -135,7 +138,7 @@ export function ServiceAccountsPage() {
             <ServiceAccountDetail
               key={selected.id}
               sa={selected}
-              reveal={picked && stacked}
+              reveal={stacked ? reveal : 0}
             />
           )}
         </div>
@@ -146,16 +149,15 @@ export function ServiceAccountsPage() {
 
 // The detail mounts for one bot, so its field and the callbacks of its
 // mutations belong to that bot even when the reader selects another before
-// a response comes. Those callbacks run after it unmounts too. reveal brings
-// it into view as it mounts, with the focus on its heading.
-function ServiceAccountDetail({ sa, reveal }: { sa: ServiceAccount; reveal: boolean }) {
+// a response comes. Those callbacks run after it unmounts too. Each new
+// reveal brings it into view, with the focus on its heading.
+function ServiceAccountDetail({ sa, reveal }: { sa: ServiceAccount; reveal: number }) {
   const { id, name, disabled = false } = sa;
   const q = useQueryClient();
   const url = publicURL();
   const heading = useRef<HTMLDivElement>(null);
-  const revealed = useRef(reveal);
   useEffect(() => {
-    if (!revealed.current) return;
+    if (!reveal) return;
     heading.current?.focus({ preventScroll: true });
     heading.current?.scrollIntoView({
       block: "start",
@@ -163,13 +165,13 @@ function ServiceAccountDetail({ sa, reveal }: { sa: ServiceAccount; reveal: bool
         ? "auto"
         : "smooth",
     });
-  }, []);
+  }, [reveal]);
   const keys = useQuery({
     queryKey: queryKeys.serviceAccountKeys(id),
     queryFn: () => api.listServiceAccountKeys(id),
   });
   // The words of the field belong to this bot, so they never move to another.
-  const { text: keyName, setText: setKeyName } = useFieldDraft(`key-name:${id}`);
+  const keyName = useEditDraft(`key-name:${id}`, "");
   const createKey = useMutation({
     // The key reaches the reader on any page, under the bot and the name sent.
     mutationFn: (sent: string) =>
@@ -180,7 +182,7 @@ function ServiceAccountDetail({ sa, reveal }: { sa: ServiceAccount; reveal: bool
       })),
     onSuccess: (_, sent) => {
       // A name typed while the key was made stays for the next key.
-      setKeyName((now) => (now.trim() === sent ? "" : now));
+      keyName.sent(sent);
       q.invalidateQueries({ queryKey: queryKeys.serviceAccountKeys(id) });
     },
     onError: (e) => toast.error(errorMessage(e, `Could not make a key for ${name}`)),
@@ -258,19 +260,28 @@ function ServiceAccountDetail({ sa, reveal }: { sa: ServiceAccount; reveal: bool
             className="flex flex-wrap gap-2"
             onSubmit={(e) => {
               e.preventDefault();
-              createKey.mutate(keyName.trim());
+              if (!keyName.conflict) createKey.mutate(keyName.value.trim());
             }}
           >
             <Input
-              value={keyName}
-              onChange={(e) => setKeyName(e.target.value)}
+              value={keyName.value}
+              onChange={(e) => keyName.setValue(e.target.value)}
               placeholder="Key name"
+              aria-label="Key name"
               className="min-w-0 flex-1 basis-40"
             />
-            <Button type="submit" disabled={!keyName.trim()} busy={createKey.isPending}>
+            <Button
+              type="submit"
+              disabled={!keyName.value.trim() || !!keyName.conflict}
+              busy={createKey.isPending}
+            >
               <Plus className="h-4 w-4" /> New key
             </Button>
           </form>
+          <DraftNotice
+            draft={keyName}
+            cameBack="Your key name from earlier came back."
+          />
           <div className="space-y-1">
             {keys.isLoading ? (
               <>
@@ -379,8 +390,8 @@ function NewBotForm({
   onClose: () => void;
 }) {
   const q = useQueryClient();
-  const { text: value, setText: setValue } = useFieldDraft("bot-name");
-  const trimmed = value.trim();
+  const name = useEditDraft("bot-name", "");
+  const trimmed = name.value.trim();
   const { label, domain } = splitAddress(trimmed);
   const hasDomain = domain !== undefined;
   // Lightweight inline hint mirroring the server's `.bot` address rule; the
@@ -396,7 +407,7 @@ function NewBotForm({
     },
     // It runs after Cancel too.
     onSuccess: (_, sent) => {
-      setValue((now) => (now.trim() === sent ? "" : now));
+      name.sent(sent);
       q.invalidateQueries({ queryKey: queryKeys.serviceAccounts() });
     },
     onError: (e) => toast.error(errorMessage(e, `Could not create ${label}`)),
@@ -415,7 +426,7 @@ function NewBotForm({
           e.preventDefault();
           // The form closes, and the page selects the bot, only while they
           // are open: a later form stays.
-          if (label)
+          if (label && !name.conflict)
             create.mutate(trimmed, {
               onSuccess: (sa) => {
                 onCreated(sa);
@@ -442,14 +453,15 @@ function NewBotForm({
         >
           <Input
             placeholder="n8n-prod   or   n8n-prod@ops.team.bot"
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
+            value={name.value}
+            onChange={(e) => name.setValue(e.target.value)}
             autoCapitalize="off"
             autoCorrect="off"
             spellCheck={false}
             autoFocus
           />
         </Field>
+        <DraftNotice draft={name} cameBack="Your bot name from earlier came back." />
 
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose}>
@@ -457,7 +469,7 @@ function NewBotForm({
           </Button>
           <Button
             type="submit"
-            disabled={!label || !domainLooksValid}
+            disabled={!label || !domainLooksValid || !!name.conflict}
             busy={create.isPending}
           >
             Create bot
