@@ -38,10 +38,14 @@ const feedback =
 export function ReactionBar({
   c,
   docId,
+  triggerClassName,
   children,
 }: {
   c: Comment;
   docId: string;
+  // A message with no reactions shows only its Add reaction button, in its
+  // header, so that the first reaction is one click away.
+  triggerClassName?: string;
   children?: ReactNode;
 }) {
   const q = useQueryClient();
@@ -182,6 +186,7 @@ export function ReactionBar({
               className={cn(
                 "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-sm text-xs text-[var(--color-fg-muted)] hover:bg-[var(--color-surface-muted)] data-[state=open]:bg-[var(--color-accent)]/10 data-[state=open]:text-[var(--color-accent)] aria-disabled:cursor-wait",
                 feedback,
+                triggerClassName,
               )}
             >
               <SmilePlus className="h-4 w-4" aria-hidden="true" />
@@ -270,7 +275,7 @@ export function ReactionBar({
         </Menu.Root>
         <div className="ml-auto flex shrink-0 items-center">{children}</div>
       </div>
-      <span role="status" className="sr-only">
+      <span aria-live="polite" className="sr-only">
         {announcement}
       </span>
     </div>
