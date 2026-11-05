@@ -101,6 +101,28 @@ export function BookReaderRoute() {
   return <BookReader bookId={bookId} manifest={manifest.data} link={link} />;
 }
 
+// Other-device offers the reader dismissed or followed, kept for the browser
+// session so the note does not come back on every chapter.
+const HANDLED_OFFERS = "slashdocs:book-offers-handled";
+const offerKey = (bookId: string, p: ReadingPosition) =>
+  `${bookId}:${p.device_id}:${p.client_ts}`;
+function handledOffers(): string[] {
+  try {
+    const v: unknown = JSON.parse(sessionStorage.getItem(HANDLED_OFFERS) ?? "[]");
+    return Array.isArray(v) ? v.filter((k): k is string => typeof k === "string") : [];
+  } catch {
+    return [];
+  }
+}
+function handleOffer(key: string) {
+  try {
+    const keys = handledOffers().filter((k) => k !== key);
+    sessionStorage.setItem(HANDLED_OFFERS, JSON.stringify([...keys, key].slice(-50)));
+  } catch {
+    // Storage may be unavailable; the note then only stays away for this visit.
+  }
+}
+
 const toTarget = (p: ReadingPosition): PositionTarget => ({
   anchor: p.anchor?.quote ? p.anchor : undefined,
   section: p.section_id || undefined,
@@ -141,6 +163,9 @@ function BookReader({
   // resolves fuzzily in the new version, once its frame is ready.
   const versionRestore = useRef<PositionTarget | null>(null);
   const lastView = useRef<ReaderViewport | null>(null);
+  // When this device first reported reading in this mount. Saves follow,
+  // so another device's older place is no longer newer than ours.
+  const firstRead = useRef<number | undefined>(undefined);
   const here = useCallback(
     (): Back => ({
       href,
@@ -191,6 +216,7 @@ function BookReader({
       saveViewport(v);
       lastView.current = v;
       setReadingDoc(docId);
+      firstRead.current ??= Date.now();
       setSection(v.section);
       // A chapter that fits on screen is visible to its end.
       setAtEnd(!!v.fits || v.progression >= END_PROGRESSION);
@@ -270,7 +296,17 @@ function BookReader({
     const device = deviceIdStore.read();
     const mine = s?.positions.find((p) => p.device_id === device);
     const other = s ? latestPosition(s, device) : undefined;
-    if (other && shouldOfferOtherDevice(mine, other)) setOffer(other);
+    const readOn =
+      firstRead.current !== undefined &&
+      (Date.parse(other?.client_ts ?? "") || 0) < firstRead.current;
+    if (
+      other &&
+      shouldOfferOtherDevice(mine, other) &&
+      !readOn &&
+      !handledOffers().includes(offerKey(bookId, other))
+    ) {
+      setOffer(other);
+    }
     // An explicit link wins over the saved place.
     if (location.hash) {
       restoreDone();
@@ -362,9 +398,13 @@ function BookReader({
     meta: { suppressGlobalError: true },
   });
 
+  const dismissOffer = () => {
+    if (offer) handleOffer(offerKey(bookId, offer));
+    setOffer(null);
+  };
   const goOffer = () => {
     if (!offer) return;
-    setOffer(null);
+    dismissOffer();
     if (offer.document_id === docId) {
       setBack(here());
       restoreSaved(toTarget(offer));
@@ -434,7 +474,7 @@ function BookReader({
               restoreRef={restoreRef}
               offer={offer && <OfferNote offer={offer} manifest={manifest} />}
               onGoOffer={goOffer}
-              onDismissOffer={() => setOffer(null)}
+              onDismissOffer={dismissOffer}
               back={!!back}
               onBack={goBack}
               onDismissBack={() => setBack(null)}

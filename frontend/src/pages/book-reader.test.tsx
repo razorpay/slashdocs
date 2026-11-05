@@ -127,6 +127,7 @@ beforeEach(() => {
   h.restore = vi.fn();
   h.streamArgs = [];
   localStorage.clear();
+  sessionStorage.clear();
 });
 afterEach(() => {
   cleanup();
@@ -284,6 +285,56 @@ describe("BookReader", () => {
     );
     const note = await screen.findByRole("group", { name: "Other device" });
     await user.click(within(note).getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByRole("group", { name: "Other device" })).toBeNull();
+  });
+
+  it("remembers a dismissed other-device note across chapters", async () => {
+    const user = userEvent.setup();
+    renderReader(
+      "/app/b/b1/c/doc_2",
+      bookState(
+        {},
+        {
+          positions: [
+            position({
+              device_id: "phone",
+              document_id: "doc_3",
+              client_ts: "2026-11-02T10:00:00Z",
+            }),
+          ],
+        },
+      ),
+    );
+    const note = await screen.findByRole("group", { name: "Other device" });
+    await user.click(within(note).getByRole("button", { name: "Dismiss" }));
+    await user.keyboard("{ArrowRight}");
+    expect(where()).toBe("/app/b/b1/c/doc_3");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole("group", { name: "Other device" })).toBeNull();
+  });
+
+  it("stops offering an older place once this device has read on", async () => {
+    const user = userEvent.setup();
+    renderReader(
+      "/app/b/b1/c/doc_2",
+      bookState(
+        {},
+        {
+          positions: [
+            position({
+              device_id: "phone",
+              document_id: "doc_1",
+              client_ts: "2026-11-02T10:00:00Z",
+            }),
+          ],
+        },
+      ),
+    );
+    await screen.findByRole("group", { name: "Other device" });
+    act(() => reader().onViewport!({ section: "setup", progression: 0.3 }));
+    await user.keyboard("{ArrowRight}");
+    expect(where()).toBe("/app/b/b1/c/doc_3");
+    await new Promise((r) => setTimeout(r, 20));
     expect(screen.queryByRole("group", { name: "Other device" })).toBeNull();
   });
 
