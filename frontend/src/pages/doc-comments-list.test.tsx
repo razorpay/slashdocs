@@ -1,11 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, expect, it, vi } from "vitest";
-import type { Comment, Principal } from "@/api";
+import { api, type Comment, type Principal } from "@/api";
 import type { CommentDraft } from "@/lib/comment-drafts";
-import { CommentThread, CommentsList } from "./doc-comments";
+import { CommentComposer, CommentThread, CommentsList } from "./doc-comments";
 import { DocProvider, type DocContextValue } from "./doc-context";
 
 const author: Principal & { type: "user" } = {
@@ -253,4 +253,57 @@ it("offers to move a moved pin to its author, in its thread", async () => {
   expect(screen.getByText("Moved: its element is gone")).toBeVisible();
   await userEvent.click(screen.getByRole("button", { name: "Move pin" }));
   expect(setPlacingPin).toHaveBeenCalledWith("moved");
+});
+
+function renderComposer() {
+  const ctx = {
+    docId: "doc-1",
+    principal: reader,
+    unanchoredComments: new Set<string>(),
+    saveDraft: vi.fn(),
+    discardDraft: vi.fn(),
+    setActiveComment: vi.fn(),
+  } as unknown as DocContextValue;
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <DocProvider value={ctx}>
+        <CommentComposer draft={draft("draft:1", "")} />
+      </DocProvider>
+    </QueryClientProvider>,
+  );
+  return { ctx, box: screen.getByPlaceholderText("Add a comment…") };
+}
+
+it("keeps the words typed while a comment posts, as a reply to the new thread", async () => {
+  localStorage.clear();
+  let settle!: (c: Comment) => void;
+  const post = vi
+    .spyOn(api, "createComment")
+    .mockReturnValue(new Promise((resolve) => (settle = resolve)));
+  const { ctx, box } = renderComposer();
+  await userEvent.type(box, "Fix this{Enter} KEEP THE LATER WORDS");
+  expect(post).toHaveBeenCalledWith(
+    "doc-1",
+    "v1",
+    "Fix this",
+    "drafted text",
+    undefined,
+    [],
+  );
+  await act(async () => settle(thread("cmt_new", "open")));
+  expect(ctx.discardDraft).toHaveBeenCalledWith("draft:1");
+  expect(ctx.setActiveComment).toHaveBeenCalledWith("cmt_new");
+  expect(
+    JSON.parse(localStorage.getItem("slashdocs.reply-drafts")!)["doc-1"].cmt_new,
+  ).toMatchObject({ body: "KEEP THE LATER WORDS" });
+});
+
+it("keeps the comment in its draft when it does not post", async () => {
+  vi.spyOn(api, "createComment").mockRejectedValue(new Error("503"));
+  const { ctx, box } = renderComposer();
+  await userEvent.type(box, "Fix this{Enter}");
+  await vi.waitFor(() => expect(api.createComment).toHaveBeenCalled());
+  await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  expect(box).toHaveValue("Fix this");
+  expect(ctx.discardDraft).not.toHaveBeenCalled();
 });
