@@ -233,3 +233,22 @@ func TestAutoModeWithoutListenerURLFallsBackToPolling(t *testing.T) {
 	}
 	unsubscribe()
 }
+
+// With book mode off, no chapter section backfill runs at startup.
+func TestBackfillsRunSectionIndexingOnlyWithBooks(t *testing.T) {
+	names := func(booksEnabled bool) []string {
+		var out []string
+		for _, group := range backfills(nil, booksEnabled) {
+			for _, b := range group {
+				out = append(out, b.items)
+			}
+		}
+		return out
+	}
+	if got := strings.Join(names(false), ","); got != "versions,documents" {
+		t.Fatalf("backfills with books off = %s, want versions,documents", got)
+	}
+	if got := strings.Join(names(true), ","); got != "versions,documents,version sections" {
+		t.Fatalf("backfills with books on = %s", got)
+	}
+}

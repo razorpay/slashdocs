@@ -179,7 +179,13 @@ chapters, nested `toc` for parts and sections), with slashdocs fields under
 Chapters the reader cannot open are left out of the manifest entirely: no
 title, id or position. Numbering stays the same for every reader, so a reader
 without access to Chapter 41 sees Chapter 40 followed by Chapter 42.
-Placeholders are visible to every reader of the book.
+Placeholders are visible to every reader of the book. The chapter count and
+the part numbers cover only what the reader can see.
+
+The book's title and subtitle are shown to every reader, including someone
+who can open only one chapter. A new book takes its folder's title, so an
+editor whose folder name is private should change the book title. The folder
+id is sent only to readers who can view the folder.
 
 ## Reading experience
 

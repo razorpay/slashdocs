@@ -111,20 +111,46 @@ func run() error {
 		slog.String("requested_mode", string(kvEvents.RequestedMode())),
 		slog.String("active_mode", string(kvEvents.ActiveMode())))
 
-	srv, err := newApplicationServer(ctx, store, blobs, kvEvents)
+	booksEnabled, err := boolEnv("SLASHDOCS_BOOKS_ENABLED", false)
+	if err != nil {
+		return err
+	}
+	// Chapter sections serve only book mode; with it off, no publish, move
+	// or backfill indexes them.
+	store.SetSectionIndexingEnabled(booksEnabled)
+	srv, err := newApplicationServer(ctx, store, blobs, kvEvents, booksEnabled)
 	if err != nil {
 		return err
 	}
 	workerCtx, cancelWorkers := context.WithCancel(ctx)
 	var workers sync.WaitGroup
 	workers.Go(func() { srv.RunCommentNotifications(workerCtx) })
-	workers.Go(func() {
-		indexSearch(workerCtx, "versions", store.IndexVersions)
-		indexSearch(workerCtx, "documents", store.IndexDocuments)
-	})
-	workers.Go(func() { indexSearch(workerCtx, "version sections", store.IndexVersionSections) })
+	for _, group := range backfills(store, booksEnabled) {
+		workers.Go(func() {
+			for _, b := range group {
+				indexSearch(workerCtx, b.items, b.index)
+			}
+		})
+	}
 	defer func() { cancelWorkers(); workers.Wait() }()
 	return serve(ctx, srv.Handler(), ":"+envOrDefault("SLASHDOCS_PORT", "8080"), ":"+envOrDefault("SLASHDOCS_METRICS_PORT", "9090"))
+}
+
+// backfill is a startup job that gives index data to rows created before
+// the index existed.
+type backfill struct {
+	items string
+	index func(context.Context) (int, error)
+}
+
+// backfills lists the startup jobs. Each group runs in order on its own
+// goroutine. The chapter section backfill runs only with book mode on.
+func backfills(store *pgrepo.Store, booksEnabled bool) [][]backfill {
+	out := [][]backfill{{{"versions", store.IndexVersions}, {"documents", store.IndexDocuments}}}
+	if booksEnabled {
+		out = append(out, []backfill{{"version sections", store.IndexVersionSections}})
+	}
+	return out
 }
 
 // indexSearch gives search data to the versions or documents that were
@@ -272,7 +298,7 @@ func loadOIDC(ctx context.Context, appOrigin string) (auth.OIDC, string, error) 
 	return provider, settings.ProviderName, err
 }
 
-func newApplicationServer(ctx context.Context, store *pgrepo.Store, blobs blob.Store, kvEvents kvevents.Subscriber) (*server.Server, error) {
+func newApplicationServer(ctx context.Context, store *pgrepo.Store, blobs blob.Store, kvEvents kvevents.Subscriber, booksEnabled bool) (*server.Server, error) {
 	origins, err := loadOriginSettings()
 	if err != nil {
 		return nil, err
@@ -331,6 +357,7 @@ func newApplicationServer(ctx context.Context, store *pgrepo.Store, blobs blob.S
 		GoogleGroupsEnabled:       googleGroups.enabled,
 		GoogleGroupsMembershipTTL: googleGroups.membershipTTL,
 		DisableLabels:             !labelsEnabled,
+		BooksEnabled:              booksEnabled,
 	}, options...), nil
 }
 

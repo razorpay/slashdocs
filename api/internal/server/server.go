@@ -50,6 +50,9 @@ type Config struct {
 	// programmatic users of server.New retain the existing feature set unless
 	// the application entrypoint explicitly disables labels.
 	DisableLabels bool
+	// BooksEnabled turns on book mode (/v1/books and folder books). It
+	// defaults to false.
+	BooksEnabled bool
 }
 
 // Server wraps the gin engine.
@@ -87,6 +90,7 @@ type dependencies struct {
 	googleGroupDirectory      googlegroups.GoogleGroupDirectory
 	googleGroupResolver       *googlegroups.Resolver
 	labelsEnabled             bool
+	booksEnabled              bool
 }
 
 // Option configures the Server.
@@ -161,6 +165,7 @@ func New(cfg Config, opts ...Option) *Server {
 		githubAccessChecks:   new(singleflight.Group),
 		googleGroupsEnabled:  cfg.GoogleGroupsEnabled,
 		labelsEnabled:        !cfg.DisableLabels,
+		booksEnabled:         cfg.BooksEnabled,
 	}
 	if cfg.GitHubClientID != "" && cfg.GitHubClientSecret != "" && cfg.AppOrigin != "" {
 		deps.githubOAuth = &oauth2.Config{
@@ -286,6 +291,14 @@ func (s *Server) routes(deps dependencies) {
 	// other activity. A moving cursor reports about 12 times a second.
 	presenceLimit := activityRateLimit(60)
 	cursorLimit := activityRateLimit(1200)
+	// Readers report their position while scrolling (debounced) and on
+	// every page hide.
+	readingLimit := activityRateLimit(120)
+	// Book views scan the outline and check each chapter's role, even for a
+	// caller who then gets 404; readers refetch them on focus.
+	bookReadLimit := activityRateLimit(120)
+	// Opening, finishing and dismissing updates happen once per chapter.
+	bookStateLimit := activityRateLimit(60)
 	authed.GET("/me", h.me)
 	authed.GET("/users", h.searchUsers)
 	authed.GET("/google-groups", h.searchGoogleGroups)
@@ -341,6 +354,24 @@ func (s *Server) routes(deps dependencies) {
 	authed.GET("/folders/:id/documents", h.listFolderDocs)
 	authed.POST("/folders/:id/documents", h.moveDocToFolder)
 	authed.DELETE("/folders/:id/documents/:doc_id", h.moveDocToRoot)
+	authed.POST("/folders/:id/book", h.createBook)
+	authed.GET("/folders/:id/book", h.folderBook)
+	authed.GET("/books/:id", bookReadLimit, h.getManifest)
+	authed.GET("/books/:id/llms.txt", bookReadLimit, h.getBookLLMs)
+	authed.DELETE("/books/:id", h.deleteBook)
+	authed.GET("/books/:id/outline", h.getOutline)
+	authed.PUT("/books/:id/outline", h.putOutline)
+	authed.GET("/books/:id/outline/versions", h.listOutlineVersions)
+	authed.GET("/books/:id/status", h.bookStatus)
+	authed.GET("/books/:id/state", bookReadLimit, h.getReadingState)
+	authed.PUT("/books/:id/position", readingLimit, h.putReadingPosition)
+	authed.POST("/books/:id/seen", bookStateLimit, h.markBookSeen)
+	authed.GET("/books/:id/search", bookReadLimit, h.searchBook)
+	authed.POST("/books/:id/chapters/:doc_id/open", bookStateLimit, h.openChapter)
+	authed.POST("/books/:id/chapters/:doc_id/progress", readingLimit, h.chapterProgress)
+	authed.PUT("/books/:id/chapters/:doc_id/done", bookStateLimit, h.setChapterDone)
+	authed.POST("/books/:id/chapters/:doc_id/seen", bookStateLimit, h.markChapterSeen)
+	authed.GET("/books/:id/chapters/:doc_id/changes", bookReadLimit, h.chapterChanges)
 	authed.GET("/pins", h.listPins)
 	authed.PUT("/pins/:resource_type/:resource_id", h.putPin)
 	authed.DELETE("/pins/:resource_type/:resource_id", h.deletePin)

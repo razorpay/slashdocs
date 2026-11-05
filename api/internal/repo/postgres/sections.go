@@ -65,11 +65,20 @@ func insertSections(ctx context.Context, q *dbsqlc.Queries, versionID string, ht
 	return nil
 }
 
+// SetSectionIndexingEnabled turns chapter section indexing on or off: on
+// publish, after a placeholder fill or CreateBook, and in the backfill. A
+// server with book mode off turns it off; EnsureVersionSections, which only
+// the book API calls, still indexes on demand.
+func (s *Store) SetSectionIndexingEnabled(enabled bool) { s.sectionIndexingOff = !enabled }
+
 // indexPublishedSections indexes a new version's sections when its document
 // is in a book folder (A12); other versions are indexed on demand. It runs in
 // a savepoint, so that a failed insert leaves the version unindexed (for
 // EnsureVersionSections and the backfill) and never fails the publish.
 func (s *Store) indexPublishedSections(ctx context.Context, tx pgx.Tx, documentID, versionID string, html []byte) error {
+	if s.sectionIndexingOff {
+		return nil
+	}
 	inBook, err := s.q.WithTx(tx).DocumentInBook(ctx, documentID)
 	if err != nil {
 		return fmt.Errorf("find book of document %s: %w", documentID, err)
@@ -126,6 +135,9 @@ func (s *Store) indexAfterCommitLimit() int { return indexLimitFor(s.db.Config()
 // stays unindexed for EnsureVersionSections and the backfill; one deleted
 // meanwhile is skipped.
 func (s *Store) indexAfterCommit(ctx context.Context, versionIDs ...string) {
+	if s.sectionIndexingOff {
+		return
+	}
 	var g errgroup.Group
 	g.SetLimit(s.indexAfterCommitLimit())
 	for _, id := range versionIDs {
@@ -205,6 +217,17 @@ func (s *Store) ListVersionSections(ctx context.Context, versionID string) ([]re
 	return out, nil
 }
 
+func (s *Store) UnindexedVersions(ctx context.Context, versionIDs []string) ([]string, error) {
+	ids, err := s.q.UnindexedVersions(ctx, versionIDs)
+	if err != nil {
+		return nil, err
+	}
+	if ids == nil {
+		ids = []string{}
+	}
+	return ids, nil
+}
+
 func (s *Store) VersionWords(ctx context.Context, versionIDs []string) (map[string]int, error) {
 	rows, err := s.q.VersionWords(ctx, versionIDs)
 	if err != nil {
@@ -235,6 +258,9 @@ func (s *Store) ListVersionsAfter(ctx context.Context, documentID, afterVersionI
 // same time. A version whose blob cannot be read is skipped until the next
 // run. It returns the number of versions that it indexed.
 func (s *Store) IndexVersionSections(ctx context.Context) (indexed int, err error) {
+	if s.sectionIndexingOff {
+		return 0, nil
+	}
 	var skipped []string
 	for {
 		n, failed, err := s.indexSectionBatch(ctx, skipped)

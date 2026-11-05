@@ -145,6 +145,7 @@ matches AS (
         AND (search_folder.id = ANY(@folders::text[]) OR lower(search_folder.title) = ANY(@folders::text[]))
     )
   )
+  AND (COALESCE(cardinality(@document_ids::text[]), 0) = 0 OR d.id = ANY(@document_ids::text[]))
   AND NOT EXISTS (
     SELECT 1 FROM unnest(@labels::text[]) AS requested_label
     WHERE NOT EXISTS (

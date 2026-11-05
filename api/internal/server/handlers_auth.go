@@ -52,6 +52,7 @@ type configResponse struct {
 	DefaultDocPermission string `json:"default_doc_permission"`
 	GoogleGroupsEnabled  bool   `json:"google_groups_enabled"`
 	LabelsEnabled        bool   `json:"labels_enabled"`
+	BooksEnabled         bool   `json:"books_enabled"`
 }
 
 // meResponse is the payload of GET /v1/me. Exactly one of User and
@@ -483,6 +484,7 @@ func (h handlers) config(c *gin.Context) {
 		DefaultDocPermission: defaultDocPermissionLabel(h.deps.defaultDocPermission),
 		GoogleGroupsEnabled:  h.deps.googleGroupsEnabled,
 		LabelsEnabled:        h.deps.labelsEnabled,
+		BooksEnabled:         h.deps.booksEnabled,
 	})
 }
 

@@ -9,8 +9,8 @@ import (
 )
 
 // A bounded per-principal budget of requests per minute for notification
-// settings, link discovery, and live viewer reports. This protects expensive
-// HTML reads independently of Slack delivery limits.
+// settings, link discovery, live viewer reports, and book reading. This
+// protects expensive HTML reads independently of Slack delivery limits.
 func activityRateLimit(perMinute int) gin.HandlerFunc {
 	type window struct {
 		start time.Time

@@ -277,12 +277,13 @@ func (q *Queries) ListOutlineVersions(ctx context.Context, bookID string) ([]Lis
 
 const listReadingPositions = `-- name: ListReadingPositions :many
 SELECT device_id,document_id,version_id,section_id,anchor,progression,client_ts,updated_at
-FROM reading_positions WHERE user_id = $1 AND book_id = $2 ORDER BY client_ts DESC
+FROM reading_positions WHERE user_id = $1 AND book_id = $2 ORDER BY client_ts DESC, device_id LIMIT $3
 `
 
 type ListReadingPositionsParams struct {
-	UserID string
-	BookID string
+	UserID   string
+	BookID   string
+	RowLimit int32
 }
 
 type ListReadingPositionsRow struct {
@@ -297,7 +298,7 @@ type ListReadingPositionsRow struct {
 }
 
 func (q *Queries) ListReadingPositions(ctx context.Context, arg ListReadingPositionsParams) ([]ListReadingPositionsRow, error) {
-	rows, err := q.db.Query(ctx, listReadingPositions, arg.UserID, arg.BookID)
+	rows, err := q.db.Query(ctx, listReadingPositions, arg.UserID, arg.BookID, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -488,6 +489,24 @@ func (q *Queries) NextOutlineNumber(ctx context.Context, bookID string) (int32, 
 	return column_1, err
 }
 
+const pruneReadingPositions = `-- name: PruneReadingPositions :exec
+DELETE FROM reading_positions rp WHERE rp.user_id = $1 AND rp.book_id = $2
+  AND rp.device_id NOT IN (SELECT k.device_id FROM reading_positions k WHERE k.user_id = $1 AND k.book_id = $2
+    ORDER BY k.client_ts DESC, k.device_id LIMIT $3)
+`
+
+type PruneReadingPositionsParams struct {
+	UserID string
+	BookID string
+	Keep   int32
+}
+
+// Keeps only the reader's @keep newest devices in the book.
+func (q *Queries) PruneReadingPositions(ctx context.Context, arg PruneReadingPositionsParams) error {
+	_, err := q.db.Exec(ctx, pruneReadingPositions, arg.UserID, arg.BookID, arg.Keep)
+	return err
+}
+
 const setChapterDone = `-- name: SetChapterDone :exec
 UPDATE chapter_reads SET done_at=CASE WHEN $1::bool THEN now() ELSE NULL END WHERE user_id = $2 AND document_id = $3
 `
@@ -515,6 +534,31 @@ type SetCurrentOutlineParams struct {
 func (q *Queries) SetCurrentOutline(ctx context.Context, arg SetCurrentOutlineParams) error {
 	_, err := q.db.Exec(ctx, setCurrentOutline, arg.VersionID, arg.BookID)
 	return err
+}
+
+const unindexedVersions = `-- name: UnindexedVersions :many
+SELECT id FROM versions WHERE id = ANY($1::text[]) AND NOT sections_indexed
+`
+
+// Plain read, no lock: lists which of the versions still need indexing.
+func (q *Queries) UnindexedVersions(ctx context.Context, versionIds []string) ([]string, error) {
+	rows, err := q.db.Query(ctx, unindexedVersions, versionIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const updateChapterProgress = `-- name: UpdateChapterProgress :exec
