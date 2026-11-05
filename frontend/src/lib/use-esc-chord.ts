@@ -5,6 +5,7 @@ import {
   IDLE,
   isChordBlocked,
   reduceChord,
+  type ChordEffect,
   type ChordEvent,
   type ChordKey,
   type ChordState,
@@ -31,7 +32,7 @@ export function useEscChord({
   onEscapeRef.current = onEscape;
   const timerRef = React.useRef<number>(undefined);
 
-  const dispatch = React.useCallback((event: ChordEvent) => {
+  const dispatch = React.useCallback((event: ChordEvent): ChordEffect => {
     const { state: next, effect } = reduceChord(
       stateRef.current,
       event,
@@ -56,6 +57,7 @@ export function useEscChord({
     }
     if (effect?.type === "run") onRunRef.current(effect.key);
     if (effect?.type === "escape") onEscapeRef.current();
+    return effect;
   }, []);
 
   React.useEffect(() => {
@@ -68,11 +70,17 @@ export function useEscChord({
         dispatch({ type: "cancel" });
         return;
       }
-      dispatch({
+      const effect = dispatch({
         type: "keydown",
         key: event.key,
         modified: event.metaKey || event.ctrlKey || event.altKey,
       });
+      // The letter of a chord is the chord's alone: C opens the comments,
+      // and does not also place a pin.
+      if (effect?.type === "run") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => {
