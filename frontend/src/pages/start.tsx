@@ -16,7 +16,7 @@ import { Page } from "@/components/layout/page";
 import { beat } from "@/lib/enter";
 import { CodeBlock, Collapse } from "@/components/ui/misc";
 import { cn } from "@/lib/cn";
-import { Segmented } from "@/components/ui/segmented";
+import { Segmented, tabPanel } from "@/components/ui/segmented";
 import { McpConnect } from "@/components/mcp-connect";
 import {
   onboardingProgress,
@@ -106,80 +106,83 @@ export function StartPage() {
         value={state.path}
         onChange={setPath}
         options={PATHS}
+        panel="setup-steps"
         className="enter mb-4"
       />
 
-      <div
-        className="enter mb-4 flex items-center gap-3 text-xs text-[var(--color-fg-muted)]"
-        style={beat(3)}
-      >
-        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--color-surface-muted)] ring-1 ring-[var(--color-border)] dark:ring-transparent">
-          <div
-            className="h-full rounded-full bg-[image:var(--razorsense-border)] bg-[length:240%_100%] transition-[width] duration-500 ease-[var(--ease-slash)]"
-            style={{ width: `${(done / total) * 100}%` }}
-          />
+      <div {...tabPanel("setup-steps")}>
+        <div
+          className="enter mb-4 flex items-center gap-3 text-xs text-[var(--color-fg-muted)]"
+          style={beat(3)}
+        >
+          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--color-surface-muted)] ring-1 ring-[var(--color-border)] dark:ring-transparent">
+            <div
+              className="h-full rounded-full bg-[image:var(--razorsense-border)] bg-[length:240%_100%] transition-[width] duration-500 ease-[var(--ease-slash)]"
+              style={{ width: `${(done / total) * 100}%` }}
+            />
+          </div>
+          <span className="font-mono tabular-nums">
+            {done}/{total} complete
+          </span>
         </div>
-        <span className="font-mono tabular-nums">
-          {done}/{total} complete
-        </span>
-      </div>
 
-      <ol className="enter space-y-3" style={beat(4)}>
-        {state.path === "mcp" ? (
-          <Step
-            n={1}
-            title="Add slashdocs to your agent app"
-            stepKey="agent_configured"
-            {...step}
-          >
-            <McpConnect />
-          </Step>
-        ) : (
-          <>
+        <ol className="enter space-y-3" style={beat(4)}>
+          {state.path === "mcp" ? (
             <Step
               n={1}
-              title="Install the CLI and slashdocs skill"
-              stepKey="cli_installed"
+              title="Add slashdocs to your agent app"
+              stepKey="agent_configured"
               {...step}
             >
-              <p className="mb-3 text-sm text-[var(--color-fg-muted)]">
-                One-time, on the machine where your agent runs. This installs the
-                slashdocs CLI plus the bundled agent skill, so your agent knows when to
-                publish docs to slashdocs.
-              </p>
-              <CodeBlock>{`curl -fsSL ${publicURL()}/install.sh | sh`}</CodeBlock>
-              <p className="mt-3 text-xs text-[var(--color-fg-muted)]">
-                Works on macOS and Linux. The skill is fetched from this slashdocs
-                server and installed into the standard agent skills directory and
-                Claude's skills directory — no GitHub auth or npx step required.
-              </p>
+              <McpConnect />
             </Step>
+          ) : (
+            <>
+              <Step
+                n={1}
+                title="Install the CLI and slashdocs skill"
+                stepKey="cli_installed"
+                {...step}
+              >
+                <p className="mb-3 text-sm text-[var(--color-fg-muted)]">
+                  One-time, on the machine where your agent runs. This installs the
+                  slashdocs CLI plus the bundled agent skill, so your agent knows when
+                  to publish docs to slashdocs.
+                </p>
+                <CodeBlock>{`curl -fsSL ${publicURL()}/install.sh | sh`}</CodeBlock>
+                <p className="mt-3 text-xs text-[var(--color-fg-muted)]">
+                  Works on macOS and Linux. The skill is fetched from this slashdocs
+                  server and installed into the standard agent skills directory and
+                  Claude's skills directory — no GitHub auth or npx step required.
+                </p>
+              </Step>
 
-            <Step
-              n={2}
-              title="Sign in once from your terminal"
-              stepKey="cli_authed"
-              {...step}
-            >
-              <p className="mb-3 text-sm text-[var(--color-fg-muted)]">
-                One-time. After this, your agent can publish documents on your behalf —
-                no keys or tokens to copy around.
-              </p>
-              <CodeBlock>{loginCmd}</CodeBlock>
-            </Step>
-          </>
-        )}
+              <Step
+                n={2}
+                title="Sign in once from your terminal"
+                stepKey="cli_authed"
+                {...step}
+              >
+                <p className="mb-3 text-sm text-[var(--color-fg-muted)]">
+                  One-time. After this, your agent can publish documents on your behalf
+                  — no keys or tokens to copy around.
+                </p>
+                <CodeBlock>{loginCmd}</CodeBlock>
+              </Step>
+            </>
+          )}
 
-        <Step
-          n={requiredSteps[state.path].length + 1}
-          title="Try it end-to-end"
-          stepKey="first_doc_seen"
-          {...step}
-          optional
-        >
-          <TryItOut path={state.path} />
-        </Step>
-      </ol>
+          <Step
+            n={requiredSteps[state.path].length + 1}
+            title="Try it end-to-end"
+            stepKey="first_doc_seen"
+            {...step}
+            optional
+          >
+            <TryItOut path={state.path} />
+          </Step>
+        </ol>
+      </div>
     </Page>
   );
 }

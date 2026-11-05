@@ -3,6 +3,7 @@ import { Link, Navigate } from "react-router-dom";
 import { History, MessageSquareQuote, ShieldCheck, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CodeBlock } from "@/components/ui/misc";
+import { Segmented, tabPanel } from "@/components/ui/segmented";
 import {
   SELF_HOSTING_URL,
   SiteFooter,
@@ -317,28 +318,23 @@ function Start({ title, children }: { title: string; children: string }) {
 
 // Each way to connect an agent, with the commands for the selected one.
 function Connect() {
-  const [active, setActive] = useState(0);
-  const c = CONNECT[active];
+  const [active, setActive] = useState(CONNECT[0].title);
+  const c = CONNECT.find((t) => t.title === active) ?? CONNECT[0];
   return (
     <div className="min-w-0">
+      <Segmented
+        label="Ways to connect an agent"
+        value={active}
+        options={CONNECT.map((t) => ({ value: t.title, label: t.title }))}
+        onChange={setActive}
+        panel="connect-agent"
+        className="w-fit"
+      />
       <div
-        role="tablist"
-        aria-label="Ways to connect an agent"
-        className="flex w-fit gap-0.5 rounded-sm bg-[var(--color-surface-muted)] p-0.5 ring-1 ring-[var(--color-border)] dark:ring-transparent"
+        {...tabPanel("connect-agent")}
+        key={active}
+        className="mt-6 animate-[rise_300ms_ease-out]"
       >
-        {CONNECT.map((t, i) => (
-          <button
-            key={t.title}
-            role="tab"
-            aria-selected={i === active}
-            onClick={() => setActive(i)}
-            className="rounded-[6px] px-3 py-1.5 text-sm text-[var(--color-fg-muted)] transition-colors duration-200 aria-selected:bg-[var(--color-surface)] aria-selected:text-[var(--color-fg)] aria-selected:shadow-[var(--shadow-border)]"
-          >
-            {t.title}
-          </button>
-        ))}
-      </div>
-      <div role="tabpanel" key={active} className="mt-6 animate-[rise_300ms_ease-out]">
         <p className="text-[var(--color-fg-muted)]">{c.body}</p>
         <CodeBlock className="mt-4 bg-[var(--color-surface)]">{c.code}</CodeBlock>
       </div>
