@@ -4,6 +4,7 @@ import {
   clearCommentDrafts,
   keepPendingComment,
   takePendingComment,
+  unsentText,
   useCommentDrafts,
   useDraftText,
   useReplyDraft,
@@ -107,5 +108,46 @@ describe("useDraftText", () => {
     unmount();
     expect(save).toHaveBeenLastCalledWith({ body: "abc", mentions: [] });
     vi.useRealTimers();
+  });
+});
+
+describe("unsentText", () => {
+  const mention = (offset: number) => ({
+    principal: { type: "user" as const, id: "u2" },
+    offset,
+    length: 4,
+  });
+  const sent = { body: "Fix this", mentions: [] };
+
+  it("leaves nothing when the field still holds the sent text", () => {
+    expect(unsentText(sent, sent)).toEqual({ body: "", mentions: [] });
+  });
+
+  it("leaves the words typed after the sent text, with their mentions", () => {
+    const now = { body: "Fix this  @Bo, today", mentions: [mention(10)] };
+    expect(unsentText(now, sent)).toEqual({
+      body: "@Bo, today",
+      mentions: [mention(0)],
+    });
+  });
+
+  it("leaves all of the field when the sent words changed", () => {
+    const now = { body: "Fix that too", mentions: [] };
+    expect(unsentText(now, sent)).toBe(now);
+  });
+});
+
+describe("useDraftText edit", () => {
+  it("takes a function of the text now, and gives back the new text", () => {
+    const { result } = renderHook(() =>
+      useDraftText({ body: "a", mentions: [] }, vi.fn()),
+    );
+    let next;
+    act(() => {
+      result.current[1]({ body: "ab", mentions: [] });
+      next = result.current[1]((now) => ({ ...now, body: now.body + "c" }));
+    });
+    expect(next).toEqual({ body: "abc", mentions: [] });
+    expect(result.current[0].body).toBe("abc");
   });
 });

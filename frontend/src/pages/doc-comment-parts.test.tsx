@@ -156,3 +156,23 @@ it.each([
   // After the menu closes, so that the document frame keeps the focus.
   await vi.waitFor(() => expect(setPlacingPin).toHaveBeenCalledWith("cmt_pin"));
 });
+
+// held gives a promise for a mocked API call, and the function that settles it.
+function held<T>() {
+  let settle!: (value: T) => void;
+  const promise = new Promise<T>((resolve) => (settle = resolve));
+  return { promise, settle };
+}
+
+it("keeps the words typed while a reply posts, without the posted ones", async () => {
+  localStorage.clear();
+  const response = held<Comment>();
+  const post = vi.spyOn(api, "createCommentReply").mockReturnValue(response.promise);
+  const user = userEvent.setup();
+  renderReply();
+  const box = screen.getByPlaceholderText("Reply…");
+  await user.type(box, "Agreed{Enter} KEEP THE LATER WORDS");
+  expect(post).toHaveBeenCalledWith("doc-1", "cmt_1", "Agreed", []);
+  await act(async () => response.settle({} as Comment));
+  expect(box).toHaveValue("KEEP THE LATER WORDS");
+});

@@ -20,7 +20,13 @@ import { principalLabel, samePrincipal } from "@/lib/principals";
 import { queryKeys } from "@/lib/queryKeys";
 import { anchorLabel, canMovePin } from "@/lib/comment-pins";
 import { isAgentRequest } from "@/lib/agent-request";
-import { useDraftText, type CommentDraft } from "@/lib/comment-drafts";
+import {
+  saveReplyDraft,
+  unsentText,
+  useDraftText,
+  type CommentDraft,
+} from "@/lib/comment-drafts";
+import type { MentionDraft } from "@/lib/comment-mentions";
 import { COMMENT_FILTERS, COMMENT_STATUS, matchesCommentFilter } from "@/lib/constants";
 import { useSelf } from "@/lib/hooks";
 import { useDoc } from "./doc-context";
@@ -108,27 +114,36 @@ export function CommentComposer({ draft }: { draft: CommentDraft }) {
   );
 
   const create = useMutation({
-    mutationFn: () =>
+    mutationFn: (sent: MentionDraft) =>
       api.createComment(
         docId,
         draft.version,
-        text.body,
+        sent.body,
         draft.quote,
         draft.anchor,
-        text.mentions,
+        sent.mentions,
       ),
-    onSuccess: (created) => {
+    onSuccess: (created, sent) => {
+      // Words typed while it was sent wait as a reply to the new thread,
+      // which opens where the draft was.
+      const rest = edit((now) => unsentText(now, sent));
+      saveReplyDraft(docId, created.id, rest);
       discardDraft(draft.id);
-      // The new thread opens where the draft was.
       setActiveComment(created.id);
       q.invalidateQueries({ queryKey: queryKeys.comments(docId) });
     },
     // The text stays in the field, and the toast sends it again.
-    onError: (e) =>
+    onError: (e, sent) =>
       toast.error(errorMessage(e, "Could not add comment"), {
-        action: { label: "Retry", onClick: () => create.mutate() },
+        id: draft.id,
+        action: { label: "Retry", onClick: () => post(sent) },
       }),
   });
+  // A new send makes the Retry of an earlier one go, so it cannot post twice.
+  const post = (sent = text) => {
+    toast.dismiss(draft.id);
+    create.mutate(sent);
+  };
 
   // Only this button deletes what was typed. Esc and a click outside close
   // the popover and keep the draft, and an empty one goes as it closes.
@@ -163,7 +178,7 @@ export function CommentComposer({ draft }: { draft: CommentDraft }) {
         <ComposeField
           value={text}
           onChange={edit}
-          onSubmit={() => create.mutate()}
+          onSubmit={post}
           pending={create.isPending}
           placeholder="Add a comment…"
           sendLabel="Post comment"

@@ -46,7 +46,7 @@ import {
   AlertDialogFooter,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { useDraftText, useReplyDraft } from "@/lib/comment-drafts";
+import { unsentText, useDraftText, useReplyDraft } from "@/lib/comment-drafts";
 import { useSelf } from "@/lib/hooks";
 import { useDoc } from "./doc-context";
 import { CommentBody, MentionTextarea } from "./doc-comment-text";
@@ -422,23 +422,24 @@ export function ReplyRow({
   // reader goes away, until it is posted or deleted.
   const [saved, save] = useReplyDraft(docId, c.id);
   const [draft, edit] = useDraftText(saved ?? emptyMentionDraft(), save);
-  const sent = useRef<MentionDraft | null>(null);
   const reply = useMutation({
     mutationFn: (d: MentionDraft) =>
       api.createCommentReply(docId, c.id, d.body, d.mentions),
-    onSuccess: () => {
-      // Keep anything typed after sending.
-      if (draft === sent.current) edit(emptyMentionDraft());
+    onSuccess: (_, sent) => {
+      // Words typed while it was sent stay in the field.
+      edit((now) => unsentText(now, sent));
       q.invalidateQueries({ queryKey: queryKeys.comments(docId) });
     },
     // The text stays in the field, and the toast sends it again.
     onError: (e, d) =>
       toast.error(errorMessage(e, "Could not add reply"), {
+        id: c.id,
         action: { label: "Retry", onClick: () => send(d) },
       }),
   });
+  // A new send makes the Retry of an earlier one go, so it cannot post twice.
   const send = (d = draft) => {
-    sent.current = d;
+    toast.dismiss(c.id);
     reply.mutate(d);
   };
   if (signIn) return null;
