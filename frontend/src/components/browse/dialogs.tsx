@@ -25,46 +25,62 @@ export function NewFolderDialog({
   onOpenChange: (open: boolean) => void;
   parentFolderId?: string;
 }) {
-  const [title, setTitle] = useState("");
-  const qc = useQueryClient();
-  const create = useMutation({
-    mutationFn: () => api.createFolder(title, parentFolderId),
-    onSuccess: () => {
-      onOpenChange(false);
-      setTitle("");
-      qc.invalidateQueries({ queryKey: queryKeys.folders(parentFolderId) });
-    },
-    onError: (e) => toast.error(errorMessage(e, "Create failed")),
-  });
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{parentFolderId ? "New subfolder" : "New folder"}</DialogTitle>
         </DialogHeader>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (title.trim()) create.mutate();
-          }}
-        >
-          <Input
-            placeholder="Folder name"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            autoFocus
-          />
-          <DialogFooter className="mt-4">
-            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={!title.trim() || create.isPending}>
-              Create
-            </Button>
-          </DialogFooter>
-        </form>
+        <NewFolderForm
+          parentFolderId={parentFolderId}
+          onClose={() => onOpenChange(false)}
+        />
       </DialogContent>
     </Dialog>
+  );
+}
+
+// The form mounts each time the dialog opens. A folder made after Cancel
+// still shows in a toast, and does not close or clear a later form.
+function NewFolderForm({
+  parentFolderId,
+  onClose,
+}: {
+  parentFolderId?: string;
+  onClose: () => void;
+}) {
+  const [title, setTitle] = useState("");
+  const qc = useQueryClient();
+  const create = useMutation({
+    mutationFn: (sent: string) => api.createFolder(sent, parentFolderId),
+    onSuccess: (_, sent) => {
+      toast.success(`Created folder “${sent}”.`);
+      qc.invalidateQueries({ queryKey: queryKeys.folders(parentFolderId) });
+    },
+    onError: (e) => toast.error(errorMessage(e, "Create failed")),
+  });
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (title.trim()) create.mutate(title, { onSuccess: onClose });
+      }}
+    >
+      <Input
+        placeholder="Folder name"
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        autoFocus
+      />
+      <DialogFooter className="mt-4">
+        <Button type="button" variant="ghost" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button type="submit" disabled={!title.trim() || create.isPending}>
+          Create
+        </Button>
+      </DialogFooter>
+    </form>
   );
 }
 

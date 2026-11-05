@@ -14,7 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { HtmlFileInput, useStagedFile } from "@/components/ui/upload";
+import { HtmlFileInput } from "@/components/ui/upload";
 import { api } from "@/api";
 import { errorMessage } from "@/lib/errors";
 import { queryKeys } from "@/lib/queryKeys";
@@ -38,13 +38,32 @@ export function UploadBackupDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Upload an HTML file</DialogTitle>
+          <DialogDescription>
+            Agents normally publish via the CLI. Use this only as a manual fallback.
+          </DialogDescription>
+        </DialogHeader>
+        <UploadBackupForm onClose={() => onOpenChange(false)} />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// The form mounts each time the dialog opens. An upload that ends after
+// Cancel names its document in a toast, but does not open it.
+function UploadBackupForm({ onClose }: { onClose: () => void }) {
   const q = useQueryClient();
   const nav = useNavigate();
   const [title, setTitle] = useState("");
-  const { file, setFile, reset } = useStagedFile();
+  const [file, setFile] = useState<File | null>(null);
   const m = useMutation({
-    mutationFn: () => api.createDocument(title || file?.name || "Untitled", file!),
-    onSuccess: (r) => {
+    mutationFn: ({ title, file }: { title: string; file: File }) =>
+      api.createDocument(title, file),
+    onSuccess: (r, { title }) => {
       q.invalidateQueries({ queryKey: queryKeys.documents() });
       if (r.default_grant) {
         const verb =
@@ -54,16 +73,12 @@ export function UploadBackupDialog({
               ? "read and comment on"
               : "read";
         toast.info(
-          `Uploaded — shared by default: everyone on this server can ${verb} this document. Manage access from the document's share menu.`,
+          `Uploaded “${title}” — shared by default: everyone on this server can ${verb} this document. Manage access from the document's share menu.`,
           { duration: 8000 },
         );
       } else {
-        toast.success("Document uploaded.");
+        toast.success(`Uploaded “${title}”.`);
       }
-      onOpenChange(false);
-      setTitle("");
-      reset();
-      nav(`/app/d/${r.id}`);
     },
     onError: (e) => toast.error(errorMessage(e, "Upload failed")),
   });
@@ -74,40 +89,39 @@ export function UploadBackupDialog({
       void htmlTitle(next).then((found) => setTitle((typed) => typed || found));
   };
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Upload an HTML file</DialogTitle>
-          <DialogDescription>
-            Agents normally publish via the CLI. Use this only as a manual fallback.
-          </DialogDescription>
-        </DialogHeader>
-        <form
-          className="space-y-3"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (file) m.mutate();
-          }}
-        >
-          <Field label="Title">
-            <Input
-              placeholder={file?.name || "Untitled"}
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-            />
-          </Field>
-          <HtmlFileInput file={file} onFile={pick} />
-          <DialogFooter>
-            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={!file || m.isPending}>
-              {m.isPending ? "Uploading…" : "Upload"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <form
+      className="space-y-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (file)
+          m.mutate(
+            { title: title || file.name, file },
+            {
+              onSuccess: (r) => {
+                onClose();
+                nav(`/app/d/${r.id}`);
+              },
+            },
+          );
+      }}
+    >
+      <Field label="Title">
+        <Input
+          placeholder={file?.name || "Untitled"}
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+        />
+      </Field>
+      <HtmlFileInput file={file} onFile={pick} />
+      <DialogFooter>
+        <Button type="button" variant="ghost" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button type="submit" disabled={!file || m.isPending}>
+          {m.isPending ? "Uploading…" : "Upload"}
+        </Button>
+      </DialogFooter>
+    </form>
   );
 }
 
