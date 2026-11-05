@@ -29,3 +29,50 @@ it("keeps the letter of a chord from the keys of the page", () => {
   expect(page).toHaveBeenCalledTimes(2);
   window.removeEventListener("keydown", page);
 });
+
+it("arms only on an Esc that nothing else uses", () => {
+  // A handler before the chord may use the Esc.
+  let use = false;
+  const used = (event: KeyboardEvent) => use && event.preventDefault();
+  window.addEventListener("keydown", used, true);
+  const onRun = vi.fn();
+  let open = true;
+  const { result } = renderHook(() =>
+    useEscChord({
+      available: ["c"],
+      onRun,
+      onEscape: () => {},
+      takeEscape: () => (open ? !(open = false) : false),
+    }),
+  );
+  const pressIn = (el: Element, key: string) =>
+    el.dispatchEvent(
+      new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
+    );
+
+  // An open thread takes the first Esc, and C after it is the page's.
+  press("Escape");
+  expect(result.current.phase).toBe("idle");
+  expect(press("c").defaultPrevented).toBe(false);
+
+  // An Esc in a popover or a menu closes it.
+  const layer = document.createElement("div");
+  layer.setAttribute("role", "dialog");
+  layer.append(document.createElement("button"));
+  document.body.append(layer);
+  pressIn(layer.firstElementChild!, "Escape");
+  expect(result.current.phase).toBe("idle");
+  layer.remove();
+
+  // An Esc that a handler before the chord used arms nothing.
+  use = true;
+  press("Escape");
+  use = false;
+  expect(result.current.phase).toBe("idle");
+
+  // A free Esc arms it.
+  press("Escape");
+  expect(press("c").defaultPrevented).toBe(true);
+  expect(onRun).toHaveBeenCalledTimes(1);
+  window.removeEventListener("keydown", used, true);
+});

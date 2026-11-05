@@ -4,6 +4,7 @@ import {
   CHORD_WINDOW_MS,
   IDLE,
   isChordBlocked,
+  isInLayer,
   reduceChord,
   type ChordEffect,
   type ChordEvent,
@@ -15,11 +16,15 @@ export function useEscChord({
   available,
   onRun,
   onEscape,
+  takeEscape = () => false,
   enabled = true,
 }: {
   available: ReadonlyArray<ChordKey>;
   onRun: (key: ChordKey) => void;
   onEscape: () => void;
+  // Something on screen that an Esc closes, as an open thread, takes it at
+  // once and says so.
+  takeEscape?: () => boolean;
   enabled?: boolean;
 }): ChordState {
   const [state, setState] = React.useState<ChordState>(IDLE);
@@ -30,6 +35,8 @@ export function useEscChord({
   onRunRef.current = onRun;
   const onEscapeRef = React.useRef(onEscape);
   onEscapeRef.current = onEscape;
+  const takeEscapeRef = React.useRef(takeEscape);
+  takeEscapeRef.current = takeEscape;
   const timerRef = React.useRef<number>(undefined);
 
   const dispatch = React.useCallback((event: ChordEvent): ChordEffect => {
@@ -66,7 +73,14 @@ export function useEscChord({
       return;
     }
     const onKeyDown = (event: KeyboardEvent) => {
-      if (isChordBlocked(event.target)) {
+      // Only an Esc that nothing else uses arms the chord.
+      if (
+        isChordBlocked(event.target) ||
+        (event.key === "Escape" &&
+          (event.defaultPrevented ||
+            isInLayer(event.target) ||
+            takeEscapeRef.current()))
+      ) {
         dispatch({ type: "cancel" });
         return;
       }
