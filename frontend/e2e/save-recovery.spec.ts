@@ -203,7 +203,8 @@ test("the first save offers one Undo, in its message", async ({ page, slashdocs 
   const saved = nextSave(page);
   await typeOver(page, "#tail", "giving up.", "giving up. Oops");
   expect((await saved).status()).toBe(201);
-  await expect(page.getByText("Your edit is saved.")).toBeVisible();
+  // The message says what changed, in the words of the history.
+  await expect(page.getByText("Added “Oops”.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Undo", exact: true })).toHaveCount(1);
 
   const undone = nextSave(page);

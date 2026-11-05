@@ -1,7 +1,9 @@
 import { act, renderHook } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactNode } from "react";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api, APIError } from "@/api";
+import { api, APIError, type ApprovalsList, type Document } from "@/api";
 import { findLiterals, type Render } from "@/lib/script-literals";
 import * as sourceEdits from "@/lib/source-edits";
 import { readTextDraft, writeTextDraft } from "@/lib/text-drafts";
@@ -21,6 +23,7 @@ beforeEach(async () => {
   vi.mocked(sourceEdits.parseSource).mockClear();
   vi.useFakeTimers();
   vi.spyOn(api, "getVersionHTML").mockResolvedValue(SOURCE);
+  vi.spyOn(api, "getDocument").mockResolvedValue({ id: "doc_1" } as Document);
 });
 afterEach(() => {
   localStorage.clear();
@@ -37,11 +40,12 @@ const second = (text: string): Region => ({
   removed: [],
 });
 
-const saved = (id: string, rebased = false) => ({
+const saved = (id: string, rebased = false, change_summary?: string) => ({
   id,
   number: Number(id.slice(4)),
   base_version_id: "ver_1",
   rebased,
+  change_summary,
 });
 
 function setup() {
@@ -58,9 +62,15 @@ function setup() {
     probe: vi.fn<Render>(),
     replaceText: vi.fn(),
   };
+  const client = new QueryClient();
   const hook = renderHook(
     (props: { loaded: typeof loaded }) => useTextAutosave({ ...options, ...props }),
-    { initialProps: { loaded } },
+    {
+      initialProps: { loaded },
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      ),
+    },
   );
   const { result } = hook;
   const pause = async () => {
@@ -329,7 +339,7 @@ it("says nothing is saved when the edits went back to the loaded text", async ()
 it("offers Undo once, for eight seconds, after the first save of a visit", async () => {
   const success = vi.spyOn(toast, "success");
   vi.spyOn(api, "editSource")
-    .mockResolvedValueOnce(saved("ver_2"))
+    .mockResolvedValueOnce(saved("ver_2", false, "Changed “it.” to “it now.”"))
     .mockResolvedValueOnce(saved("ver_3"));
   const { type, undo } = setup();
 
@@ -338,12 +348,70 @@ it("offers Undo once, for eight seconds, after the first save of a visit", async
 
   expect(success).toHaveBeenCalledOnce();
   const [message, options] = success.mock.lastCall!;
-  expect(message).toBe("Your edit is saved.");
+  // The message says what changed, as the history does.
+  expect(message).toBe("Changed “it.” to “it now.”.");
   const { action, duration } = options as Actions & { duration: number };
   expect(duration).toBe(8000);
   expect(action.label).toBe("Undo");
   action.onClick({ preventDefault: vi.fn() });
   expect(undo).toHaveBeenCalledOnce();
+});
+
+describe("an approved document", () => {
+  const reviewer = { type: "user" as const, id: "usr_r", name: "Rev" };
+  // The approvals that count on each version.
+  const approvedOn = (approved: Record<string, boolean>) =>
+    vi.spyOn(api, "listApprovals").mockImplementation(
+      async (_doc, version) =>
+        ({
+          items: [
+            { approver: reviewer, decision: approved[version!] ? "approved" : null },
+          ],
+        }) as ApprovalsList,
+    );
+  beforeEach(() =>
+    vi
+      .mocked(api.getDocument)
+      .mockResolvedValue({ id: "doc_1", approval_status: "approved" } as Document),
+  );
+
+  it("says once, before the first key, that a change asks the approver again", async () => {
+    const info = vi.spyOn(toast, "info");
+    approvedOn({ ver_1: true });
+    const { result } = setup();
+    await act(() => vi.advanceTimersByTimeAsync(0));
+
+    await act(() => result.current.focused());
+    await act(() => result.current.focused());
+
+    expect(info).toHaveBeenCalledExactlyOnceWith(
+      "Your change asks Rev to approve again.",
+      expect.anything(),
+    );
+  });
+
+  it("says that a save resets the approval, and that the save after it restores it", async () => {
+    const success = vi.spyOn(toast, "success");
+    approvedOn({ ver_1: true, ver_3: true });
+    vi.spyOn(api, "editSource")
+      .mockResolvedValueOnce(saved("ver_2", false, "Changed “it.” to “it now.”"))
+      .mockResolvedValueOnce(saved("ver_3", false, "Changed “it now.” to “it.”"));
+    const { type, result } = setup();
+    await act(() => vi.advanceTimersByTimeAsync(0));
+
+    await type("Try it now.");
+    expect(success.mock.lastCall![0]).toBe(
+      "Changed “it.” to “it now.”. The approval of Rev is reset.",
+    );
+    await type("Try it.");
+    expect(success.mock.lastCall![0]).toBe(
+      "Changed “it now.” to “it.”. The approval of Rev is restored.",
+    );
+    // The restored approval is news again before the next key.
+    const info = vi.spyOn(toast, "info");
+    await act(() => result.current.focused());
+    expect(info).toHaveBeenCalledOnce();
+  });
 });
 
 describe("text that cannot save", () => {
@@ -439,7 +507,11 @@ describe("script text", () => {
 
   it("saves a change that shows, changes its other places in place, and undoes it", async () => {
     const success = vi.spyOn(toast, "success");
-    const edit = vi.spyOn(api, "editSource").mockResolvedValue(saved("ver_2"));
+    const edit = vi
+      .spyOn(api, "editSource")
+      .mockResolvedValue(
+        saved("ver_2", false, "Changed “Try it.” to “Run it.” in 2 places"),
+      );
     const { frame, probe, pause, reload, replaceText } = setup();
     probe.mockImplementation(render());
 
@@ -458,7 +530,7 @@ describe("script text", () => {
     expect(reload).not.toHaveBeenCalled();
     expect(replaceText).toHaveBeenLastCalledWith("Try it.", "Run it.");
     const [message, options] = success.mock.lastCall!;
-    expect(message).toBe("Changed “Try it.” to “Run it.” in 2 places");
+    expect(message).toBe("Changed “Try it.” to “Run it.” in 2 places.");
     const { action } = options as { action: { label: string; onClick: () => void } };
     expect(action.label).toBe("Undo");
 
