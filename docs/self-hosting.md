@@ -254,7 +254,7 @@ Bearer token instead of using browser OAuth.
 Book mode lets a folder of documents be read as a book, with an outline, chapter
 navigation, saved reading places and book search. It is off by default. Set
 `SLASHDOCS_BOOKS_ENABLED=true` (Helm: `features.books: true`) to turn it on.
-While it is off, every `/v1/books` route returns a "feature disabled" error, the
+While it is off, every `/v1/books` and `/v1/folders/{id}/book` route returns a "feature disabled" error, the
 MCP server does not offer the book tools, and the web app hides book entry
 points. `GET /v1/config` and the MCP
 `get_server_config` tool report the current state as `books_enabled`.

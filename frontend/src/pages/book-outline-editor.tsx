@@ -766,10 +766,14 @@ export function BookOutlineEditorPage() {
     queryKey: queryKeys.bookOutline(bookId),
     queryFn: () => booksApi.outline(bookId),
     enabled: !!bookId,
-    // The draft is local; refetching behind the editor's back would only
-    // risk replacing it.
+    // Every visit starts from the current outline: moving a document in,
+    // a CLI or MCP push and other editors all write new versions, and a
+    // draft built on a cached one would end in a conflict on Save. Once
+    // open, the draft is local; refetching behind the editor's back would
+    // only risk replacing it.
+    refetchOnMount: "always",
     refetchOnWindowFocus: false,
-    staleTime: Infinity,
+    refetchOnReconnect: false,
     ...bookRetry,
     // The page explains its own errors.
     meta: { suppressGlobalError: true },
@@ -788,7 +792,9 @@ export function BookOutlineEditorPage() {
     return m;
   }, [manifest.data]);
 
-  if (outline.isLoading || (manifest.isLoading && !outline.data)) {
+  // Wait for this visit's outline, never editing a cached one, and for the
+  // manifest's titles; a manifest error falls through to generic names.
+  if (outline.isLoading || !outline.isFetchedAfterMount || manifest.isLoading) {
     return (
       <Page lane="focus" backdrop={false}>
         <Skeleton className="mb-3 h-9 w-48" />

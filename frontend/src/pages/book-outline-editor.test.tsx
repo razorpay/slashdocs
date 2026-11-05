@@ -83,9 +83,8 @@ function HistoryState() {
 // Errors the app's global query handler would toast (main.tsx).
 let globalErrors = vi.fn<(e: unknown) => void>();
 
-function renderEditor(state?: unknown) {
-  globalErrors = vi.fn<(e: unknown) => void>();
-  const client = new QueryClient({
+function newClient() {
+  return new QueryClient({
     defaultOptions: { queries: { retry: false } },
     queryCache: new QueryCache({
       onError: (e, q) => {
@@ -93,6 +92,10 @@ function renderEditor(state?: unknown) {
       },
     }),
   });
+}
+
+function renderEditor(state?: unknown, client = newClient()) {
+  globalErrors = vi.fn<(e: unknown) => void>();
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[{ pathname: "/app/b/b1/outline", state }]}>
@@ -366,6 +369,53 @@ describe("BookOutlineEditorPage", () => {
     ).toBeTruthy();
     await waitFor(() => expect(booksApi.manifest).toHaveBeenCalled());
     expect(globalErrors).not.toHaveBeenCalled();
+  });
+
+  // Documents moved in, CLI or MCP pushes and other editors all write new
+  // outline versions; a returning editor must start from the current one,
+  // never from the cached one, or its first Save is a conflict.
+  it("loads the current outline every time the editor opens", async () => {
+    const load = mockLoad();
+    const client = newClient();
+    const first = renderEditor(undefined, client);
+    const pool = await screen.findByRole("region", { name: "Not in outline" });
+    expect(within(pool).queryByText("Moved in")).toBeNull();
+    first.unmount();
+    load.mockResolvedValue(
+      response({
+        version_id: "bov_2",
+        number: 2,
+        not_in_outline: [
+          { id: "doc_d", title: "Extra" },
+          { id: "doc_e", title: "Moved in" },
+        ],
+      }),
+    );
+    renderEditor(undefined, client);
+    // The cached version is never shown to edit.
+    expect(screen.queryByRole("region", { name: "Not in outline" })).toBeNull();
+    const fresh = await screen.findByRole("region", { name: "Not in outline" });
+    expect(within(fresh).getByText("Moved in")).toBeTruthy();
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  // The manifest names the placed documents; rows must not render first as
+  // "Untitled document" (and keep that name if removed meanwhile).
+  it("waits for the manifest before it shows the rows", async () => {
+    mockLoad();
+    let resolveManifest!: (m: ReturnType<typeof bookManifest>) => void;
+    const m = await booksApi.manifest("b1");
+    vi.mocked(booksApi.manifest).mockReturnValue(
+      new Promise((r) => (resolveManifest = r)),
+    );
+    renderEditor();
+    await waitFor(() => expect(booksApi.outline).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText("Untitled document")).toBeNull();
+    expect(screen.queryAllByRole("listitem")).toHaveLength(0);
+    resolveManifest(m);
+    expect(await screen.findByRole("listitem", { name: /Alpha/ })).toBeTruthy();
+    expect(screen.queryByText("Untitled document")).toBeNull();
   });
 
   it("names front matter documents", async () => {

@@ -317,10 +317,16 @@ test("does not mark a chapter that fits on screen read when it opens", async ({
       ends.push(request.url());
     }
   });
+  const saved = watchPositionSaves(page, short.id);
   await page.goto(chapterPath(book.book_id, short.id));
   await expect(chapterFrame(page, 1).locator("#only")).toBeVisible();
   // The frame has reported that the chapter fits: the end strip is offered.
   await expect(page.getByRole("region", { name: "End of chapter" })).toBeVisible();
+  // The strip shows on any report, even one the reading hook dropped before
+  // the restore. A saved position proves the hook took a report, so the
+  // window below really exercises the reached-end rule. Nothing scrolls, so
+  // there is nothing to do but wait for it.
+  await saved.wait(async () => {});
   // Nothing scrolls, so only time on screen (15 s, FITS_READ_MS) marks it
   // read. Opening it alone must not.
   await page.waitForTimeout(3_000);
