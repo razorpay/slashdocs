@@ -5,9 +5,10 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
-import { api } from "@/api";
+import { api, APIError } from "@/api";
 import {
   booksApi,
+  type BookState,
   type ChapterChanges,
   type Manifest,
   type ReadingPosition,
@@ -79,7 +80,7 @@ const NO_CHANGES: ChapterChanges = {
 
 function renderReader(
   url = "/app/b/b1/c/doc_2",
-  state = bookState(),
+  state: BookState | Error = bookState(),
   changes = NO_CHANGES,
   cached?: Manifest,
 ) {
@@ -90,7 +91,8 @@ function renderReader(
   if (!vi.isMockFunction(booksApi.manifest)) {
     vi.spyOn(booksApi, "manifest").mockResolvedValue(bookManifest());
   }
-  vi.spyOn(booksApi, "state").mockResolvedValue(state);
+  if (state instanceof Error) vi.spyOn(booksApi, "state").mockRejectedValue(state);
+  else vi.spyOn(booksApi, "state").mockResolvedValue(state);
   vi.spyOn(booksApi, "changes").mockResolvedValue(changes);
   vi.spyOn(booksApi, "headings").mockResolvedValue({
     items: [
@@ -348,6 +350,24 @@ describe("BookReader", () => {
     expect(where()).toBe("/app/b/b1/c/doc_3");
     await new Promise((r) => setTimeout(r, 20));
     expect(screen.queryByRole("group", { name: "Other device" })).toBeNull();
+  });
+
+  it("keeps saving the place when the reading state cannot be loaded", async () => {
+    const save = vi.spyOn(booksApi, "savePosition");
+    renderReader("/app/b/b1/c/doc_2", new APIError(500, "internal", "boom"));
+    const note = await screen.findByRole(
+      "group",
+      { name: "Reading state" },
+      { timeout: 4000 },
+    );
+    expect(note).toHaveTextContent(
+      "Your saved place can't be loaded right now. Where you read is still saved.",
+    );
+    act(() => reader().onViewport!({ section: "setup", progression: 0.4 }));
+    expect(save).toHaveBeenCalledWith(
+      "b1",
+      expect.objectContaining({ document_id: "doc_2", progression: 0.4 }),
+    );
   });
 
   it("shows a toast when the saved place cannot be found", async () => {

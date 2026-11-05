@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   booksApi,
+  readingWriteFailure,
   type BookState,
   type ChapterState,
   type ManifestLink,
@@ -26,13 +27,22 @@ export function rowState(l: ManifestLink, s: BookState | undefined): RowState {
   return (id && s?.chapters[id]?.state) || "not_started";
 }
 
+// An outage (5xx, including 503 group_membership_unavailable) or a network
+// error is tried twice more, 0.5 s and 1 s apart. A refusal or 429
+// rate_limited is not: a retry would only fail the same way.
+const MAX_RETRIES = 2;
+const retry = (count: number, err: unknown) =>
+  count < MAX_RETRIES && readingWriteFailure(err) === "retry";
+const retryDelay = (attempt: number) => 500 * 2 ** attempt;
+
 // The book's manifest and this reader's state. Both refetch when the window
 // regains focus, so another device's reading shows up (A18).
 export function useManifest(bookId: string) {
   return useQuery({
     queryKey: queryKeys.book(bookId),
     queryFn: () => booksApi.manifest(bookId),
-    retry: false,
+    retry,
+    retryDelay,
     refetchOnWindowFocus: true,
     meta: { suppressGlobalError: true },
   });
@@ -42,7 +52,8 @@ export function useBookState(bookId: string) {
   return useQuery({
     queryKey: queryKeys.bookState(bookId),
     queryFn: () => booksApi.state(bookId),
-    retry: false,
+    retry,
+    retryDelay,
     refetchOnWindowFocus: true,
     meta: { suppressGlobalError: true },
   });

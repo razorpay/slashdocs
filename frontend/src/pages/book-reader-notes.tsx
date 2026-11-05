@@ -98,6 +98,8 @@ export function ReaderOverlay({
   offer,
   onGoOffer,
   onDismissOffer,
+  stateFailed,
+  onDismissStateFailed,
   back,
   onBack,
   onDismissBack,
@@ -106,6 +108,9 @@ export function ReaderOverlay({
   offer: ReactNode;
   onGoOffer: () => void;
   onDismissOffer: () => void;
+  // GET /state failed: the place cannot be restored, but saving goes on.
+  stateFailed: boolean;
+  onDismissStateFailed: () => void;
   back: boolean;
   onBack: () => void;
   onDismissBack: () => void;
@@ -129,6 +134,13 @@ export function ReaderOverlay({
             <Button size="sm" variant="ghost" className="h-7 px-2" onClick={onGoOffer}>
               Go there
             </Button>
+          </Note>
+        ) : null}
+        {stateFailed ? (
+          <Note label="Reading state" onDismiss={onDismissStateFailed}>
+            <span className="min-w-0 py-1">
+              Your saved place can't be loaded right now. Where you read is still saved.
+            </span>
           </Note>
         ) : null}
         {back ? (

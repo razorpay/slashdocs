@@ -146,6 +146,30 @@ describe("BookHomePage", () => {
     expect(link.getAttribute("href")).toBe("/app/b/b1/outline");
   });
 
+  it("says so quietly when the reading state cannot be loaded", async () => {
+    vi.spyOn(booksApi, "manifest").mockResolvedValue(manifest([1, 2]));
+    const st = vi
+      .spyOn(booksApi, "state")
+      .mockRejectedValue(new APIError(500, "internal", "boom"));
+    renderHome();
+    expect(
+      await screen.findByText(
+        "Your reading progress can't be loaded right now.",
+        undefined,
+        { timeout: 4000 },
+      ),
+    ).toBeTruthy();
+    // The chapters are still listed.
+    expect(screen.getByText("Title 2")).toBeTruthy();
+    st.mockResolvedValue(state());
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByText("Your reading progress can't be loaded right now."),
+      ).toBeNull(),
+    );
+  });
+
   it("explains a disabled feature", async () => {
     vi.spyOn(booksApi, "manifest").mockRejectedValue(
       new APIError(404, "feature_disabled", "off"),

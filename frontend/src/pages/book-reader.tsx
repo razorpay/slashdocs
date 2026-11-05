@@ -205,7 +205,8 @@ function BookReader({
     bookId,
     documentId: docId,
     versionId: current,
-    enabled: state.isSuccess && !!current,
+    // Saving needs no state; only the restore waits for it.
+    enabled: !!current,
     onReachedEnd: invalidateBook,
   });
   const [section, setSection] = useState("");
@@ -272,6 +273,7 @@ function BookReader({
   // A chapter visit starts: open it, restore the saved place, and offer
   // another device's newer one.
   const [offer, setOffer] = useState<ReadingPosition | null>(null);
+  const [stateNoteClosed, setStateNoteClosed] = useState(false);
   const visited = useRef("");
   const opened = useRef("");
   useEffect(() => {
@@ -488,6 +490,11 @@ function BookReader({
                 onGoOffer={goOffer}
                 onDismissOffer={() => {
                   dismissOffer();
+                  refocus();
+                }}
+                stateFailed={state.isError && !state.data && !stateNoteClosed}
+                onDismissStateFailed={() => {
+                  setStateNoteClosed(true);
                   refocus();
                 }}
                 back={!!back}

@@ -307,6 +307,18 @@ export function BookHomePage() {
             {m.metadata.numberOfChapters} chapters in {m.toc.length}{" "}
             {m.toc.length === 1 ? "part" : "parts"}
           </p>
+          {!s && state.isError ? (
+            <p role="status" className="mt-3 text-xs text-[var(--color-fg-muted)]">
+              Your reading progress can't be loaded right now.{" "}
+              <button
+                type="button"
+                className="text-[var(--color-accent)] underline-offset-4 hover:underline"
+                onClick={() => void state.refetch()}
+              >
+                Retry
+              </button>
+            </p>
+          ) : null}
           {s ? (
             <div className="mt-3">
               <div
