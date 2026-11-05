@@ -56,17 +56,29 @@ function AccessDeniedState({ documentID }: { documentID: string }) {
     // The error shows under the button, not as a toast.
     onError: () => {},
   });
-  const check = useMutation({ mutationFn: async () => void (await recheck.refetch()) });
+  // Only a 403 says that access is still missing. Any other failure says
+  // nothing about access, so the reader can check again.
+  const check = useMutation({
+    mutationFn: async () => {
+      const { error } = await recheck.refetch();
+      if (error) throw error;
+    },
+    // The result shows in the description, not as a toast.
+    onError: () => {},
+  });
+  const denied = check.error instanceof APIError && check.error.status === 403;
   const sent = requestAccess.isSuccess || !!ownRequest.data?.items.length;
   return (
     <ErrorState
       title="You don't have access to this document"
       description={
-        check.isSuccess
+        denied
           ? "You still don't have access. This page opens the document when someone grants it."
-          : sent
-            ? "People who can share this document will see your request. This page opens the document when they grant access."
-            : "Send the owner a request to grant you access."
+          : check.isError
+            ? "Could not check access. Check your connection, then try again."
+            : sent
+              ? "People who can share this document will see your request. This page opens the document when they grant access."
+              : "Send the owner a request to grant you access."
       }
       icon={<KeyRound aria-hidden="true" className="h-5 w-5" />}
       action={
