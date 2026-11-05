@@ -4,11 +4,12 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { errorMessage } from "@/lib/errors";
-import { Bot, CloudOff, KeyRound, Plus, Power, Trash2 } from "lucide-react";
+import { Bot, KeyRound, Plus, Power, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { CodeBlock, EmptyState, RetryButton, Skeleton } from "@/components/ui/misc";
+import { CodeBlock, Skeleton } from "@/components/ui/misc";
+import { LoadError } from "@/components/error-state";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
@@ -75,12 +76,7 @@ export function ServiceAccountsPage() {
               <Skeleton className="h-12 w-full" />
             </>
           ) : sas.error ? (
-            <EmptyState
-              icon={<CloudOff className="h-5 w-5" />}
-              title="Could not load bots"
-              description="Check your connection, then try again."
-              action={<RetryButton query={sas} variant="outline" size="sm" />}
-            />
+            <LoadError title="Could not load bots" query={sas} />
           ) : items.length === 0 ? (
             <div className="rounded-md border border-dashed border-[var(--color-border)] p-6 text-center text-sm text-[var(--color-fg-muted)]">
               No bots yet. Create one to share docs with it.
@@ -231,9 +227,7 @@ function ServiceAccountDetail({ sa }: { sa: ServiceAccount }) {
                 <Skeleton className="h-10 w-full" />
               </>
             ) : keys.error ? (
-              <div className="rounded-md border border-dashed border-[var(--color-border)] p-4 text-center text-xs text-[var(--color-danger)]">
-                Could not load keys.
-              </div>
+              <LoadError title="Could not load keys" query={keys} />
             ) : keys.data?.items?.length ? (
               keys.data.items.map((k) => (
                 <div
