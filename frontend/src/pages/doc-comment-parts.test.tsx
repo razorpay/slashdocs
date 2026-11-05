@@ -8,6 +8,7 @@ import { emptyMentionDraft, type MentionDraft } from "@/lib/comment-mentions";
 import {
   AgentRequestBadge,
   ComposeField,
+  Message,
   MoreMenu,
   ReplyRow,
 } from "./doc-comment-parts";
@@ -175,4 +176,84 @@ it("keeps the words typed while a reply posts, without the posted ones", async (
   expect(post).toHaveBeenCalledWith("doc-1", "cmt_1", "Agreed", []);
   await act(async () => response.settle({} as Comment));
   expect(box).toHaveValue("KEEP THE LATER WORDS");
+});
+
+const mine: Comment = {
+  id: "cmt_mine",
+  body: "Original words",
+  status: "open",
+  author: { type: "user", id: "u1" },
+  created_on_version_id: "ver_1",
+  parent_comment_id: "cmt_1",
+};
+
+function renderMessage(c: Comment) {
+  const ctx = { principal: { type: "user", id: "u1" } } as DocContextValue;
+  const ui = (next: Comment) => (
+    <QueryClientProvider client={new QueryClient()}>
+      <DocProvider value={ctx}>
+        <Message c={next} docId="doc-1" thread={false} />
+      </DocProvider>
+    </QueryClientProvider>
+  );
+  const view = render(ui(c));
+  return (next: Comment) => view.rerender(ui(next));
+}
+
+async function startEdit(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: "Message actions" }));
+  await user.click(screen.getByRole("menuitem", { name: "Edit" }));
+  return screen.findByRole("combobox");
+}
+
+it("starts each edit from the text on screen, after a live change", async () => {
+  const user = userEvent.setup();
+  const update = renderMessage(mine);
+  update({ ...mine, body: "Remote words" });
+  expect(await startEdit(user)).toHaveValue("Remote words");
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  await user.keyboard("{Escape}");
+});
+
+it("takes a live change into an untouched edit, and tells of one under a changed edit", async () => {
+  const user = userEvent.setup();
+  const update = renderMessage(mine);
+  const box = await startEdit(user);
+  update({ ...mine, body: "Remote words" });
+  expect(box).toHaveValue("Remote words");
+  expect(screen.queryByRole("status")).toBeNull();
+
+  await user.type(box, " and mine");
+  update({ ...mine, body: "Second remote words" });
+  expect(box).toHaveValue("Remote words and mine");
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "This reply changed while you edited. It now says:Second remote words",
+  );
+  await user.click(screen.getByRole("button", { name: "Use the new text" }));
+  expect(box).toHaveValue("Second remote words");
+  expect(screen.queryByRole("status")).toBeNull();
+  await user.keyboard("{Escape}");
+});
+
+it("keeps an edit open with the words typed while it saved", async () => {
+  const user = userEvent.setup();
+  const response = held<Comment>();
+  const patch = vi.spyOn(api, "patchComment").mockReturnValue(response.promise);
+  const update = renderMessage(mine);
+  const box = await startEdit(user);
+  await user.type(box, " fixed{Enter} KEEP");
+  expect(patch).toHaveBeenCalledWith("doc-1", "cmt_mine", {
+    body: "Original words fixed",
+    mentions: [],
+  });
+  update({ ...mine, body: "Original words fixed" });
+  await act(async () => response.settle({} as Comment));
+  expect(screen.getByRole("combobox")).toHaveValue("Original words fixed KEEP");
+  expect(screen.queryByRole("status")).toBeNull();
+
+  patch.mockResolvedValue({} as Comment);
+  await user.keyboard("{Enter}");
+  update({ ...mine, body: "Original words fixed KEEP" });
+  await vi.waitFor(() => expect(screen.queryByRole("combobox")).toBeNull());
+  expect(screen.getByText("Original words fixed KEEP")).toBeVisible();
 });

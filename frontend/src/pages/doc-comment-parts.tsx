@@ -263,43 +263,61 @@ export function AgentRequestBadge({ c }: { c: Comment }) {
   );
 }
 
+const textOf = (c: Comment): MentionDraft => ({
+  body: c.body,
+  mentions: c.mentions || [],
+});
+
 // EditableBody is a message's text, or, while its author edits it, a field
-// with the text to change. Enter saves, Shift+Enter starts a new line, Esc
-// cancels.
+// with the text to change.
 function EditableBody({ c, docId }: { c: Comment; docId: string }) {
+  if (useEditing(c.id)) return <EditForm c={c} docId={docId} />;
+  return (
+    <>
+      <CommentBody text={c.body} mentions={c.mentions} />
+      {c.edited ? <div className={cn("text-[11px]", muted)}>edited</div> : null}
+    </>
+  );
+}
+
+// EditForm changes a message's text, from the text on screen when the edit
+// starts. Enter saves, Shift+Enter starts a new line, Esc cancels. If another
+// person changes the message during the edit, the field takes their text when
+// the reader changed nothing. Else it tells them, so that Save does not replace
+// the other change without notice.
+function EditForm({ c, docId }: { c: Comment; docId: string }) {
   const q = useQueryClient();
-  const isEditing = useEditing(c.id);
-  const [draft, setDraft] = useState<MentionDraft>({
-    body: c.body,
-    mentions: c.mentions || [],
-  });
+  // The text that the edit started from.
+  const [base, setBase] = useState(c.body);
+  const [draft, setDraft] = useState(() => textOf(c));
+  const latest = useRef(draft);
+  latest.current = draft;
   const save = useMutation({
-    mutationFn: () => api.patchComment(docId, c.id, draft),
-    onSuccess: async () => {
+    mutationFn: (sent: MentionDraft) => api.patchComment(docId, c.id, sent),
+    onSuccess: async (_, sent) => {
       await q.invalidateQueries({ queryKey: queryKeys.comments(docId) });
-      setEditing(c.id, false);
+      setBase(sent.body);
+      // Words typed while it saved keep the field open.
+      if (latest.current.body === sent.body) setEditing(c.id, false);
     },
     onError: (e) => toast.error(errorMessage(e, "Could not update comment")),
   });
-  if (!isEditing)
-    return (
-      <>
-        <CommentBody text={c.body} mentions={c.mentions} />
-        {c.edited ? <div className={cn("text-[11px]", muted)}>edited</div> : null}
-      </>
-    );
-  const ready = !!draft.body.trim() && !save.isPending;
-  const cancel = () => {
-    setDraft({ body: c.body, mentions: c.mentions || [] });
-    setEditing(c.id, false);
+  const takeLive = () => {
+    setBase(c.body);
+    setDraft(textOf(c));
   };
+  // The reader's own save changes the text too, so the check waits for it.
+  const changed = !save.isPending && c.body !== base;
+  if (changed && (draft.body === base || draft.body === c.body)) takeLive();
+  const ready = !!draft.body.trim() && draft.body !== c.body && !save.isPending;
+  const cancel = () => setEditing(c.id, false);
   return (
     <form
       className="min-w-0"
       onClick={(e) => e.stopPropagation()}
       onSubmit={(e) => {
         e.preventDefault();
-        if (ready) save.mutate();
+        if (ready) save.mutate(draft);
       }}
     >
       <MentionTextarea
@@ -315,9 +333,32 @@ function EditableBody({ c, docId }: { c: Comment; docId: string }) {
           }
           if (event.key !== "Enter" || event.shiftKey || event.altKey) return;
           event.preventDefault();
-          if (ready) save.mutate();
+          if (ready) save.mutate(draft);
         }}
       />
+      {changed ? (
+        <div
+          role="status"
+          className={cn(
+            "mt-2 rounded-md bg-[var(--color-surface-muted)] px-2 py-1.5 text-xs",
+            muted,
+          )}
+        >
+          {c.parent_comment_id ? "This reply" : "This comment"} changed while you
+          edited. It now says:
+          <div className="mt-1 text-[var(--color-fg)]">
+            <CommentBody text={c.body} mentions={c.mentions} preview />
+          </div>
+          <Button
+            type="button"
+            variant="link"
+            className="mt-1 h-auto p-0 text-xs"
+            onClick={takeLive}
+          >
+            Use the new text
+          </Button>
+        </div>
+      ) : null}
       <div className="mt-2 flex justify-end gap-2">
         <Button
           type="button"
