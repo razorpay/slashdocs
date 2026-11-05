@@ -28,6 +28,8 @@ type FetchOptions = {
   deployment?: "org" | "public";
   // The grant from the parent folder is gone, as after a remote revoke.
   inheritedGone?: boolean;
+  // Anyone may view, by a grant on the parent folder.
+  anyoneFromFolder?: boolean;
 };
 
 function installFetch(options: FetchOptions = {}) {
@@ -150,6 +152,23 @@ function installFetch(options: FetchOptions = {}) {
                     ],
                   },
                 ]),
+            ...(options.anyoneFromFolder
+              ? [
+                  {
+                    principal: { type: "anyone", id: "anyone" },
+                    effective_role: "viewer",
+                    sources: [
+                      {
+                        resource_type: "folder",
+                        resource_id: "fld_parent",
+                        resource_title: "Parent folder",
+                        role: "viewer",
+                        grant_id: "gr_anyone",
+                      },
+                    ],
+                  },
+                ]
+              : []),
             {
               principal: {
                 type: "user",
@@ -566,6 +585,36 @@ describe("the words of a share", () => {
       await screen.findByText("This access changed elsewhere. It is removed now."),
     ).toBeTruthy();
     expect(screen.getByRole("button", { name: "Remove from folder" })).toBeDisabled();
+  });
+
+  it("keeps a newer inherited confirmation when an older change ends", async () => {
+    installFetch({ anyoneFromFolder: true });
+    let release!: () => void;
+    vi.spyOn(api, "deleteFolderGrant").mockReturnValue(
+      new Promise((resolve) => (release = () => resolve(undefined as never))),
+    );
+    renderShare();
+    const user = userEvent.setup();
+    const row = (await screen.findByText("Inherited group")).closest(
+      "div.flex.justify-between",
+    );
+    await user.click(
+      within(row as HTMLElement).getByRole("button", { name: "Access role: Viewer" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Remove access" }));
+    await user.click(screen.getByRole("button", { name: "Remove from folder" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(
+      screen.getByRole("button", { name: "General access role: Viewer" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "No access" }));
+    expect(await screen.findByText("Remove access for Anyone in Acme?")).toBeTruthy();
+
+    release();
+    await waitFor(() => expect(api.deleteFolderGrant).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByText("Remove access for Anyone in Acme?")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Remove from folder" })).toBeEnabled();
   });
 
   it("keeps an unsent address through a close, and says that it came back", async () => {
