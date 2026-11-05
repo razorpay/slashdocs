@@ -2,7 +2,8 @@ import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { AccessRequestsMenu, AccountMenu, GetStarted, TopBar } from "./topbar";
 import { useMe } from "@/lib/hooks";
 import { useSignInPath } from "@/lib/auth-state";
-import { Center } from "@/components/ui/misc";
+import { Center, RetryButton } from "@/components/ui/misc";
+import { ErrorState } from "@/components/error-state";
 import { cn } from "@/lib/cn";
 
 // The app bar of every page but a document, which has its own bar. A
@@ -32,7 +33,14 @@ export function AppShell() {
   // to sign in when the server does not let them read it.
   if (me.unauth && !documentPage) return <Navigate to={signInPath} replace />;
   if (me.isLoading) return <Center>Loading workspace…</Center>;
-  if (!me.data && !me.unauth) return null;
+  if (!me.data && !me.unauth)
+    return (
+      <ErrorState
+        title="Could not load your workspace"
+        description="Check your connection, then try again."
+        action={<RetryButton query={me} />}
+      />
+    );
   const fullscreenDocument =
     documentPage && new URLSearchParams(loc.search).get("fullscreen") === "1";
   return (
