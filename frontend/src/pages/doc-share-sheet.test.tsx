@@ -79,8 +79,8 @@ function installFetch(options: FetchOptions = {}) {
       if (url === "/v1/documents/doc_1/access") {
         if (options.accessFails) {
           return jsonResponse(
-            { error: { code: "forbidden", message: "not allowed" } },
-            403,
+            { error: { code: "unavailable", message: "try again" } },
+            503,
           );
         }
         return jsonResponse({
@@ -184,14 +184,14 @@ function jsonResponse(payload: unknown, status = 200) {
   });
 }
 
-function renderShare() {
+function renderShare(canManageAccess = true) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
       <Sheet open>
-        <ShareSheet docId="doc_1" canManageAccess />
+        <ShareSheet docId="doc_1" canManageAccess={canManageAccess} />
       </Sheet>
     </QueryClientProvider>,
   );
@@ -266,7 +266,27 @@ describe("Google Group sharing", () => {
     expect(
       await screen.findByText(/No verified organization groups matched/i),
     ).toBeVisible();
-    expect(await screen.findByText("Could not load access list.")).toBeVisible();
+    expect(await screen.findByText(/Could not load who has access/)).toBeVisible();
+  });
+
+  it("says that access is unknown while the list fails, and loads it on Retry", async () => {
+    const user = userEvent.setup();
+    const options: FetchOptions = { accessFails: true };
+    installFetch(options);
+    renderShare(false);
+
+    expect(await screen.findByText(/Could not load who has access/)).toBeVisible();
+    expect(screen.getByText("Unknown")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /General access role/ })).toBeNull();
+    expect(screen.queryByText(/Sharing is read-only/)).toBeNull();
+
+    options.accessFails = false;
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(
+      await screen.findByRole("button", { name: "General access role: No access" }),
+    ).toBeDisabled();
+    expect(screen.getByText(/Sharing is read-only/)).toBeVisible();
+    expect(screen.queryByText("Unknown")).toBeNull();
   });
 
   it("distinguishes owner, direct, and inherited access", async () => {
