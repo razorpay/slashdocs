@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Center } from "@/components/ui/misc";
 import { SheetHandle } from "@/components/ui/sheet";
 import { useIsMobile } from "@/lib/use-media-query";
+import { keepToastsAbove } from "@/components/ui/toaster";
 import { useTheme } from "@/lib/theme";
 import { useEscChord } from "@/lib/use-esc-chord";
 import { cursorsShownStore } from "@/lib/live-cursors";
@@ -224,6 +225,10 @@ export function DocWorkspace({
     };
   }, [listOpen]);
   const pickComment = useCallback((id: string) => {
+  useEffect(
+    () => (listOpen ? keepToastsAbove(listRef.current) : undefined),
+    [listOpen],
+  );
     setListOpen(false);
     setActiveComment(id);
   }, []);
