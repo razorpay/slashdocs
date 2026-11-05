@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ApprovalListItem, ApprovalStatus, Principal } from "@/api";
-import { clearFieldDrafts } from "@/lib/field-drafts";
+import { clearFieldDrafts, readFieldDraft } from "@/lib/field-drafts";
 import { ApprovalsDialog } from "./doc-approvals";
 import { DocProvider, type DocContextValue } from "./doc-context";
 
@@ -730,6 +730,8 @@ describe("the reason of a rejection", () => {
     expect(within(dialog).getByRole("textbox", { name: "Reason" })).toHaveValue(REASON);
     const submit = within(dialog).getByRole("button", { name: "Reject" });
     expect(submit).toBeDisabled();
+    // The reason is kept for a reload too.
+    await waitFor(() => expect(readFieldDraft("reject:doc_1")?.body).toBe(REASON));
 
     await user.click(
       within(dialog).getByRole("button", { name: "Use it for version 3" }),
