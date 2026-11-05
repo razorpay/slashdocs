@@ -1,4 +1,4 @@
-import { type FrameLocator, type Page } from "@playwright/test";
+import { type FrameLocator, type Page, type Response } from "@playwright/test";
 import {
   APP_ORIGIN,
   AUTH_STATE_PATH,
@@ -63,24 +63,56 @@ function chapterPath(bookID: string, documentID: string) {
   return `/app/b/${bookID}/c/${documentID}`;
 }
 
-// Resolves when the reader saves a position for the chapter, optionally only
-// one that is past the start. Create it before the action that causes the save.
-function positionSaved(page: Page, documentID: string, pastStart = false) {
-  return page.waitForResponse((response) => {
-    const request = response.request();
-    if (request.method() !== "PUT" || !response.url().endsWith("/position")) {
-      return false;
-    }
-    const body = request.postDataJSON() as {
-      document_id: string;
-      progression: number;
-    };
-    return (
-      response.ok() &&
-      body.document_id === documentID &&
-      (!pastStart || body.progression > 0)
-    );
-  });
+function isPositionSave(response: Response, documentID: string, pastStart: boolean) {
+  const request = response.request();
+  if (request.method() !== "PUT" || !response.url().endsWith("/position")) {
+    return false;
+  }
+  const body = request.postDataJSON() as {
+    document_id: string;
+    progression: number;
+  };
+  return (
+    response.ok() &&
+    body.document_id === documentID &&
+    (!pastStart || body.progression > 0)
+  );
+}
+
+// Watches for the reader saving a position for the chapter, optionally only
+// one past the start. Create it before the action that causes the save.
+//
+// The reader drops viewport reports that arrive before it has restored the
+// saved place (use-reading-position.ts), and only another scroll reports
+// again. So wait() calls scrollAgain whenever a save does not come, rather
+// than waiting once and hanging until the test times out.
+function watchPositionSaves(page: Page, documentID: string, pastStart = false) {
+  let saved = false;
+  const onResponse = (response: Response) => {
+    if (isPositionSave(response, documentID, pastStart)) saved = true;
+  };
+  page.on("response", onResponse);
+  return {
+    async wait(scrollAgain: () => Promise<void>) {
+      let first = true;
+      try {
+        await expect(async () => {
+          if (!first && !saved) await scrollAgain();
+          first = false;
+          await expect.poll(() => saved, { timeout: 4_000 }).toBe(true);
+        }).toPass({ timeout: 25_000 });
+      } finally {
+        page.off("response", onResponse);
+      }
+    },
+  };
+}
+
+// Scrolls up to one section and back down to another, so the frame reports
+// its viewport again.
+async function scrollBetween(doc: FrameLocator, up: string, down: string) {
+  await doc.locator(`#${up}`).scrollIntoViewIfNeeded();
+  await doc.locator(`#${down}`).scrollIntoViewIfNeeded();
 }
 
 function scrollY(doc: FrameLocator) {
@@ -110,6 +142,9 @@ test("reads a book, sees a chapter update, and resumes on another device", async
   browser,
   slashdocs,
 }) => {
+  // Four document API calls, about eight page loads with nested frames, a
+  // second browser context and several throttled position saves.
+  test.slow();
   const { folder, alpha, beta, alphaTitle, betaTitle } = await seedBook(slashdocs);
 
   // Make the folder a book from its page.
@@ -127,9 +162,9 @@ test("reads a book, sees a chapter update, and resumes on another device", async
   // Chapter 1: scroll, and wait for the position to be saved.
   const doc1 = chapterFrame(page, 1);
   await expect(doc1.locator("#setup")).toBeVisible();
-  const savedAlpha = positionSaved(page, alpha.id, true);
+  const savedAlpha = watchPositionSaves(page, alpha.id, true);
   await doc1.locator("#limits").scrollIntoViewIfNeeded();
-  await savedAlpha;
+  await savedAlpha.wait(() => scrollBetween(doc1, "setup", "limits"));
 
   // Chapter 2 with the right arrow key.
   await page.getByRole("heading", { name: /^Chapter 1,/ }).focus();
@@ -137,9 +172,9 @@ test("reads a book, sees a chapter update, and resumes on another device", async
   await expect(page).toHaveURL(chapterPath(bookID, beta.id));
   const doc2 = chapterFrame(page, 2);
   await expect(doc2.locator("#setup")).toBeVisible();
-  const savedBeta = positionSaved(page, beta.id, true);
+  const savedBeta = watchPositionSaves(page, beta.id, true);
   await doc2.locator("#usage").scrollIntoViewIfNeeded();
-  await savedBeta;
+  await savedBeta.wait(() => scrollBetween(doc2, "setup", "usage"));
 
   // The author publishes a new version of chapter 1 that rewrites one section.
   await slashdocs.pushVersion(
@@ -173,10 +208,11 @@ test("reads a book, sees a chapter update, and resumes on another device", async
   );
   // Opening the section also moves the reader, which saves a position in
   // chapter 1, the last chapter visited (A19).
-  const savedRevisit = positionSaved(page, alpha.id);
+  const savedRevisit = watchPositionSaves(page, alpha.id);
   await changes.getByRole("button", { name: "Usage" }).click();
   await seen;
-  await savedRevisit;
+  const revisit = chapterFrame(page, 1);
+  await savedRevisit.wait(() => scrollBetween(revisit, "setup", "usage"));
   await expect(chip).toBeHidden();
 
   // The same user on a second device resumes at chapter 1, not chapter 2.
@@ -245,11 +281,48 @@ test("restores the saved place after a reload", async ({ page, slashdocs }) => {
   await expect(doc.locator("#setup")).toBeVisible();
   expect(await scrollY(doc)).toBe(0);
 
-  const saved = positionSaved(page, alpha.id, true);
+  const saved = watchPositionSaves(page, alpha.id, true);
   await doc.locator("#limits").scrollIntoViewIfNeeded();
-  await saved;
+  await saved.wait(() => scrollBetween(doc, "setup", "limits"));
 
   await page.reload();
   await expect(chapterFrame(page, 1).locator("#setup")).toBeAttached();
   await expect.poll(() => scrollY(chapterFrame(page, 1))).toBeGreaterThan(0);
+});
+
+test("does not mark a chapter that fits on screen read when it opens", async ({
+  page,
+  slashdocs,
+}) => {
+  const folder = await slashdocs.createFolder(uniqueName("Short book"));
+  const title = uniqueName("Short");
+  const short = await slashdocs.createDocument(
+    `1 · ${title}`,
+    `<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>${title}</title></head>
+  <body><h1>${title}</h1><p id="only">One short paragraph.</p></body>
+</html>`,
+  );
+  await slashdocs.moveToFolder(folder.id, short.id);
+  const book = await slashdocs.createBook(folder.id);
+
+  const ends: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      request.url().endsWith(`/chapters/${short.id}/progress`) &&
+      (request.postDataJSON() as { reached_end?: boolean }).reached_end
+    ) {
+      ends.push(request.url());
+    }
+  });
+  await page.goto(chapterPath(book.book_id, short.id));
+  await expect(chapterFrame(page, 1).locator("#only")).toBeVisible();
+  // The frame has reported that the chapter fits: the end strip is offered.
+  await expect(page.getByRole("region", { name: "End of chapter" })).toBeVisible();
+  // Nothing scrolls, so only time on screen (15 s, FITS_READ_MS) marks it
+  // read. Opening it alone must not.
+  await page.waitForTimeout(3_000);
+  expect(ends).toEqual([]);
 });
