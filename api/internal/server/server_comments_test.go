@@ -233,6 +233,32 @@ func TestPatchCommentRejectsWrongDocument(t *testing.T) {
 	assertStatus(t, rr, http.StatusNotFound)
 }
 
+// An edit names the body that it started from. A client that did not see a
+// newer body gets 409 and does not replace it. A patch without base_body, as
+// from the CLI or MCP, still applies.
+func TestPatchCommentRefusesAStaleEdit(t *testing.T) {
+	e := newTestEnv(t)
+	path := "/v1/documents/" + e.doc.ID + "/comments/" + e.cmt.ID
+	headers := map[string]string{"Content-Type": "application/json", "X-Test-Principal": principalHeader(fixtureCommenter)}
+
+	rr := do(t, e.h, http.MethodPatch, path, `{"body":"from tab A","base_body":"original"}`, headers)
+	assertStatus(t, rr, http.StatusOK)
+	rr = do(t, e.h, http.MethodPatch, path, `{"body":"from tab B","base_body":"original"}`, headers)
+	assertStatus(t, rr, http.StatusConflict)
+	if !strings.Contains(rr.Body.String(), `"comment_changed"`) {
+		t.Fatalf("body = %s, want the comment_changed code", rr.Body.String())
+	}
+	got, err := e.store.GetComment(context.Background(), e.cmt.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Body != "from tab A" {
+		t.Fatalf("body = %q, want the newer edit to stay", got.Body)
+	}
+	rr = do(t, e.h, http.MethodPatch, path, `{"body":"from the CLI"}`, headers)
+	assertStatus(t, rr, http.StatusOK)
+}
+
 func TestPatchCommentRejectsInvalidStatus(t *testing.T) {
 	e := newTestEnv(t)
 	rr := do(t, e.h, http.MethodPatch, "/v1/documents/"+e.doc.ID+"/comments/"+e.cmt.ID, `{"status":"closed"}`, map[string]string{

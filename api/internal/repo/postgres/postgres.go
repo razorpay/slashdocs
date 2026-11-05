@@ -1339,10 +1339,7 @@ func (s *Store) UpdateComment(ctx context.Context, id string, update repo.Commen
 	}
 	defer rollback(ctx, tx)
 	q := s.q.WithTx(tx)
-	row, err := q.GetCommentForUpdate(ctx, id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return repo.Comment{}, repo.ErrNotFound
-	}
+	row, err := lockCommentForUpdate(ctx, q, id, update.BaseBody)
 	if err != nil {
 		return repo.Comment{}, err
 	}
@@ -1384,6 +1381,21 @@ func (s *Store) UpdateComment(ctx context.Context, id string, update repo.Commen
 		return repo.Comment{}, err
 	}
 	return comment, nil
+}
+
+// lockCommentForUpdate reads a comment and locks it for the update. It fails
+// with ErrConflict when baseBody is set and the body is no longer it.
+func lockCommentForUpdate(ctx context.Context, q *dbsqlc.Queries, id string, baseBody *string) (dbsqlc.GetCommentForUpdateRow, error) {
+	row, err := q.GetCommentForUpdate(ctx, id)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return row, repo.ErrNotFound
+	case err != nil:
+		return row, err
+	case baseBody != nil && *baseBody != row.Body:
+		return row, repo.ErrConflict
+	}
+	return row, nil
 }
 
 // withMentionsAndReactions fills in the mentions and reactions of a comment.

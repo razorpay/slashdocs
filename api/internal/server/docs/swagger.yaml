@@ -874,6 +874,11 @@ definitions:
         allOf:
         - $ref: '#/definitions/repo.Anchor'
         description: Anchor moves a point comment to a new spot.
+      base_body:
+        description: |-
+          BaseBody is the body that an edit started from. When set, and another
+          edit changed the body since, the patch fails with 409 comment_changed.
+        type: string
       body:
         type: string
       mentions:
@@ -1674,6 +1679,10 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/server.commentResponse'
+        "409":
+          description: 'comment_changed: the body is no longer base_body'
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
       security:
       - bearerAuth: []
       - cookieAuth: []
