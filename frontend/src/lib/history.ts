@@ -33,27 +33,33 @@ export function historySessions(
 
 const createdAt = (v: Version) => Date.parse(v.created_at || "") || 0;
 
-// withoutUndone leaves out each edit that its author undid with the next
-// one: an entry that brings back the content of the entry before the edit,
-// as Undo and Redo do. The entries in keep stay, so that the newest entry and
-// the one on screen always show.
+// withoutUndone leaves out each run of edits by one person that ends on the
+// content where it started, as Undo and Redo do: the edits of the run and the
+// entry that ends it. The entry before the run stays, and it has the content
+// of the run's end. The entries in keep stay, so that the entry on screen
+// always shows.
 export function withoutUndone(
   versions: Version[],
   keep: ReadonlySet<string>,
 ): Version[] {
   const kept: Version[] = [];
   for (const v of [...versions].sort((a, b) => a.number - b.number)) {
-    const [before, edit] = kept.slice(-2);
-    if (
-      edit &&
-      v.sha256 &&
-      v.sha256 === before?.sha256 &&
-      samePrincipal(edit.created_by, v.created_by) &&
-      !keep.has(edit.id) &&
-      !keep.has(v.id)
-    ) {
-      kept.pop();
-    } else kept.push(v);
+    const start = runStart(kept, v, keep);
+    if (start < 0) kept.push(v);
+    else kept.length = start + 1;
   }
   return kept;
+}
+
+// runStart finds the entry, before the newest of kept, that has the content
+// of v, with only edits by v's author after it. It returns -1 when there is
+// none.
+function runStart(kept: Version[], v: Version, keep: ReadonlySet<string>) {
+  if (!v.sha256 || keep.has(v.id)) return -1;
+  for (let i = kept.length - 1; i >= 0; i--) {
+    if (i < kept.length - 1 && kept[i].sha256 === v.sha256) return i;
+    if (keep.has(kept[i].id) || !samePrincipal(kept[i].created_by, v.created_by))
+      return -1;
+  }
+  return -1;
 }

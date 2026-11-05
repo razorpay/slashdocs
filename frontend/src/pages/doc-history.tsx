@@ -45,15 +45,20 @@ export function HistoryDialog({
   onSelectVersion: (versionID: string) => void;
 }) {
   const versions = useVersions(docId);
-  const sessions = useMemo(
-    () =>
-      historySessions(
-        withoutUndone(versions.data?.items ?? [], new Set([current, latest])),
-      ),
-    [versions.data, current, latest],
-  );
+  // An undone run can end on the latest version. Then the newest entry left,
+  // which has the same content, stands for it: it reads Current and opens the
+  // latest version.
+  const { sessions, newest } = useMemo(() => {
+    const kept = withoutUndone(
+      versions.data?.items ?? [],
+      new Set(current === latest ? [] : [current]),
+    );
+    return { sessions: historySessions(kept), newest: kept.at(-1)?.id ?? latest };
+  }, [versions.data, current, latest]);
+  const shown = current === latest ? newest : current;
   const select = (versionID: string) => {
-    if (versionID !== current) onSelectVersion(versionID);
+    const target = versionID === newest ? latest : versionID;
+    if (target !== current) onSelectVersion(target);
     onOpenChange(false);
   };
   return (
@@ -96,8 +101,8 @@ export function HistoryDialog({
               <HistorySessionRow
                 key={session.entries[0].id}
                 session={session}
-                current={current}
-                latest={latest}
+                current={shown}
+                latest={newest}
                 onSelect={select}
               />
             ))}
