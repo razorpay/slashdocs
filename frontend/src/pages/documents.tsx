@@ -5,11 +5,12 @@ import { useOnboarding, autoMarkFirstDoc, onboardingProgress } from "@/lib/onboa
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { errorMessage } from "@/lib/errors";
 import { useDebounced } from "@/lib/hooks";
-import { CloudOff, MoreHorizontal, Plus, Sparkles } from "lucide-react";
+import { MoreHorizontal, Plus, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Page } from "@/components/layout/page";
 import { beat } from "@/lib/enter";
 import { Skeleton, EmptyState, RetryButton } from "@/components/ui/misc";
+import { LoadErrorLine } from "@/components/error-state";
 import { Dropdown, DropdownContent, DropdownTrigger } from "@/components/ui/dropdown";
 import { api, APIError, docID, docTitle, type Folder, type FolderEntry } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
@@ -252,16 +253,14 @@ export function DocumentsPage() {
       {!searching && <FeaturedItems />}
 
       {foldersFailed ? (
-        <div
-          role="alert"
-          className="mb-4 flex items-center gap-3 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] py-2 pl-4 pr-2 text-sm dark:border-transparent"
-        >
-          <CloudOff className="h-4 w-4 shrink-0 text-[var(--color-fg-muted)]" />
-          <span className="min-w-0 flex-1 text-pretty">
-            Could not load folders. Documents show below.
-          </span>
-          <RetryButton query={rootFolders} variant="outline" size="sm" />
-        </div>
+        <LoadErrorLine boxed query={rootFolders}>
+          Could not load folders. Documents show below.
+        </LoadErrorLine>
+      ) : null}
+      {pins.isError && entries.length ? (
+        <LoadErrorLine boxed query={pins}>
+          Could not load your pins. Pinned items show in their usual place.
+        </LoadErrorLine>
       ) : null}
 
       {docs.error ? (

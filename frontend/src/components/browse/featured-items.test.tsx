@@ -100,4 +100,38 @@ describe("FeaturedItems", () => {
     await waitFor(() => expect(screen.queryByRole("heading")).toBeNull());
     expect(calls).toContainEqual({ url: "/v1/featured/doc_guide", method: "DELETE" });
   });
+
+  it("offers Retry when the featured documents do not load", async () => {
+    let fail = true;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        fail
+          ? new Response(JSON.stringify({ error: { code: "unavailable" } }), {
+              status: 503,
+              headers: { "Content-Type": "application/json" },
+            })
+          : new Response(JSON.stringify({ items: [tutorials] }), {
+              headers: { "Content-Type": "application/json" },
+            }),
+      ),
+    );
+    render(
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
+        <MemoryRouter>
+          <FeaturedItems />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not load the featured documents.",
+    );
+    fail = false;
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("Dev tutorials")).toBeVisible();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
 });

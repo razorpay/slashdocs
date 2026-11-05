@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ChevronRight, FileText, Folder as FolderIcon, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { LoadErrorLine } from "@/components/error-state";
 import { api, docID, docTitle, type FeaturedSection, type FolderEntry } from "@/api";
 import { cn } from "@/lib/cn";
 import { errorMessage } from "@/lib/errors";
@@ -26,6 +27,12 @@ export function FeaturedItems() {
     queryKey: queryKeys.featured(),
     queryFn: api.listFeatured,
   });
+  if (featured.isError && !featured.data)
+    return (
+      <LoadErrorLine boxed query={featured}>
+        Could not load the featured documents.
+      </LoadErrorLine>
+    );
   return (featured.data?.items || []).map((section) => (
     <FeaturedRow key={section.title} section={section} />
   ));

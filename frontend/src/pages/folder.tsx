@@ -20,7 +20,7 @@ import { Page } from "@/components/layout/page";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton, EmptyState, RetryButton } from "@/components/ui/misc";
-import { ErrorState } from "@/components/error-state";
+import { ErrorState, LoadErrorLine } from "@/components/error-state";
 import {
   Dropdown,
   DropdownContent,
@@ -172,6 +172,7 @@ export function FolderPage() {
           <ErrorState
             title="Group access is temporarily unavailable"
             description="Google Group membership could not be refreshed. Try again shortly; stale group content has not been shown."
+            retry={folder.error ? folder : contents}
           />
         ) : (
           <ErrorState
@@ -360,6 +361,11 @@ export function FolderPage() {
         </AlertDialog>
 
         {/* Contents */}
+        {pins.isError && visibleItems.length ? (
+          <LoadErrorLine boxed query={pins}>
+            Could not load your pins. Pinned items show in their usual place.
+          </LoadErrorLine>
+        ) : null}
         {visibleItems.length === 0 && !readme ? (
           <EmptyState
             icon={<FolderIcon className="h-5 w-5" />}
