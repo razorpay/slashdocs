@@ -235,7 +235,8 @@ export function startScriptText(
       box.append(button);
     }
     injectStyle();
-    d.body.append(box);
+    // Outside the body, so that a selection of all the text does not hold it.
+    d.documentElement.append(box);
     fitLines(text);
     el.setAttribute("aria-describedby", HINT_ID);
     hint = { box, el };
