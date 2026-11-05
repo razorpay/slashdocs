@@ -10,6 +10,7 @@ import {
   COMMENT,
   DOC_ID,
   HOST,
+  OPENING,
   QUOTE,
   REPLY,
   TITLE,
@@ -43,18 +44,20 @@ const rise = "animate-[rise_300ms_ease-out]";
 // comment, revise. At each handoff both windows buzz and a gust of wind
 // carries the work across. It plays while any of it is in view, so that a
 // phone, which shows only the top of the terminal at first, sees it start.
-// With reduced motion it shows the last beat and stays still.
+// It opens with the first lines shown at once. With reduced motion, also when
+// it is turned on later, it shows the last beat and stays still.
 export function AgentLoop() {
   const ref = useRef<HTMLDivElement>(null);
   const inView = useInView(ref);
   const still = usePrefersReducedMotion();
-  const beat = useBeat(inView && !still, still ? BEAT_COUNT - 1 : 0);
+  const playing = useBeat(inView && !still);
+  const beat = still ? BEAT_COUNT - 1 : playing;
   const { lines, doc, step, send } = sceneAt(beat);
   return (
     <div ref={ref}>
       <div className="grid md:grid-cols-[1fr_clamp(4rem,10vw,9rem)_1fr]">
         <Window label="Your agent" bar="zsh" buzz={!!send} dark>
-          <Terminal lines={lines} animate={!still} />
+          <Terminal lines={lines} animate={!still && beat !== OPENING} />
         </Window>
         <div className="relative h-20 md:h-auto">
           {send && <Wind key={beat} reverse={send === "terminal"} />}
@@ -94,9 +97,9 @@ export function AgentLoop() {
   );
 }
 
-// Steps through the beats in a loop while `play` is true.
-function useBeat(play: boolean, start: number) {
-  const [beat, setBeat] = useState(start);
+// Steps through the beats in a loop while `play` is true, from the opening.
+function useBeat(play: boolean) {
+  const [beat, setBeat] = useState(OPENING);
   useEffect(() => {
     if (!play) return;
     const t = setTimeout(() => setBeat((b) => (b + 1) % BEAT_COUNT), beatMs(beat));

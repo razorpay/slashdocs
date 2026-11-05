@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, APIError } from "@/api";
@@ -53,20 +53,44 @@ describe("LandingPage", () => {
     expect(await screen.findByText(/editors fix words in place/)).toBeInTheDocument();
   });
 
-  it("shows the agent's prompt at once, and types it while any of it is in view", async () => {
+  it("opens on the prompt and its first output, then types the next command", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     renderPage(<LandingPage />);
     const terminal = (await screen.findByText("Your agent")).closest("figure")!;
-    expect(within(terminal).getByText("›")).toBeVisible();
+    expect(terminal).toHaveTextContent(
+      /›Write an explainer.*slashdocs●Wrote gps\.html/,
+    );
 
     // Each typed letter sets the timer for the next one.
     for (let i = 0; i < 60; i++)
       await act(async () => {
         vi.advanceTimersByTime(50);
       });
-    expect(terminal).toHaveTextContent(/›Write an explainer/);
+    expect(terminal).toHaveTextContent(/\$slashdocs docs create/);
     // The landing page is large to render in jsdom.
   }, 15_000);
+
+  it("shows the last scene once reduced motion turns on, also after the start", async () => {
+    const reduce = new Set<() => void>();
+    let reduced = false;
+    window.matchMedia = (query: string) =>
+      ({
+        get matches() {
+          return query.includes("reduced-motion") && reduced;
+        },
+        addEventListener: (_: string, listener: () => void) => reduce.add(listener),
+        removeEventListener: (_: string, listener: () => void) =>
+          reduce.delete(listener),
+      }) as unknown as MediaQueryList;
+    renderPage(<LandingPage />);
+    const team = (await screen.findByText("Your team")).closest("figure")!;
+    expect(team).toHaveTextContent("No documents yet");
+
+    reduced = true;
+    act(() => reduce.forEach((listener) => listener()));
+    expect(team).toHaveTextContent("Added in v2");
+    expect(team).not.toHaveTextContent("No documents yet");
+  });
 });
 
 describe("StartPage", () => {
