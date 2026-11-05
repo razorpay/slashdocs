@@ -173,6 +173,39 @@ describe("BookHomePage", () => {
     expect(within(row).getByText("Updated")).toBeTruthy();
   });
 
+  it("shows the newest change note first and every other note", async () => {
+    vi.spyOn(booksApi, "manifest").mockResolvedValue(manifest([1]));
+    vi.spyOn(booksApi, "state").mockResolvedValue(
+      state({
+        chapters: {
+          doc_1: {
+            state: "read",
+            updated: true,
+            seen_version_id: "",
+            furthest_progression: 1,
+          },
+        },
+      }),
+    );
+    // The server lists versions newest first.
+    vi.spyOn(booksApi, "changes").mockResolvedValue({
+      since_version_id: "ver_1",
+      versions: [
+        { id: "ver_3", number: 3, change_summary: "Newest note", created_at: "" },
+        { id: "ver_2", number: 2, change_summary: "Older note", created_at: "" },
+      ],
+      changed_sections: [],
+    });
+    renderHome();
+    const group = await screen.findByRole("region", { name: "Updated chapters" });
+    await userEvent.click(within(group).getByText("Title 1"));
+    const newest = await within(group).findByText(/Newest note/);
+    const older = within(group).getByText(/Older note/);
+    expect(
+      newest.compareDocumentPosition(older) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("says so quietly when the reading state cannot be loaded", async () => {
     vi.spyOn(booksApi, "manifest").mockResolvedValue(manifest([1, 2]));
     const st = vi

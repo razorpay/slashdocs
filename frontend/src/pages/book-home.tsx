@@ -95,17 +95,30 @@ export function BookError({
   );
 }
 
+// Every unseen version's note, newest first (R8).
 function ChangeSummary({ bookId, docId }: { bookId: string; docId: string }) {
   const q = useChapterChanges(bookId, docId, true);
-  const latest = q.data?.versions[q.data.versions.length - 1];
+  if (q.isLoading || q.isError || !q.data?.versions.length) {
+    return (
+      <p className="mt-1 text-sm text-[var(--color-fg-muted)]">
+        {q.isLoading
+          ? "Loading…"
+          : q.isError
+            ? "Could not load the changes."
+            : "No summary was written for this change."}
+      </p>
+    );
+  }
+  const versions = [...q.data.versions].sort((a, b) => b.number - a.number);
   return (
-    <p className="mt-1 text-sm text-[var(--color-fg-muted)]">
-      {q.isLoading
-        ? "Loading…"
-        : q.isError
-          ? "Could not load the changes."
-          : latest?.change_summary || "No summary was written for this change."}
-    </p>
+    <ul className="mt-1 space-y-1 text-sm text-[var(--color-fg-muted)]">
+      {versions.map((v) => (
+        <li key={v.id}>
+          <span className="tabular-nums">Version {v.number}:</span>{" "}
+          {v.change_summary || "No summary was written for this change."}
+        </li>
+      ))}
+    </ul>
   );
 }
 
