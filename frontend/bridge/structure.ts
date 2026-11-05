@@ -11,7 +11,7 @@
 // execCommand writes <b> and <i>, copies the source attribute of an element
 // that it splits onto both halves, and keeps its own undo stack.
 
-import { blockOf, placeClear, reducedMotion } from "./dom.ts";
+import { blockOf, placeClear, reducedMotion, viewOf } from "./dom.ts";
 import type { SourceMap } from "./source-map.ts";
 import { SOURCE_ATTR } from "./source-pieces.ts";
 
@@ -65,6 +65,8 @@ type Format = keyof typeof SAME_FORMAT;
 const SAFE_HREF = /^(https?:|mailto:|#)/i;
 const LINK_HIGHLIGHT = "slashdocs-link";
 const LINK_GAP = 6;
+// The room that two lines of the link field's note take.
+const LINK_NOTE_ROOM = 40;
 const LINK_ENTER: Keyframe[] = [
   { opacity: 0, transform: "scale(.97)" },
   { opacity: 1, transform: "none" },
@@ -605,22 +607,22 @@ export function createStructure(e: Editor) {
   }
 
   // place puts card where it covers no text: below the last line of words,
-  // else above the first line, else where placeClear finds room. It goes
-  // there once, with room for two lines of note, and its width is fixed, so
-  // it stays still while the reader types. Above the words, it grows up.
+  // else above the first line, else beside them. With no clear room, it goes
+  // below the words, over the next line, or above them where the viewport
+  // has no room below for its note. It goes there once, and its width is
+  // fixed, so it stays still while the reader types. Its note grows away
+  // from the words: down below them, and up above them.
   function place(card: HTMLElement, words: Range) {
     // jsdom has no layout, and so no rectangles for ranges.
     const lines = [...(words.getClientRects?.() ?? [])];
     if (!lines.length) return;
     const [first, last] = [lines[0], lines.at(-1)!];
-    const note = card.querySelector("p")!;
-    note.innerText = "\u00a0\n\u00a0";
-    placeClear(d, card, lines, [
-      [last.left, last.bottom + LINK_GAP],
-      [first.left, first.top - LINK_GAP - card.offsetHeight],
-    ]);
+    const below = [last.left, last.bottom + LINK_GAP];
+    const above = [first.left, first.top - LINK_GAP - card.offsetHeight];
+    const roomBelow =
+      below[1] + card.offsetHeight + LINK_NOTE_ROOM <= viewOf(d, true).height;
+    placeClear(d, card, lines, roomBelow ? [below, above] : [above, below]);
     const { bottom } = card.getBoundingClientRect();
-    note.textContent = "";
     if (bottom > first.top) return;
     card.style.setProperty("top", "auto", "important");
     card.style.setProperty(

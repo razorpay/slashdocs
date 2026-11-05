@@ -93,15 +93,17 @@ const CLEAR_STEP = 10;
 
 // placeClear puts el, fixed in the viewport, at the first place where it
 // covers none of lines and no text of d, with a margin of CLEAR_MARGIN around
-// it. It tries places, as [left, top], then the sides of lines, then the
-// bottom and the top of the viewport. When each place covers text, el sits at
-// the bottom or the top of the viewport, where it covers none of lines. When
-// el sits at an edge of the viewport, placeClear gives that edge.
+// it. It tries places, as [left, top], then the sides of lines. When each
+// place covers text, el stays near lines: at the first place that covers
+// none of them, over other text. With dock, el also tries the bottom and the
+// top of the viewport, and docks there when each place covers text. When el
+// sits at an edge of the viewport, placeClear gives that edge.
 export function placeClear(
   d: Document,
   el: HTMLElement,
   lines: DOMRect[],
   places: number[][],
+  dock = false,
 ): "bottom" | "top" | null {
   const { width: viewWidth, height: viewHeight } = viewOf(d, true);
   const { offsetWidth: width, offsetHeight: height } = el;
@@ -109,36 +111,34 @@ export function placeClear(
   const first = lines[0] ?? span;
   const beside = first.top + (first.height - height) / 2;
   const center = (viewWidth - width) / 2;
-  const edges = [
-    [center, viewHeight],
-    [center, 0],
-  ];
-  const boxes = [
-    ...places,
-    [span.right + CLEAR_MARGIN * 2, beside],
-    [span.left - CLEAR_MARGIN * 2 - width, beside],
-    ...edges,
-  ].map(([left, top]) =>
+  const at = ([left, top]: number[]) =>
     DOMRect.fromRect({
       x: Math.max(8, Math.min(left, viewWidth - width - 8)),
       y: Math.max(8, Math.min(top, viewHeight - height - 8)),
       width,
       height,
-    }),
-  );
+    });
+  const near = [
+    ...places,
+    [span.right + CLEAR_MARGIN * 2, beside],
+    [span.left - CLEAR_MARGIN * 2 - width, beside],
+  ].map(at);
+  const edges = dock ? [at([center, viewHeight]), at([center, 0])] : [];
   const coversLines = (box: DOMRect) => lines.some((line) => overlap(box, line));
   // The hit test for text must not find el, so el waits out of the viewport.
   // It keeps its layout there, and so the focus of a field in it.
   el.style.setProperty("left", `${-width - viewWidth}px`, "important");
-  const [bottom, top] = boxes.slice(-edges.length);
+  const fallbacks = dock ? edges : near;
   const place =
-    boxes.find((box) => {
+    [...near, ...edges].find((box) => {
       const room = grow(box, CLEAR_MARGIN);
       return !coversLines(room) && !coversText(d, room);
-    }) ?? (coversLines(bottom) ? top : bottom);
+    }) ??
+    fallbacks.find((box) => !coversLines(box)) ??
+    fallbacks[0];
   el.style.setProperty("left", `${place.left}px`, "important");
   el.style.setProperty("top", `${place.top}px`, "important");
-  return place === bottom ? "bottom" : place === top ? "top" : null;
+  return place === edges[0] ? "bottom" : place === edges[1] ? "top" : null;
 }
 
 function union(a: DOMRect, b: DOMRect): DOMRect {
