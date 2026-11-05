@@ -1,5 +1,6 @@
 import * as React from "react";
 import { Slot } from "@radix-ui/react-slot";
+import { LoaderCircle } from "lucide-react";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/cn";
 import { Tooltip } from "./tooltip";
@@ -40,10 +41,16 @@ export interface ButtonProps
     VariantProps<typeof buttonVariants> {
   asChild?: boolean;
   tooltip?: string | false;
+  // A busy button waits for its action. It takes no second press, and after
+  // a short wait a spinner takes the place of its label, at the same width.
+  busy?: boolean;
 }
 
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild, tooltip, title, children, ...props }, ref) => {
+  (
+    { className, variant, size, asChild, tooltip, title, busy, children, ...props },
+    ref,
+  ) => {
     const Comp = asChild ? Slot : "button";
     const child =
       asChild &&
@@ -62,13 +69,27 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     const button = (
       <Comp
         ref={ref}
-        className={cn(buttonVariants({ variant, size }), className)}
+        className={cn(buttonVariants({ variant, size }), busy && "relative", className)}
         {...props}
+        disabled={props.disabled || busy}
+        aria-busy={busy || undefined}
         title={label || tooltip === false ? undefined : title}
       >
-        {child && (label || tooltip === false)
-          ? React.cloneElement(child, { title: undefined })
-          : children}
+        {child && (label || tooltip === false) ? (
+          React.cloneElement(child, { title: undefined })
+        ) : busy ? (
+          <>
+            <span className="busy-label inline-flex items-center gap-2">
+              {children}
+            </span>
+            <LoaderCircle
+              aria-hidden="true"
+              className="busy-spinner absolute inset-0 m-auto h-4 w-4"
+            />
+          </>
+        ) : (
+          children
+        )}
       </Comp>
     );
     return label ? <Tooltip label={label}>{button}</Tooltip> : button;

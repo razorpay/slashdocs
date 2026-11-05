@@ -755,6 +755,22 @@
   }
 }
 
+/* A busy button keeps its width. After 300 ms, so that a quick action does
+   not flash, its label fades out and a spinner fades in at its center. */
+.busy-label {
+  animation: busy-fade 150ms ease-out 300ms both reverse;
+}
+.busy-spinner {
+  animation:
+    busy-fade 150ms ease-out 300ms both,
+    spin 1s linear infinite;
+}
+@keyframes busy-fade {
+  from {
+    opacity: 0;
+  }
+}
+
 /* Menus grow from their trigger. Radix keeps a menu mounted until its
    faster, softer exit ends. */
 @keyframes pop-in {
