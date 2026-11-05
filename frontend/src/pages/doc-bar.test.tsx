@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 import type { ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/api";
+import { clearFieldDrafts } from "@/lib/field-drafts";
 import { DocBar } from "./doc-bar";
 import { EditStatus } from "./doc-edit-status";
 import { DocProvider, type DocContextValue, type SaveState } from "./doc-context";
@@ -134,7 +135,8 @@ function renderDocBar(
   const onSelectVersion = vi.fn();
   const onFollowViewer = vi.fn();
 
-  render(
+  // update renders the bar again with other props, as a remote change does.
+  const bar = (changed: Partial<ComponentProps<typeof DocBar>> = {}) => (
     <QueryClientProvider client={queryClient}>
       <MemoryRouter>
         <DocProvider value={mockDocContext}>
@@ -158,14 +160,22 @@ function renderDocBar(
             shareOpen={false}
             onShareOpenChange={vi.fn()}
             {...props}
+            {...changed}
           />
         </DocProvider>
       </MemoryRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
-
-  return { onSelectVersion, onFollowViewer };
+  const view = render(bar());
+  return {
+    onSelectVersion,
+    onFollowViewer,
+    update: (changed: Partial<ComponentProps<typeof DocBar>>) =>
+      view.rerender(bar(changed)),
+  };
 }
+
+afterEach(clearFieldDrafts);
 
 describe("DocBar More menu and small-screen reachable dialogs", () => {
   afterEach(() => {
@@ -222,13 +232,65 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     const input = screen.getByPlaceholderText("runbook, payments, onboarding");
     expect(input).toHaveValue("payments, runbook");
 
-    // An unsaved draft does not survive closing the dialog.
+    // An unsaved draft survives closing the dialog, and says so.
     await user.type(input, ", draft");
     await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: "Document labels" }));
     expect(
       await screen.findByPlaceholderText("runbook, payments, onboarding"),
-    ).toHaveValue("payments, runbook");
+    ).toHaveValue("payments, runbook, draft");
+    expect(
+      screen.getByText("Your labels from earlier came back. They are not saved yet."),
+    ).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+    expect(screen.getByPlaceholderText("runbook, payments, onboarding")).toHaveValue(
+      "payments, runbook",
+    );
+  });
+
+  it("keeps typed labels when the labels change elsewhere, and saves only after a choice", async () => {
+    const user = userEvent.setup();
+    const save = vi
+      .spyOn(api, "replaceDocumentLabels")
+      .mockResolvedValue({} as Awaited<ReturnType<typeof api.replaceDocumentLabels>>);
+    const { update } = renderDocBar(true);
+    await user.click(await screen.findByRole("button", { name: "Document labels" }));
+    const input = await screen.findByRole("textbox", { name: "Labels" });
+    await user.type(input, ", mine");
+    update({ labels: ["payments", "theirs"] });
+    expect(
+      await screen.findByText("The labels changed elsewhere. They now say:"),
+    ).toBeTruthy();
+    expect(input).toHaveValue("payments, runbook, mine");
+    const saveButton = screen.getByRole("button", { name: "Save labels" });
+    expect(saveButton).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Use the new labels" }));
+    expect(input).toHaveValue("payments, theirs");
+    await user.click(saveButton);
+    expect(save).toHaveBeenCalledWith("doc_1", ["payments", "theirs"]);
+  });
+
+  it("keeps a title being typed when the document is renamed elsewhere", async () => {
+    const user = userEvent.setup();
+    const rename = vi
+      .spyOn(api, "renameDocument")
+      .mockResolvedValue({ id: "doc_1", title: "Mine" });
+    const { update } = renderDocBar();
+    await user.click(screen.getByRole("button", { name: "Rename Test Document" }));
+    const field = screen.getByRole("textbox", { name: "Document title" });
+    await user.clear(field);
+    await user.type(field, "Mine");
+    update({ title: "Theirs" });
+    expect(
+      await screen.findByText("The document was renamed elsewhere. It is now:"),
+    ).toBeTruthy();
+    // A click away saves nothing while the reader has not chosen.
+    await user.click(document.body);
+    expect(rename).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox", { name: "Document title" })).toHaveValue("Mine");
+    await user.click(screen.getByRole("button", { name: "Keep mine" }));
+    await user.keyboard("{Enter}");
+    expect(rename).toHaveBeenCalledWith("doc_1", "Mine");
   });
 
   it("hides document labels from the More menu when labels are disabled", async () => {
