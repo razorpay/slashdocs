@@ -1,6 +1,12 @@
 @import "tailwindcss";
 
 @custom-variant dark (&:where(.dark, .dark *));
+/* A finger, or a phone-width screen: controls grow to 40px touch targets. */
+@custom-variant touch {
+  @media (pointer: coarse), (width < 40rem) {
+    @slot;
+  }
+}
 
 /* Blade fonts (OFL 1.1, see src/assets/fonts): TASA Orbiter for headings,
    Inter for text. The fallbacks match their metrics to stop layout shift. */
@@ -34,6 +40,8 @@
    Slash, pages sit on Blade's intense gray, and app chrome (the document bar
    and the comments panel) on its moderate gray. */
 @theme {
+  /* Below xs a phone bar moves the approvals and the people into More. */
+  --breakpoint-xs: 25rem;
   --font-sans: "Inter", "Inter Fallback", ui-sans-serif, system-ui, sans-serif;
   --font-heading:
     "TASA Orbiter", "TASA Orbiter Fallback", ui-sans-serif, system-ui, sans-serif;
