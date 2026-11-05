@@ -56,7 +56,7 @@ function stubRestores(...answers: (Version | number)[]) {
 async function undoAction() {
   await waitFor(() => expect(toast.success).toHaveBeenCalled());
   const [message, options] = vi.mocked(toast.success).mock.calls[0];
-  expect(message).toBe("Restored.");
+  expect(message).toBe("Restored an earlier version of “Untitled”.");
   const action = options?.action as { label: string; onClick: () => void };
   expect(action.label).toBe("Undo");
   return action.onClick;
@@ -97,7 +97,7 @@ it("undoes a restore by restoring the entry that was the newest", async () => {
     expect.objectContaining({ method: "POST" }),
   );
   expect(doc.stayOnVersion).toHaveBeenLastCalledWith("v10");
-  expect(messages).toMatchObject({ success: "Restore undone." });
+  expect(messages).toMatchObject({ success: "Undid the restore of “Untitled”." });
 });
 
 it("says when the undo fails", async () => {

@@ -1,8 +1,8 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Check, ChevronDown, History, RotateCcw } from "lucide-react";
-import { api, type Version } from "@/api";
+import { api, docTitle, type Document, type Version } from "@/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapse, Skeleton } from "@/components/ui/misc";
@@ -237,6 +237,9 @@ function ChangeSummary({ version }: { version: Version }) {
 
 // RestoreButton brings back the version on screen as the newest one. History
 // keeps everything, so Undo restores the entry that was the newest before.
+// The saved data always refreshes, and the toasts name the document. Only a
+// reader who still previews the entry goes to the restored document: a
+// Restore that ends after they moved on leaves them where they went.
 export function RestoreButton({
   docId,
   version,
@@ -247,6 +250,8 @@ export function RestoreButton({
   const q = useQueryClient();
   const showSaved = useShowSaved();
   const newest = useVersions(docId).data?.items.at(-1);
+  const previewed = useRef(version?.id);
+  previewed.current = version?.id;
   const restoreTo = async (v: Version) => {
     const restored = await api.restoreVersion(docId, v.id);
     for (const queryKey of [
@@ -257,20 +262,23 @@ export function RestoreButton({
     ]) {
       q.invalidateQueries({ queryKey });
     }
-    showSaved(restored);
+    return restored;
   };
-  const undo = (previous: Version) =>
-    toast.promise(restoreTo(previous), {
+  const undo = (previous: Version, title: string) =>
+    toast.promise(restoreTo(previous).then(showSaved), {
       loading: "Undoing the restore…",
-      success: "Restore undone.",
+      success: `Undid the restore of “${title}”.`,
       error: (e) => errorMessage(e, "Could not undo the restore."),
     });
   const restore = useMutation({
-    mutationFn: ({ to }: { to: Version; previous?: Version }) => restoreTo(to),
-    onSuccess: (_, { previous }) =>
+    mutationFn: ({ to }: { to: Version; previous?: Version; title: string }) =>
+      restoreTo(to),
+    onSuccess: (_, { previous, title }) =>
       toast.success(
-        "Restored.",
-        previous && { action: { label: "Undo", onClick: () => undo(previous) } },
+        `Restored an earlier version of “${title}”.`,
+        previous && {
+          action: { label: "Undo", onClick: () => undo(previous, title) },
+        },
       ),
     onError: (e) => toast.error(errorMessage(e, "Could not restore this entry.")),
   });
@@ -279,11 +287,23 @@ export function RestoreButton({
     <Button
       size="sm"
       className="shrink-0"
-      disabled={restore.isPending}
-      onClick={() => restore.mutate({ to: version, previous: newest })}
+      busy={restore.isPending}
+      onClick={() =>
+        restore.mutate(
+          {
+            to: version,
+            previous: newest,
+            title: docTitle(q.getQueryData<Document>(queryKeys.document(docId)) ?? {}),
+          },
+          {
+            onSuccess: (restored) =>
+              previewed.current === version.id && showSaved(restored),
+          },
+        )
+      }
     >
       <RotateCcw className="h-4 w-4" />
-      {restore.isPending ? "Restoring…" : "Restore"}
+      Restore
     </Button>
   );
 }
