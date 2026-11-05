@@ -19,16 +19,22 @@ import { errorMessage } from "@/lib/errors";
 import { principalLabel, samePrincipal } from "@/lib/principals";
 import { queryKeys } from "@/lib/queryKeys";
 import { anchorLabel, canMovePin } from "@/lib/comment-pins";
-import { isAgentRequest } from "@/lib/agent-request";
+import { agentRequestBody, isAgentRequest } from "@/lib/agent-request";
 import {
+  changed,
+  copyWords,
   forgetWords,
   saveReplyDraft,
   sentBack,
+  setEdit,
+  textsOf,
   unsentText,
   useDraftText,
+  useEdits,
+  useReplyDrafts,
   type CommentDraft,
 } from "@/lib/comment-drafts";
-import type { MentionDraft } from "@/lib/comment-mentions";
+import { emptyMentionDraft, type MentionDraft } from "@/lib/comment-mentions";
 import { COMMENT_FILTERS, COMMENT_STATUS, matchesCommentFilter } from "@/lib/constants";
 import { useSelf } from "@/lib/hooks";
 import { useDoc } from "./doc-context";
@@ -101,8 +107,15 @@ function CloseButton({ label, onClick }: { label: string; onClick: () => void })
 }
 
 // CommentComposer writes a new thread: who writes it, what it is on, and the
-// same field and send button as a reply.
-export function CommentComposer({ draft }: { draft: CommentDraft }) {
+// same field and send button as a reply. onPosted gets the new thread, just
+// before it opens in place of the composer.
+export function CommentComposer({
+  draft,
+  onPosted,
+}: {
+  draft: CommentDraft;
+  onPosted?: (id: string) => void;
+}) {
   const {
     docId,
     setActiveComment,
@@ -112,9 +125,8 @@ export function CommentComposer({ draft }: { draft: CommentDraft }) {
     principal,
   } = useDoc();
   const q = useQueryClient();
-  const [text, edit, conflict] = useDraftText(
-    { body: draft.body, mentions: draft.mentions },
-    (next) => saveDraft(draft.id, next),
+  const [text, edit, conflict] = useDraftText(draft, (next) =>
+    saveDraft(draft.id, next),
   );
 
   const create = useMutation({
@@ -137,6 +149,7 @@ export function CommentComposer({ draft }: { draft: CommentDraft }) {
         created.id,
         edit((now) => now),
       );
+      onPosted?.(created.id);
       setActiveComment((active) => (active === draft.id ? created.id : active));
       discardDraft(draft.id);
     },
@@ -201,6 +214,9 @@ export function CommentComposer({ draft }: { draft: CommentDraft }) {
           sendLabel="Post comment"
           autoFocus
           conflict={conflict}
+          // Words that the app put in an agent request did not come back.
+          restored={!!draft.body.trim() && draft.body !== agentRequestBody(draft.quote)}
+          onDiscard={discard}
         />
       </div>
     </div>
@@ -209,7 +225,16 @@ export function CommentComposer({ draft }: { draft: CommentDraft }) {
 
 // CommentThread is a whole thread, for its popover: the first comment with
 // the thread's actions, the replies set in under it, and the reply field.
-export function CommentThread({ c, onClose }: { c: Comment; onClose: () => void }) {
+export function CommentThread({
+  c,
+  onClose,
+  focusReply,
+}: {
+  c: Comment;
+  onClose: () => void;
+  // The reader posted the thread just now, and goes on in its reply field.
+  focusReply?: boolean;
+}) {
   const {
     docId,
     signIn,
@@ -273,7 +298,12 @@ export function CommentThread({ c, onClose }: { c: Comment; onClose: () => void 
           becomes one of them. It stays in view while a long thread scrolls. */}
       {!signIn ? (
         <div className="sticky bottom-0 -mx-3 -mb-3 mt-1 bg-[var(--color-surface)] pb-3 pl-10 pr-3 pt-2">
-          <ReplyRow c={c} docId={docId} className="border-0 p-0" />
+          <ReplyRow
+            c={c}
+            docId={docId}
+            className="border-0 p-0"
+            autoFocus={focusReply}
+          />
         </div>
       ) : null}
     </article>
@@ -281,7 +311,8 @@ export function CommentThread({ c, onClose }: { c: Comment; onClose: () => void 
 }
 
 // DeletedThread is a thread that someone deleted while the reader wrote in
-// it. It keeps their words to copy, until they dismiss them.
+// it. It keeps their words to copy, until they discard them. Close and Esc
+// only close it: the words stay in the Drafts of the comments list.
 export function DeletedThread({
   id,
   texts,
@@ -293,17 +324,92 @@ export function DeletedThread({
 }) {
   const { docId } = useDoc();
   return (
-    <div className="px-3 pb-3 pt-1">
+    <div className="px-3 pb-3 pt-3">
+      <div className="flex min-h-6 items-center gap-2">
+        <span className="min-w-0 flex-1 truncate text-xs font-semibold">
+          Thread deleted
+        </span>
+        <CloseButton label="Close" onClick={onClose} />
+      </div>
       <LostWords
         what="This thread was deleted."
         texts={texts}
-        onDismiss={() => {
+        onDiscard={() => {
           forgetWords(docId, { id });
           onClose();
         }}
       />
     </div>
   );
+}
+
+// The unsent words of one place, in the Drafts of the comments list: a new
+// comment, a reply, or an edit. `open` is the draft or thread that holds
+// them, and `gone` tells when someone deleted it.
+type Unsent = {
+  key: string;
+  open: string;
+  label: string;
+  gone?: string;
+  quote: string;
+  texts: MentionDraft[];
+  updatedAt: number;
+  discard: () => void;
+};
+
+// useUnsent gives every unsent word of the document, so that each stays in
+// reach after its view closed, also when its thread is gone. A thread counts
+// as gone only once the comments load.
+function useUnsent(): Unsent[] {
+  const { docId, comments, commentsLoading, commentsError, drafts, discardDraft } =
+    useDoc();
+  const replies = useReplyDrafts(docId);
+  const edits = useEdits(docId);
+  const threads = new Map(comments.map((c) => [c.id, c]));
+  const place = (thread: string, message = thread) => {
+    const c = threads.get(thread);
+    const kept = message === thread || c?.replies?.some((r) => r.id === message);
+    const gone =
+      commentsLoading || commentsError
+        ? undefined
+        : !c
+          ? "Thread deleted"
+          : !kept
+            ? "Reply deleted"
+            : undefined;
+    return { open: thread, gone, quote: c ? anchorLabel(c) : "" };
+  };
+  return [
+    ...drafts
+      .filter((d) => textsOf(d).some((t) => t.body.trim()))
+      .map((d) => ({
+        key: d.id,
+        open: d.id,
+        label: "Draft",
+        quote: anchorLabel({ selected_text: d.quote, anchor: d.anchor }),
+        texts: textsOf(d),
+        updatedAt: d.updatedAt,
+        discard: () => discardDraft(d.id),
+      })),
+    ...Object.entries(replies).map(([thread, reply]) => ({
+      key: `reply:${thread}`,
+      label: "Draft reply",
+      ...place(thread),
+      texts: textsOf(reply),
+      updatedAt: reply.updatedAt,
+      discard: () => saveReplyDraft(docId, thread, emptyMentionDraft()),
+    })),
+    ...Object.entries(edits)
+      .filter(([, edit]) => changed(edit))
+      .map(([id, edit]) => ({
+        key: `edit:${id}`,
+        label: "Unsent edit",
+        ...place(edit.thread, id),
+        texts: textsOf(edit),
+        updatedAt: edit.updatedAt,
+        discard: () => setEdit(docId, id),
+      })),
+  ];
 }
 
 const LIST_FILTERS = [...COMMENT_FILTERS, "for you"] as const;
@@ -349,8 +455,6 @@ export function CommentsList({
     unanchoredComments,
     movedPins,
     activeComment,
-    drafts,
-    discardDraft,
     editable,
   } = useDoc();
   const self = useSelf(principal);
@@ -373,11 +477,9 @@ export function CommentsList({
       ? mentions(c, principal)
       : matchesCommentFilter(c.status, filter),
   );
-  // Drafts are the reader's own open threads, not yet sent.
-  const unsent =
-    filter === "all" || filter === COMMENT_STATUS.open
-      ? drafts.filter((d) => d.body.trim())
-      : [];
+  // Drafts are the reader's own words in open threads, not yet sent.
+  const all = useUnsent();
+  const unsent = filter === "all" || filter === COMMENT_STATUS.open ? all : [];
   const drafted = unsent.length ? countLabel(unsent.length, "draft") : "";
   return (
     <div className="flex max-h-full min-h-0 flex-col">
@@ -444,41 +546,57 @@ export function CommentsList({
         {unsent.length ? (
           <ul aria-label="Drafts" className="mb-1 space-y-1">
             {unsent.map((d) => (
-              <li key={d.id} className="relative">
+              <li key={d.key} className="relative">
                 <button
-                  ref={d.id === activeComment ? activeRow : undefined}
+                  ref={d.open === activeComment ? activeRow : undefined}
                   type="button"
-                  onClick={() => onPick(d.id)}
-                  aria-current={d.id === activeComment ? "true" : undefined}
+                  onClick={() => onPick(d.open)}
+                  aria-current={d.open === activeComment ? "true" : undefined}
                   className={LIST_ROW}
                 >
-                  <span className="flex items-center gap-2">
+                  <span className="flex items-center gap-2 pr-36">
                     {self ? <PersonAvatar who={self} /> : null}
-                    <span className="text-xs font-semibold text-[var(--color-accent)]">
-                      Draft
+                    <span className="shrink-0 text-xs font-semibold text-[var(--color-accent)]">
+                      {d.label}
                     </span>
-                    <span className="shrink-0 text-[11px] text-[var(--color-fg-muted)]">
+                    <span className="min-w-0 truncate text-[11px] text-[var(--color-fg-muted)]">
                       <RelativeTime iso={new Date(d.updatedAt).toISOString()} />
                     </span>
                   </span>
                   <span className="ml-7 block">
-                    <Quote
-                      text={anchorLabel({ selected_text: d.quote, anchor: d.anchor })}
-                    />
-                    <span className="mt-1 block">
-                      <CommentBody text={d.body} mentions={d.mentions} preview />
-                    </span>
+                    <Quote text={d.quote} />
+                    {d.texts.map((t, i) => (
+                      <span key={i} className="mt-1 block">
+                        <CommentBody text={t.body} mentions={t.mentions} preview />
+                      </span>
+                    ))}
+                    {d.gone || d.texts.length > 1 ? (
+                      <Badge variant={d.gone ? "warning" : "muted"} className="mt-1">
+                        {d.gone ?? "Two versions, from two tabs"}
+                      </Badge>
+                    ) : null}
                   </span>
                 </button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => discardDraft(d.id)}
-                  className="absolute right-1 top-1 h-7 px-2 text-xs text-[var(--color-fg-muted)]"
-                >
-                  Discard
-                </Button>
+                <span className="absolute right-1 top-1 flex">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => copyWords(d.texts)}
+                    className="h-7 px-2 text-xs text-[var(--color-fg-muted)]"
+                  >
+                    Copy my text
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={d.discard}
+                    className="h-7 px-2 text-xs text-[var(--color-fg-muted)]"
+                  >
+                    Discard
+                  </Button>
+                </span>
               </li>
             ))}
           </ul>

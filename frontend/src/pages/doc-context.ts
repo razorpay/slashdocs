@@ -1,6 +1,6 @@
 import { createContext, useContext, type Dispatch, type SetStateAction } from "react";
 import type { Anchor, AnchorPoint, Comment, CursorSpot, Principal } from "@/api";
-import type { CommentDraft } from "@/lib/comment-drafts";
+import type { CommentDraft, DraftText } from "@/lib/comment-drafts";
 import type { Region, ScriptChange } from "../../bridge/source-pieces";
 import type { CursorListener, DocumentKVListener } from "./use-document-stream";
 
@@ -52,7 +52,7 @@ export type DocContextValue = {
   signIn?: () => void;
   drafts: CommentDraft[];
   startDraft: (selection: PendingSelection) => void;
-  saveDraft: (id: string, text: Pick<CommentDraft, "body" | "mentions">) => void;
+  saveDraft: (id: string, text: DraftText) => void;
   // moveDraft moves an unsent point comment to a new spot.
   moveDraft: (id: string, anchor: Partial<Anchor> & { point: AnchorPoint }) => void;
   discardDraft: (id: string) => void;

@@ -173,6 +173,9 @@ function Popover({
   );
 }
 
+// Where an anchor is: its box, and the boxes that a popover keeps off.
+type Place = { rect: Rect | null; beside: Rect[] };
+
 // CommentPopovers shows the open thread, or the new comment, beside its
 // highlight or pin, and the threads of a pin cluster. The bridge reports
 // where the open one's anchor is on each frame that it moves.
@@ -202,11 +205,11 @@ export function CommentPopovers({
     drafts,
     unanchoredComments,
   } = useDoc();
-  const [anchor, setAnchor] = useState<{
-    id: string;
-    rect: Rect | null;
-    beside: Rect[];
-  }>();
+  // `last` is the last place that the anchor had, for a thread whose mark
+  // goes because someone deleted it.
+  const [anchor, setAnchor] = useState<Place & { id: string; last?: Place }>();
+  // The thread that the reader posted from its composer just now.
+  const posted = useRef<string>(undefined);
   const [cluster, setCluster] = useState<{ ids: string[]; rect: Rect }>();
   // The height of each open sheet. The bridge keeps the open thread's anchor
   // above the tallest, which covers the bottom of the frame.
@@ -240,11 +243,16 @@ export function CommentPopovers({
     if (data.type === "slashdocs:anchor-rect" && typeof data.id === "string") {
       // The blocks that hold a highlight, then the text of its lines.
       const [rect, ...beside] = [data.rect, data.block, data.lines].map(parseRect);
-      setAnchor({
-        id: data.id,
+      const id = data.id;
+      const place = {
         rect: rect && toApp(iframe, rect),
         beside: beside.flatMap((box) => (box ? [toApp(iframe, box)] : [])),
-      });
+      };
+      setAnchor((now) => ({
+        id,
+        ...place,
+        last: place.rect ? place : now?.id === id ? now.last : undefined,
+      }));
     }
     if (data.type === "slashdocs:pin-cluster" && Array.isArray(data.ids)) {
       const rect = parseRect(data.rect);
@@ -254,7 +262,10 @@ export function CommentPopovers({
     if (data.type === "slashdocs:document-click") setCluster(undefined);
   });
 
-  const close = () => setActiveComment(undefined);
+  const close = () => {
+    posted.current = undefined;
+    setActiveComment(undefined);
+  };
   const draft = drafts.find((d) => d.id === activeComment);
   const thread = comments.find((c) => c.id === activeComment);
   // A thread that someone deleted keeps the words that the reader did not send.
@@ -262,7 +273,9 @@ export function CommentPopovers({
   const deleted =
     !draft && !thread && !commentsLoading && !commentsError && lost.length > 0;
   const placedAnchor = anchor?.id === activeComment ? anchor : undefined;
-  const rect = placedAnchor?.rect ?? null;
+  // A deleted thread stays where it was.
+  const place = deleted ? placedAnchor?.last : placedAnchor;
+  const rect = place?.rect ?? null;
   // Until the bridge reports the anchor, a thread waits, so it does not
   // jump; one whose text or pin is gone floats at the top right.
   const placed = !!rect || (!!activeComment && unanchoredComments.has(activeComment));
@@ -273,7 +286,7 @@ export function CommentPopovers({
         <Popover
           key={activeComment}
           anchor={rect}
-          beside={placedAnchor?.beside}
+          beside={place?.beside}
           bounds={bounds}
           panel={panel}
           label={draft ? "New comment" : "Comment thread"}
@@ -281,9 +294,13 @@ export function CommentPopovers({
           onClose={close}
         >
           {draft ? (
-            <CommentComposer draft={draft} />
+            <CommentComposer draft={draft} onPosted={(id) => (posted.current = id)} />
           ) : thread ? (
-            <CommentThread c={thread} onClose={close} />
+            <CommentThread
+              c={thread}
+              onClose={close}
+              focusReply={posted.current === thread.id}
+            />
           ) : (
             <DeletedThread id={activeComment!} texts={lost} onClose={close} />
           )}

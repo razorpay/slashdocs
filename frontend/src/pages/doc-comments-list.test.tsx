@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, expect, it, vi } from "vitest";
 import { api, type Comment, type Principal } from "@/api";
-import type { CommentDraft } from "@/lib/comment-drafts";
+import { saveReplyDraft, setEdit, type CommentDraft } from "@/lib/comment-drafts";
 import { CommentComposer, CommentThread, CommentsList } from "./doc-comments";
 import { DocProvider, type DocContextValue } from "./doc-context";
 
@@ -81,7 +81,10 @@ const listed = () =>
     .getAllByRole("listitem")
     .map((item) => within(item).getByText(/^Thread /).textContent);
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
 
 it("lists every thread, open and resolved, and filters them", async () => {
   renderList();
@@ -318,4 +321,42 @@ it("keeps the comment in its draft when it does not post", async () => {
   await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   expect(box).toHaveValue("Fix this");
   expect(ctx.discardDraft).not.toHaveBeenCalled();
+});
+
+it("lists the unsent words of a thread that someone deleted, to open, copy or discard", async () => {
+  const user = userEvent.setup();
+  const writeText = vi.spyOn(navigator.clipboard, "writeText");
+  setEdit("doc-1", "gone", {
+    thread: "gone",
+    base: "Deleted words",
+    body: "Deleted words IMPORTANT EDIT",
+    mentions: [],
+  });
+  saveReplyDraft("doc-1", "gone", { body: "UNSENT REPLY", mentions: [] });
+  saveReplyDraft("doc-1", "open", { body: "Reply on a live thread", mentions: [] });
+  const { onPick } = renderList();
+  const drafts = within(screen.getByRole("list", { name: "Drafts" }));
+  expect(drafts.getAllByRole("listitem")).toHaveLength(3);
+  expect(drafts.getAllByText("Thread deleted")).toHaveLength(2);
+  expect(
+    screen.getByLabelText("3 comment threads (all), 3 drafts"),
+  ).toBeInTheDocument();
+
+  const edit = within(drafts.getByText("Deleted words IMPORTANT EDIT").closest("li")!);
+  await user.click(edit.getByRole("button", { name: "Copy my text" }));
+  expect(writeText).toHaveBeenCalledWith("Deleted words IMPORTANT EDIT");
+  await user.click(drafts.getByText("UNSENT REPLY"));
+  expect(onPick).toHaveBeenCalledWith("gone");
+  await user.click(edit.getByRole("button", { name: "Discard" }));
+  expect(drafts.queryByText("Deleted words IMPORTANT EDIT")).toBeNull();
+  expect(drafts.getByText("Reply on a live thread")).toBeInTheDocument();
+});
+
+it("keeps the drafts in reach when the comments do not load", () => {
+  saveReplyDraft("doc-1", "gone", { body: "UNSENT REPLY", mentions: [] });
+  renderList({ comments: [], commentsError: true });
+  const drafts = within(screen.getByRole("list", { name: "Drafts" }));
+  expect(drafts.getByText("UNSENT REPLY")).toBeInTheDocument();
+  // It cannot know yet whether the thread is gone.
+  expect(drafts.queryByText("Thread deleted")).toBeNull();
 });

@@ -10,13 +10,14 @@ import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Minimize2 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { api, type CommentMention, type Principal } from "@/api";
+import { api, type Principal } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { signInPath } from "@/lib/auth-state";
 import {
   keepPendingComment,
   takePendingComment,
   useCommentDrafts,
+  type DraftText,
 } from "@/lib/comment-drafts";
 import { Button } from "@/components/ui/button";
 import { Center } from "@/components/ui/misc";
@@ -317,7 +318,7 @@ export function DocWorkspace({
     );
   }, [intent, principal, docId, startDraft, setSearchParams]);
   const saveDraft = useCallback(
-    (draftId: string, text: { body: string; mentions: CommentMention[] }) =>
+    (draftId: string, text: DraftText) =>
       updateDrafts((list) =>
         list.map((d) =>
           d.id === draftId ? { ...d, ...text, updatedAt: Date.now() } : d,

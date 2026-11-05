@@ -3,12 +3,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearCommentDrafts,
   keepPendingComment,
+  readEdit,
+  setEdit,
   takePendingComment,
   unsentText,
   useCommentDrafts,
   useDraftText,
   useReplyDraft,
   type CommentDraft,
+  type DraftText,
 } from "./comment-drafts";
 
 const KEY = "slashdocs.comment-drafts";
@@ -149,5 +152,83 @@ describe("useDraftText edit", () => {
     });
     expect(next).toEqual({ body: "abc", mentions: [] });
     expect(result.current[0].body).toBe("abc");
+  });
+});
+
+describe("useDraftText conflict", () => {
+  const text = (body: string) => ({ body, mentions: [] });
+
+  it("keeps both texts when the field closes before the reader chooses, and shows them again", () => {
+    const save = vi.fn();
+    const first = renderHook(({ stored }) => useDraftText(stored, save), {
+      initialProps: { stored: text("BASE") },
+    });
+    act(() => void first.result.current[1](text("LOCAL WORDS")));
+    first.rerender({ stored: text("OTHER TAB WORDS") });
+    expect(first.result.current[2]?.theirs.body).toBe("OTHER TAB WORDS");
+    first.unmount();
+    // The newer stored text stays, and the reader's words wait beside it.
+    expect(save).toHaveBeenLastCalledWith({
+      ...text("OTHER TAB WORDS"),
+      held: text("LOCAL WORDS"),
+    });
+
+    const again = renderHook(() => useDraftText(save.mock.lastCall![0], save));
+    expect(again.result.current[0].body).toBe("LOCAL WORDS");
+    expect(again.result.current[2]?.theirs.body).toBe("OTHER TAB WORDS");
+    act(() => again.result.current[2]!.keep());
+    expect(save).toHaveBeenLastCalledWith(text("LOCAL WORDS"));
+    expect(again.result.current[2]).toBeUndefined();
+  });
+
+  it("clears the waiting text when the reader takes the new one", () => {
+    const save = vi.fn();
+    const { result } = renderHook(() =>
+      useDraftText({ ...text("THEIRS"), held: text("MINE") }, save),
+    );
+    act(() => result.current[2]!.take());
+    expect(result.current[0].body).toBe("THEIRS");
+    expect(save).toHaveBeenLastCalledWith(text("THEIRS"));
+  });
+
+  it("keeps a waiting text when another open field saves the same draft", () => {
+    vi.useFakeTimers();
+    const save = vi.fn();
+    const { result, rerender } = renderHook(
+      ({ stored }) => useDraftText(stored, save),
+      {
+        initialProps: { stored: text("THEIRS") as DraftText },
+      },
+    );
+    rerender({ stored: { ...text("THEIRS"), held: text("MINE") } });
+    act(() => void result.current[1](text("THEIRS AND MORE")));
+    act(() => vi.advanceTimersByTime(300));
+    expect(save).toHaveBeenLastCalledWith({
+      ...text("THEIRS AND MORE"),
+      held: text("MINE"),
+    });
+    vi.useRealTimers();
+  });
+});
+
+describe("setEdit", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("keeps an unsent edit per document in storage, so that it outlives a reload", () => {
+    const edit = { thread: "cmt_1", base: "Old", body: "Old and new", mentions: [] };
+    act(() => setEdit("doc_a", "cmt_1", edit));
+    expect(readEdit("doc_a", "cmt_1")).toMatchObject(edit);
+    expect(readEdit("doc_b", "cmt_1")).toBeUndefined();
+    expect(
+      JSON.parse(localStorage.getItem("slashdocs.comment-edits")!).doc_a.cmt_1,
+    ).toMatchObject({ body: "Old and new" });
+    act(() => setEdit("doc_a", "cmt_1"));
+    expect(readEdit("doc_a", "cmt_1")).toBeUndefined();
+  });
+
+  it("forgets every edit on clear", () => {
+    setEdit("doc_a", "cmt_1", { thread: "cmt_1", base: "a", body: "b", mentions: [] });
+    clearCommentDrafts();
+    expect(readEdit("doc_a", "cmt_1")).toBeUndefined();
   });
 });
