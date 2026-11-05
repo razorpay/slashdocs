@@ -10,27 +10,19 @@
 //
 // Spans inside SVG content cannot be wrapped (non-SVG children of `<text>`
 // don't render), so those get a `<rect>` overlay behind the text instead.
-import { scrollBehavior } from "./dom.ts";
+import { holds, scrollBehavior, viewOf } from "./dom.ts";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 /**
- * Scroll the highlight `el` to the center of the view, unless all of it shows
- * already, as text that the reader just selected does: then the document stays
- * where the reader looks.
+ * Scroll the highlight `el` to the center of the part of the view that the app
+ * leaves clear, unless all of it shows there already, as text that the reader
+ * just selected does: then the document stays where the reader looks.
  */
 export function reveal(el: Element): void {
-  const view = el.ownerDocument.defaultView;
-  const box = el.getBoundingClientRect();
-  if (
-    view &&
-    box.top >= 0 &&
-    box.left >= 0 &&
-    box.bottom <= view.innerHeight &&
-    box.right <= view.innerWidth
-  )
-    return;
-  el.scrollIntoView({ block: "center", behavior: scrollBehavior(el.ownerDocument) });
+  const d = el.ownerDocument;
+  if (holds(viewOf(d, true), el.getBoundingClientRect())) return;
+  el.scrollIntoView({ block: "center", behavior: scrollBehavior(d) });
 }
 
 /**

@@ -9,7 +9,8 @@ import {
   pointAt,
 } from "../bridge/pins.ts";
 import { elementAtPath, pathOf } from "../bridge/cursors.ts";
-import { highlightRange } from "../bridge/highlight.ts";
+import { highlightRange, reveal } from "../bridge/highlight.ts";
+import { cover } from "../bridge/dom.ts";
 
 afterEach(() => {
   document.body.innerHTML = "";
@@ -104,10 +105,14 @@ function layout() {
   pageSize(1280, 2000);
 }
 
+// pageSize sets the size of the page, in a viewport of the window's size
+// without scroll bars.
 function pageSize(width: number, height: number) {
   for (const [key, value] of [
     ["scrollWidth", width],
     ["scrollHeight", height],
+    ["clientWidth", window.innerWidth],
+    ["clientHeight", window.innerHeight],
   ] as const)
     Object.defineProperty(document.documentElement, key, { value, configurable: true });
 }
@@ -453,7 +458,7 @@ test("a pin whose spot is off the page shows at the edge of the page", () => {
       },
     ]),
   );
-  assert.deepEqual(layer.rect("margin"), { left: 0, top: 92, width: 28, height: 28 });
+  assert.deepEqual(layer.rect("margin"), { left: 4, top: 92, width: 28, height: 28 });
   assert.deepEqual(layer.rect("below"), { left: 100, top: 572, width: 28, height: 28 });
   // The stored spots stay as they are.
   assert.strictEqual(layer.tops().find((t) => t.id === "below")?.top, 600);
@@ -499,8 +504,9 @@ test("a pin turns its body away from the text beside its tip", () => {
     );
     const pin = document.querySelector<HTMLElement>('.sd-pin[data-id="c1"]')!;
     assert.strictEqual(pin.dataset.turn, "left");
-    // The tip stays at the spot.
-    assert.deepEqual(layer.rect("c1"), { left: 204, top: 182, width: 28, height: 28 });
+    // The tip stays at the spot, and the face is outside the badge.
+    assert.deepEqual(layer.rect("c1"), { left: 176, top: 182, width: 28, height: 28 });
+    assert.strictEqual(pin.style.transformOrigin, "28px 28px");
   } finally {
     delete (document as Partial<Document>).caretRangeFromPoint;
     delete (Range.prototype as Partial<Range>).getClientRects;
@@ -583,4 +589,167 @@ test("Tab and the arrow keys ring the blocks while placing, Enter places, and Es
   layer.setPlacing(true);
   key("Escape");
   assert.ok(!layer.isPlacing());
+});
+
+// textAt makes the document's text one word whose lines have the given
+// boxes, found at every point.
+function textAt(lines: DOMRect[]) {
+  const word = document.body.appendChild(document.createTextNode("Repeat"));
+  document.caretRangeFromPoint = () => {
+    const range = document.createRange();
+    range.setStart(word, 0);
+    return range;
+  };
+  Range.prototype.getClientRects = () => lines as unknown as DOMRectList;
+  return () => {
+    delete (document as Partial<Document>).caretRangeFromPoint;
+    delete (Range.prototype as Partial<Range>).getClientRects;
+  };
+}
+
+function pinOn(point: Record<string, unknown>) {
+  const layer = createPinLayer({
+    doc: () => document,
+    post: () => {},
+    laidOut: () => {},
+  });
+  layer.start(document);
+  layer.setPins(parsePins([{ id: "c1", anchor: { quote: "", point } }]));
+  return {
+    layer,
+    pin: () => document.querySelector<HTMLElement>('.sd-pin[data-id="c1"]'),
+  };
+}
+
+test("a margin pin stays wholly in the page in view on each side, at 390 pixels", () => {
+  document.body.innerHTML = '<main><p id="steps">Steps</p></main>';
+  layout();
+  // The page is 6px wider than the viewport, as Sol saw it.
+  pageSize(372, 600);
+  Object.defineProperty(document.documentElement, "clientWidth", {
+    value: 366,
+    configurable: true,
+  });
+  boxes({ steps: new DOMRect(16, 100, 334, 40) });
+  for (const [x, left] of [
+    // Placed in the right margin at 1440 pixels: the face turns left.
+    [1.3, 334],
+    // Placed in the left margin.
+    [-0.43, 4],
+  ]) {
+    const { layer, pin } = pinOn({ target: "steps", x, y: 0.5 });
+    assert.ok(pin(), `the pin at ${x} shows`);
+    const rect = layer.rect("c1")!;
+    assert.deepEqual(rect, { left, top: 92, width: 28, height: 28 });
+    assert.ok(rect.left >= 0 && rect.left + rect.width <= 366);
+    document.querySelector(".sd-pins")?.remove();
+  }
+});
+
+test("a face that covers text on each turn goes to the nearest clear space, and points to its tip", () => {
+  document.body.innerHTML = '<main><p id="p">Repeat repeat repeat.</p></main>';
+  layout();
+  boxes({ p: new DOMRect(100, 200, 400, 44) });
+  const lines = [new DOMRect(100, 200, 400, 19), new DOMRect(100, 224, 400, 19)];
+  const restore = textAt(lines);
+  try {
+    // In the middle of the second line.
+    const { layer, pin } = pinOn({ target: "p", x: 0.5, y: 30 / 44 });
+    const face = layer.rect("c1")!;
+    // Just below the paragraph, under the tip, with its rim in the line's slack.
+    assert.deepEqual(face, { left: 300, top: 239, width: 28, height: 28 });
+    assert.strictEqual(pin()!.dataset.turn, "away");
+    // The pointer runs from the middle of the face up to the tip at 300, 230.
+    assert.strictEqual(
+      pin()!.style.getPropertyValue("--len"),
+      `${Math.hypot(14, 23)}px`,
+    );
+    assert.strictEqual(
+      pin()!.style.getPropertyValue("--angle"),
+      `${Math.atan2(-23, -14)}rad`,
+    );
+    assert.ok(pin()!.querySelector("s"), "the pin has a pointer");
+  } finally {
+    restore();
+  }
+});
+
+test("a face with no clear space near turns to the side that covers the least", () => {
+  document.body.innerHTML = '<main><p id="p">Repeat</p></main>';
+  layout();
+  boxes({ p: new DOMRect(0, 0, 1024, 768) });
+  // Text on all the screen but a gap above the tip, too narrow for a face.
+  const restore = textAt([
+    new DOMRect(0, 210, 1024, 558),
+    new DOMRect(0, 0, 284, 210),
+    new DOMRect(300, 0, 724, 210),
+  ]);
+  try {
+    const { layer, pin } = pinOn({ target: "p", x: 300 / 1024, y: 220 / 768 });
+    assert.strictEqual(pin()!.dataset.turn, "left");
+    assert.deepEqual(layer.rect("c1"), { left: 272, top: 192, width: 28, height: 28 });
+  } finally {
+    restore();
+  }
+});
+
+test("an open moved pin shows one ring, the active one, dashed", () => {
+  createPinLayer({ doc: () => document, post: () => {}, laidOut: () => {} });
+  const css = Array.from(document.querySelectorAll("style"), (s) => s.textContent).join(
+    "",
+  );
+  assert.match(
+    css,
+    /\.sd-pin\[data-moved\]\[data-active\]\{outline:2px dashed #2563eb;box-shadow:0 0 0 \.5px/,
+  );
+});
+
+test("a pin and a cluster take a 40px hit area on a touch screen, with the same face", () => {
+  createPinLayer({ doc: () => document, post: () => {}, laidOut: () => {} });
+  const css = Array.from(document.querySelectorAll("style"), (s) => s.textContent).join(
+    "",
+  );
+  assert.include(
+    css,
+    '@media (pointer:coarse),(max-width:639.98px){.sd-pin::before,.sd-cluster::before{content:"";position:absolute;inset:-6px;border-radius:50%}}',
+  );
+  assert.match(css, /\.sd-pin,\.sd-cluster\{[^}]*width:28px;height:28px/);
+});
+
+test("a pin or highlight opened under a comment sheet comes up above it", () => {
+  document.body.innerHTML = '<main><p id="p">Paragraph 4</p></main>';
+  layout();
+  boxes({ p: new DOMRect(100, 600, 400, 40) });
+  const scrolled: string[] = [];
+  Element.prototype.scrollIntoView = function (this: Element) {
+    scrolled.push(this.id);
+  };
+  try {
+    const { layer } = pinOn({ target: "p", x: 0.5, y: 0.5 });
+    // The pin shows: opened from the list, it stays.
+    layer.setPins(
+      parsePins([
+        { id: "c1", anchor: { quote: "", point: { target: "p", x: 0.5, y: 0.5 } } },
+      ]),
+      "c1",
+    );
+    assert.deepEqual(scrolled, []);
+    // A sheet covers the bottom 400px of the 768px view, and the pin with it.
+    cover(document, 400);
+    assert.match(
+      document.getElementById("slashdocs-cover")!.textContent!,
+      /scroll-padding-bottom:400px/,
+    );
+    assert.ok(layer.reveal("c1"));
+    assert.deepEqual(scrolled, ["p"]);
+    reveal(document.getElementById("p")!);
+    assert.deepEqual(scrolled, ["p", "p"]);
+    // The sheet closes.
+    cover(document, 0);
+    assert.strictEqual(document.getElementById("slashdocs-cover"), null);
+    reveal(document.getElementById("p")!);
+    assert.deepEqual(scrolled, ["p", "p"]);
+  } finally {
+    delete (Element.prototype as Partial<Element>).scrollIntoView;
+  }
 });
