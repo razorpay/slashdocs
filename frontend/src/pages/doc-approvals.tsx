@@ -383,6 +383,7 @@ export function ReviewActions({
                   size="sm"
                   autoFocus
                   disabled={deciding}
+                  busy={decide.isPending}
                   onClick={() =>
                     mine.length > 0 ? setConfirmApprove(true) : approve()
                   }
