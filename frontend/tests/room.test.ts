@@ -37,3 +37,39 @@ test.each([
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
+
+// A page of 1000px, in a view of 800px, scrolled to its end.
+function page(scrollTop: number) {
+  const root = document.documentElement;
+  const room = () => parseFloat(getComputedStyle(root).paddingBottom) || 0;
+  Object.defineProperty(document, "scrollingElement", {
+    configurable: true,
+    value: root,
+  });
+  Object.defineProperties(root, {
+    clientHeight: { configurable: true, value: 800 },
+    scrollHeight: { configurable: true, get: () => 1000 + room() },
+    scrollTop: { configurable: true, value: scrollTop },
+  });
+  vi.stubGlobal("scrollY", scrollTop);
+}
+
+// While a sheet stays open, the view keeps the room that it shows. So the
+// words above a sheet that shrinks, as when replies go, stay where they are.
+test("the room of a sheet that shrinks keeps what the view shows", () => {
+  vi.stubGlobal("matchMedia", () => ({ matches: false }));
+  const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+  page(0);
+  cover(document, 500);
+  // The view shows 400px of the room after the page end.
+  page(600);
+  cover(document, 150);
+  assert.match(styles().join(), /padding-bottom:400px/);
+  assert.strictEqual(covered(document), 150);
+  assert.strictEqual(scrollTo.mock.calls.length, 0);
+  // A sheet that grows again takes more room.
+  cover(document, 600);
+  assert.match(styles().join(), /padding-bottom:600px/);
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
