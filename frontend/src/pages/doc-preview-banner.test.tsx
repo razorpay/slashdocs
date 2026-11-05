@@ -6,6 +6,7 @@ import type { Version } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { DocProvider, type DocContextValue } from "./doc-context";
 import { PreviewBanner } from "./doc-preview-banner";
+import { useVersions } from "./use-versions";
 
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), promise: vi.fn() },
@@ -116,4 +117,39 @@ it("still warns before the history loads", () => {
   expect(screen.getByRole("status")).toHaveTextContent(
     "This is an earlier state of the document.",
   );
+});
+
+it("says that the history did not load, with Retry, and does not just drop Restore", async () => {
+  let fail = true;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      fail
+        ? new Response(JSON.stringify({ error: "unavailable" }), { status: 503 })
+        : new Response(JSON.stringify({ items: [earlier, newest] }), {
+            headers: { "Content-Type": "application/json" },
+          }),
+    ),
+  );
+  // The document page finds the entry in the history that it reads.
+  function Banner() {
+    const versions = useVersions("doc_1");
+    const version = versions.data?.items.find((v) => v.id === earlier.id);
+    return <PreviewBanner docId="doc_1" version={version} canRestore />;
+  }
+  const doc = { showLatest: vi.fn(), stayOnVersion: vi.fn() };
+  render(
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+    >
+      <DocProvider value={doc as unknown as DocContextValue}>
+        <Banner />
+      </DocProvider>
+    </QueryClientProvider>,
+  );
+
+  expect(await screen.findByText(/The history did not load\./)).toBeVisible();
+  fail = false;
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByRole("button", { name: /Restore/ })).toBeVisible();
 });
