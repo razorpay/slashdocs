@@ -149,19 +149,17 @@ export function useCommentPins(
     }
   });
 
-  // C places a pin from outside the document too, unless the reader types,
-  // is in a dialog, or is in the Esc then C chord. Esc stops placing.
+  // C places a pin from outside the document too, unless the reader types
+  // or is in a dialog. The Esc chord takes its own C first (useEscChord).
+  // Esc stops placing.
   useEffect(() => {
-    let escapedAt = 0;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        escapedAt = Date.now();
         if (placingPin) setPlacingPin(false);
         return;
       }
       if (e.key !== "c" || e.metaKey || e.ctrlKey || e.altKey || typingOrInLayer(e))
         return;
-      if (Date.now() - escapedAt <= CHORD_WINDOW_MS) return;
       e.preventDefault();
       setPlacingPin(!placingPin);
     };

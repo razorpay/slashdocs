@@ -28,8 +28,8 @@ import {
 import { startTextEditing, type TextEditor } from "./text-editing.ts";
 import { elementOf, REFUSED } from "./structure.ts";
 import { probe, startScriptText, type ScriptText } from "./script-text.ts";
-import { blockTexts, changedBlocks } from "./changed-blocks.ts";
-import { CHORD_KEYS } from "../src/lib/esc-chord.ts";
+import { blockTexts, changedBlocks, type Block } from "./changed-blocks.ts";
+import { CHORD_KEYS, CHORD_WINDOW_MS } from "../src/lib/esc-chord.ts";
 import {
   reduceVimScroll,
   VIM_GLIDE_PX_PER_MS,
@@ -154,8 +154,17 @@ type Theme = "dark" | "light";
   // this window, not the document. Give them the document's shortcuts (Esc,
   // C, the Esc chords) but leave the button its own keys.
   let documentKeys: ((ev: KeyboardEvent) => void) | null = null;
-  // The app shows the Esc chord, and says while it waits for a letter.
+  // The app shows the Esc chord, and says while it waits for a letter. An Esc
+  // here arms it at once, as the app does, so that a letter right after it
+  // goes to the chord before the app's word comes. The app's word, or the
+  // chord's time, ends it.
   let chordArmed = false;
+  let chordTimer: ReturnType<typeof setTimeout> | undefined;
+  function armChord(armed: boolean): void {
+    chordArmed = armed;
+    clearTimeout(chordTimer);
+    if (armed) chordTimer = setTimeout(() => (chordArmed = false), CHORD_WINDOW_MS);
+  }
   document.addEventListener("keydown", (ev) => {
     const target = ev.target as Element | null;
     if (!target?.closest?.(".sd-pins")) return;
@@ -2039,28 +2048,27 @@ type Theme = "dark" | "light";
   }
 
   // The text of the blocks that a reader saw last in this tab, per document,
-  // which the next load of the document compares with its own.
+  // which the next load of the document compares with its own. It is kept
+  // after each load, and again when the document's window goes, while its
+  // blocks are still there: this frame goes after the document does.
   const SEEN_BLOCKS = `slashdocs:blocks:${location.pathname.split("/")[2]}`;
-  window.addEventListener("pagehide", () => {
-    const d = doc();
-    if (!d?.body) return;
+  function keepSeen(blocks: Block[]): void {
     try {
-      sessionStorage.setItem(
-        SEEN_BLOCKS,
-        JSON.stringify(blockTexts(d).map((b) => b.text)),
-      );
+      sessionStorage.setItem(SEEN_BLOCKS, JSON.stringify(blocks.map((b) => b.text)));
     } catch {}
-  });
+  }
 
   // showChanges flashes the blocks whose text the reader did not see last.
   function showChanges(): void {
     const d = doc();
+    if (!d?.body) return;
     let seen: unknown;
     try {
       seen = JSON.parse(sessionStorage.getItem(SEEN_BLOCKS) ?? "null");
     } catch {}
-    if (!d?.body || !Array.isArray(seen)) return;
     const blocks = blockTexts(d);
+    keepSeen(blocks);
+    if (!Array.isArray(seen)) return;
     const changed = changedBlocks(
       seen.map(String),
       blocks.map((b) => b.text),
@@ -2271,6 +2279,7 @@ type Theme = "dark" | "light";
 
       const key = ev.key.toLowerCase();
       if (ev.key === "Escape") {
+        armChord(!chordArmed);
         parent.postMessage(
           { type: "slashdocs:keydown", key: "Escape" },
           targetOrigin(),
@@ -2278,7 +2287,7 @@ type Theme = "dark" | "light";
       } else if (chordArmed && !modified && chordKeys.includes(key)) {
         // While the app shows the Esc chord, the chord takes the key: it
         // types nothing, and C opens the comments instead of placing a pin.
-        chordArmed = false;
+        armChord(false);
         ev.preventDefault();
         parent.postMessage({ type: "slashdocs:keydown", key }, targetOrigin());
       }
@@ -2368,6 +2377,7 @@ type Theme = "dark" | "light";
       true,
     );
     d.defaultView?.addEventListener("resize", scheduleCommentPositions);
+    d.defaultView?.addEventListener("pagehide", () => keepSeen(blockTexts(d)));
     // Capture scrolls of nested containers too, not only the window.
     d.addEventListener("scroll", scheduleViewport, { capture: true, passive: true });
     d.addEventListener("scroll", cursors.refresh, { capture: true, passive: true });
@@ -2584,7 +2594,7 @@ type Theme = "dark" | "light";
     } else if (e.data.type === "slashdocs:open-cursor-chat") {
       chat?.open();
     } else if (e.data.type === "slashdocs:chord") {
-      chordArmed = e.data.armed === true;
+      armChord(e.data.armed === true);
     } else if (e.data.type === "slashdocs:cursor-chat") {
       chatColor =
         typeof e.data.color === "string" && /^#[0-9a-f]{3,8}$/i.test(e.data.color)
