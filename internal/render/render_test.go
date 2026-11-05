@@ -76,7 +76,6 @@ func TestRenderWrapperPreservesInlineScriptClosingTag(t *testing.T) {
 func TestBridgeImplementsThemeContract(t *testing.T) {
 	bridge := requireEmbeddedBridge(t)
 	for _, needle := range []string{
-		"data-slashdocs-theme",
 		"slashdocs_theme",
 		"slashdocs:theme",
 	} {
@@ -84,6 +83,9 @@ func TestBridgeImplementsThemeContract(t *testing.T) {
 			t.Fatalf("bridge.js missing theme-handshake hook %q", needle)
 		}
 	}
+	// The bridge stamps data-<name>-theme for each public name, slashdocs first.
+	requireBridgePattern(t, `PUBLIC_NAMES\s*=\s*\[\s*["']slashdocs["']`)
+	requireBridgePattern(t, "setAttribute\\(`data-\\$\\{name\\}-theme`")
 	requireBridgePattern(t, `readyState\s*!==\s*["']loading["']`)
 }
 
