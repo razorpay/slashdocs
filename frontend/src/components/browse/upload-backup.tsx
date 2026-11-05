@@ -15,7 +15,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { HtmlFileInput } from "@/components/ui/upload";
+import { DraftNotice } from "@/components/draft-notice";
 import { api } from "@/api";
+import { useEditDraft } from "@/lib/edit-drafts";
 import { errorMessage } from "@/lib/errors";
 import { queryKeys } from "@/lib/queryKeys";
 
@@ -53,17 +55,26 @@ export function UploadBackupDialog({
   );
 }
 
-// The form mounts each time the dialog opens. An upload that ends after
-// Cancel names its document in a toast, but does not open it.
+// The form mounts each time the dialog opens. The typed title is a draft
+// (`upload-title`) that Esc, a click outside, a failure and a reload keep,
+// and Cancel discards. A file cannot outlive the page, so a title that came
+// back asks for its file again. An upload that ends after Cancel names its
+// document in a toast, but does not open it.
 function UploadBackupForm({ onClose }: { onClose: () => void }) {
   const q = useQueryClient();
   const nav = useNavigate();
-  const [title, setTitle] = useState("");
+  const typed = useEditDraft("upload-title", "");
   const [file, setFile] = useState<File | null>(null);
+  // The title that a file gives itself, once it is read. It shows as the
+  // placeholder, so that it never takes the place of typed words, and it
+  // counts only for its own file.
+  const [found, setFound] = useState<{ file: File; title: string }>();
+  const title = typed.value.trim() || (found?.file === file && found.title) || "";
   const m = useMutation({
     mutationFn: ({ title, file }: { title: string; file: File }) =>
       api.createDocument(title, file),
     onSuccess: (r, { title }) => {
+      typed.sent(title);
       q.invalidateQueries({ queryKey: queryKeys.documents() });
       if (r.default_grant) {
         const verb =
@@ -82,18 +93,16 @@ function UploadBackupForm({ onClose }: { onClose: () => void }) {
     },
     onError: (e) => toast.error(errorMessage(e, "Upload failed")),
   });
-  // A file fills an empty title with the title that the file gives itself.
   const pick = (next: File | null) => {
     setFile(next);
-    if (next && !title.trim())
-      void htmlTitle(next).then((found) => setTitle((typed) => typed || found));
+    if (next) void htmlTitle(next).then((title) => setFound({ file: next, title }));
   };
   return (
     <form
       className="space-y-3"
       onSubmit={(e) => {
         e.preventDefault();
-        if (file)
+        if (file && !m.isPending)
           m.mutate(
             { title: title || file.name, file },
             {
@@ -107,18 +116,29 @@ function UploadBackupForm({ onClose }: { onClose: () => void }) {
     >
       <Field label="Title">
         <Input
-          placeholder={file?.name || "Untitled"}
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
+          placeholder={title || file?.name || "Untitled"}
+          value={typed.value}
+          onChange={(e) => typed.setValue(e.target.value)}
         />
       </Field>
+      <DraftNotice
+        draft={typed}
+        cameBack="Your title from earlier came back. Choose the file again."
+      />
       <HtmlFileInput file={file} onFile={pick} />
       <DialogFooter>
-        <Button type="button" variant="ghost" onClick={onClose}>
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={() => {
+            typed.discard();
+            onClose();
+          }}
+        >
           Cancel
         </Button>
-        <Button type="submit" disabled={!file || m.isPending}>
-          {m.isPending ? "Uploading…" : "Upload"}
+        <Button type="submit" disabled={!file} busy={m.isPending}>
+          Upload
         </Button>
       </DialogFooter>
     </form>

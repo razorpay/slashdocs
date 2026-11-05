@@ -9,9 +9,10 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import { Center, EmptyState, Skeleton } from "@/components/ui/misc";
 import { TopBar } from "@/components/layout/topbar";
+import { LoadError } from "@/components/error-state";
 import { CommentsToggle, DocBarFrame } from "@/components/layout/doc-bar-frame";
 import { DocWorkspace } from "@/pages/doc-workspace";
-import { api } from "@/api";
+import { api, APIError } from "@/api";
 import { errorMessage } from "@/lib/errors";
 import { queryKeys } from "@/lib/queryKeys";
 import { Page } from "@/components/layout/page";
@@ -36,7 +37,7 @@ type Doc = Entry & { type: "document"; raw: string; version: string };
 
 async function getEntry(pathname: string): Promise<Folder | Doc> {
   const res = await fetch(`/_/api/entry${pathname}`);
-  if (!res.ok) throw new Error(res.status === 404 ? "Not found." : res.statusText);
+  if (!res.ok) throw new APIError(res.status, "", res.statusText);
   return res.json();
 }
 
@@ -64,7 +65,13 @@ function EntryPage() {
           <Skeleton className="h-64 w-full" />
         </Page>
       ) : !data ? (
-        <Center>{entry.error?.message}</Center>
+        <Center>
+          <LoadError
+            title="Could not open this page"
+            error={entry.error}
+            query={entry}
+          />
+        </Center>
       ) : data.path ? (
         <FolderPage folder={data} />
       ) : (

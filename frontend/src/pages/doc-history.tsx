@@ -5,7 +5,8 @@ import { Check, ChevronDown, History, RotateCcw } from "lucide-react";
 import { api, type Version } from "@/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Collapse, EmptyState, RetryButton, Skeleton } from "@/components/ui/misc";
+import { Collapse, Skeleton } from "@/components/ui/misc";
+import { LoadError } from "@/components/error-state";
 import { RelativeTime } from "@/components/ui/relative-time";
 import {
   Dialog,
@@ -89,11 +90,10 @@ export function HistoryDialog({
             <Skeleton className="h-24 rounded-xl" />
           </div>
         ) : versions.error ? (
-          <EmptyState
-            className="enter"
+          <LoadError
             title="Could not load the history"
-            description={errorMessage(versions.error)}
-            action={<RetryButton query={versions} />}
+            error={versions.error}
+            query={versions}
           />
         ) : (
           <div className="enter max-h-[60vh] space-y-2 overflow-auto pr-1">
