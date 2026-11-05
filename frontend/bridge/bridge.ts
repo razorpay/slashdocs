@@ -29,7 +29,7 @@ import {
   settled,
 } from "./dom.ts";
 import { startTextEditing, type TextEditor } from "./text-editing.ts";
-import { elementOf, REFUSED } from "./structure.ts";
+import { BRIDGE_UI, elementOf, REFUSED } from "./structure.ts";
 import { probe, startScriptText, type ScriptText } from "./script-text.ts";
 import { blockTexts, changedBlocks, type Block } from "./changed-blocks.ts";
 import { CHORD_KEYS, CHORD_WINDOW_MS } from "../src/lib/esc-chord.ts";
@@ -772,9 +772,12 @@ type Theme = "dark" | "light";
     if (!d || d.getElementById("slashdocs-highlight-style")) return;
     const s = d.createElement("style");
     s.id = "slashdocs-highlight-style";
-    // The app names an unsent comment "draft:…". Its highlight has a dashed
+    // The bridge's controls are not text of the document, so a selection,
+    // as of Cmd+A, does not mark them. A field keeps its own selection. The
+    // app names an unsent comment "draft:…". Its highlight has a dashed
     // underline, apart from the comments that are sent.
     s.textContent =
+      `:root :is(${BRIDGE_UI}),:root :is(${BRIDGE_UI}) :not(input){-webkit-user-select:none!important;user-select:none!important}` +
       ".slashdocs-mark{background:#fef3c7!important;color:#111827!important;-webkit-text-fill-color:#111827!important;box-decoration-break:clone;-webkit-box-decoration-break:clone;border-radius:2px 2px 0 0;box-shadow:inset 0 -2px 0 #fbbf24;cursor:pointer;transition:background-color .15s,box-shadow .15s}.slashdocs-mark-active{background:#fde68a!important;box-shadow:inset 0 -2px 0 #f59e0b}.slashdocs-svg-mark-text{fill:#111827!important;-webkit-text-fill-color:#111827!important;cursor:pointer}.slashdocs-svg-mark-rect{fill:#fef3c7;stroke:#fbbf24;stroke-width:1;rx:3;ry:3;pointer-events:auto;opacity:.8}.slashdocs-svg-mark-rect.slashdocs-mark-active{fill:#fde68a;stroke:#f59e0b;stroke-width:2;opacity:.9}@media screen{.slashdocs-mark[data-cid^='draft:']{background:#fffbeb!important;box-shadow:none;text-decoration:underline dashed #f59e0b 1.5px!important;text-underline-offset:3px!important}.slashdocs-mark-active[data-cid^='draft:']{background:#fde68a!important}.slashdocs-svg-mark-rect[data-cid^='draft:']{stroke-dasharray:3 2}}@media print{.slashdocs-mark{background:transparent!important;box-shadow:none!important;-webkit-text-fill-color:inherit!important;color:inherit!important}.slashdocs-svg-mark-rect{display:none!important}.slashdocs-svg-mark-text{fill:inherit!important;-webkit-text-fill-color:inherit!important}}";
     (d.head || d.documentElement).appendChild(s);
   }
@@ -1756,7 +1759,7 @@ type Theme = "dark" | "light";
           .slashdocs-selection-action[data-docked]{left:0!important;right:0!important;width:auto!important;max-width:none!important;justify-content:center!important;padding:2px 2px max(2px,env(safe-area-inset-bottom))!important;border-radius:0!important}
           .slashdocs-selection-action[data-docked=bottom]{bottom:0!important}
           .slashdocs-selection-action[data-docked=top]{top:0!important}
-          html:has(>body>.slashdocs-selection-action[data-docked=bottom]){padding-bottom:48px!important}
+          html:has(>.slashdocs-selection-action[data-docked=bottom]){padding-bottom:48px!important}
           [data-slashdocs-surface=dark] .slashdocs-selection-action{background:#27272a!important;color:#d4d4d8!important;box-shadow:0 0 0 1px #fff2,0 4px 16px #0004!important}
           [data-slashdocs-surface=dark] .slashdocs-selection-action button:hover{background:#3f3f46!important;color:#fff!important}
           [data-slashdocs-surface=dark] .slashdocs-selection-action kbd{background:#3f3f46!important;color:#a1a1aa!important}
@@ -1767,7 +1770,9 @@ type Theme = "dark" | "light";
           @media print{.slashdocs-selection-action,.slashdocs-text-flash{display:none!important}}`;
         d.head.appendChild(style);
       }
-      d.body.appendChild(selectionAction);
+      // Outside the body, as the link field is, so that a selection of all
+      // the text, as of Cmd+A in the editor, does not hold the actions.
+      d.documentElement.appendChild(selectionAction);
     }
     // In text that the reader edits, C types, so the chip shows the chord.
     const typing = isEditableTarget(d, d.activeElement);

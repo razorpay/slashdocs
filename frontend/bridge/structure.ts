@@ -58,7 +58,8 @@ const VISIBLE = /[^ \t\n\r\f]/;
 const SPLITS = /^(p|li|h[1-6])$/;
 const HEADING = /^h[1-6]$/;
 const NOT_CONTENT = /^(script|style|template|noscript|textarea|title)$/;
-const BRIDGE_UI =
+// The bridge's controls in the document.
+export const BRIDGE_UI =
   ".slashdocs-selection-action,.slashdocs-heading-link,.slashdocs-text-flash,.slashdocs-script-hint,.slashdocs-link-input";
 const SAME_FORMAT = { strong: "strong,b", em: "em,i" };
 type Format = keyof typeof SAME_FORMAT;
