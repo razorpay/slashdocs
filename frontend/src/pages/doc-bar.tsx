@@ -50,6 +50,8 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import type { RetryQuery } from "@/components/ui/misc";
+import { LoadErrorLine } from "@/components/error-state";
 import { Sheet, SheetTrigger } from "@/components/ui/sheet";
 import { DeleteDocumentDialog } from "@/components/delete-document-dialog";
 import { MoveDialog } from "@/components/browse/move-dialog";
@@ -88,6 +90,7 @@ export function DocBar({
   latest,
   previewing,
   canChangeContent,
+  accessUnknown,
   labels,
   onSelectVersion,
   onShowLatest,
@@ -117,6 +120,8 @@ export function DocBar({
   // The reader may change the content: an editor who is not an assigned
   // approver.
   canChangeContent: boolean;
+  // The query to retry when what the reader may do did not load.
+  accessUnknown?: RetryQuery;
   labels: string[];
   onSelectVersion: (versionID: string) => void;
   onShowLatest: () => void;
@@ -204,7 +209,15 @@ export function DocBar({
           onRenamingChange={setRenaming}
         />
       }
-      meta={previewing ? null : <EditStatus access={access} />}
+      meta={
+        previewing ? null : accessUnknown ? (
+          <LoadErrorLine query={accessUnknown} className="shrink-0 gap-2">
+            <span className="sr-only sm:not-sr-only">Could not check your access</span>
+          </LoadErrorLine>
+        ) : (
+          <EditStatus access={access} />
+        )
+      }
     >
       <ApprovalsDialog
         status={approvalStatus}
