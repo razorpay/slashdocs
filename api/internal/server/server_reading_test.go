@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -74,10 +75,9 @@ func (f *readingFixture) publish(t *testing.T, docID, base, summary, html string
 
 func (f *readingFixture) path(p string) string { return "/v1/books/" + f.bookID + p }
 
-func (f *readingFixture) do(t *testing.T, method, p, body, principal string) *http.Response {
+func (f *readingFixture) do(t *testing.T, method, p, body, principal string) *httptest.ResponseRecorder {
 	t.Helper()
-	rr := do(t, f.e.h, method, f.path(p), body, bkHeaders(principal))
-	return rr.Result()
+	return do(t, f.e.h, method, f.path(p), body, bkHeaders(principal))
 }
 
 func (f *readingFixture) expect(t *testing.T, method, p, body, principal string, want int) []byte {
@@ -186,13 +186,20 @@ func TestPositionWithUnknownSectionIsKeptWithoutSection(t *testing.T) {
 func TestPositionValidation(t *testing.T) {
 	f := newReadingFixture(t)
 	now := time.Now()
+	anchorOf := func(m map[string]any) map[string]any {
+		a, ok := m["anchor"].(map[string]any)
+		if !ok {
+			t.Fatalf("anchor = %T, want object", m["anchor"])
+		}
+		return a
+	}
 	bad := map[string]func(map[string]any){
 		"short device":      func(m map[string]any) { m["device_id"] = "abc" },
 		"device charset":    func(m map[string]any) { m["device_id"] = "device id with spaces" },
-		"long quote":        func(m map[string]any) { m["anchor"].(map[string]any)["quote"] = strings.Repeat("₹", 513) },
-		"long prefix":       func(m map[string]any) { m["anchor"].(map[string]any)["prefix"] = strings.Repeat("a", 65) },
-		"long suffix":       func(m map[string]any) { m["anchor"].(map[string]any)["suffix"] = strings.Repeat("a", 65) },
-		"bad offsets":       func(m map[string]any) { m["anchor"].(map[string]any)["end_offset"] = -1 },
+		"long quote":        func(m map[string]any) { anchorOf(m)["quote"] = strings.Repeat("₹", 513) },
+		"long prefix":       func(m map[string]any) { anchorOf(m)["prefix"] = strings.Repeat("a", 65) },
+		"long suffix":       func(m map[string]any) { anchorOf(m)["suffix"] = strings.Repeat("a", 65) },
+		"bad offsets":       func(m map[string]any) { anchorOf(m)["end_offset"] = -1 },
 		"future timestamp":  func(m map[string]any) { m["client_ts"] = now.Add(10 * time.Minute).UTC().Format(time.RFC3339) },
 		"missing timestamp": func(m map[string]any) { delete(m, "client_ts") },
 		"missing version":   func(m map[string]any) { m["version_id"] = "" },
@@ -231,12 +238,12 @@ func TestStalePositionIgnored(t *testing.T) {
 	t2 := time.Now().Add(-time.Minute)
 	t1 := t2.Add(-time.Minute)
 	rr := f.do(t, http.MethodPut, "/position", positionBody(t, position(f.ch2, f.ch2v1, "intro", t2)), f.viewer)
-	if rr.StatusCode != http.StatusNoContent || rr.Header.Get("X-Position-Stale") != "" {
-		t.Fatalf("first write: status %d stale %q", rr.StatusCode, rr.Header.Get("X-Position-Stale"))
+	if rr.Code != http.StatusNoContent || rr.Header().Get("X-Position-Stale") != "" {
+		t.Fatalf("first write: status %d stale %q", rr.Code, rr.Header().Get("X-Position-Stale"))
 	}
 	rr = f.do(t, http.MethodPut, "/position", positionBody(t, position(f.ch1, f.ch1v1, "cost", t1)), f.viewer)
-	if rr.StatusCode != http.StatusNoContent || rr.Header.Get("X-Position-Stale") != "1" {
-		t.Fatalf("stale write: status %d stale %q, want 204 and X-Position-Stale: 1", rr.StatusCode, rr.Header.Get("X-Position-Stale"))
+	if rr.Code != http.StatusNoContent || rr.Header().Get("X-Position-Stale") != "1" {
+		t.Fatalf("stale write: status %d stale %q, want 204 and X-Position-Stale: 1", rr.Code, rr.Header().Get("X-Position-Stale"))
 	}
 	s := f.state(t, f.viewer)
 	if len(s.Positions) != 1 || s.Positions[0].DocumentID != f.ch2 || s.Positions[0].SectionID != "intro" {

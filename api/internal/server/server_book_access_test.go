@@ -155,8 +155,8 @@ func TestBookRoutesAreRateLimited(t *testing.T) {
 	for _, g := range groups {
 		for i := 0; i < g.budget; i++ {
 			r := g.routes[i%len(g.routes)]
-			if rr := f.do(t, r.method, r.path, r.body, f.viewer); rr.StatusCode >= 300 {
-				t.Fatalf("%s: request %d %s %s: status %d", g.name, i, r.method, r.path, rr.StatusCode)
+			if rr := f.do(t, r.method, r.path, r.body, f.viewer); rr.Code >= 300 {
+				t.Fatalf("%s: request %d %s %s: status %d", g.name, i, r.method, r.path, rr.Code)
 			}
 		}
 		for _, r := range g.routes {

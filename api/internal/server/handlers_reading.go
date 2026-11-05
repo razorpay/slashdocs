@@ -341,6 +341,14 @@ func (h handlers) getReadingState(c *gin.Context) {
 		internalErr(c, err)
 		return
 	}
+	out := buildReadingState(view, docIDs, reads, stored)
+	c.Header("Cache-Control", "private, no-store")
+	c.JSON(http.StatusOK, out)
+}
+
+// buildReadingState assembles the reading state of one reader: positions in
+// chapters they can still open, the state of each chapter, and progress.
+func buildReadingState(view bookView, docIDs []string, reads map[string]repo.ChapterRead, stored []repo.ReadingPosition) readingStateResponse {
 	out := readingStateResponse{Positions: []positionResponse{}, Chapters: make(map[string]chapterStateResponse, len(docIDs))}
 	for _, p := range stored {
 		// A position in a chapter the reader can no longer open is kept but
@@ -386,8 +394,7 @@ func (h handlers) getReadingState(c *gin.Context) {
 		})
 	}
 	out.Progress.Share = books.Progress(progress)
-	c.Header("Cache-Control", "private, no-store")
-	c.JSON(http.StatusOK, out)
+	return out
 }
 
 // PutReadingPosition godoc

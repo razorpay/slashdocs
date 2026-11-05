@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/razorpay/slashdocs/api/internal/auth"
 	"github.com/razorpay/slashdocs/api/internal/books"
 	"github.com/razorpay/slashdocs/api/internal/repo"
 )
@@ -113,28 +115,10 @@ func (h handlers) bookReaderView(c *gin.Context) (view bookView, ok bool) {
 		Words:      map[string]int{},
 	}
 	folderViewer := atLeast(role, repo.RoleViewer)
-	var versions []string
-	for _, e := range view.Entries {
-		if e.Doc == "" {
-			continue
-		}
-		if !folderViewer {
-			// TODO: batch these into one query.
-			dr, err := r.RoleForDocument(ctx, p, e.Doc)
-			if err != nil {
-				internalErr(c, err)
-				return bookView{}, false
-			}
-			if !atLeast(dr, repo.RoleViewer) {
-				continue
-			}
-		}
-		view.Visible[e.Doc] = true
-		if e.Kind == books.KindChapter {
-			if v := view.Docs[e.Doc].CurrentVersionID; v != "" {
-				versions = append(versions, v)
-			}
-		}
+	versions, err := h.markVisible(ctx, p, &view, folderViewer)
+	if err != nil {
+		internalErr(c, err)
+		return bookView{}, false
 	}
 	if len(view.Visible) == 0 && !folderViewer {
 		notFound(c)
@@ -151,6 +135,35 @@ func (h handlers) bookReaderView(c *gin.Context) (view bookView, ok bool) {
 		view.Words = words
 	}
 	return view, true
+}
+
+// markVisible fills view.Visible with the slots p may read and returns the
+// current version of each visible chapter. A folder viewer may read every
+// slot; anyone else needs a grant on the document.
+func (h handlers) markVisible(ctx context.Context, p auth.Principal, view *bookView, folderViewer bool) ([]string, error) {
+	var versions []string
+	for _, e := range view.Entries {
+		if e.Doc == "" {
+			continue
+		}
+		if !folderViewer {
+			// TODO: batch these into one query.
+			dr, err := h.deps.repository.RoleForDocument(ctx, p, e.Doc)
+			if err != nil {
+				return nil, err
+			}
+			if !atLeast(dr, repo.RoleViewer) {
+				continue
+			}
+		}
+		view.Visible[e.Doc] = true
+		if e.Kind == books.KindChapter {
+			if v := view.Docs[e.Doc].CurrentVersionID; v != "" {
+				versions = append(versions, v)
+			}
+		}
+	}
+	return versions, nil
 }
 
 // chapterHref is the canonical reader URL of one chapter (A11).
@@ -289,7 +302,7 @@ func (h handlers) getBookLLMs(c *gin.Context) {
 			continue
 		}
 		l := view.link(e)
-		sb.WriteString(fmt.Sprintf("- [%d · %s](%s)\n", e.Number, llmsText(l.Title), l.Href))
+		fmt.Fprintf(&sb, "- [%d · %s](%s)\n", e.Number, llmsText(l.Title), l.Href)
 	}
 	c.Header("Cache-Control", "private, no-cache")
 	c.Data(http.StatusOK, "text/plain; charset=utf-8", []byte(sb.String()))
