@@ -6,6 +6,7 @@ import { Check, ChevronDown, Copy, LockKeyhole, UsersRound, X } from "lucide-rea
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
 import { Skeleton, useCopy } from "@/components/ui/misc";
+import { LoadErrorLine } from "@/components/error-state";
 import { RelativeTime } from "@/components/ui/relative-time";
 import {
   Dropdown,
@@ -144,7 +145,13 @@ export function ShareSheet({
     return anyoneItem.sources?.find((s) => s.resource_id !== id);
   }, [anyoneItem, id]);
 
-  const anyoneEffectiveRole = anyoneItem?.effective_role || GENERAL_ACCESS_NONE;
+  // The role of a reader other than the owner comes from the access list.
+  // Until it loads, the sheet waits and says nothing false: no read-only
+  // note, and general access is unknown, not "No access".
+  const readOnly = !canManageAccess && !!access.data;
+  const anyoneEffectiveRole = access.data
+    ? anyoneItem?.effective_role || GENERAL_ACCESS_NONE
+    : undefined;
 
   const directGrantId = (item: EffectiveAccessItem) =>
     item.sources?.find((s) => s.resource_id === id)?.grant_id;
@@ -446,7 +453,7 @@ export function ShareSheet({
           </div>
         ) : (
           <>
-            {!canManageAccess ? (
+            {readOnly ? (
               <div
                 id="share-read-only-note"
                 className="mb-4 flex gap-3 rounded-lg border border-[var(--color-danger)]/25 bg-[var(--color-danger)]/5 px-3 py-2.5 text-sm"
@@ -465,7 +472,7 @@ export function ShareSheet({
             ) : null}
             <form
               className={`space-y-3 ${canManageAccess ? "" : "opacity-55"}`}
-              aria-describedby={!canManageAccess ? "share-read-only-note" : undefined}
+              aria-describedby={readOnly ? "share-read-only-note" : undefined}
               onSubmit={(e) => {
                 e.preventDefault();
                 if (!canManageAccess) return;
@@ -543,6 +550,10 @@ export function ShareSheet({
                         </Button>
                       ) : null}
                     </div>
+                  ) : userSearch.isError ? (
+                    <LoadErrorLine query={userSearch} className="mt-1.5">
+                      Could not search people. You can still enter a full email.
+                    </LoadErrorLine>
                   ) : (
                     <p className="mt-1.5 text-xs text-[var(--color-fg-muted)]">
                       {hint}
@@ -596,13 +607,18 @@ export function ShareSheet({
                 </Button>
               </fieldset>
             </form>
-            {accessRequests.data?.items.length ? (
+            {accessRequests.data?.items.length || accessRequests.isError ? (
               <div className="mt-6">
                 <h4 className="mb-2 text-xs font-medium uppercase tracking-wider text-[var(--color-fg-muted)]">
                   Requests for access
                 </h4>
                 <div className="space-y-1">
-                  {accessRequests.data.items.map((request) => (
+                  {accessRequests.isError && !accessRequests.data ? (
+                    <LoadErrorLine query={accessRequests}>
+                      Could not load the requests for access.
+                    </LoadErrorLine>
+                  ) : null}
+                  {accessRequests.data?.items.map((request) => (
                     <AccessRequestRow
                       key={request.requester.type + ":" + request.requester.id}
                       docId={id}
@@ -623,13 +639,13 @@ export function ShareSheet({
                     <Skeleton className="h-9 w-full" />
                     <Skeleton className="h-9 w-full" />
                   </>
-                ) : access.error ? (
-                  <div className="text-xs text-[var(--color-danger)]">
+                ) : access.error && !access.data ? (
+                  <LoadErrorLine query={access}>
                     {access.error instanceof APIError &&
                     access.error.code === "group_membership_unavailable"
                       ? "Google Group membership is temporarily unavailable. Access was not evaluated from stale data."
-                      : "Could not load access list."}
-                  </div>
+                      : "Could not load who has access. Access changes wait until it loads."}
+                  </LoadErrorLine>
                 ) : namedItems.length === 0 ? (
                   <div className="text-xs text-[var(--color-fg-muted)]">
                     No people or bots added yet.
@@ -707,23 +723,31 @@ export function ShareSheet({
               </h4>
               <div className="flex items-center justify-between gap-3 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm">
                 <span className="truncate">{everyoneLabel}</span>
-                <RoleMenu
-                  label="General access role"
-                  value={anyoneEffectiveRole}
-                  options={GENERAL_ACCESS_OPTIONS}
-                  disabled={!canManageAccess || general.isPending}
-                  onChange={(next) => {
-                    const inheritedRole = anyoneInheritedSource?.role;
-                    if (
-                      inheritedRole &&
-                      (ROLE_RANK[next] || 0) < (ROLE_RANK[inheritedRole] || 0)
-                    ) {
-                      handleGeneralInheritedChange(next);
-                    } else {
-                      general.mutate(next);
-                    }
-                  }}
-                />
+                {anyoneEffectiveRole ? (
+                  <RoleMenu
+                    label="General access role"
+                    value={anyoneEffectiveRole}
+                    options={GENERAL_ACCESS_OPTIONS}
+                    disabled={!canManageAccess || general.isPending}
+                    onChange={(next) => {
+                      const inheritedRole = anyoneInheritedSource?.role;
+                      if (
+                        inheritedRole &&
+                        (ROLE_RANK[next] || 0) < (ROLE_RANK[inheritedRole] || 0)
+                      ) {
+                        handleGeneralInheritedChange(next);
+                      } else {
+                        general.mutate(next);
+                      }
+                    }}
+                  />
+                ) : access.isError ? (
+                  <span className="shrink-0 text-xs text-[var(--color-fg-muted)]">
+                    Unknown
+                  </span>
+                ) : (
+                  <Skeleton className="h-8 w-24" />
+                )}
               </div>
             </div>
             <div className="mt-6 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-muted)]/45 p-3">
