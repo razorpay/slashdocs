@@ -84,11 +84,16 @@ Publishing model:
   - Runtime KV changes from uploaded HTML do not create versions; see:
       slashdocs guidelines interactivity kv
 
-Books:
+Books (when Book mode is enabled on the server):
   - A book is a folder of documents read as chapters. Publish each chapter as
     its own document in the book folder.
-  - Pull and push the chapter order with slashdocs books outline pull and
-    slashdocs books outline push <book_id> outline.json --base-version <n>.
+  - To change the chapter order, pull the outline, edit the file, and push the
+    same file back:
+      slashdocs books outline pull <book_id> outline.json
+      slashdocs books outline push <book_id> outline.json
+    The push takes its base version from the pulled file's version_id. Pass
+    --base-version only with a bare outline, and give the outline's version_id
+    (bov_...), not its number.
 
 Before publishing, run the relevant guideline pages for the kind of document you
 are authoring. For example:

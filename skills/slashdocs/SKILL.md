@@ -87,19 +87,23 @@ slashdocs docs labels clear doc_123
 
 ## Books
 
-A book is a folder read as ordered chapters. Book mode may be off on the server;
-if `slashdocs books` reports it is disabled, tell the user.
+A book is a folder read as ordered chapters. These commands work only when
+Book mode is enabled on the server; if `slashdocs books` reports it is
+disabled, tell the user.
 
 ```bash
 slashdocs books create fld_123                       # seed an outline from the folder
 slashdocs books outline pull book_123 outline.json
-slashdocs books outline push book_123 outline.json --base-version <outline_version> --note "Add chapter 12"
+slashdocs books outline push book_123 outline.json --note "Add chapter 12"
 slashdocs books status book_123                      # missing, removed and unplaced chapters
 ```
 
 - Numbered titles (`24 · Agents`) seed the order; `0` or `00` goes to front matter.
-- Pull the outline before you edit it, and push with `--base-version`. A push on
-  a stale version fails; pull again and re-apply your change.
+- Pull the outline before you edit it, and push the same file. The push takes
+  its base version from the pulled file's `version_id`. Pass `--base-version`
+  only with a bare outline, and give the outline's `version_id` (`bov_…`), not
+  its number. A push on a stale version fails; pull again and re-apply your
+  change.
 - A planned chapter is a placeholder. It fills itself when a document with the
   same number or title is created in, or moved into, the book folder.
 - Keep heading ids stable when you push new chapter versions, so readers'
