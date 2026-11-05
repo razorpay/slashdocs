@@ -393,11 +393,12 @@ export function pinElement(d: Document, a: PinAnchor): Element | null {
 
 // One shape for pins and clusters: a 28px bubble with its tip at the corner
 // that its face turns from, or round with a pointer when its face is away
-// from its tip, a 2px white rim, a 24px face. A touch screen gets a 40px hit
-// area around it. A cluster wears its first pin's color, with a second rim
-// behind it for the others. An open moved pin wears one ring: the active one,
-// dashed. Glyphs are centred on their cap
-// height (text-box), so initials, digits and "+" sit in the optical middle.
+// from its tip, a 2px white rim, a 24px face. The pointer ends in an open
+// ring on the tip, so that the letter under the tip shows. A touch screen
+// gets a 40px hit area around it. A cluster wears its first pin's color,
+// with a second rim behind it for the others. An open moved pin wears one
+// ring: the active one, dashed. Glyphs are centred on their cap height
+// (text-box), so initials, digits and "+" sit in the optical middle.
 // Pins sit on the document, not on the app, so they keep this light frame in
 // both app themes.
 const FOCUS_RING = "outline:2px solid #2563eb;outline-offset:2px";
@@ -410,9 +411,9 @@ const CSS = `
 :is(.sd-pin,.sd-cluster)[data-turn=down]{border-radius:3px ${PIN_SIZE / 2}px ${PIN_SIZE / 2}px}
 :is(.sd-pin,.sd-cluster)[data-turn="down left"]{border-radius:${PIN_SIZE / 2}px 3px ${PIN_SIZE / 2}px ${PIN_SIZE / 2}px}
 :is(.sd-pin,.sd-cluster)[data-turn=away]{border-radius:50%}
-.sd-pins s{display:none;position:absolute;z-index:-1;left:50%;top:50%;width:var(--len);height:1.5px;margin-top:-.75px;background:var(--c,#6366f1);transform-origin:0 50%;rotate:var(--angle);pointer-events:none}
+.sd-pins s{display:none;position:absolute;z-index:-1;left:50%;top:50%;width:calc(var(--len) - 3.5px);height:1.5px;margin-top:-.75px;background:var(--c,#6366f1);transform-origin:0 50%;rotate:var(--angle);pointer-events:none}
 .sd-pins [data-turn=away]>s{display:block}
-.sd-pins s::after{content:"";position:absolute;right:-3px;top:-2.25px;width:6px;height:6px;border-radius:50%;background:inherit;box-shadow:0 0 0 1.5px #fff}
+.sd-pins s::after{content:"";position:absolute;right:-7px;top:-2.75px;box-sizing:border-box;width:7px;height:7px;border:1.5px solid var(--c,#6366f1);border-radius:50%;box-shadow:0 0 0 1px #fffc}
 @media (pointer:coarse),(max-width:639.98px){.sd-pin::before,.sd-cluster::before{content:"";position:absolute;inset:-6px;border-radius:50%}}
 .sd-pin[data-moved]{outline:1.5px dashed var(--c,#6366f1);outline-offset:1.5px}
 .sd-pin:focus-visible,.sd-cluster:focus-visible{${FOCUS_RING}}
