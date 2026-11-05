@@ -15,10 +15,12 @@ export function createPersistentStore<T>(
   let cachedRaw: string | null = null;
   let cached: T = initial;
 
+  let memory: string | null = null;
+
   function read(): T {
-    let raw: string | null;
+    let raw = memory;
     try {
-      raw = localStorage.getItem(key);
+      raw ??= localStorage.getItem(key);
     } catch {
       return initial;
     }
@@ -36,8 +38,16 @@ export function createPersistentStore<T>(
     return cached;
   }
 
+  // Storage can be blocked or full. The value then lives in this tab only,
+  // so that the app goes on and readers of the store still see it.
   function write(next: T) {
-    localStorage.setItem(key, JSON.stringify(next));
+    const raw = JSON.stringify(next);
+    try {
+      localStorage.setItem(key, raw);
+      memory = null;
+    } catch {
+      memory = raw;
+    }
     window.dispatchEvent(new Event(event));
   }
 
