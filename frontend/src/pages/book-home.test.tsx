@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { APIError } from "@/api";
 import {
   booksApi,
@@ -11,10 +11,16 @@ import {
   type ManifestLink,
 } from "@/lib/books";
 import { BookHomePage } from "./book-home";
+import { stubMatchMedia } from "./book-fixtures";
 
+// The page backdrop reads matchMedia, which jsdom lacks.
+beforeEach(() => {
+  vi.stubGlobal("matchMedia", stubMatchMedia(false));
+});
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 const ch = (n: number, kind: "chapter" | "planned" = "chapter"): ManifestLink => ({

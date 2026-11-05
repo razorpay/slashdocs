@@ -324,7 +324,7 @@ export function BookHomePage() {
   const share = s ? Math.round(s.progress.share * 100) : 0;
 
   return (
-    <Page lane="focus" backdrop={false}>
+    <Page lane="focus">
       <header className="mb-6 flex items-start gap-4">
         <div
           aria-hidden="true"
