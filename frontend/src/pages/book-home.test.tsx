@@ -144,12 +144,13 @@ describe("BookHomePage", () => {
     expect(screen.queryByText("Title 2")).toBeNull();
   });
 
-  it("offers editors an outline button", async () => {
+  it("links to no outline editor before its route exists", async () => {
+    // The outline editor and its route arrive with the next PR in the stack.
     vi.spyOn(booksApi, "manifest").mockResolvedValue(manifest([1], true));
     vi.spyOn(booksApi, "state").mockResolvedValue(state());
     renderHome();
-    const link = await screen.findByRole("link", { name: /edit outline/i });
-    expect(link.getAttribute("href")).toBe("/app/b/b1/outline");
+    await screen.findAllByText("Title 1");
+    expect(screen.queryByRole("link", { name: /edit outline/i })).toBeNull();
   });
 
   it("says so quietly when the reading state cannot be loaded", async () => {

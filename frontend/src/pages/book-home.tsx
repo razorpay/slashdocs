@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, Pencil } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { APIError } from "@/api";
 import {
   booksApi,
@@ -382,14 +382,6 @@ export function BookHomePage() {
             </div>
           ) : null}
         </div>
-        {m.metadata.canEdit ? (
-          <Button asChild variant="outline" size="sm">
-            <Link to={`/app/b/${encodeURIComponent(bookId)}/outline`}>
-              <Pencil aria-hidden="true" className="h-3.5 w-3.5" />
-              Edit outline
-            </Link>
-          </Button>
-        ) : null}
       </header>
 
       {s ? <ContinueCard manifest={m} state={s} /> : null}
