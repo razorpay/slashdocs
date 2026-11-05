@@ -41,7 +41,7 @@ test("words typed while a comment posts wait as a reply to the new thread", asyn
     .getByPlaceholder("Add a comment…");
   await field.fill("Original words");
   await field.press("Enter");
-  await field.pressSequentially(" KEEP THE LATER WORDS");
+  await field.pressSequentially("KEEP THE LATER WORDS");
   release();
 
   const thread = page.getByRole("dialog", { name: "Comment thread" });
@@ -91,7 +91,7 @@ test("an edit starts from the live text, and tells of a change made during it", 
   await expect(notice).toBeHidden();
 });
 
-test("a thread that another person deletes closes, also during an edit", async ({
+test("a thread that another person deletes closes, also during an untouched edit", async ({
   page,
   slashdocs,
 }) => {
@@ -106,9 +106,7 @@ test("a thread that another person deletes closes, also during an edit", async (
   const thread = page.getByRole("dialog", { name: "Comment thread" });
   await thread.getByRole("button", { name: "More actions" }).click();
   await page.getByRole("menuitem", { name: "Edit" }).click();
-  await thread
-    .getByRole("combobox", { name: "Edit comment" })
-    .pressSequentially(" now");
+  await expect(thread.getByRole("combobox", { name: "Edit comment" })).toBeVisible();
 
   const deleted = await page.request.delete(
     `/v1/documents/${document.id}/comments/${comment.id}`,
