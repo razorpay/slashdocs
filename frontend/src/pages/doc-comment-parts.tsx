@@ -5,7 +5,6 @@ import {
   type FormEvent,
   type KeyboardEvent,
   type MouseEvent,
-  type ReactNode,
 } from "react";
 import { useMutation, useMutationState, useQueryClient } from "@tanstack/react-query";
 import {
@@ -31,6 +30,7 @@ import { emptyMentionDraft, type MentionDraft } from "@/lib/comment-mentions";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Notice, NoticeAction } from "@/components/ui/notice";
 import { Avatar } from "@/components/ui/misc";
 import {
   Dropdown,
@@ -352,7 +352,7 @@ function EditForm({ c, docId, edit }: { c: Comment; docId: string; edit: Edit })
       {changed && !untouched ? (
         <Notice
           say={`This ${noun} changed while you edited. It now says:`}
-          texts={[textOf(c)]}
+          quotes={[quote(textOf(c))]}
         >
           <NoticeAction onClick={takeLive}>Use the new text</NoticeAction>
         </Notice>
@@ -382,54 +382,10 @@ function EditForm({ c, docId, edit }: { c: Comment; docId: string; edit: Edit })
   );
 }
 
-// Notice tells of a change that someone made to the words that the reader
-// writes, shows the words that it is about, and offers what to do.
-function Notice({
-  say,
-  texts,
-  children,
-}: {
-  say: string;
-  texts: MentionDraft[];
-  children: ReactNode;
-}) {
-  return (
-    <div
-      role="status"
-      className={cn(
-        "mt-2 rounded-md bg-[var(--color-surface-muted)] px-2 py-1.5 text-xs",
-        muted,
-      )}
-    >
-      {say}
-      {texts.map((text, i) => (
-        <div key={i} className="mt-1 text-[var(--color-fg)]">
-          <CommentBody text={text.body} mentions={text.mentions} preview />
-        </div>
-      ))}
-      <div className="mt-1 flex gap-3">{children}</div>
-    </div>
-  );
-}
-
-function NoticeAction({
-  onClick,
-  children,
-}: {
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <Button
-      type="button"
-      variant="link"
-      className="h-auto p-0 text-xs"
-      onClick={onClick}
-    >
-      {children}
-    </Button>
-  );
-}
+// quote shows the words of a draft in a notice.
+const quote = (text: MentionDraft) => (
+  <CommentBody text={text.body} mentions={text.mentions} preview />
+);
 
 // LostWords keeps the words that the reader did not send in a message that
 // someone deleted, to copy.
@@ -448,7 +404,7 @@ export function LostWords({
       () => toast.error("Could not copy your text."),
     );
   return (
-    <Notice say={`${what} Your words were not sent:`} texts={texts}>
+    <Notice say={`${what} Your words were not sent:`} quotes={texts.map(quote)}>
       <NoticeAction onClick={copy}>Copy my text</NoticeAction>
       <NoticeAction onClick={onDismiss}>Dismiss</NoticeAction>
     </Notice>
@@ -540,7 +496,7 @@ export function ComposeField({
       {conflict ? (
         <Notice
           say="This draft changed in another tab. It now says:"
-          texts={[conflict.theirs]}
+          quotes={[quote(conflict.theirs)]}
         >
           <NoticeAction onClick={conflict.take}>Use the new text</NoticeAction>
           <NoticeAction onClick={conflict.keep}>Keep mine</NoticeAction>
