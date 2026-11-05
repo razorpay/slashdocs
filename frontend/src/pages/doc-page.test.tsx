@@ -58,6 +58,7 @@ function renderPage() {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("DocumentPage", () => {
@@ -88,5 +89,27 @@ describe("DocumentPage", () => {
       await screen.findByText("You don't have access to this document"),
     ).toBeVisible();
     expect(calls.filter((call) => call.url === "/v1/documents/doc_1")).toHaveLength(2);
+  });
+
+  it("checks access again on Check access, and says that it is still missing", async () => {
+    const { calls } = installFetch(
+      [403],
+      [{ requester: { type: "user", id: "usr_reader" }, requested_at: "2026-11-01" }],
+    );
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Check access" }));
+    expect(await screen.findByText(/You still don't have access/)).toBeVisible();
+    expect(calls.filter((call) => call.url === "/v1/documents/doc_1")).toHaveLength(2);
+  });
+
+  it("asks for the document again while the reader waits for access", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { calls } = installFetch([403]);
+    renderPage();
+    await screen.findByText("You don't have access to this document");
+    const asked = () => calls.filter((call) => call.url === "/v1/documents/doc_1");
+    expect(asked()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await waitFor(() => expect(asked()).toHaveLength(2));
   });
 });
