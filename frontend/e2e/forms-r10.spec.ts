@@ -89,7 +89,7 @@ test("a reason survives a new version and a reload, and rejects the new version 
   await reviewer.context().close();
 });
 
-test("the open help of who can approve covers neither the field nor Add, and Add takes the first click", async ({
+test("the open help of who can approve covers no control of the dialog, and Add takes the first click", async ({
   page,
   slashdocs,
 }) => {
@@ -107,7 +107,11 @@ test("the open help of who can approve covers neither the field nor Add, and Add
 
   const box = (await page.locator(".icon-tooltip").boundingBox())!;
   const add = dialog.getByRole("button", { name: "Add", exact: true });
-  for (const control of [add, dialog.getByRole("combobox", { name: "Approver" })]) {
+  for (const control of [
+    add,
+    dialog.getByRole("combobox", { name: "Approver" }),
+    dialog.getByRole("button", { name: "Close dialog" }),
+  ]) {
     const other = (await control.boundingBox())!;
     const overlaps =
       box.x < other.x + other.width &&
