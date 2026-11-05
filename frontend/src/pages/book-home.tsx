@@ -30,20 +30,40 @@ function Dot({ state }: { state: RowState }) {
   return <StateDot state={state} />;
 }
 
-export function BookError({ error }: { error: unknown }) {
+// Why a book or chapter could not be loaded. 404 and 403 read the same, so
+// a book's existence never shows; an outage or rate limit says it is
+// temporary and offers to try again.
+export function BookError({
+  error,
+  onRetry,
+}: {
+  error: unknown;
+  onRetry?: () => void;
+}) {
   let title = "Could not load this book";
   let description = "Something went wrong. Please try again.";
+  let retryable = true;
   if (error instanceof APIError) {
     if (error.status === 404 && error.code === "feature_disabled") {
       title = "Books are not enabled on this server.";
       description = "Ask an administrator to turn on book mode.";
+      retryable = false;
     } else if (error.status === 401) {
       title = "Sign in to read this book";
       description = "Your session has ended. Sign in again to continue.";
+      retryable = false;
     } else if (error.status === 403 || error.status === 404) {
       title = "Book not found";
       description =
         "This book may have been deleted, or you may not have access to it. Check the link.";
+      retryable = false;
+    } else if (error.status === 503 && error.code === "group_membership_unavailable") {
+      title = "Can't check your access right now";
+      description =
+        "Your group memberships can't be checked at the moment. Try again in a minute.";
+    } else if (error.status === 429) {
+      title = "Too many requests";
+      description = "Wait a minute, then try again.";
     }
   }
   return (
@@ -51,6 +71,11 @@ export function BookError({ error }: { error: unknown }) {
       <div className="max-w-md text-center">
         <h1 className="text-lg font-semibold text-[var(--color-fg)]">{title}</h1>
         <p className="mt-2 text-sm text-[var(--color-fg-muted)]">{description}</p>
+        {retryable && onRetry ? (
+          <Button variant="outline" size="sm" className="mt-4" onClick={onRetry}>
+            Try again
+          </Button>
+        ) : null}
       </div>
     </Center>
   );
@@ -271,7 +296,10 @@ export function BookHomePage() {
       </Page>
     );
   }
-  if (manifest.error || !manifest.data) return <BookError error={manifest.error} />;
+  // A failed refetch keeps the page that loaded.
+  if (!manifest.data) {
+    return <BookError error={manifest.error} onRetry={() => void manifest.refetch()} />;
+  }
 
   const m = manifest.data;
   const s = state.data;

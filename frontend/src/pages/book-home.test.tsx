@@ -170,6 +170,29 @@ describe("BookHomePage", () => {
     );
   });
 
+  it("explains a group outage as temporary", async () => {
+    vi.spyOn(booksApi, "manifest").mockRejectedValue(
+      new APIError(503, "group_membership_unavailable", "groups down"),
+    );
+    vi.spyOn(booksApi, "state").mockResolvedValue(state());
+    renderHome();
+    expect(
+      await screen.findByText("Can't check your access right now", undefined, {
+        timeout: 4000,
+      }),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+  });
+
+  it("explains a rate limit", async () => {
+    vi.spyOn(booksApi, "manifest").mockRejectedValue(
+      new APIError(429, "rate_limited", "slow down"),
+    );
+    vi.spyOn(booksApi, "state").mockResolvedValue(state());
+    renderHome();
+    expect(await screen.findByText("Too many requests")).toBeTruthy();
+  });
+
   it("explains a disabled feature", async () => {
     vi.spyOn(booksApi, "manifest").mockRejectedValue(
       new APIError(404, "feature_disabled", "off"),

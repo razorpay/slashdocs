@@ -166,6 +166,19 @@ describe("BookReader", () => {
     expect(reader().frameTitle).toBe("Chapter 2, Title 2");
   });
 
+  it("keeps the chapter open when a manifest refetch is rate limited", async () => {
+    const { client } = renderReader();
+    await screen.findByTestId("workspace");
+    vi.mocked(booksApi.manifest).mockRejectedValue(
+      new APIError(429, "rate_limited", "slow down"),
+    );
+    await act(() => client.invalidateQueries({ queryKey: ["book", "b1"] }));
+    await waitFor(() =>
+      expect(client.getQueryState(["book", "b1"])?.error).toBeInstanceOf(APIError),
+    );
+    expect(screen.getByTestId("workspace")).toBeInTheDocument();
+  });
+
   it("passes a live document stream", async () => {
     renderReader();
     await screen.findByTestId("workspace");

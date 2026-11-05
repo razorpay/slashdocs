@@ -72,8 +72,8 @@ export function BookNumberRoute() {
   const { bookId = "", number = "" } = useParams();
   const q = useManifest(bookId);
   if (q.isLoading) return <Skeleton className="m-6 h-40" />;
-  if (q.error) return <BookError error={q.error} />;
-  const link = q.data && chapterByNumber(q.data, Number(number));
+  if (!q.data) return <BookError error={q.error} onRetry={() => void q.refetch()} />;
+  const link = chapterByNumber(q.data, Number(number));
   if (!link?.href) return NOT_IN_BOOK;
   return <Navigate to={link.href} replace />;
 }
@@ -93,7 +93,10 @@ export function BookReaderRoute() {
       </div>
     );
   }
-  if (manifest.error || !manifest.data) return <BookError error={manifest.error} />;
+  // A failed refetch (say a 429 on window focus) keeps the chapter open.
+  if (!manifest.data) {
+    return <BookError error={manifest.error} onRetry={() => void manifest.refetch()} />;
+  }
   const link = manifest.data.readingOrder.find(
     (l) => l.properties?.documentId === docId && l.href,
   );
