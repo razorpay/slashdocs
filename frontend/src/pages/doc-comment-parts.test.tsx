@@ -5,7 +5,12 @@ import { useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { api, type Comment } from "@/api";
 import { emptyMentionDraft, type MentionDraft } from "@/lib/comment-mentions";
-import { AgentRequestBadge, ComposeField, ReplyRow } from "./doc-comment-parts";
+import {
+  AgentRequestBadge,
+  ComposeField,
+  MoreMenu,
+  ReplyRow,
+} from "./doc-comment-parts";
 import { DocProvider, type DocContextValue } from "./doc-context";
 
 afterEach(cleanup);
@@ -116,4 +121,38 @@ it("keeps a reply after the thread closes, until it is posted", async () => {
   expect(box).toHaveValue("");
   await act(() => new Promise((resolve) => setTimeout(resolve, 350)));
   expect(localStorage.getItem("slashdocs.reply-drafts")).toBe("{}");
+});
+
+it.each([
+  ["the author", { principal: { type: "user", id: "usr_ana" }, editable: false }, true],
+  ["an editor", { principal: { type: "user", id: "usr_ed" }, editable: true }, true],
+  [
+    "a commenter",
+    { principal: { type: "user", id: "usr_bo" }, editable: false },
+    false,
+  ],
+])("offers Move pin to %s", async (_, reader, offered) => {
+  const user = userEvent.setup();
+  const setPlacingPin = vi.fn();
+  const pin: Comment = {
+    id: "cmt_pin",
+    body: "Here",
+    status: "open",
+    author: { type: "user", id: "usr_ana" },
+    created_on_version_id: "ver_1",
+    anchor: { quote: "", point: { x: 0.5, y: 0.5 } },
+  };
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <DocProvider value={{ ...reader, setPlacingPin } as unknown as DocContextValue}>
+        <MoreMenu c={pin} docId="doc_1" thread />
+      </DocProvider>
+    </QueryClientProvider>,
+  );
+  await user.click(screen.getByRole("button", { name: "More actions" }));
+  const item = screen.queryByRole("menuitem", { name: "Move pin" });
+  if (!offered) return expect(item).toBeNull();
+  await user.click(item!);
+  // After the menu closes, so that the document frame keeps the focus.
+  await vi.waitFor(() => expect(setPlacingPin).toHaveBeenCalledWith("cmt_pin"));
 });

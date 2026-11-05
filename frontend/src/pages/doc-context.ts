@@ -79,9 +79,10 @@ export type DocContextValue = {
   handleDocCommentClick: (id: string) => void;
   handleRenderedDocumentClick: () => void;
   // The reader is placing a comment pin: the next click in the document
-  // drops it.
-  placingPin: boolean;
-  setPlacingPin: (on: boolean) => void;
+  // drops it. It is the id of a thread whose pin the reader moves, or true
+  // for a new pin.
+  placingPin: boolean | string;
+  setPlacingPin: (on: boolean | string) => void;
   subscribeDocumentKV: (listener: DocumentKVListener) => () => void;
   reportViewport: (anchor?: Partial<Anchor>) => void;
   moveCursor: (spot: CursorSpot | null) => void;
