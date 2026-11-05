@@ -59,3 +59,25 @@ it("sends one pin for presses while it waits, opens nothing, and shows the new s
     "aria-busy",
   );
 });
+
+it("takes no press when the pins did not load, so that a failed list never reads as not pinned", async () => {
+  const pins = vi.spyOn(api, "listPins").mockRejectedValue(new Error("503"));
+  render(
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+    >
+      <TooltipProvider>
+        <PinButton
+          resourceType="document"
+          resourceId="doc_1"
+          pinned={false}
+          className=""
+        />
+      </TooltipProvider>
+    </QueryClientProvider>,
+  );
+  await vi.waitFor(() => expect(pins).toHaveBeenCalled());
+  await vi.waitFor(() =>
+    expect(screen.getByRole("button", { name: "Pin" })).toBeDisabled(),
+  );
+});

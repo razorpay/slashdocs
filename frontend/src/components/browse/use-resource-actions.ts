@@ -38,7 +38,9 @@ export function useTogglePin(
     onError: (e, pin) =>
       toast.error(errorMessage(e, pin ? "Could not pin it" : "Could not unpin it")),
   });
-  return { isPinned, togglePin };
+  // When the pins failed to load, the state is unknown, so that a failed
+  // list never reads as "not pinned".
+  return { unknown: pins.isError && !pins.data, isPinned, togglePin };
 }
 
 // Delete mutation shared by every card/row action cluster. The toast names
