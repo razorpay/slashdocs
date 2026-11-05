@@ -11,7 +11,7 @@ import {
 import { api } from "@/api";
 import { useDebounced } from "@/lib/hooks";
 import { Button } from "@/components/ui/button";
-import { Avatar } from "@/components/ui/misc";
+import { Avatar, RetryButton } from "@/components/ui/misc";
 import { principalColor } from "@/lib/principals";
 import { queryKeys } from "@/lib/queryKeys";
 import {
@@ -66,6 +66,10 @@ export function DocumentSearchInput({
     staleTime: 30_000,
   });
 
+  // The people or folders that the field searches. A search that failed says
+  // so, with Retry, and not that nothing matches.
+  const remote =
+    lookup.key === "from" ? people : lookup.key === "in" ? folders : undefined;
   const suggestions = suggestionsFor(token, value, {
     people: people.data?.items.map((person) => ({
       label: person.name || person.email || person.id,
@@ -93,6 +97,7 @@ export function DocumentSearchInput({
         : [],
     ),
     searching: people.isFetching || folders.isFetching,
+    failed: !!remote?.isError,
   });
   const items = suggestions?.items || [];
   const open = focused && !dismissed && !!suggestions;
@@ -229,9 +234,17 @@ export function DocumentSearchInput({
             </button>
           ))}
           {suggestions.status ? (
-            <p className="px-3 py-2 text-sm text-[var(--color-fg-muted)]">
-              {suggestions.status}
-            </p>
+            <div className="flex items-center gap-3 px-3 py-2 text-sm text-[var(--color-fg-muted)]">
+              <p className="min-w-0 flex-1">{suggestions.status}</p>
+              {remote?.isError ? (
+                <RetryButton
+                  query={remote}
+                  variant="outline"
+                  size="sm"
+                  onMouseDown={(event) => event.preventDefault()}
+                />
+              ) : null}
+            </div>
           ) : null}
         </div>
       ) : null}
@@ -269,7 +282,12 @@ function remoteQuery(token: SearchToken): { key?: string; query: string } {
 function suggestionsFor(
   token: SearchToken,
   query: string,
-  found: { people?: Suggestion[]; folders?: Suggestion[]; searching: boolean },
+  found: {
+    people?: Suggestion[];
+    folders?: Suggestion[];
+    searching: boolean;
+    failed: boolean;
+  },
 ): Suggestions | null {
   const typed = token.value.replace(/^[@#]/, "").toLowerCase();
   const { key } = remoteQuery(token);
@@ -299,7 +317,7 @@ function suggestionsFor(
     return {
       heading: "People",
       items,
-      status: statusFor(typed.length >= 2, found.searching, items.length, "people"),
+      status: statusFor(typed.length >= 2, found, items.length, "people"),
     };
   }
   if (key === "in") {
@@ -307,7 +325,7 @@ function suggestionsFor(
     return {
       heading: "Folders",
       items,
-      status: statusFor(!!typed, found.searching, items.length, "folders"),
+      status: statusFor(!!typed, found, items.length, "folders"),
     };
   }
   if (DATE_KEYS.has(key)) {
@@ -328,11 +346,12 @@ function suggestionsFor(
 
 function statusFor(
   searched: boolean,
-  searching: boolean,
+  { searching, failed }: { searching: boolean; failed: boolean },
   count: number,
   noun: string,
 ): string | undefined {
   if (!searched) return `Type to search ${noun}`;
+  if (failed && !searching) return `Could not search ${noun}`;
   if (searching && count === 0) return "Searching…";
   if (count === 0) return `No matching ${noun}`;
   return undefined;

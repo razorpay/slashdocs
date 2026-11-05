@@ -87,6 +87,33 @@ describe("DocumentSearchInput", () => {
     expect(fetchMock).toHaveBeenCalledWith("/v1/users?q=ali", expect.anything());
   });
 
+  it("says that a people search failed, not that nobody matches, and retries", async () => {
+    const { user, input, fetchMock } = setup();
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ error: { code: "unavailable" } }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+    await user.type(input, "from:ali");
+    expect(await screen.findByText("Could not search people")).toBeVisible();
+    expect(screen.queryByText("No matching people")).toBeNull();
+
+    fetchMock.mockImplementation(async () =>
+      jsonResponse({
+        items: [
+          { type: "user", id: "usr_alice", email: "alice@example.com", name: "Alice" },
+        ],
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(
+      await screen.findByRole("option", { name: /alice@example\.com/i }),
+    ).toBeVisible();
+    expect(input).toHaveFocus();
+  });
+
   it("quotes a folder title that has spaces", async () => {
     const { user, input } = setup({
       "/v1/folders?q=prod": {
