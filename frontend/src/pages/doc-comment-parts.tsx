@@ -287,6 +287,7 @@ function EditableBody({ c, docId }: { c: Comment; docId: string }) {
 // the other change without notice.
 function EditForm({ c, docId }: { c: Comment; docId: string }) {
   const q = useQueryClient();
+  const noun = c.parent_comment_id ? "reply" : "comment";
   // The text that the edit started from.
   const [base, setBase] = useState(c.body);
   const [draft, setDraft] = useState(() => textOf(c));
@@ -322,6 +323,7 @@ function EditForm({ c, docId }: { c: Comment; docId: string }) {
     >
       <MentionTextarea
         autoFocus
+        label={`Edit ${noun}`}
         draft={draft}
         onChange={setDraft}
         onKeyDown={(event) => {
@@ -344,8 +346,7 @@ function EditForm({ c, docId }: { c: Comment; docId: string }) {
             muted,
           )}
         >
-          {c.parent_comment_id ? "This reply" : "This comment"} changed while you
-          edited. It now says:
+          This {noun} changed while you edited. It now says:
           <div className="mt-1 text-[var(--color-fg)]">
             <CommentBody text={c.body} mentions={c.mentions} preview />
           </div>

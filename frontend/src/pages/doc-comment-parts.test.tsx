@@ -203,7 +203,7 @@ function renderMessage(c: Comment) {
 async function startEdit(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: "Message actions" }));
   await user.click(screen.getByRole("menuitem", { name: "Edit" }));
-  return screen.findByRole("combobox");
+  return screen.findByRole("combobox", { name: "Edit reply" });
 }
 
 it("starts each edit from the text on screen, after a live change", async () => {
@@ -248,12 +248,16 @@ it("keeps an edit open with the words typed while it saved", async () => {
   });
   update({ ...mine, body: "Original words fixed" });
   await act(async () => response.settle({} as Comment));
-  expect(screen.getByRole("combobox")).toHaveValue("Original words fixed KEEP");
+  expect(screen.getByRole("combobox", { name: "Edit reply" })).toHaveValue(
+    "Original words fixed KEEP",
+  );
   expect(screen.queryByRole("status")).toBeNull();
 
   patch.mockResolvedValue({} as Comment);
   await user.keyboard("{Enter}");
   update({ ...mine, body: "Original words fixed KEEP" });
-  await vi.waitFor(() => expect(screen.queryByRole("combobox")).toBeNull());
+  await vi.waitFor(() =>
+    expect(screen.queryByRole("combobox", { name: "Edit reply" })).toBeNull(),
+  );
   expect(screen.getByText("Original words fixed KEEP")).toBeVisible();
 });
