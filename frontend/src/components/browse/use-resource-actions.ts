@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/api";
 import { errorMessage } from "@/lib/errors";
+import { useMounted } from "@/lib/hooks";
 import { queryKeys } from "@/lib/queryKeys";
 
 export type ResourceType = "document" | "folder";
@@ -25,15 +26,17 @@ export function useTogglePin(
     (pins.data?.items || []).some(
       (p) => p.resource_type === resourceType && p.resource_id === resourceId,
     );
+  // The mutation sends the state that the reader asked for, and stays busy
+  // until the pins load again, so that the mark never shows the old state
+  // as the result and a second press waits.
   const togglePin = useMutation({
-    mutationFn: () =>
-      isPinned
-        ? api.deletePin(resourceType, resourceId)
-        : api.putPin(resourceType, resourceId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.pins() });
-    },
-    onError: (e) => toast.error(errorMessage(e)),
+    mutationFn: (pin: boolean) =>
+      pin
+        ? api.putPin(resourceType, resourceId)
+        : api.deletePin(resourceType, resourceId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.pins() }),
+    onError: (e, pin) =>
+      toast.error(errorMessage(e, pin ? "Could not pin it" : "Could not unpin it")),
   });
   return { isPinned, togglePin };
 }
@@ -73,9 +76,11 @@ export type Move = {
 };
 
 // Move mutation shared by drag and drop and the Move dialog. A move that
-// changes who has access gives a warning to show instead of the toast.
+// changes who has access gives a warning to show instead of the toast, in a
+// dialog while the page that moved it is on screen, or else in a toast.
 export function useMoveResource() {
   const qc = useQueryClient();
+  const mounted = useMounted();
   const [warning, setWarning] = useState<string | null>(null);
   const move = useMutation({
     // The result is the warning, if the server gives one.
@@ -94,7 +99,9 @@ export function useMoveResource() {
       qc.invalidateQueries({
         queryKey: type === "folder" ? queryKeys.folder(id) : queryKeys.document(id),
       });
-      if (warning) setWarning(warning);
+      if (warning && mounted.current) setWarning(warning);
+      else if (warning)
+        toast.warning(warning, { duration: Infinity, closeButton: true });
       else
         toast.success(toTitle ? `Moved to ${toTitle}.` : "Moved.", {
           action: {

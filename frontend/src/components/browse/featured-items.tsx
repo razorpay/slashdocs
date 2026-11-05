@@ -100,7 +100,7 @@ function FeaturedCard({ item, hideable }: { item: FolderEntry; hideable: boolean
   const hide = useMutation({
     mutationFn: () => api.hideFeatured(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.featured() }),
-    onError: (e) => toast.error(errorMessage(e, "Could not hide")),
+    onError: (e) => toast.error(errorMessage(e, `Could not hide “${title}”`)),
   });
   const Icon = isFolder ? FolderIcon : FileText;
 
@@ -126,8 +126,9 @@ function FeaturedCard({ item, hideable }: { item: FolderEntry; hideable: boolean
           variant="ghost"
           size="icon"
           aria-label="Hide"
-          className="absolute right-1 h-10 w-10 cursor-pointer opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-          disabled={hide.isPending}
+          // A busy Hide still takes the press, so that it does not open the item.
+          className="absolute right-1 h-10 w-10 cursor-pointer opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 disabled:pointer-events-auto aria-busy:opacity-100"
+          busy={hide.isPending}
           onClick={() => hide.mutate()}
         >
           <X className="h-3.5 w-3.5" />
