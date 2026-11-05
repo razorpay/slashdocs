@@ -22,11 +22,11 @@ import {
   cover,
   isEditableTarget,
   markSurface,
-  paperOf,
   placeClear,
   reducedMotion,
   scrollBehavior,
   settled,
+  slide,
 } from "./dom.ts";
 import { startTextEditing, type TextEditor } from "./text-editing.ts";
 import { BRIDGE_UI, elementOf, REFUSED } from "./structure.ts";
@@ -2104,10 +2104,26 @@ type Theme = "dark" | "light";
 
   // The margin that a document keeps at its left when it moves for a panel.
   const ROOM_MARGIN = 16;
+  // The pixels at the right of the window that a panel of the app covers.
+  let panel = 0;
+
+  // makeRoomForPanel moves the document left, so that the panel covers none
+  // of its content, when its left margin has room. Else it tells the app,
+  // which makes room beside the panel.
+  function makeRoomForPanel(): void {
+    const d = doc();
+    if (!d?.body) return;
+    const shift = roomFor(d, panel);
+    slide(d, shift ?? 0);
+    if (shift === null)
+      parent.postMessage({ type: "slashdocs:room", crowded: true }, targetOrigin());
+  }
+
   // roomFor tells how far left document d moves so that a panel over the
   // right `covered` pixels of the window covers none of its content: 0 when the
   // panel covers margin only, or null when the left margin is too narrow.
-  // The content is the boxes of the body's blocks, as a centered column.
+  // The content is the boxes of the body's blocks, as a centered column, in
+  // the page.
   function roomFor(d: Document, covered: number): number | null {
     const view = d.defaultView!;
     let left = Infinity;
@@ -2116,11 +2132,11 @@ type Theme = "dark" | "light";
       if (/^(absolute|fixed)$/.test(view.getComputedStyle(el).position)) continue;
       const r = el.getBoundingClientRect();
       if (!r.width || !r.height) continue;
-      left = Math.min(left, r.left);
-      right = Math.max(right, r.right);
+      left = Math.min(left, r.left + view.scrollX);
+      right = Math.max(right, r.right + view.scrollX);
     }
     const shift = Math.max(0, Math.ceil(right - (view.innerWidth - covered)));
-    return left <= right && shift <= left - ROOM_MARGIN ? shift : null;
+    return !shift || (left <= right && shift <= left - ROOM_MARGIN) ? shift : null;
   }
 
   function rectsOf(node: Node): DOMRect[] {
@@ -2449,6 +2465,8 @@ type Theme = "dark" | "light";
     parent.postMessage({ type: "slashdocs:ready" }, targetOrigin());
     scheduleViewport();
     hydrateKV();
+    // A document that reloads by itself keeps clear of the panel.
+    if (panel) makeRoomForPanel();
   }
 
   frame.addEventListener("load", setupFrame);
@@ -2606,17 +2624,8 @@ type Theme = "dark" | "light";
       typeof e.data.cover === "number" &&
       Number.isFinite(e.data.cover)
     ) {
-      // The app fills the room that the document leaves with its paper.
-      const d = doc();
-      if (d?.body)
-        parent.postMessage(
-          {
-            type: "slashdocs:room",
-            shift: roomFor(d, e.data.cover),
-            paper: `rgb(${paperOf(d).slice(0, 3)})`,
-          },
-          targetOrigin(),
-        );
+      panel = e.data.cover;
+      makeRoomForPanel();
     } else if (e.data.type === "slashdocs:show-changes") {
       showChanges();
     } else if (e.data.type === "slashdocs:navigate-text") {
@@ -2685,13 +2694,15 @@ type Theme = "dark" | "light";
       // stops scrolling to the open thread, its pin or highlight comes up
       // above the sheet.
       const d = doc();
+      const bottom = typeof e.data.bottom === "number" ? e.data.bottom : 0;
       if (!d?.defaultView) return;
-      cover(d, typeof e.data.bottom === "number" ? e.data.bottom : 0);
-      settled(d.defaultView, () => {
-        const cid = watched && CSS.escape(watched);
-        const mark = cid && d.querySelector(`mark.slashdocs-mark[data-cid="${cid}"]`);
-        if (!pins.reveal(watched ?? undefined) && mark) reveal(mark);
-      });
+      cover(d, bottom);
+      if (bottom)
+        settled(d.defaultView, () => {
+          const cid = watched && CSS.escape(watched);
+          const mark = cid && d.querySelector(`mark.slashdocs-mark[data-cid="${cid}"]`);
+          if (!pins.reveal(watched ?? undefined) && mark) reveal(mark);
+        });
     }
   });
 })();
