@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -24,6 +25,17 @@ const sectionBatchSize = 50
 // error path, which real HTML input almost never takes.
 var splitSections = render.Sections
 
+// clampInt32 narrows n to int32, saturating at the bounds.
+func clampInt32(n int) int32 {
+	if n > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	if n < math.MinInt32 {
+		return math.MinInt32
+	}
+	return int32(n)
+}
+
 // insertSections stores the sections of a version and marks it indexed. A
 // version whose HTML cannot be split is marked indexed with no sections, so
 // that indexing never blocks a publish and is not retried forever.
@@ -37,12 +49,12 @@ func insertSections(ctx context.Context, q *dbsqlc.Queries, versionID string, ht
 	for _, sec := range secs {
 		if err := q.InsertVersionSection(ctx, dbsqlc.InsertVersionSectionParams{
 			VersionID: versionID,
-			Ord:       int32(sec.Order),
+			Ord:       clampInt32(sec.Order),
 			SectionID: pgText(sec.ID),
 			Title:     pgText(sec.Title),
-			Level:     int32(sec.Level),
+			Level:     clampInt32(sec.Level),
 			TextHash:  sec.Hash,
-			Words:     int32(sec.Words),
+			Words:     clampInt32(sec.Words),
 		}); err != nil {
 			return fmt.Errorf("insert section %d of version %s: %w", sec.Order, versionID, err)
 		}

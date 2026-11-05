@@ -90,61 +90,77 @@ func DisplayTitle(title string, number int) string {
 
 // Validate reports every problem in the outline, each with its path.
 func Validate(o Outline, folderDocs map[string]bool) []Problem {
-	var ps []Problem
-	seen := map[string]bool{}
-	count := 0
-	add := func(p, m string) { ps = append(ps, Problem{p, m}) }
-	if strings.TrimSpace(o.Title) == "" {
-		add("title", "Give the book a title.")
-	}
-	if utf8.RuneCountInString(o.Title) > MaxTitle {
-		add("title", "Keep the title under 200 characters.")
-	}
-	if utf8.RuneCountInString(o.Subtitle) > MaxTitle {
-		add("subtitle", "Keep the subtitle under 200 characters.")
-	}
-	if len(o.Parts) > MaxEntries {
-		add("parts", "An outline can hold at most 500 parts.")
-	}
-	entry := func(path string, e Entry) {
-		count++
-		switch {
-		case e.Doc != "" && e.Planned != "":
-			add(path, "Set either doc or planned, not both.")
-		case e.Doc != "":
-			if !folderDocs[e.Doc] {
-				add(path+".doc", "This document is not in the book's folder.")
-			} else if seen[e.Doc] {
-				add(path+".doc", "This document is already in the outline.")
-			}
-			seen[e.Doc] = true
-		case strings.TrimSpace(e.Planned) == "":
-			add(path+".planned", "Give the planned chapter a title.")
-		case utf8.RuneCountInString(e.Planned) > MaxTitle:
-			add(path+".planned", "Keep the title under 200 characters.")
-		}
-	}
+	v := &validator{folderDocs: folderDocs, seen: map[string]bool{}}
+	v.header(o)
 	for i, e := range o.Front {
-		entry(fmt.Sprintf("front[%d]", i), e)
+		v.entry(fmt.Sprintf("front[%d]", i), e)
 	}
 	for pi, p := range o.Parts {
-		if strings.TrimSpace(p.Title) == "" && len(o.Parts) > 1 {
-			add(fmt.Sprintf("parts[%d].title", pi), "Give the part a title, or remove the part.")
-		}
-		if utf8.RuneCountInString(p.Title) > MaxTitle {
-			add(fmt.Sprintf("parts[%d].title", pi), "Keep the part title under 200 characters.")
-		}
-		for ci, e := range p.Chapters {
-			entry(fmt.Sprintf("parts[%d].chapters[%d]", pi, ci), e)
-		}
+		v.part(pi, p, len(o.Parts))
 	}
 	for i, e := range o.Back {
-		entry(fmt.Sprintf("back[%d]", i), e)
+		v.entry(fmt.Sprintf("back[%d]", i), e)
 	}
-	if count > MaxEntries {
-		add("parts", "An outline can hold at most 500 entries.")
+	if v.count > MaxEntries {
+		v.add("parts", "An outline can hold at most 500 entries.")
 	}
-	return ps
+	return v.ps
+}
+
+// validator accumulates the problems found by Validate.
+type validator struct {
+	folderDocs map[string]bool
+	seen       map[string]bool
+	count      int
+	ps         []Problem
+}
+
+func (v *validator) add(p, m string) { v.ps = append(v.ps, Problem{p, m}) }
+
+func (v *validator) header(o Outline) {
+	if strings.TrimSpace(o.Title) == "" {
+		v.add("title", "Give the book a title.")
+	}
+	if utf8.RuneCountInString(o.Title) > MaxTitle {
+		v.add("title", "Keep the title under 200 characters.")
+	}
+	if utf8.RuneCountInString(o.Subtitle) > MaxTitle {
+		v.add("subtitle", "Keep the subtitle under 200 characters.")
+	}
+	if len(o.Parts) > MaxEntries {
+		v.add("parts", "An outline can hold at most 500 parts.")
+	}
+}
+
+func (v *validator) part(pi int, p Part, nparts int) {
+	if strings.TrimSpace(p.Title) == "" && nparts > 1 {
+		v.add(fmt.Sprintf("parts[%d].title", pi), "Give the part a title, or remove the part.")
+	}
+	if utf8.RuneCountInString(p.Title) > MaxTitle {
+		v.add(fmt.Sprintf("parts[%d].title", pi), "Keep the part title under 200 characters.")
+	}
+	for ci, e := range p.Chapters {
+		v.entry(fmt.Sprintf("parts[%d].chapters[%d]", pi, ci), e)
+	}
+}
+
+func (v *validator) entry(path string, e Entry) {
+	v.count++
+	switch {
+	case e.Doc != "" && e.Planned != "":
+		v.add(path, "Set either doc or planned, not both.")
+	case e.Doc != "":
+		if !v.folderDocs[e.Doc] {
+			v.add(path+".doc", "This document is not in the book's folder.")
+		} else if v.seen[e.Doc] {
+			v.add(path+".doc", "This document is already in the outline.")
+		}
+		v.seen[e.Doc] = true
+	case strings.TrimSpace(e.Planned) == "":
+		v.add(path+".planned", "Give the planned chapter a title.")
+	case utf8.RuneCountInString(e.Planned) > MaxTitle:
+		v.add(path+".planned", "Keep the title under 200 characters.")
+	}
 }
 
 // Number lists every slot in reading order; chapters and placeholders are

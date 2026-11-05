@@ -49,16 +49,7 @@ func (s *Store) CreateBook(ctx context.Context, folderID string, outline books.O
 	}
 	id := newID("book")
 	if err := q.InsertBook(ctx, dbsqlc.InsertBookParams{ID: id, FolderID: folderID, CreatedByType: string(actor.Type), CreatedByID: actor.ID}); err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) {
-			switch pgErr.Code {
-			case "23503": // folder does not exist
-				return repo.Book{}, repo.ErrNotFound
-			case "23505": // folder already is a book
-				return repo.Book{}, repo.ErrConflict
-			}
-		}
-		return repo.Book{}, err
+		return repo.Book{}, mapInsertBookError(err)
 	}
 	if _, _, err := insertOutline(ctx, q, id, outline, "Book created", actor); err != nil {
 		return repo.Book{}, err
@@ -68,19 +59,9 @@ func (s *Store) CreateBook(ctx context.Context, folderID string, outline books.O
 	// every chapter's current version. A placed id that is gone or elsewhere
 	// is skipped: the handler validates the outline, and a read-time prune
 	// drops what it missed.
-	listed, err := q.ListFolderDocuments(ctx, folderID)
+	toIndex, err := chapterVersionIDs(ctx, q, folderID, outline)
 	if err != nil {
-		return repo.Book{}, fmt.Errorf("list chapters of folder %s: %w", folderID, err)
-	}
-	current := make(map[string]string, len(listed))
-	for _, d := range listed {
-		current[d.ID] = d.CurrentVersionID
-	}
-	var toIndex []string
-	for _, docID := range books.DocIDs(outline) {
-		if v := current[docID]; v != "" {
-			toIndex = append(toIndex, v)
-		}
+		return repo.Book{}, err
 	}
 	b, err := getBook(ctx, q, id)
 	if err != nil {
@@ -91,6 +72,41 @@ func (s *Store) CreateBook(ctx context.Context, folderID string, outline books.O
 	}
 	s.indexAfterCommit(ctx, toIndex...)
 	return b, nil
+}
+
+// mapInsertBookError maps the foreign-key and unique violations of a book
+// insert to repo errors.
+func mapInsertBookError(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		switch pgErr.Code {
+		case "23503": // folder does not exist
+			return repo.ErrNotFound
+		case "23505": // folder already is a book
+			return repo.ErrConflict
+		}
+	}
+	return err
+}
+
+// chapterVersionIDs returns the current version of every document the
+// outline places that is in the folder.
+func chapterVersionIDs(ctx context.Context, q *dbsqlc.Queries, folderID string, outline books.Outline) ([]string, error) {
+	listed, err := q.ListFolderDocuments(ctx, folderID)
+	if err != nil {
+		return nil, fmt.Errorf("list chapters of folder %s: %w", folderID, err)
+	}
+	current := make(map[string]string, len(listed))
+	for _, d := range listed {
+		current[d.ID] = d.CurrentVersionID
+	}
+	var ids []string
+	for _, docID := range books.DocIDs(outline) {
+		if v := current[docID]; v != "" {
+			ids = append(ids, v)
+		}
+	}
+	return ids, nil
 }
 
 func (s *Store) GetBook(ctx context.Context, id string) (repo.Book, error) {

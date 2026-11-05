@@ -39,12 +39,7 @@ func Sections(raw []byte) ([]Section, error) {
 	for i, n := range nodes {
 		byNode[n] = hs[i]
 	}
-	type acc struct {
-		s      Section
-		text   strings.Builder
-		markup strings.Builder
-	}
-	parts := []*acc{{}}
+	parts := []*sectionAcc{{}}
 	// inHeading: heading text is the title, not body, but a heading nested
 	// inside another one still starts its own section.
 	var walk func(n *html.Node, inFigure, inHeading bool)
@@ -54,7 +49,7 @@ func Sections(raw []byte) ([]Section, error) {
 				return
 			}
 			if h, ok := byNode[n]; ok {
-				parts = append(parts, &acc{s: Section{ID: h.ID, Title: h.Text, Level: h.Level}})
+				parts = append(parts, &sectionAcc{s: Section{ID: h.ID, Title: h.Text, Level: h.Level}})
 				inHeading = true
 			}
 			if !inHeading && !inFigure && figureTags[n.Data] {
@@ -73,6 +68,19 @@ func Sections(raw []byte) ([]Section, error) {
 		}
 	}
 	walk(d, false, false)
+	return finishSections(parts), nil
+}
+
+// sectionAcc collects the text and figure markup of one section.
+type sectionAcc struct {
+	s      Section
+	text   strings.Builder
+	markup strings.Builder
+}
+
+// finishSections hashes and numbers the collected sections, dropping an empty
+// leading section.
+func finishSections(parts []*sectionAcc) []Section {
 	out := make([]Section, 0, len(parts))
 	for i, p := range parts {
 		words := strings.Fields(p.text.String())
@@ -83,7 +91,7 @@ func Sections(raw []byte) ([]Section, error) {
 		p.s.Words, p.s.Hash, p.s.Order = len(words), hex.EncodeToString(sum[:8]), len(out)
 		out = append(out, p.s)
 	}
-	return out, nil
+	return out
 }
 
 // figureMarkup serialises a figure subtree without id attributes (img keeps
