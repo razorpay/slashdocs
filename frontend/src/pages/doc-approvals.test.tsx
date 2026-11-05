@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ApprovalListItem, ApprovalStatus, Principal } from "@/api";
+import { clearFieldDrafts } from "@/lib/field-drafts";
 import { ApprovalsDialog } from "./doc-approvals";
 import { DocProvider, type DocContextValue } from "./doc-context";
 
@@ -38,6 +39,9 @@ type FetchOptions = {
   // The approvers list, and the user search, fail with these statuses.
   approversStatus?: number;
   usersStatus?: number;
+  // Adding an approver fails with this status once the person can open the
+  // document.
+  addStatus?: number;
   // Every write waits for this before it answers.
   held?: Promise<unknown>;
 };
@@ -69,6 +73,13 @@ function installFetch(options: FetchOptions = {}, posted: PostedDecision[] = [])
           201,
         );
       }
+      if (url === "/v1/documents/doc_1/versions")
+        return jsonResponse({
+          items: ["ver_3", "ver_2", "ver_1"].map((id) => ({
+            id,
+            number: Number(id.replace("ver_", "")),
+          })),
+        });
       if (url === "/v1/documents/doc_1") {
         return jsonResponse({
           id: "doc_1",
@@ -123,6 +134,11 @@ function installFetch(options: FetchOptions = {}, posted: PostedDecision[] = [])
             },
             400,
           );
+        if (init?.method === "POST" && options.addStatus)
+          return jsonResponse(
+            { error: { code: "unavailable", message: "Approvers are unavailable." } },
+            options.addStatus,
+          );
         if (init?.method === "POST")
           return jsonResponse(
             {
@@ -176,13 +192,14 @@ function renderDialog(
   const ctx = {
     docId: "doc_1",
     version: viewedVersion,
+    showLatest: vi.fn(),
     principal: OWNER,
     comments,
     commentsLoading: false,
     commentsError: false,
     setActiveComment: vi.fn(),
   } as unknown as DocContextValue;
-  return render(
+  const view = render(
     <QueryClientProvider client={client}>
       <DocProvider value={ctx}>
         <Dialog
@@ -195,11 +212,13 @@ function renderDialog(
       </DocProvider>
     </QueryClientProvider>,
   );
+  return { ...view, client, ctx };
 }
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  clearFieldDrafts();
 });
 
 describe("ApprovalsDialog", () => {
@@ -304,6 +323,17 @@ describe("ApprovalsDialog", () => {
       expect(screen.queryByRole("tooltip", { hidden: true })).toBeNull(),
     );
     expect(screen.getByRole("dialog")).toBeVisible();
+  });
+
+  it("opens who can approve above its link, and a press on it closes it", async () => {
+    installFetch();
+    renderDialog({ isOwner: true, defaultOpen: true });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Who can approve?" }));
+    const help = document.querySelector<HTMLElement>(".icon-tooltip");
+    expect(help?.dataset.side).toBe("top");
+    await user.click(help!);
+    await waitFor(() => expect(document.querySelector(".icon-tooltip")).toBeNull());
   });
 
   it("says that the people search failed, with Retry, and keeps a full address", async () => {
@@ -662,6 +692,99 @@ describe("the approver's review actions", () => {
   });
 });
 
+// A reason is kept until the reviewer sends or discards it, and it never
+// moves to new content unless the reviewer says so.
+describe("the reason of a rejection", () => {
+  const pendingOwn = {
+    status: "pending" as ApprovalStatus,
+    approved: 0,
+    total: 1,
+    items: [{ approver: OWNER, decision: null } as ApprovalListItem],
+  };
+  const approvals = { ver_2: pendingOwn, ver_3: pendingOwn };
+  const REASON = "IMPORTANT REJECTION REASON DURING LIVE UPDATE";
+
+  async function openReject(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(await screen.findByRole("button", { name: /Open approvals/ }));
+    await user.click(await screen.findByRole("button", { name: "Reject" }));
+    return screen.findByRole("dialog", { name: "Reject" });
+  }
+
+  it("keeps the dialog and the reason when a new version comes, and rejects it only when the reviewer says so", async () => {
+    const posted: PostedDecision[] = [];
+    const options: FetchOptions = { approvalsByVersion: approvals };
+    installFetch(options, posted);
+    const { client, ctx } = renderDialog({ status: "pending", approved: 0, total: 1 });
+    const user = userEvent.setup();
+    const dialog = await openReject(user);
+    await user.type(within(dialog).getByRole("textbox", { name: "Reason" }), REASON);
+
+    options.currentVersionID = "ver_3";
+    await client.invalidateQueries();
+    expect(
+      await within(dialog).findByText(
+        "A new version was published. You wrote this reason for version 2.",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "Reject" })).toBe(dialog);
+    expect(within(dialog).getByRole("textbox", { name: "Reason" })).toHaveValue(REASON);
+    const submit = within(dialog).getByRole("button", { name: "Reject" });
+    expect(submit).toBeDisabled();
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "Use it for version 3" }),
+    );
+    expect(ctx.showLatest).toHaveBeenCalled();
+    await user.click(submit);
+    await waitFor(() => expect(posted).toHaveLength(1));
+    expect(posted[0]).toEqual({
+      version_id: "ver_3",
+      decision: "rejected",
+      note: REASON,
+    });
+  });
+
+  it("gives the reason back after a close, says what it was for, and lets the reviewer discard it", async () => {
+    installFetch({ approvalsByVersion: approvals });
+    renderDialog({ status: "pending", approved: 0, total: 1 });
+    const user = userEvent.setup();
+    let dialog = await openReject(user);
+    await user.type(within(dialog).getByRole("textbox", { name: "Reason" }), REASON);
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Reject" })).toBeNull(),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Reject" }));
+    dialog = await screen.findByRole("dialog", { name: "Reject" });
+    expect(within(dialog).getByRole("textbox", { name: "Reason" })).toHaveValue(REASON);
+    await user.click(within(dialog).getByRole("button", { name: "Discard" }));
+    expect(within(dialog).getByRole("textbox", { name: "Reason" })).toHaveValue("");
+  });
+
+  it("says so when a reason from an earlier visit was for another version", async () => {
+    const posted: PostedDecision[] = [];
+    const options: FetchOptions = { approvalsByVersion: approvals };
+    installFetch(options, posted);
+    const first = renderDialog({ status: "pending", approved: 0, total: 1 });
+    const user = userEvent.setup();
+    const dialog = await openReject(user);
+    await user.type(within(dialog).getByRole("textbox", { name: "Reason" }), REASON);
+    first.unmount();
+
+    options.currentVersionID = "ver_3";
+    renderDialog({ status: "pending", approved: 0, total: 1 }, "ver_3");
+    const again = await openReject(user);
+    expect(within(again).getByRole("textbox", { name: "Reason" })).toHaveValue(REASON);
+    expect(
+      await within(again).findByText(
+        "You wrote this reason for version 2. This is version 3.",
+      ),
+    ).toBeTruthy();
+    expect(within(again).getByRole("button", { name: "Reject" })).toBeDisabled();
+  });
+});
+
 // A late answer names what it was about, and leaves what the reader did
 // since alone.
 describe("late answers in approvals", () => {
@@ -734,6 +857,43 @@ describe("late answers in approvals", () => {
       expect(success).toHaveBeenCalledWith("Added Reviewer as approver."),
     );
     expect(input).toHaveValue("other@example.com");
+  });
+
+  it("keeps an unsent approver address through a close, and says that it came back", async () => {
+    installFetch();
+    const first = renderDialog({ isOwner: true, defaultOpen: true });
+    const user = userEvent.setup();
+    await user.type(
+      await screen.findByRole("combobox", { name: "Approver" }),
+      "reviewer@example.com",
+    );
+    first.unmount();
+    renderDialog({ isOwner: true, defaultOpen: true });
+    expect(await screen.findByRole("combobox", { name: "Approver" })).toHaveValue(
+      "reviewer@example.com",
+    );
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+    expect(screen.getByRole("combobox", { name: "Approver" })).toHaveValue("");
+  });
+
+  it("says that the share worked when the add after it failed", async () => {
+    installFetch({ noAccess: true, addStatus: 503 });
+    renderDialog({ isOwner: true, defaultOpen: true });
+    const user = userEvent.setup();
+    await user.type(
+      await screen.findByRole("combobox", { name: "Approver" }),
+      "reviewer@example.com",
+    );
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Share as viewer and add" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Shared with reviewer@example.com as viewer, but could not add them as approver. Approvers are unavailable.",
+    );
+    expect(screen.getByRole("combobox", { name: "Approver" })).toHaveValue(
+      "reviewer@example.com",
+    );
   });
 
   it("toasts a failed add when the dialog closed before the answer", async () => {

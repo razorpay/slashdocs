@@ -32,7 +32,10 @@ function openOnTabFocus(event: React.FocusEvent<HTMLElement>) {
 
 // A help trigger, such as "Who can approve?", also toggles its tooltip on a
 // click or a tap, because a touch screen has no hover. Radix closes a tooltip
-// on a press of its trigger, so the trigger keeps the press for itself.
+// on a press of its trigger, so the trigger keeps the press for itself. Help
+// is longer than a label, and it sits at the end of a line of hint text, over
+// the controls below. Thus it opens above its trigger, and a press on it
+// closes it, as a press outside does.
 export function Tooltip({
   label,
   children,
@@ -67,13 +70,14 @@ export function Tooltip({
       </Primitive.Trigger>
       <Primitive.Portal>
         <Primitive.Content
-          side="bottom"
+          side={help ? "top" : "bottom"}
           sideOffset={6}
           collisionPadding={8}
           // A press of the trigger is the trigger's own, not a press outside.
           onPointerDownOutside={(e) => {
             if (trigger.current?.contains(e.target as Node)) e.preventDefault();
           }}
+          onPointerDown={help ? () => setOpen(false) : undefined}
           className="icon-tooltip z-[200] max-w-64 rounded-md bg-[#16191d] px-2.5 py-1.5 text-xs font-medium leading-snug text-white shadow-[var(--shadow-pop)] dark:bg-[#2b2e33]"
         >
           {label}
