@@ -157,7 +157,7 @@ it("keeps the text of a comment that did not post, and posts it again", async ()
 
   const retry = error.mock.calls[0][1]?.action as Action;
   retry.onClick({} as Parameters<Action["onClick"]>[0]);
-  await vi.waitFor(() => expect(ctx.setActiveComment).toHaveBeenCalledWith("c2"));
+  await vi.waitFor(() => expect(ctx.discardDraft).toHaveBeenCalledWith("d1"));
   expect(create).toHaveBeenCalledTimes(2);
   expect(create.mock.calls[1][2]).toBe("Try again");
 });
@@ -272,5 +272,67 @@ it("shows a new comment as sending, with the field clear for more words", async 
     "First words",
   );
   settle({ id: "c2" } as Comment);
-  await vi.waitFor(() => expect(ctx.setActiveComment).toHaveBeenCalledWith("c2"));
+  await vi.waitFor(() => expect(ctx.discardDraft).toHaveBeenCalledWith("d1"));
+  // The thread opens where its composer is still open, and only there.
+  const open = ctx.setActiveComment.mock.lastCall![0];
+  expect(open("d1")).toBe("c2");
+  expect(open(undefined)).toBeUndefined();
+  expect(open("c9")).toBe("c9");
+});
+
+it("keeps the thread closed when Esc closes a comment that sends", async () => {
+  let settle!: (value: Comment) => void;
+  vi.spyOn(api, "createComment").mockReturnValueOnce(
+    new Promise<Comment>((resolve) => (settle = resolve)),
+  );
+  function Composer() {
+    const [active, setActive] = useState<string | undefined>("d1");
+    const draft: CommentDraft = {
+      id: "d1",
+      version: "v1",
+      quote: "Look",
+      body: "",
+      mentions: [],
+      updatedAt: 0,
+    };
+    renders.push(active);
+    return (
+      <DocProvider
+        value={
+          {
+            docId: "doc-1",
+            comments: [],
+            drafts: active === "d1" ? [draft] : [],
+            activeComment: active,
+            setActiveComment: setActive,
+            unanchoredComments: new Set(["d1"]),
+            saveDraft: () => {},
+            discardDraft: () => {},
+          } as unknown as DocContextValue
+        }
+      >
+        <CommentPopovers
+          frame={createRef()}
+          bounds={createRef()}
+          origin={null}
+          ready={false}
+          postToFrame={() => {}}
+        />
+      </DocProvider>
+    );
+  }
+  const renders: (string | undefined)[] = [];
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter>
+        <Composer />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+  await userEvent.type(screen.getByPlaceholderText("Add a comment…"), "Sent{Enter}");
+  await userEvent.keyboard("{Escape}");
+  settle({ id: "c2" } as Comment);
+  await vi.waitFor(() => expect(renders.at(-1)).toBeUndefined());
+  await new Promise((r) => setTimeout(r, 50));
+  expect(renders).not.toContain("c2");
 });

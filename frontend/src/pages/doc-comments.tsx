@@ -129,7 +129,7 @@ export function CommentComposer({ draft }: { draft: CommentDraft }) {
       ),
     // It shows as sending until the new thread loads. Then the words typed
     // since (edit gives back the text now) wait as a reply to the thread,
-    // which opens where the draft was.
+    // which opens where the draft was, unless the reader closed it.
     onSuccess: async (created) => {
       await q.invalidateQueries({ queryKey: queryKeys.comments(docId) });
       saveReplyDraft(
@@ -138,7 +138,7 @@ export function CommentComposer({ draft }: { draft: CommentDraft }) {
         edit((now) => now),
       );
       discardDraft(draft.id);
-      setActiveComment(created.id);
+      setActiveComment((active) => (active === draft.id ? created.id : active));
     },
     // The words go back in the field, and the toast sends them again.
     onError: (e, sent) => {
