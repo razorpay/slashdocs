@@ -63,7 +63,8 @@ export function useAccessRequests() {
     queryKey: queryKeys.managedAccessRequests(),
     queryFn: api.managedAccessRequests,
     staleTime: 30_000,
-    // The list is a hint. A failure shows nothing, not an error.
+    // The list is a hint. A failure shows a quiet mark in the header with
+    // Retry, not a toast.
     meta: { suppressGlobalError: true },
   });
 }
