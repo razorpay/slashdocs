@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -68,8 +68,19 @@ function mockLoad(over: Partial<OutlineResponse> = {}) {
   return vi.spyOn(booksApi, "outline").mockResolvedValue(response(over));
 }
 
+// Errors the app's global query handler would toast (main.tsx).
+let globalErrors: ReturnType<typeof vi.fn>;
+
 function renderEditor(state?: unknown) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  globalErrors = vi.fn();
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+    queryCache: new QueryCache({
+      onError: (e, q) => {
+        if (!q.meta?.suppressGlobalError) globalErrors(e);
+      },
+    }),
+  });
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[{ pathname: "/app/b/b1/outline", state }]}>
@@ -277,5 +288,49 @@ describe("BookOutlineEditorPage", () => {
         "Placed 2 chapters; 1 document is not in the outline yet.",
       ),
     ).toBeTruthy();
+  });
+
+  it("keeps the editor when the outline cannot be refetched after a save", async () => {
+    const load = mockLoad();
+    vi.spyOn(booksApi, "pushOutline").mockResolvedValue({
+      version_id: "bov_2",
+      number: 2,
+    });
+    const user = userEvent.setup();
+    renderEditor();
+    await screen.findByRole("listitem", { name: "Chapter 1: Alpha" });
+    load.mockRejectedValue(new APIError(429, "rate_limited", "slow down"));
+    await user.click(screen.getByRole("button", { name: "Move Alpha down" }));
+    await user.click(screen.getByRole("button", { name: "Save outline" }));
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("Too many requests")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Edit outline" })).toBeTruthy();
+  });
+
+  it("offers to try again when the outline cannot be loaded", async () => {
+    const load = mockLoad();
+    load.mockRejectedValueOnce(new APIError(429, "rate_limited", "slow down"));
+    const user = userEvent.setup();
+    renderEditor();
+    expect(await screen.findByText("Too many requests")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(
+      await screen.findByRole("listitem", { name: "Chapter 1: Alpha" }),
+    ).toBeTruthy();
+  });
+
+  it("says only editors can change the outline, without a global error", async () => {
+    mockLoad().mockRejectedValue(
+      new APIError(403, "forbidden", "editor role required"),
+    );
+    vi.spyOn(booksApi, "manifest").mockRejectedValue(
+      new APIError(404, "not_found", "not found"),
+    );
+    renderEditor();
+    expect(
+      await screen.findByText("Only editors of this folder can change the outline."),
+    ).toBeTruthy();
+    await waitFor(() => expect(booksApi.manifest).toHaveBeenCalled());
+    expect(globalErrors).not.toHaveBeenCalled();
   });
 });

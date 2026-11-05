@@ -49,6 +49,7 @@ import { Input, Label } from "@/components/ui/input";
 import { Center, Skeleton } from "@/components/ui/misc";
 import { Page } from "@/components/layout/page";
 import { BookError } from "./book-home";
+import { bookRetry, useManifest } from "./book-chapter-state";
 
 const SELECT =
   "h-8 rounded-sm border border-[var(--color-border)] bg-[var(--color-surface)] px-2 text-sm text-[var(--color-fg)]";
@@ -702,14 +703,13 @@ export function BookOutlineEditorPage() {
     // risk replacing it.
     refetchOnWindowFocus: false,
     staleTime: Infinity,
+    ...bookRetry,
+    // The page explains its own errors.
+    meta: { suppressGlobalError: true },
   });
   // The outline carries no titles for documents already placed. The manifest
   // has them; if it fails the rows fall back to a generic name.
-  const manifest = useQuery({
-    queryKey: queryKeys.book(bookId),
-    queryFn: () => booksApi.manifest(bookId),
-    enabled: !!bookId,
-  });
+  const manifest = useManifest(bookId);
   const titles = useMemo(() => {
     const m = new Map<string, string>();
     for (const g of manifest.data?.toc ?? [])
@@ -728,7 +728,9 @@ export function BookOutlineEditorPage() {
       </Page>
     );
   }
-  if (outline.error || !outline.data) {
+  // Only without an outline: a failed refetch (after a save) keeps the
+  // editor and its draft.
+  if (!outline.data) {
     const e = outline.error;
     if (e instanceof APIError && e.status === 403)
       return (
@@ -736,7 +738,7 @@ export function BookOutlineEditorPage() {
           <p className="text-sm">Only editors of this folder can change the outline.</p>
         </Center>
       );
-    return <BookError error={e} />;
+    return <BookError error={e} onRetry={() => void outline.refetch()} />;
   }
   const placed = (loc.state ?? undefined) as
     { placed: number; notInOutline: number } | undefined;

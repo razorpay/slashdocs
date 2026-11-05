@@ -34,6 +34,8 @@ const MAX_RETRIES = 2;
 const retry = (count: number, err: unknown) =>
   count < MAX_RETRIES && readingWriteFailure(err) === "retry";
 const retryDelay = (attempt: number) => 500 * 2 ** attempt;
+// The same policy for the book's other reads (the outline editor's).
+export const bookRetry = { retry, retryDelay };
 
 // The chapter has a version the reader has not seen.
 export function isUpdated(l: ManifestLink, s: BookState | undefined): boolean {
