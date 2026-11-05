@@ -25,10 +25,11 @@ describe("CodeBlock", () => {
     expect(screen.getByRole("button", { name: "Could not copy" })).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("Could not copy");
     expect(window.getSelection()?.toString()).toBe("slashdocs docs create report.html");
+    // The help stays until the next try, so that the reader can copy by hand.
     act(() => {
       vi.advanceTimersByTime(1500);
     });
-    expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Could not copy");
   });
 
   it("fades only the sides that hide text, as the command scrolls", () => {
