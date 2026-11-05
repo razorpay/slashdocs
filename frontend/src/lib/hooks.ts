@@ -35,6 +35,9 @@ export function useSelf(principal?: Principal): Principal | undefined {
 // owner may do everything; anyone else has the role their grants give. The
 // grants are asked for only after the document loads with its owner, so a
 // document that does not open asks for nothing more.
+// When the grants do not load, the role is unknown, and `failed` is the query
+// to retry: a reader then can do nothing yet, but is not told that they may
+// only view.
 export function useDocumentRole(
   docId: string,
   owner?: Principal,
@@ -52,6 +55,7 @@ export function useDocumentRole(
     isOwner,
     role,
     canEdit: (ROLE_RANK[role || ""] || 0) >= ROLE_RANK.editor,
+    failed: access.isError && !access.data ? access : undefined,
   };
 }
 

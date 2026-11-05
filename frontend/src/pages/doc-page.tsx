@@ -190,20 +190,23 @@ export function DocumentPage() {
   const current = queryVersion || pinnedVersion || latest;
   // An earlier version from the history is a preview: it does not change.
   const previewing = !!queryVersion && queryVersion !== latest;
-  const { canEdit } = useDocumentRole(id, doc.data?.owner, me.data?.principal);
+  const role = useDocumentRole(id, doc.data?.owner, me.data?.principal);
   // An assigned approver reviews the document. Typing in it would make them
   // an author, which removes them as an approver, so it stays read-only.
   const approvals = useQuery({
     queryKey: queryKeys.approvals(id),
     queryFn: () => api.listApprovals(id),
-    enabled: canEdit && !!doc.data?.approval_status,
+    enabled: role.canEdit && !!doc.data?.approval_status,
   });
   const approver = !!approvals.data?.items.some((item) =>
     samePrincipal(item.approver, me.data?.principal),
   );
   // Until the approvals load, the reader may be an approver.
   const approverKnown = !doc.data?.approval_status || approvals.isSuccess;
-  const canChangeContent = canEdit && approverKnown && !approver;
+  const canChangeContent = role.canEdit && approverKnown && !approver;
+  // What the reader may do did not load: the bar says so, with Retry.
+  const accessUnknown =
+    role.failed ?? (approvals.isError && !approvals.data ? approvals : undefined);
   const editable = canChangeContent && !previewing;
 
   // The version on screen is in the link, so a reload or a copied link keeps
@@ -325,6 +328,7 @@ export function DocumentPage() {
           latest={latest}
           previewing={previewing}
           canChangeContent={canChangeContent}
+          accessUnknown={accessUnknown}
           labels={doc.data.labels || []}
           onSelectVersion={showVersion}
           onShowLatest={showLatest}

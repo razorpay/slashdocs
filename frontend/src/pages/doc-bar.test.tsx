@@ -344,6 +344,17 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     expect(screen.queryByRole("button", { name: /^Rename / })).toBeNull();
   });
 
+  it("says when it could not check the reader's access, with Retry", async () => {
+    const accessUnknown = { isFetching: false, refetch: vi.fn() };
+    renderDocBar(true, [], [], "owner", { accessUnknown });
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not check your access",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(accessUnknown.refetch).toHaveBeenCalled();
+    expect(screen.queryByText("Can edit")).toBeNull();
+  });
+
   it("tells a reader who cannot edit what they may do", () => {
     const status = (access?: "commenter" | "viewer", editable = false) => {
       cleanup();
