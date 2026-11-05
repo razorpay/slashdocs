@@ -361,6 +361,10 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     for (const state of ["idle", "unsaved", "saving", "saved"] as const) {
       expect(show(state, false)).toEqual([false, true, null]);
       expect(show(state, true)).toEqual([false, false, null]);
+      // On a phone, Done takes the place of the status, and gets its taps.
+      expect(screen.getByRole("status").className).toContain(
+        "max-sm:pointer-coarse:pointer-events-none",
+      );
     }
     await userEvent.click(screen.getByRole("button", { name: "Done" }));
     expect(leave).toHaveBeenCalled();
