@@ -138,7 +138,9 @@ test("a spot in the page margin stays where it is, on the body", () => {
     '<main id="page"><h1>Pricing</h1><p>Wide margins</p></main>';
   document.elementFromPoint = (() =>
     document.documentElement) as typeof document.elementFromPoint;
+  // The html element fills the viewport, below the body too.
   Element.prototype.getBoundingClientRect = function (this: Element) {
+    if (this === document.documentElement) return new DOMRect(0, 0, 1280, 800);
     return this === document.body
       ? new DOMRect(300, 0, 600, 400)
       : new DOMRect(300, 0, 600, 100);

@@ -195,13 +195,14 @@ export function pointAt(d: Document, x: number, y: number): PinAnchor | null {
 
 // spotElement gives the element that takes a pin at a point in the viewport:
 // the innermost one under it whose box holds the point and is at least
-// MIN_PIN_BOX on each side, or else the body. The pin stays at the point,
-// also when that is outside the body's box, as in a page margin.
+// MIN_PIN_BOX on each side, or else the body, also for a spot on the html
+// element below a short body. The pin stays at the point, also when that is
+// outside the body's box, as in a page margin.
 function spotElement(d: Document, x: number, y: number): Element {
   const body = d.body!;
   for (
     let el = sharedElement(d, d.elementFromPoint(x, y));
-    el && el !== body;
+    el && el !== body && body.contains(el);
     el = el.parentElement
   ) {
     const box = el.getBoundingClientRect();
@@ -275,7 +276,7 @@ export function pinElement(d: Document, a: PinAnchor): Element | null {
   const candidates: Element[] = [];
   for (
     let el = node.nodeType === 1 ? (node as Element) : node.parentElement;
-    el && el !== body;
+    el && el !== body && body.contains(el);
     el = el.parentElement
   )
     if (startsWithQuote(el)) candidates.push(el);
