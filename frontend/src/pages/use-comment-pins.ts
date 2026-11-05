@@ -3,9 +3,13 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/api";
 import { COMMENT_STATUS } from "@/lib/constants";
-import { CHORD_WINDOW_MS } from "@/lib/esc-chord";
-import { initialsOf, parsePointAnchor, type PointAnchor } from "@/lib/comment-pins";
-import { principalColor, principalLabel, samePrincipal } from "@/lib/principals";
+import {
+  canMovePin,
+  initialsOf,
+  parsePointAnchor,
+  type PointAnchor,
+} from "@/lib/comment-pins";
+import { principalColor, principalLabel } from "@/lib/principals";
 import { queryKeys } from "@/lib/queryKeys";
 import { useDoc } from "./doc-context";
 import { useFrameMessage } from "./use-frame-message";
@@ -67,7 +71,7 @@ export function useCommentPins(
                 anchor: c.anchor,
                 initials: initialsOf(principalLabel(c.author)),
                 replies: c.replies?.length ?? 0,
-                movable: editable || samePrincipal(c.author, principal),
+                movable: canMovePin(c, editable, principal),
                 color: principalColor(c.author),
               },
             ]
@@ -92,9 +96,16 @@ export function useCommentPins(
   useEffect(() => {
     if (ready) postToFrame({ type: "slashdocs:pins", pins, active: activeComment });
   }, [ready, pins, activeComment, postToFrame]);
+  // The frame takes the focus, so that placing takes keys too.
   useEffect(() => {
-    if (ready) postToFrame({ type: "slashdocs:pin-placing", on: placingPin });
-  }, [ready, placingPin, postToFrame]);
+    if (!ready) return;
+    postToFrame({
+      type: "slashdocs:pin-placing",
+      on: !!placingPin,
+      move: typeof placingPin === "string" ? placingPin : undefined,
+    });
+    if (placingPin && document.activeElement !== frame.current) frame.current?.focus();
+  }, [ready, placingPin, postToFrame, frame]);
 
   // A pin dragged to a new spot: a draft moves here, a thread through the
   // API. A failed save puts the pin back with the next list.
@@ -133,7 +144,10 @@ export function useCommentPins(
       setUnanchoredComments("pins", ids("placed", false));
       setMovedPins(ids("moved", true));
     }
-    if (data.type === "slashdocs:pin-placing") setPlacingPin(data.on === true);
+    if (data.type === "slashdocs:pin-placing")
+      setPlacingPin(
+        data.on === true && (typeof data.move === "string" ? data.move : true),
+      );
     if (data.type === "slashdocs:pin-place") {
       const anchor = parsePointAnchor(data.anchor);
       if (anchor) startDraft({ quote: anchor.quote ?? "", anchor });

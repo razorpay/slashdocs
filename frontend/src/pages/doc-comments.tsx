@@ -18,7 +18,7 @@ import { cn } from "@/lib/cn";
 import { errorMessage } from "@/lib/errors";
 import { principalLabel, samePrincipal } from "@/lib/principals";
 import { queryKeys } from "@/lib/queryKeys";
-import { anchorLabel } from "@/lib/comment-pins";
+import { anchorLabel, canMovePin } from "@/lib/comment-pins";
 import { isAgentRequest } from "@/lib/agent-request";
 import { useDraftText, type CommentDraft } from "@/lib/comment-drafts";
 import { COMMENT_FILTERS, COMMENT_STATUS, matchesCommentFilter } from "@/lib/constants";
@@ -48,7 +48,7 @@ function Quote({ text }: { text: string }) {
 }
 
 // A small header action, which grows to a 40px target on a touch screen.
-const HEADER_ACTION = "h-7 w-7 pointer-coarse:h-10 pointer-coarse:w-10";
+const HEADER_ACTION = "h-7 w-7";
 
 // PlacementBadge tells that a thread is not where it was made, in the version
 // on screen: its text or element is not found, or its pin's element is gone
@@ -60,7 +60,7 @@ function PlacementBadge({
 }: {
   lost: boolean;
   moved: boolean;
-  className: string;
+  className?: string;
 }) {
   if (moved)
     return (
@@ -177,7 +177,15 @@ export function CommentComposer({ draft }: { draft: CommentDraft }) {
 // CommentThread is a whole thread, for its popover: the first comment with
 // the thread's actions, the replies set in under it, and the reply field.
 export function CommentThread({ c, onClose }: { c: Comment; onClose: () => void }) {
-  const { docId, signIn, unanchoredComments, movedPins } = useDoc();
+  const {
+    docId,
+    signIn,
+    unanchoredComments,
+    movedPins,
+    editable,
+    principal,
+    setPlacingPin,
+  } = useDoc();
   const ref = useRef<HTMLElement>(null);
   const [params] = useSearchParams();
   const linked = params.get("comment");
@@ -191,11 +199,21 @@ export function CommentThread({ c, onClose }: { c: Comment; onClose: () => void 
   const resolved = c.status === COMMENT_STATUS.resolved;
   return (
     <article ref={ref} data-comment-id={c.id} className="px-3 py-3">
-      <PlacementBadge
-        lost={unanchoredComments.has(c.id)}
-        moved={movedPins.has(c.id)}
-        className="mb-2"
-      />
+      <div className="mb-2 flex items-center gap-2 empty:hidden">
+        <PlacementBadge
+          lost={unanchoredComments.has(c.id)}
+          moved={movedPins.has(c.id)}
+        />
+        {movedPins.has(c.id) && canMovePin(c, editable, principal) ? (
+          <Button
+            variant="link"
+            className="h-auto p-0 text-xs"
+            onClick={() => setPlacingPin(c.id)}
+          >
+            Move pin
+          </Button>
+        ) : null}
+      </div>
       <Message
         c={c}
         docId={docId}
