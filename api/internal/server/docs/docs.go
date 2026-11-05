@@ -2554,7 +2554,7 @@ const docTemplate = `{
                         }
                     },
                     "409": {
-                        "description": "book_exists",
+                        "description": "book_exists: error.details.book_id names the folder's book",
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }

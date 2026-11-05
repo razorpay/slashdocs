@@ -95,7 +95,7 @@ func NewRoot(out io.Writer) *cobra.Command {
 	root.PersistentFlags().BoolVarP(&g.quiet, "quiet", "q", false, "quiet")
 	root.PersistentFlags().BoolVarP(&g.verbose, "verbose", "v", false, "verbose")
 	root.PersistentFlags().BoolVar(&g.local, "local", false, "use slashdocs local on this computer, and start it if it is not running")
-	root.AddCommand(notificationsCmd(g, out, false), authCmd(g, out), contextCmd(g, out), docsCmd(g, out), foldersCmd(g, out), saRoot(g, out), openCmd(g, out), guidelinesCmd(g, out), configCmd(g, out), versionCmd(out), updateCmd(g, out), skillsCmd(g, out), localCmd(g, out))
+	root.AddCommand(notificationsCmd(g, out, false), authCmd(g, out), contextCmd(g, out), docsCmd(g, out), foldersCmd(g, out), booksCmd(g, out), saRoot(g, out), openCmd(g, out), guidelinesCmd(g, out), configCmd(g, out), versionCmd(out), updateCmd(g, out), skillsCmd(g, out), localCmd(g, out))
 	return root
 }
 

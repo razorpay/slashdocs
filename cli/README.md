@@ -46,6 +46,23 @@ slashdocs docs push doc_123 report.html --summary "Address review comments"
 slashdocs docs comments resolve doc_123 cmt_1 cmt_2
 ```
 
+## Books
+
+A book is a folder of chapters with an outline. Book mode must be enabled on the server.
+
+```bash
+slashdocs books create fld_123                    # seed an outline from numbered titles; lists docs left out
+slashdocs books show book_123                     # each part's chapters and placeholders: number, title, document ID
+slashdocs books show --folder fld_123             # the same, for the book made from a folder
+slashdocs books status book_123                   # each entry: number, title, document, version; then unplaced docs
+slashdocs books outline pull book_123 outline.json   # omit the file or use - for stdout
+# edit outline.json
+slashdocs books outline push book_123 outline.json --note "Add the testing chapter"
+slashdocs books delete book_123                   # permanent: removes the book, every outline version and readers' saved places; the folder and documents stay
+```
+
+`push` accepts the pulled file or a bare outline. For a pulled file, `--base-version` defaults to its `version_id`; for a bare outline it is required. After a successful push, a pulled file's `version_id` and `number` move to the new version, so you can keep editing the same file and push it again. If the outline changed since the file's version (another file, agent or person saved a newer one), `push` exits with code 5 and names the current version: pull into a new file and re-apply your changes there. Pulling into the file you edited overwrites your edits. If the outline has problems, `push` prints each one as `path: message`.
+
 ## Local documents
 
 `slashdocs local` lets you try slashdocs on one computer, without a server, account, or login. It serves a folder of HTML documents with the slashdocs viewer and comments. To share documents with your team, and to get version history, full-text search, labels, and notifications, use a slashdocs server.

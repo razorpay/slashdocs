@@ -20,19 +20,25 @@ import (
 
 var expectedMCPTools = []string{
 	"accept_service_account_transfer",
+	"create_book",
 	"create_comment",
 	"create_document",
 	"create_folder",
 	"create_service_account_transfer",
 	"decline_service_account_transfer",
+	"delete_book",
 	"delete_comment",
 	"delete_document",
 	"delete_folder",
 	"get_authoring_guidelines",
+	"get_book",
+	"get_book_outline",
+	"get_book_status",
 	"get_document",
 	"get_document_html",
 	"get_document_version",
 	"get_folder",
+	"get_folder_book",
 	"get_server_config",
 	"list_comments",
 	"list_document_access",
@@ -62,6 +68,7 @@ var expectedMCPTools = []string{
 	"share_document",
 	"share_folder",
 	"unreact_comment",
+	"update_book_outline",
 	"update_comment",
 	"update_document",
 	"update_document_grant",
@@ -70,8 +77,13 @@ var expectedMCPTools = []string{
 	"whoami",
 }
 
+// mcpBookTools are listed only when book mode is on.
+var mcpBookTools = []string{
+	"create_book", "delete_book", "get_book", "get_book_outline", "get_book_status", "get_folder_book", "update_book_outline",
+}
+
 func TestMCPStreamableHTTPInitializeListAndCall(t *testing.T) {
-	e := newMCPOAuthTestEnv(t)
+	e := newMCPOAuthTestEnvConfig(t, func(cfg *server.Config) { cfg.BooksEnabled = true })
 	token := auth.NewMCPAccessToken(fixtureUser.ID, e.resource, oauthTestSigningMaterial, time.Minute)
 
 	initialize := mcpPost(t, e, token, "", map[string]any{
@@ -138,6 +150,7 @@ func TestMCPStreamableHTTPInitializeListAndCall(t *testing.T) {
 	destructiveTools := map[string]bool{
 		"accept_service_account_transfer":  true,
 		"decline_service_account_transfer": true,
+		"delete_book":                      true,
 		"delete_comment":                   true,
 		"delete_document":                  true,
 		"delete_folder":                    true,
@@ -185,6 +198,97 @@ func TestMCPStreamableHTTPInitializeListAndCall(t *testing.T) {
 	invalid := callMCPToolHTTP(t, e, token, "get_document", map[string]any{})
 	if !invalid.IsError || !strings.Contains(invalid.Text, "document_id") {
 		t.Fatalf("invalid get_document result = %#v, want actionable tool error", invalid)
+	}
+}
+
+func TestMCPBookToolDescriptionsGuideAgents(t *testing.T) {
+	e := newMCPOAuthTestEnvConfig(t, func(cfg *server.Config) { cfg.BooksEnabled = true })
+	token := auth.NewMCPAccessToken(fixtureUser.ID, e.resource, oauthTestSigningMaterial, time.Minute)
+	listed := mcpPost(t, e, token, "", map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": map[string]any{},
+	})
+	assertStatus(t, listed, http.StatusOK)
+	var response struct {
+		Result struct {
+			Tools []struct {
+				Name        string `json:"name"`
+				Description string `json:"description"`
+				InputSchema struct {
+					Properties map[string]struct {
+						Description string `json:"description"`
+					} `json:"properties"`
+				} `json:"inputSchema"`
+			} `json:"tools"`
+		} `json:"result"`
+	}
+	decodeMCPResponse(t, listed, &response)
+	text := map[string]string{}
+	for _, tool := range response.Result.Tools {
+		text[tool.Name] = tool.Description
+		for arg, p := range tool.InputSchema.Properties {
+			text[tool.Name+"."+arg] = p.Description
+		}
+	}
+	for key, phrases := range map[string][]string{
+		// Delete is permanent, and what it keeps is stated exactly.
+		"delete_book": {"Permanently", "outline versions", "chapter progress stay", "Requires editor access"},
+		// The editor-only tools say so; get_book is the reader tool.
+		"create_book":         {"Requires editor access", "book_exists", "book_id"},
+		"get_book_outline":    {"Requires editor access"},
+		"get_book_status":     {"Requires editor access"},
+		"update_book_outline": {"Requires editor access", "current_version_id", "problems"},
+		"get_book":            {"chapters you can open"},
+		// doc is a document id, not a title, and only the outline field is sent.
+		"update_book_outline.outline": {"document ID", "planned", "subtitle", "only the outline field"},
+	} {
+		for _, phrase := range phrases {
+			if !strings.Contains(text[key], phrase) {
+				t.Errorf("%s description %q lacks %q", key, text[key], phrase)
+			}
+		}
+	}
+}
+
+func TestMCPListsBookToolsOnlyWithBookMode(t *testing.T) {
+	e := newMCPOAuthTestEnv(t) // book mode is off by default
+	token := auth.NewMCPAccessToken(fixtureUser.ID, e.resource, oauthTestSigningMaterial, time.Minute)
+	listed := mcpPost(t, e, token, "", map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": map[string]any{},
+	})
+	assertStatus(t, listed, http.StatusOK)
+	var response struct {
+		Result struct {
+			Tools []struct {
+				Name string `json:"name"`
+			} `json:"tools"`
+		} `json:"result"`
+	}
+	decodeMCPResponse(t, listed, &response)
+	book := map[string]bool{}
+	for _, name := range mcpBookTools {
+		book[name] = true
+	}
+	var got, want []string
+	for _, tool := range response.Result.Tools {
+		got = append(got, tool.Name)
+	}
+	for _, name := range expectedMCPTools {
+		if !book[name] {
+			want = append(want, name)
+		}
+	}
+	sort.Strings(got)
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("tools/list with book mode off\n got: %v\nwant: %v", got, want)
+	}
+
+	called := mcpPost(t, e, token, "", map[string]any{
+		"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+		"params": map[string]any{"name": "create_book", "arguments": map[string]any{"folder_id": "fld_x"}},
+	})
+	assertStatus(t, called, http.StatusOK)
+	if !strings.Contains(called.Body.String(), "not found") {
+		t.Fatalf("create_book with book mode off = %s, want tool not found", called.Body.String())
 	}
 }
 
@@ -791,4 +895,113 @@ func TestMCPGuidelinesProgressiveDisclosure(t *testing.T) {
 	assertMCPToolError(t, callMCPToolHTTP(t, e, token, "get_authoring_guidelines", map[string]any{
 		"section": "no such section",
 	}), "unknown guidelines section")
+}
+
+func TestMCPBookToolsAndStaleOutlineConflict(t *testing.T) {
+	e := newMCPOAuthTestEnvConfig(t, func(cfg *server.Config) { cfg.BooksEnabled = true })
+	token := auth.NewMCPAccessToken(fixtureUser.ID, e.resource, oauthTestSigningMaterial, time.Minute)
+
+	folder := callMCPToolHTTP(t, e, token, "create_folder", map[string]any{"title": "Guide"})
+	var f struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(folder.Text), &f); err != nil || f.ID == "" {
+		t.Fatalf("create_folder = %#v (%v)", folder, err)
+	}
+
+	created := callMCPToolHTTP(t, e, token, "create_book", map[string]any{"folder_id": f.ID})
+	var b struct {
+		BookID string `json:"book_id"`
+	}
+	if created.IsError || json.Unmarshal([]byte(created.Text), &b) != nil || b.BookID == "" {
+		t.Fatalf("create_book = %#v", created)
+	}
+	bookID := b.BookID
+
+	// An agent that knows only the folder can find its book.
+	found := callMCPToolHTTP(t, e, token, "get_folder_book", map[string]any{"folder_id": f.ID})
+	if found.IsError || !strings.Contains(found.Text, bookID) {
+		t.Fatalf("get_folder_book = %#v, want %s", found, bookID)
+	}
+	// Creating it again names the existing book.
+	again := callMCPToolHTTP(t, e, token, "create_book", map[string]any{"folder_id": f.ID})
+	if !again.IsError || !strings.Contains(again.Text, "book_exists") || !strings.Contains(again.Text, bookID) {
+		t.Fatalf("second create_book = %#v, want book_exists naming %s", again, bookID)
+	}
+
+	outline := callMCPToolHTTP(t, e, token, "get_book_outline", map[string]any{"book_id": bookID})
+	if outline.IsError || !strings.Contains(outline.Text, "version_id") {
+		t.Fatalf("get_book_outline = %#v", outline)
+	}
+	if got := callMCPToolHTTP(t, e, token, "get_book_status", map[string]any{"book_id": bookID}); got.IsError {
+		t.Fatalf("get_book_status = %#v", got)
+	}
+	if got := callMCPToolHTTP(t, e, token, "get_book", map[string]any{"book_id": bookID}); got.IsError {
+		t.Fatalf("get_book = %#v", got)
+	}
+
+	stale := callMCPToolHTTP(t, e, token, "update_book_outline", map[string]any{
+		"book_id":         bookID,
+		"base_version_id": "bov_stale",
+		"outline":         map[string]any{"title": "Guide", "front": []any{}, "parts": []any{map[string]any{"title": "I", "chapters": []any{map[string]any{"planned": "X"}}}}, "back": []any{}},
+		"note":            "try",
+	})
+	if !stale.IsError || !strings.Contains(stale.Text, "outline_conflict") || !strings.Contains(stale.Text, "current_version_id") {
+		t.Fatalf("stale update_book_outline = %#v, want outline_conflict with current_version_id", stale)
+	}
+
+	var pulled struct {
+		VersionID string `json:"version_id"`
+		Number    int    `json:"number"`
+	}
+	if err := json.Unmarshal([]byte(outline.Text), &pulled); err != nil || pulled.VersionID == "" {
+		t.Fatalf("get_book_outline text = %s (%v)", outline.Text, err)
+	}
+	saved := callMCPToolHTTP(t, e, token, "update_book_outline", map[string]any{
+		"book_id":         bookID,
+		"base_version_id": pulled.VersionID,
+		"outline":         map[string]any{"title": "Guide", "front": []any{}, "parts": []any{map[string]any{"title": "I", "chapters": []any{map[string]any{"planned": "X"}}}}, "back": []any{}},
+		"note":            "add X",
+	})
+	var pushed struct {
+		VersionID string `json:"version_id"`
+		Number    int    `json:"number"`
+	}
+	if saved.IsError || json.Unmarshal([]byte(saved.Text), &pushed) != nil || pushed.Number != pulled.Number+1 || pushed.VersionID == pulled.VersionID {
+		t.Fatalf("update_book_outline = %#v, want version %d", saved, pulled.Number+1)
+	}
+
+	if got := callMCPToolHTTP(t, e, token, "delete_book", map[string]any{"book_id": bookID}); got.IsError {
+		t.Fatalf("delete_book = %#v", got)
+	}
+}
+
+// MCP get_book spends the same per-principal budget as GET /v1/books/:id, so
+// an agent in a loop cannot bypass the manifest's rate limit.
+func TestMCPGetBookIsRateLimitedLikeTheManifestRoute(t *testing.T) {
+	e := newMCPOAuthTestEnvConfig(t, func(cfg *server.Config) { cfg.BooksEnabled = true })
+	token := auth.NewMCPAccessToken(fixtureUser.ID, e.resource, oauthTestSigningMaterial, time.Minute)
+	folder := callMCPToolHTTP(t, e, token, "create_folder", map[string]any{"title": "Guide"})
+	var f struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(folder.Text), &f); err != nil || f.ID == "" {
+		t.Fatalf("create_folder = %#v (%v)", folder, err)
+	}
+	created := callMCPToolHTTP(t, e, token, "create_book", map[string]any{"folder_id": f.ID})
+	var b struct {
+		BookID string `json:"book_id"`
+	}
+	if created.IsError || json.Unmarshal([]byte(created.Text), &b) != nil || b.BookID == "" {
+		t.Fatalf("create_book = %#v", created)
+	}
+	for i := range 120 {
+		if got := callMCPToolHTTP(t, e, token, "get_book", map[string]any{"book_id": b.BookID}); strings.Contains(got.Text, "rate_limited") {
+			t.Fatalf("get_book call %d was rate limited", i+1)
+		}
+	}
+	got := callMCPToolHTTP(t, e, token, "get_book", map[string]any{"book_id": b.BookID})
+	if !got.IsError || !strings.Contains(got.Text, "rate_limited") {
+		t.Fatalf("121st get_book = %#v, want rate_limited", got)
+	}
 }
