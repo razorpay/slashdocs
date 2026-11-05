@@ -185,7 +185,7 @@ func TestAssignApproverRequiresViewerAccess(t *testing.T) {
 	rr := assignApprover(t, e, e.doc.ID, `{"principal": {"type": "user", "email": "stranger@example.com"}}`, fixtureOwner)
 	assertStatus(t, rr, http.StatusBadRequest)
 	assertJSON(t, rr.Body.Bytes(), `{
-	  "error": { "code": "bad_request", "message": "approver must have at least viewer access on this document" }
+	  "error": { "code": "approver_no_access", "message": "That person can't open this document. Share it with them first." }
 	}`)
 }
 
