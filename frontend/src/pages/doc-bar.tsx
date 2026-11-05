@@ -65,10 +65,12 @@ import {
 import { canManageSharing, ROLE_RANK } from "@/lib/constants";
 import { useDocumentRole } from "@/lib/hooks";
 import { queryKeys } from "@/lib/queryKeys";
+import { loadFailed } from "@/lib/query-retry";
 import { cursorsShownStore } from "@/lib/live-cursors";
 import { principalColor } from "@/lib/principals";
 import { ShareSheet } from "./doc-share-sheet";
 import { ApprovalsDialog } from "./doc-approvals";
+import { useShownApprovals } from "./use-shown-approvals";
 import { PersonAvatar } from "./doc-comment-parts";
 import { useDoc } from "./doc-context";
 import { useShowSaved } from "./use-show-saved";
@@ -180,6 +182,17 @@ export function DocBar({
     enabled: canManageAccess && !signIn,
   });
   const requestCount = accessRequests.data?.items.length ?? 0;
+  // The share sheet says why, with Retry.
+  const requestsFailed = loadFailed(accessRequests);
+  // The menu item gives the counts of the version on screen, as the chip does.
+  const shownApprovals = useShownApprovals({
+    status: approvalStatus,
+    approved: approvalSummary?.approved,
+    total: approvalSummary?.total,
+  });
+  // An unknown status is not "no approvers".
+  const hasApprovals =
+    !!shownApprovals.status || !!shownApprovals.pending || !!shownApprovals.failed;
   const shareFrameFocusRef = useRef<HTMLIFrameElement | null>(null);
   const del = useMutation({
     mutationFn: () => api.deleteDocument(docId),
@@ -289,9 +302,11 @@ export function DocBar({
               className="relative shrink-0"
               title="Share"
               aria-label={
-                requestCount
-                  ? `Share, ${requestCount} ${requestCount === 1 ? "request" : "requests"} for access`
-                  : "Share"
+                requestsFailed
+                  ? "Share, requests for access did not load"
+                  : requestCount
+                    ? `Share, ${requestCount} ${requestCount === 1 ? "request" : "requests"} for access`
+                    : "Share"
               }
               onPointerDown={() => {
                 const active = document.activeElement;
@@ -303,12 +318,18 @@ export function DocBar({
               }}
             >
               <Share2 className="h-4 w-4" />
-              {requestCount ? (
+              {requestCount || requestsFailed ? (
+                // The inbox marks a list that did not load the same way.
                 <span
                   data-state="open"
-                  className="pop absolute right-0.5 top-0.5 min-w-4 rounded-full bg-[var(--color-accent)] px-1 text-[10px] font-medium leading-4 tabular-nums text-white"
+                  className={cn(
+                    "pop absolute right-0.5 top-0.5 min-w-4 rounded-full px-1 text-[10px] font-medium leading-4 tabular-nums text-white",
+                    requestsFailed
+                      ? "bg-[var(--color-fg-muted)]"
+                      : "bg-[var(--color-accent)]",
+                  )}
                 >
-                  {requestCount}
+                  {requestsFailed ? "!" : requestCount}
                 </span>
               ) : null}
             </Button>
@@ -376,16 +397,16 @@ export function DocBar({
           <DropdownItem className="sm:hidden" onSelect={() => setHistoryOpen(true)}>
             <History className="h-4 w-4" /> History
           </DropdownItem>
-          {approvalStatus || canManage ? (
+          {hasApprovals || canManage ? (
             <DropdownItem
               className="xs:hidden"
               onSelect={() => setApprovalsDialogOpen(true)}
             >
               <ClipboardCheck className="h-4 w-4" />
-              {approvalStatus ? "Approvals" : "Request approval"}
-              {approvalSummary ? (
+              {hasApprovals ? "Approvals" : "Request approval"}
+              {shownApprovals.total ? (
                 <span className="ml-auto pl-4 text-xs tabular-nums text-[var(--color-fg-muted)]">
-                  {approvalSummary.approved} of {approvalSummary.total}
+                  {shownApprovals.approved ?? 0} of {shownApprovals.total}
                 </span>
               ) : null}
             </DropdownItem>
