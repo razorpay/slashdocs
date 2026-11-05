@@ -1557,7 +1557,6 @@ type Theme = "dark" | "light";
     const d = button.ownerDocument;
     if (!d.getElementById("slashdocs-icon-tooltip-style")) {
       const style = d.createElement("style");
-        [data-slashdocs-tooltip][data-slashdocs-copied]::after{content:"Copied"!important;display:block!important;opacity:1!important;transform:translate(var(--slashdocs-tip-shift,-50%),0)!important;transition-delay:0s!important}
       style.id = "slashdocs-icon-tooltip-style";
       // A hidden tip has no box, so that it never widens the page, as near
       // its right edge on a phone. It fades in from its starting style.
@@ -1566,6 +1565,7 @@ type Theme = "dark" | "light";
         [data-slashdocs-tooltip]:hover::after,[data-slashdocs-tooltip]:focus-visible::after{display:block!important;opacity:1!important;transform:translate(var(--slashdocs-tip-shift,-50%),0)!important;transition:opacity .14s ease-out .5s,transform .14s ease-out .5s,display .14s allow-discrete .5s!important}
         @starting-style{[data-slashdocs-tooltip]:hover::after,[data-slashdocs-tooltip]:focus-visible::after{opacity:0!important;transform:translate(var(--slashdocs-tip-shift,-50%),var(--slashdocs-tip-enter-y,3px))!important}}
         [data-slashdocs-tooltip]:focus-visible::after{transition-delay:0s!important}
+        [data-slashdocs-tooltip][data-slashdocs-copied]::after{content:"Copied"!important;display:block!important;opacity:1!important;transform:translate(var(--slashdocs-tip-shift,-50%),0)!important;transition-delay:0s!important}
         @media(prefers-reduced-motion:reduce){[data-slashdocs-tooltip]::after{transition-duration:0s!important;transform:translateX(var(--slashdocs-tip-shift,-50%))!important}}
         @media print{[data-slashdocs-tooltip]::after{display:none!important}}`;
       d.head.appendChild(style);
@@ -1906,6 +1906,14 @@ type Theme = "dark" | "light";
       }
       button.classList.toggle("slashdocs-heading-link-end", !fits);
       // A button after a last word at the page's edge would make the page
+      // wider. It moves back over that word, where only hover and focus show it.
+      button.style.translate = "";
+      const over = button.getBoundingClientRect().right - d.documentElement.clientWidth;
+      if (!fits && over > 0) button.style.translate = `${-Math.ceil(over)}px`;
+    });
+    if (pendingHeading) navigateHeading(pendingHeading);
+  }
+
   // The time that the link control of a heading says Copied.
   const COPIED_MS = 1500;
 
@@ -1923,14 +1931,6 @@ type Theme = "dark" | "light";
     if (!copied) return;
     copied.dataset.slashdocsCopied = "";
     copiedTimer = window.setTimeout(() => showCopied(""), COPIED_MS);
-  }
-
-      // wider. It moves back over that word, where only hover and focus show it.
-      button.style.translate = "";
-      const over = button.getBoundingClientRect().right - d.documentElement.clientWidth;
-      if (!fits && over > 0) button.style.translate = `${-Math.ceil(over)}px`;
-    });
-    if (pendingHeading) navigateHeading(pendingHeading);
   }
 
   function navigateHeading(id: string): void {
@@ -2691,8 +2691,6 @@ type Theme = "dark" | "light";
     } else if (e.data.type === "slashdocs:pins") {
       pins.setPins(
         parsePins(e.data.pins),
-    } else if (e.data.type === "slashdocs:heading-copied") {
-      if (typeof e.data.id === "string") showCopied(e.data.id);
         typeof e.data.active === "string" ? e.data.active : undefined,
       );
     } else if (e.data.type === "slashdocs:pin-placing") {
@@ -2702,6 +2700,8 @@ type Theme = "dark" | "light";
       );
     } else if (e.data.type === "slashdocs:pins-release") {
       pins.releaseOutside();
+    } else if (e.data.type === "slashdocs:heading-copied") {
+      if (typeof e.data.id === "string") showCopied(e.data.id);
     } else if (e.data.type === "slashdocs:watch") {
       watchAnchor(typeof e.data.id === "string" ? e.data.id : null);
     } else if (e.data.type === "slashdocs:cover") {
