@@ -704,10 +704,16 @@ export function Replies({ c, docId }: { c: Comment; docId: string }) {
   const self = useSelf(principal);
   const replies = c.replies || [];
   const lost = lostEdits(useEdits(docId), c.id, [c.id, ...replies.map((r) => r.id)]);
-  const sending = useMutationState({
+  const pending = useMutationState({
     filters: { mutationKey: replyKey(docId, c.id), status: "pending" },
     select: (mutation) => mutation.state.variables as MentionDraft,
   });
+  // A live update can bring a reply before its own send ends. It shows once.
+  const latest = replies.slice(replies.length - pending.length);
+  const sending = pending.filter(
+    (text) =>
+      !latest.some((r) => samePrincipal(r.author, principal) && r.body === text.body),
+  );
   const count = replies.length + sending.length;
   if (!count && !lost.length) return null;
   return (

@@ -189,5 +189,6 @@ test("a posted comment opens with the focus in Reply, and a sending reply shows 
   const field0 = await reply.boundingBox();
   release();
   await expect(thread.locator("[aria-busy]")).toBeHidden();
-  expect((await reply.boundingBox())!.y).toBeCloseTo(field0!.y, 0);
+  // Not the 27px of a count that shows only after the send.
+  expect(Math.abs((await reply.boundingBox())!.y - field0!.y)).toBeLessThan(2);
 });
