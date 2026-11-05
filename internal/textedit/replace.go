@@ -146,6 +146,12 @@ func ReplacementSummary(base []byte, rs []Replacement) string {
 	return strings.Join(lines, "\n")
 }
 
+// ChangeSummary describes the change from before to after in one line, by
+// what a reader sees change first, as ReplacementSummary does for an edit.
+func ChangeSummary(before, after []byte) string {
+	return describe(outline(before), outline(after))
+}
+
 // apply makes the replacements on base, which they fit.
 func apply(base []byte, rs []Replacement) []byte {
 	var out bytes.Buffer
