@@ -226,6 +226,9 @@ test("moves a document into a folder and returns it to root when deleting the fo
     documentHTML(documentTitle),
   );
 
+  // A drag does not scroll the page, so the document row and the new folder
+  // must be on screen together, below every folder that the stack holds.
+  await page.setViewportSize({ width: 1280, height: 2000 });
   await page.goto("/app/documents");
   await page.getByRole("button", { name: "New folder" }).click();
   const newFolderDialog = page.getByRole("dialog", { name: "New folder" });
