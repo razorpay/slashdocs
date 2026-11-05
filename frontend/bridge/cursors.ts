@@ -1,5 +1,11 @@
 import type { CursorPlace, CursorPoint, CursorSpot } from "../src/api.ts";
-import { isEditableTarget, reducedMotion, scrollBehavior } from "./dom.ts";
+import {
+  blockOf,
+  isEditableTarget,
+  placeClear,
+  reducedMotion,
+  scrollBehavior,
+} from "./dom.ts";
 
 // Live cursors of other viewers. A cursor names the element under the pointer
 // and a place in that element's box, so it lands on the same content in every
@@ -62,6 +68,9 @@ const MESSAGE_LINGER = 5000;
 const EDGE = 8;
 // After a resize, the followed view is put back once this long has passed.
 const RESIZE_SETTLE = 150;
+// A viewer who has not typed or moved the caret for this long no longer
+// shows as editing.
+const EDIT_IDLE = 30_000;
 // Where a cursor's label sits from its pointer's tip.
 const LABEL_X = 12;
 const LABEL_Y = 16;
@@ -179,9 +188,10 @@ export type PointerTracker = {
 const LEFT = { path: "", x: 0, y: 0, hidden: true } as const;
 
 // trackPointer reports where this viewer's pointer is, in v the place at the
-// center of their view with its zoom, which those who follow them show, and in
-// m their cursor chat message. It reports at most once a frame and only when
-// any changes. Null means that the pointer left.
+// center of their view with its zoom, which those who follow them show, in m
+// their cursor chat message, and in e the block that holds their caret while
+// they edit. It reports at most once a frame and only when any changes. Null
+// means that the pointer left.
 export function trackPointer(
   d: Document,
   report: (spot: CursorSpot | null) => void,
@@ -192,6 +202,8 @@ export function trackPointer(
   let message = "";
   let frame = 0;
   let reported = "";
+  let edited = -Infinity;
+  let idle = 0;
   // The view is named by the element at its center. When the center is on
   // empty space that does not zoom, such as around a board that the document
   // zooms itself, it stays named by the last zoomed element, so that it keeps
@@ -205,19 +217,32 @@ export function trackPointer(
     if (!keep) anchor = el;
     return anchor && placeIn(anchor, x, y, false);
   };
+  // The path of the block with the caret, while this viewer edits it.
+  const editing = () => {
+    const caret = d.getSelection()?.focusNode;
+    if (
+      !caret ||
+      performance.now() - edited >= EDIT_IDLE ||
+      !isEditableTarget(d, caret)
+    )
+      return undefined;
+    const block = sharedElement(d, blockOf(caret));
+    return (block && pathOf(block)) || undefined;
+  };
   const send = () => {
     frame = 0;
     const at = pointer && cursorSpot(d, pointer.x, pointer.y);
     const centerPlace = center();
-    // With the pointer out of the document, the view is still sent, so that
-    // followers keep following while this viewer zooms by key or reads.
+    const e = editing();
+    const extras = { ...(centerPlace && { v: centerPlace }), ...(e && { e }) };
+    // With the pointer out of the document, the view and the edited block are
+    // still sent, so that followers keep following while this viewer zooms by
+    // key or reads, and others see where they type.
     const spot: CursorSpot | null = at
-      ? {
-          ...at,
-          ...(centerPlace && { v: centerPlace }),
-          ...(message && { m: message }),
-        }
-      : centerPlace && { ...LEFT, v: centerPlace };
+      ? { ...at, ...extras, ...(message && { m: message }) }
+      : centerPlace || e
+        ? { ...LEFT, ...extras }
+        : null;
     const key = JSON.stringify(spot);
     if (key === reported) return;
     reported = key;
@@ -242,9 +267,21 @@ export function trackPointer(
   });
   // Content moves under a resting pointer, and the view changes, while the
   // page scrolls, and while a document pans or zooms itself, which it may animate.
-  for (const type of ["scroll", "wheel", "keyup", "transitionend"])
+  for (const type of ["scroll", "wheel", "keyup", "transitionend", "focusout"])
     d.addEventListener(type, schedule, { capture: true, passive: true });
+  // Typing and caret moves keep this viewer editing, until they rest.
+  const edit = () => {
+    edited = performance.now();
+    view.clearTimeout(idle);
+    idle = view.setTimeout(schedule, EDIT_IDLE);
+    schedule();
+  };
+  d.addEventListener("selectionchange", edit);
+  d.addEventListener("input", edit, true);
   view.addEventListener("resize", schedule);
+  // The view goes out at once, so that a viewer who has not moved yet can be
+  // followed.
+  schedule();
   return {
     position: () => pointer,
     setMessage: (next) => {
@@ -440,6 +477,22 @@ export type RemoteCursor = {
   name: string;
   color: string;
   points: CursorPoint[];
+  // own tells that the cursor is this reader's, in another tab.
+  own?: boolean;
+};
+
+// An edit mark shows which block another viewer edits: a bar in their color
+// beside the block, and a label where it covers no text. fit holds the
+// label text and block size that the label was placed for, and dx and dy where
+// it went from the block's corner.
+type EditMark = {
+  path: string;
+  el: HTMLElement;
+  bar: HTMLElement;
+  label: HTMLElement;
+  fit: string;
+  dx: number;
+  dy: number;
 };
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -454,6 +507,12 @@ const BRIDGE_CSS = `
 .slashdocs-follow button:focus-visible{outline:2px solid var(--c);outline-offset:2px}
 .slashdocs-follow svg{width:12px;height:12px;opacity:.85}
 @media (hover:hover) and (pointer:fine){.slashdocs-follow button:hover{filter:brightness(.92)}}
+.slashdocs-edit{position:absolute;left:0;top:0;opacity:0;transition:opacity 120ms ease-out}
+.slashdocs-edit[data-on]{opacity:1;transition-duration:180ms}
+.slashdocs-edit>*{position:absolute;background:var(--c)}
+.slashdocs-edit>i{width:2px;border-radius:1px}
+.slashdocs-edit>span{padding:1px 6px;border-radius:4px;color:#fff;font:500 11px/16px system-ui,-apple-system,sans-serif;white-space:nowrap;box-shadow:0 1px 2px rgba(0,0,0,.15)}
+@media (prefers-reduced-motion:reduce){.slashdocs-edit{transition:none}}
 .slashdocs-chat{position:fixed;left:0;top:0;z-index:2147483647;pointer-events:none}
 .slashdocs-chat textarea{all:unset;display:block;box-sizing:border-box;field-sizing:content;min-width:120px;max-width:260px;padding:5px 10px;border-radius:3px 12px 12px 12px;background:var(--c,#27272a);color:#fff;font:500 13px/18px system-ui,-apple-system,sans-serif;white-space:pre-wrap;overflow-wrap:anywhere;resize:none;box-shadow:0 1px 3px rgba(0,0,0,.2);caret-color:#fff}
 .slashdocs-chat textarea::placeholder{color:rgba(255,255,255,.7)}
@@ -473,6 +532,7 @@ export function createCursorLayer(
     "position:fixed;inset:0;pointer-events:none;overflow:hidden;z-index:2147483647;contain:strict";
   document.body.appendChild(layer);
   const cursors = new Map<string, Cursor>();
+  const edits = new Map<string, EditMark>();
   const elements = new WeakMap<CursorPlace, Element | undefined>();
   let frame = 0;
   let lastFrame = 0;
@@ -559,6 +619,65 @@ export function createCursorLayer(
     return cursor;
   }
 
+  // markEdit shows that a session edits the block at path.
+  function markEdit(session: string, path: string, text: string, color: string) {
+    let mark = edits.get(session);
+    if (!mark) {
+      const el = document.createElement("div");
+      el.className = "slashdocs-edit";
+      el.append(document.createElement("i"), document.createElement("span"));
+      layer.appendChild(el);
+      const [bar, label] = el.children as unknown as [HTMLElement, HTMLElement];
+      mark = { path, el, bar, label, fit: "", dx: 0, dy: 0 };
+      edits.set(session, mark);
+    }
+    mark.path = path;
+    mark.label.textContent = text;
+    mark.el.style.setProperty("--c", color);
+  }
+
+  function unmarkEdit(session: string) {
+    const mark = edits.get(session);
+    if (!mark) return;
+    edits.delete(session);
+    mark.el.removeAttribute("data-on");
+    setTimeout(() => mark.el.remove(), 150);
+  }
+
+  // placeEdit puts an edit mark at its block, and hides it while the block
+  // is not in this document. The label goes at the end of the block's text,
+  // else above or below it, where it covers no text. It keeps its place from
+  // the block's corner until the label or the block's text changes size.
+  function placeEdit(mark: EditMark) {
+    const d = doc();
+    const block = d && elementAtPath(d, mark.path);
+    const box = block?.getBoundingClientRect();
+    if (d && block && box?.height) {
+      const { label, bar } = mark;
+      const range = d.createRange();
+      range.selectNodeContents(block);
+      const lines = Array.from(range.getClientRects()).filter((line) => line.width);
+      const [first, last] = [lines[0] ?? box, lines.at(-1) ?? box];
+      const fit = `${mark.path} ${label.textContent} ${last.right - box.left} ${box.width}x${box.height}`;
+      if (mark.fit !== fit) {
+        mark.fit = fit;
+        const { offsetWidth: w, offsetHeight: h } = label;
+        placeClear(d, label, lines, [
+          [last.right + 8, last.top + (last.height - h) / 2],
+          [first.left, first.top - h - 4],
+          [last.right - w, last.bottom + 4],
+        ]);
+        mark.dx = parseFloat(label.style.left) - box.left;
+        mark.dy = parseFloat(label.style.top) - box.top;
+      }
+      label.style.setProperty("left", `${box.left + mark.dx}px`, "important");
+      label.style.setProperty("top", `${box.top + mark.dy}px`, "important");
+      bar.style.cssText = `left:${box.left - 6}px;top:${box.top}px;height:${box.height}px`;
+    }
+    // Last, so that a new mark fades in from its first style.
+    mark.el.toggleAttribute("data-on", !!box?.height);
+  }
+
   function show(cursor: Cursor, shown: boolean) {
     if (cursor.shown === shown) return;
     cursor.shown = shown;
@@ -620,6 +739,7 @@ export function createCursorLayer(
         Math.abs(x - cursor.x) > 0.1 ||
         Math.abs(y - cursor.y) > 0.1;
     }
+    edits.forEach(placeEdit);
     if (moving || now < settleUntil) refresh();
     else lastFrame = 0;
   }
@@ -630,7 +750,16 @@ export function createCursorLayer(
     frame ||= requestAnimationFrame(tick);
   }
 
-  function receive({ session, name, color, points }: RemoteCursor) {
+  function receive({ session, name, color, points, own }: RemoteCursor) {
+    const edit = points.at(-1)?.e;
+    if (!edit) unmarkEdit(session);
+    else
+      markEdit(
+        session,
+        edit,
+        own ? "You are editing in another tab" : `${name} is editing`,
+        color,
+      );
     const cursor = cursors.get(session) ?? create(session);
     cursor.name = name;
     // A cursor chat message shows in the label, in the viewer's color.
@@ -679,6 +808,7 @@ export function createCursorLayer(
 
   function clear() {
     views.clear();
+    edits.forEach((_, session) => unmarkEdit(session));
     for (const cursor of cursors.values()) cursor.el.remove();
     cursors.clear();
   }

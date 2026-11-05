@@ -12,6 +12,7 @@ import {
   clearHighlightsFor,
   highlightRange,
   refreshSVGRects,
+  reveal,
 } from "./highlight.ts";
 import { createCursorChat, createCursorLayer, trackPointer } from "./cursors.ts";
 import { createPinLayer, parsePins, type PinRect } from "./pins.ts";
@@ -27,6 +28,7 @@ import {
 import { startTextEditing, type TextEditor } from "./text-editing.ts";
 import { elementOf, REFUSED } from "./structure.ts";
 import { probe, startScriptText, type ScriptText } from "./script-text.ts";
+import { blockTexts, changedBlocks } from "./changed-blocks.ts";
 import { CHORD_KEYS } from "../src/lib/esc-chord.ts";
 import {
   reduceVimScroll,
@@ -898,12 +900,7 @@ type Theme = "dark" | "light";
       el.classList.toggle("slashdocs-mark-active", isActive);
       if (isActive && !scrollTarget) scrollTarget = el;
     });
-    if (scroll && scrollTarget) {
-      (scrollTarget as Element).scrollIntoView({
-        block: "center",
-        behavior: scrollBehavior(d),
-      });
-    }
+    if (scroll && scrollTarget) reveal(scrollTarget as Element);
   }
 
   // Whitespace-insensitive text key: mark text omits synthesized <br> spaces
@@ -2025,6 +2022,40 @@ type Theme = "dark" | "light";
     });
   }
 
+  // The text of the blocks that a reader saw last in this tab, per document,
+  // which the next load of the document compares with its own.
+  const SEEN_BLOCKS = `slashdocs:blocks:${location.pathname.split("/")[2]}`;
+  window.addEventListener("pagehide", () => {
+    const d = doc();
+    if (!d?.body) return;
+    try {
+      sessionStorage.setItem(
+        SEEN_BLOCKS,
+        JSON.stringify(blockTexts(d).map((b) => b.text)),
+      );
+    } catch {}
+  });
+
+  // showChanges flashes the blocks whose text the reader did not see last.
+  function showChanges(): void {
+    const d = doc();
+    let seen: unknown;
+    try {
+      seen = JSON.parse(sessionStorage.getItem(SEEN_BLOCKS) ?? "null");
+    } catch {}
+    if (!d?.body || !Array.isArray(seen)) return;
+    const blocks = blockTexts(d);
+    const changed = changedBlocks(
+      seen.map(String),
+      blocks.map((b) => b.text),
+    );
+    flashRects(
+      d,
+      changed.flatMap((i) => blocks[i].nodes.flatMap(rectsOf)),
+      CHANGED_FLASH,
+    );
+  }
+
   function rectsOf(node: Node): DOMRect[] {
     const range = node.ownerDocument!.createRange();
     range.selectNodeContents(node);
@@ -2324,6 +2355,8 @@ type Theme = "dark" | "light";
     // Capture scrolls of nested containers too, not only the window.
     d.addEventListener("scroll", scheduleViewport, { capture: true, passive: true });
     d.addEventListener("scroll", cursors.refresh, { capture: true, passive: true });
+    // Typing here moves the blocks that others edit.
+    d.addEventListener("input", cursors.refresh);
     d.defaultView?.addEventListener("resize", cursors.refresh);
     d.defaultView?.addEventListener("resize", cursors.refollow);
     cursors.watchInput(d);
@@ -2492,6 +2525,8 @@ type Theme = "dark" | "light";
         pending.reject(
           new Error((e.data.error && e.data.error.message) || "GitHub request failed"),
         );
+    } else if (e.data.type === "slashdocs:show-changes") {
+      showChanges();
     } else if (e.data.type === "slashdocs:navigate-text") {
       navigateText(e.data.anchor);
     } else if (e.data.type === "slashdocs:navigate-heading") {

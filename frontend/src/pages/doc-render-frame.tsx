@@ -287,10 +287,14 @@ export function RenderFrame() {
     replaceText: (from, to) =>
       postToFrame({ type: "slashdocs:script-replace", from, to }),
   });
+  // Each load flashes what changed since the reader saw the document last,
+  // after the scroll, so that the flash is where they look.
   useEffect(() => {
-    if (!ready || restoreTop.current === undefined) return;
-    postToFrame({ type: "slashdocs:scroll-to", top: restoreTop.current });
+    if (!ready) return;
+    if (restoreTop.current !== undefined)
+      postToFrame({ type: "slashdocs:scroll-to", top: restoreTop.current });
     restoreTop.current = undefined;
+    postToFrame({ type: "slashdocs:show-changes" });
   }, [ready, postToFrame]);
 
   // Vim scrolling works whether focus is inside the rendered document or on

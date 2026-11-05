@@ -188,15 +188,19 @@ export function useDocumentStream({
         const viewer = event.updated_by;
         const last = data?.points?.at(-1);
         if (!data || !last || data.session === session || !viewer) return;
-        if (samePrincipal(viewer, principal)) return;
+        // This reader's other tab shows no cursor, only the block it edits.
+        const own = samePrincipal(viewer, principal);
         const cursor = {
           session: data.session,
           name: principalLabel(viewer),
           color: principalColor(viewer),
-          points: data.points,
+          own,
+          points: own
+            ? data.points.map(({ t, e }) => ({ ...hiddenPoint(t), e }))
+            : data.points,
         };
         cursors.current.set(data.session, {
-          cursor: { ...cursor, points: [last] },
+          cursor: { ...cursor, points: cursor.points.slice(-1) },
           version: data.version,
         });
         emitCursor(shownCursor(cursor, data.version));
@@ -339,9 +343,12 @@ export function useDocumentStream({
   };
 }
 
+function hiddenPoint(t: number) {
+  return { t, path: "", x: 0, y: 0, hidden: true };
+}
+
 // hiddenCursor replaces a cursor's points with one hidden point, at the time
 // of its last point plus after.
 function hiddenCursor(cursor: RemoteCursor, after = 0): RemoteCursor {
-  const t = (cursor.points.at(-1)?.t ?? 0) + after;
-  return { ...cursor, points: [{ t, path: "", x: 0, y: 0, hidden: true }] };
+  return { ...cursor, points: [hiddenPoint((cursor.points.at(-1)?.t ?? 0) + after)] };
 }

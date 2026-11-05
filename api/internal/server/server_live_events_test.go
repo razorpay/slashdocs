@@ -186,7 +186,7 @@ func TestDocumentCursorRelaysToOpenStreams(t *testing.T) {
 	defer cancel()
 	reader, _ := openLiveStream(ctx, t, ts, e.doc.ID, "?session=viewer-session", fixtureViewer)
 
-	body := `{"session":"editor-session","version":"` + e.ver.ID + `","points":[{"t":5,"path":"0.2","x":0.25,"y":1,"z":2.5,"v":{"path":"0.1","x":-1.5,"y":0.5,"z":2.5},"m":"Look here 👀"},{"t":21,"hidden":true}]}`
+	body := `{"session":"editor-session","version":"` + e.ver.ID + `","points":[{"t":5,"path":"0.2","x":0.25,"y":1,"z":2.5,"v":{"path":"0.1","x":-1.5,"y":0.5,"z":2.5},"m":"Look here 👀"},{"t":21,"e":"0.3","hidden":true}]}`
 	assertStatus(t, do(t, e.h, http.MethodPost, "/v1/documents/"+e.doc.ID+"/cursor", body, map[string]string{
 		"Content-Type":     "application/json",
 		"X-Test-Principal": principalHeader(fixtureEditor),
@@ -196,7 +196,7 @@ func TestDocumentCursorRelaysToOpenStreams(t *testing.T) {
 	if got.name != repo.DocumentEventCursor || got.id != "" || got.event.UpdatedBy.ID != fixtureEditor.ID {
 		t.Fatalf("event = %#v, want a cursor event without an id from the editor", got)
 	}
-	want := `{"session":"editor-session","version":"` + e.ver.ID + `","points":[{"t":5,"path":"0.2","x":0.25,"y":1,"z":2.5,"v":{"path":"0.1","x":-1.5,"y":0.5,"z":2.5},"m":"Look here 👀"},{"t":21,"path":"","x":0,"y":0,"hidden":true}]}`
+	want := `{"session":"editor-session","version":"` + e.ver.ID + `","points":[{"t":5,"path":"0.2","x":0.25,"y":1,"z":2.5,"v":{"path":"0.1","x":-1.5,"y":0.5,"z":2.5},"m":"Look here 👀"},{"t":21,"path":"","x":0,"y":0,"e":"0.3","hidden":true}]}`
 	if string(got.event.Data) != want {
 		t.Fatalf("cursor data = %s, want %s", got.event.Data, want)
 	}
@@ -224,6 +224,7 @@ func TestDocumentCursorRejectsInvalidInput(t *testing.T) {
 		{"long message", fixtureViewer, point(`{"t":1,"m":"` + strings.Repeat("a", 101) + `"}`), http.StatusBadRequest},
 		{"message with a control character", fixtureViewer, point(`{"t":1,"m":"hi\u0007"}`), http.StatusBadRequest},
 		{"view with a bad path", fixtureViewer, point(`{"t":1,"v":{"path":"0..1","x":0,"y":0}}`), http.StatusBadRequest},
+		{"edited block with a bad path", fixtureViewer, point(`{"t":1,"e":"0..1"}`), http.StatusBadRequest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rr := do(t, e.h, http.MethodPost, "/v1/documents/"+e.doc.ID+"/cursor", tc.body, map[string]string{

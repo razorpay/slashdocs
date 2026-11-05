@@ -72,7 +72,8 @@ func (p presence) valid() bool {
 // milliseconds on the clock of the session. Z, when set, is how much larger
 // the element shows than its layout size, as in a document that zooms itself.
 // V, when set, is the place at the center of the viewer's view, which
-// followers show. M, when set, is the viewer's cursor chat message.
+// followers show. M, when set, is the viewer's cursor chat message. E, when
+// set, names the block that holds the viewer's caret while they edit it.
 type cursor struct {
 	Session string        `json:"session"`
 	Version string        `json:"version"`
@@ -87,6 +88,7 @@ type cursorPoint struct {
 	Z      float64      `json:"z,omitempty"`
 	V      *cursorPlace `json:"v,omitempty"`
 	M      string       `json:"m,omitempty"`
+	E      string       `json:"e,omitempty"`
 	Hidden bool         `json:"hidden,omitempty"`
 }
 
@@ -119,7 +121,7 @@ func (c cursor) valid() bool {
 	for _, p := range c.Points {
 		place := cursorPlace{Path: p.Path, X: p.X, Y: p.Y, Z: p.Z}
 		if p.T < 0 || !place.valid(0, 1) || (p.V != nil && !p.V.valid(-maxViewFraction, maxViewFraction)) ||
-			!plainText(p.M, maxCursorMessage) {
+			!plainText(p.M, maxCursorMessage) || !cursorPathPattern.MatchString(p.E) {
 			return false
 		}
 	}
