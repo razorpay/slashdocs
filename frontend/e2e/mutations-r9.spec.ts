@@ -68,7 +68,9 @@ test("the key of a new bot shows when it comes after Cancel", async ({ page }) =
   const dialog = page.getByRole("dialog", { name: "Meet r9-new@bots.bot" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("sd_r9_new_bot_token").first()).toBeVisible();
+  // Done before a copy asks first.
   await dialog.getByRole("button", { name: "Done" }).click();
+  await dialog.getByRole("button", { name: "Close without a copy" }).click();
   await expect(dialog).toBeHidden();
 });
 
@@ -85,7 +87,7 @@ test("a new key shows under the bot and name that it was made for", async ({
   await field.fill("R9 FIRST KEY");
   await page.getByRole("button", { name: "New key" }).click();
   await field.fill("R9 SECOND UNSENT NAME");
-  await page.getByRole("button", { name: /r9-beta@bots\.bot/ }).click();
+  await page.getByRole("button", { name: /^r9-beta\b/ }).click();
 
   release();
   const dialog = page.getByRole("dialog", { name: "New key for r9-alpha@bots.bot" });
