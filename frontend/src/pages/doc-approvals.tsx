@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Check, ClipboardCheck, Clock, X } from "lucide-react";
 
 import {
   api,
+  APIError,
   type Comment,
   type ApprovalDecision,
   type ApprovalListItem,
@@ -106,16 +107,17 @@ export function ApprovalsDialog({
   approved,
   total,
   isOwner,
-  defaultOpen = false,
+  open,
+  onOpenChange: setOpen,
 }: {
   status?: ApprovalStatus;
   approved?: number;
   total?: number;
   isOwner: boolean;
-  defaultOpen?: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
   const { docId, version } = useDoc();
-  const [open, setOpen] = useState(defaultOpen);
   const doc = useQuery({
     queryKey: queryKeys.document(docId),
     queryFn: () => api.getDocument(docId),
@@ -151,7 +153,7 @@ export function ApprovalsDialog({
           <Button
             variant="outline"
             size="sm"
-            className="shrink-0 max-sm:bg-transparent max-sm:shadow-none"
+            className="hidden shrink-0 xs:inline-flex max-sm:bg-transparent max-sm:shadow-none"
             aria-label="Request approval"
           >
             <ClipboardCheck className="h-4 w-4" />
@@ -170,7 +172,7 @@ export function ApprovalsDialog({
         <button
           type="button"
           aria-label={`${badgeAria(shownStatus, shownApproved, shownTotal)}. Open approvals`}
-          className="relative shrink-0 rounded-full transition-transform duration-150 ease-out active:scale-[0.97] after:absolute after:inset-x-0 after:-inset-y-2"
+          className="relative hidden shrink-0 rounded-full transition-transform xs:block duration-150 ease-out active:scale-[0.97] after:absolute after:inset-x-0 after:-inset-y-2"
         >
           <ApprovalStatusBadge
             status={shownStatus}
@@ -642,7 +644,11 @@ function ApproverRow({
   );
 }
 
+// AddApprover assigns an approver. Its errors show under the field. A person
+// who cannot open the document can be shared with as a viewer and added in
+// one step.
 function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void }) {
+  const q = useQueryClient();
   const [address, setAddress] = useState("");
   const [debounced, setDebounced] = useState("");
   useEffect(() => {
@@ -656,13 +662,19 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
     staleTime: 30_000,
   });
   const add = useMutation({
-    mutationFn: (addr: string) => api.createApprover(docId, addr),
-    onSuccess: () => {
+    mutationFn: async ({ addr, share }: { addr: string; share?: boolean }) => {
+      if (share) await api.createGrant(docId, addr, "viewer");
+      return api.createApprover(docId, addr);
+    },
+    onSuccess: (_, { share }) => {
       setAddress("");
+      if (share) q.invalidateQueries({ queryKey: queryKeys.documentAccess(docId) });
       onAdded();
     },
-    onError: (e) => toast.error(errorMessage(e, "Could not assign approver")),
+    onError: () => {},
   });
+  const noAccess =
+    add.error instanceof APIError && add.error.code === "approver_no_access";
   const trimmed = address.trim();
   const options = (suggestions.data?.items || [])
     .filter((u) => u.email !== trimmed)
@@ -682,7 +694,7 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
         // Send the raw address so the server resolves either a user email or a
         // service-account (bot) address; assuming "user" here made bot
         // approvers impossible to assign from the UI.
-        if (ADDRESS_PATTERN.test(trimmed)) add.mutate(trimmed);
+        if (ADDRESS_PATTERN.test(trimmed)) add.mutate({ addr: trimmed });
       }}
     >
       <div className="flex gap-2">
@@ -690,8 +702,12 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
           <Combobox
             aria-label="Approver"
             placeholder="Email or bot address"
+            aria-invalid={!!add.error || undefined}
             value={address}
-            onValueChange={setAddress}
+            onValueChange={(next) => {
+              setAddress(next);
+              add.reset();
+            }}
             options={options}
             onPick={(u) => setAddress(u.address)}
             listAbove
@@ -704,11 +720,31 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
           Add
         </Button>
       </div>
-      <p className="mt-1.5 text-xs text-[var(--color-fg-muted)]">
-        Approvers need access to this document. Anyone who edited it, in the browser, by
-        upload, or by an agent, can&apos;t approve it. This includes you. An edit that
-        its author undid does not count.
-      </p>
+      {add.error ? (
+        <div className="mt-1.5 flex items-start gap-2">
+          <p role="alert" className="text-xs text-[var(--color-danger)]">
+            {errorMessage(add.error, "Could not assign approver.")}
+          </p>
+          {noAccess ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              disabled={add.isPending}
+              onClick={() => add.mutate({ addr: trimmed, share: true })}
+            >
+              Share as viewer and add
+            </Button>
+          ) : null}
+        </div>
+      ) : (
+        <p className="mt-1.5 text-xs text-[var(--color-fg-muted)]">
+          Approvers need access to this document. Anyone who edited it, in the browser,
+          by upload, or by an agent, can&apos;t approve it. This includes you. An edit
+          that its author undid does not count.
+        </p>
+      )}
     </form>
   );
 }
