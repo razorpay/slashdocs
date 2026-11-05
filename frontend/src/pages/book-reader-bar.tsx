@@ -206,6 +206,7 @@ export function ReaderBar({
   onSearch,
   onJump,
   onChipDismissed,
+  onViewNewest,
   headings,
   section,
   user,
@@ -221,6 +222,8 @@ export function ReaderBar({
   onSearch: () => void;
   onJump: (id: string) => void;
   onChipDismissed: () => void;
+  // Set while a newer version of the chapter is held back (A7).
+  onViewNewest?: () => void;
   headings?: ChapterHeading[];
   section: string;
   user?: Principal;
@@ -272,6 +275,20 @@ export function ReaderBar({
           onOpenSection={onJump}
           onDismissed={onChipDismissed}
         />
+        {onViewNewest ? (
+          <button
+            type="button"
+            aria-label="New version · View"
+            title="A new version of this chapter is available. Your place is kept."
+            onClick={onViewNewest}
+            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-full bg-[color-mix(in_srgb,var(--color-accent)_12%,transparent)] px-2.5 text-xs font-medium text-[var(--color-fg)] hover:bg-[color-mix(in_srgb,var(--color-accent)_20%,transparent)]"
+          >
+            New version
+            <span aria-hidden="true" className="hidden sm:inline">
+              · View
+            </span>
+          </button>
+        ) : null}
         <Button
           variant="ghost"
           size="icon"

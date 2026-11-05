@@ -130,14 +130,25 @@ export function BookUpdateChip({
   // Hidden at once, before the state is fetched again.
   const [seenVersion, setSeenVersion] = useState<string>();
   const state = useBookState(bookId);
+  // Whether focus was in the chip when the reader acted. Read when the
+  // request returns, by which time a browser may have moved focus.
+  const hadFocus = useRef(false);
   const seen = useMutation({
     mutationFn: () => booksApi.seen(bookId, doc, versionId),
     onSuccess: () => {
-      if (root.current?.contains(document.activeElement)) onDismissed?.();
+      if (hadFocus.current) onDismissed?.();
       setSeenVersion(versionId);
     },
-    onSettled: () => invalidateReading(qc, bookId),
+    onSettled: () => {
+      hadFocus.current = false;
+      return invalidateReading(qc, bookId);
+    },
   });
+  const markSeen = () => {
+    if (seen.isPending) return;
+    hadFocus.current = !!root.current?.contains(document.activeElement);
+    seen.mutate();
+  };
   if (!state.data?.chapters[doc]?.updated || seenVersion === versionId) return null;
   return (
     <span
@@ -176,8 +187,9 @@ export function BookUpdateChip({
         type="button"
         aria-label="Dismiss update"
         title="Mark as seen"
-        disabled={seen.isPending}
-        onClick={() => seen.mutate()}
+        // Not disabled: a disabled button loses focus to the body.
+        aria-disabled={seen.isPending || undefined}
+        onClick={markSeen}
         className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[var(--color-fg-muted)] hover:bg-[color-mix(in_srgb,var(--color-warning)_12%,transparent)] hover:text-[var(--color-fg)]"
       >
         <X aria-hidden="true" className="h-3 w-3" />

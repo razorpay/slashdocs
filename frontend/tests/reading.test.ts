@@ -6,6 +6,7 @@ import {
   markedHeadingIds,
   DEFAULT_READER_SETTINGS,
   documentTheme,
+  endPinnedScrollTop,
   progression,
   READER_KEYS,
   scrollProgression,
@@ -224,4 +225,44 @@ describe("change dots", () => {
 describe("READER_KEYS", () => {
   it("lists the reader shortcuts", () =>
     expect([...READER_KEYS]).toEqual(["ArrowLeft", "ArrowRight", "t", "T", "/"]));
+});
+
+describe("endPinnedScrollTop", () => {
+  // The end-of-chapter strip appears under the frame as the reader reaches
+  // the end, so the frame gets shorter: the bottom must stay in view.
+  it("keeps the bottom in view when a reader at the end loses height", () => {
+    // 2000 px page, viewport shrank from 800 to 744 px at the bottom (1200).
+    expect(
+      endPinnedScrollTop(true, {
+        scrollTop: 1200,
+        scrollHeight: 2000,
+        clientHeight: 744,
+      }),
+    ).toBe(1256);
+  });
+
+  it("leaves the scroll alone away from the end or already at the bottom", () => {
+    expect(
+      endPinnedScrollTop(false, {
+        scrollTop: 600,
+        scrollHeight: 2000,
+        clientHeight: 744,
+      }),
+    ).toBeNull();
+    expect(
+      endPinnedScrollTop(true, {
+        scrollTop: 1256,
+        scrollHeight: 2000,
+        clientHeight: 744,
+      }),
+    ).toBeNull();
+    // Taller viewport: the browser clamps the scroll itself.
+    expect(
+      endPinnedScrollTop(true, {
+        scrollTop: 1200,
+        scrollHeight: 2000,
+        clientHeight: 900,
+      }),
+    ).toBeNull();
+  });
 });

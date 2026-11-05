@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 export const NEW_VERSION = "A new version of this chapter is available.";
@@ -9,9 +9,11 @@ export const NEW_VERSION = "A new version of this chapter is available.";
 // one, whether the live stream or a manifest refetch brings it, only offers a
 // switch, and the frame never swaps under the reader (A7).
 //
-// The offer is a toast bound to the chapter that raised it. It is dismissed
-// when the chapter changes, and a late View click on it does nothing to
-// another chapter.
+// The offer is a persistent "New version · View" control in the reader bar
+// (viewNewest is set while a newer version is held back), plus a toast as a
+// brief nudge. The toast is bound to the chapter that raised it: it is
+// dismissed when the chapter changes, and a late View click on it does
+// nothing to another chapter.
 export function useHeldVersion({
   docId,
   latest,
@@ -25,7 +27,7 @@ export function useHeldVersion({
   reading: boolean;
   // Called just before switching to the newer version.
   beforeView: () => void;
-}): string {
+}): { current: string; viewNewest?: () => void } {
   const [held, setHeld] = useState({ doc: docId, version: latest });
   if (
     held.doc !== docId ||
@@ -42,21 +44,21 @@ export function useHeldVersion({
   beforeViewRef.current = beforeView;
   const offered = useRef("");
   const toastId = useRef<string | number | undefined>(undefined);
+  const view = useCallback((forDoc: string, version: string) => {
+    if (docRef.current !== forDoc) return;
+    if (toastId.current !== undefined) toast.dismiss(toastId.current);
+    toastId.current = undefined;
+    beforeViewRef.current();
+    setHeld({ doc: forDoc, version });
+  }, []);
   useEffect(() => {
     if (!latest || current === latest || offered.current === latest) return;
     offered.current = latest;
     const forDoc = docId;
     toastId.current = toast.info(NEW_VERSION, {
-      action: {
-        label: "View",
-        onClick: () => {
-          if (docRef.current !== forDoc) return;
-          beforeViewRef.current();
-          setHeld({ doc: forDoc, version: latest });
-        },
-      },
+      action: { label: "View", onClick: () => view(forDoc, latest) },
     });
-  }, [docId, latest, current]);
+  }, [docId, latest, current, view]);
   useEffect(
     () => () => {
       if (toastId.current !== undefined) toast.dismiss(toastId.current);
@@ -64,5 +66,7 @@ export function useHeldVersion({
     },
     [docId],
   );
-  return current;
+  const newer = !!latest && current !== latest;
+  const viewNewest = useCallback(() => view(docId, latest), [view, docId, latest]);
+  return { current, viewNewest: newer ? viewNewest : undefined };
 }

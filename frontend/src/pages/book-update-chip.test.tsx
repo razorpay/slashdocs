@@ -100,4 +100,25 @@ describe("BookUpdateChip", () => {
     await waitFor(() => expect(onDismissed).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole("button", { name: "Dismiss update" })).toBeNull();
   });
+
+  // Disabling the focused button would make Chrome move focus to the body
+  // before the request returns (focus fixup), and the chip would then hide
+  // without handing focus back.
+  it("keeps the dismiss button focusable while the request runs and still hands focus back", async () => {
+    const user = userEvent.setup();
+    const onDismissed = vi.fn();
+    const { seen } = renderChip(true, vi.fn(), onDismissed);
+    let finish!: () => void;
+    seen.mockReturnValue(new Promise<void>((r) => (finish = r)));
+    const dismiss = await screen.findByRole("button", { name: "Dismiss update" });
+    await user.click(dismiss);
+    expect(dismiss).not.toBeDisabled();
+    expect(dismiss).toHaveAttribute("aria-disabled", "true");
+    await user.click(dismiss);
+    expect(seen).toHaveBeenCalledTimes(1);
+    // What focus fixup would do in a browser had the button been disabled.
+    dismiss.blur();
+    finish();
+    await waitFor(() => expect(onDismissed).toHaveBeenCalledTimes(1));
+  });
 });

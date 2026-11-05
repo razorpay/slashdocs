@@ -214,7 +214,7 @@ function BookReader({
   const latest = link.properties?.versionId ?? "";
   // The chapter whose frame has reported a viewport: reading has started.
   const [readingDoc, setReadingDoc] = useState("");
-  const current = useHeldVersion({
+  const { current, viewNewest } = useHeldVersion({
     docId,
     latest,
     reading: readingDoc === docId,
@@ -245,10 +245,17 @@ function BookReader({
   // the visit until closed: it takes room from the frame, and hiding it
   // again as the frame grows back would make the two flicker.
   const [endStrip, setEndStrip] = useState<"hidden" | "shown" | "closed">("hidden");
-  const { onViewport: saveViewport, onRestored: restoreDone } = position;
+  const {
+    onViewport: saveViewport,
+    onRestored: restoreDone,
+    onRestoreRequested: requestRestore,
+  } = position;
   const onViewport = useCallback(
     (v: ReaderViewport) => {
       saveViewport(v);
+      // Posted while the frame still restores: where the page was, not
+      // where the reader is.
+      if (v.restoring) return;
       lastView.current = v;
       setReadingDoc(docId);
       firstRead.current ??= Date.now();
@@ -265,12 +272,29 @@ function BookReader({
   const restoreRef = useRef<((t: PositionTarget) => void) | null>(null);
   // Set while the frame restores a saved place, so a miss is reported.
   const restoringSaved = useRef(false);
-  const restoreSaved = useCallback((t: PositionTarget) => {
-    restoringSaved.current = true;
-    restoreRef.current?.(t);
-  }, []);
+  // The place this visit asked the frame to restore, until it reports back.
+  const requested = useRef<PositionTarget | null>(null);
+  // The chapter whose visit has settled where to start (see below).
+  const visited = useRef("");
+  // Restores where the reader was; saving waits for it (useReadingPosition).
+  const restorePlace = useCallback(
+    (t: PositionTarget) => {
+      requested.current = t;
+      requestRestore();
+      restoreRef.current?.(t);
+    },
+    [requestRestore],
+  );
+  const restoreSaved = useCallback(
+    (t: PositionTarget) => {
+      restoringSaved.current = true;
+      restorePlace(t);
+    },
+    [restorePlace],
+  );
   const onRestored = useCallback(
     (method: RestoreMethod) => {
+      requested.current = null;
       restoreDone();
       if (method === "none" && restoringSaved.current) toast.info(RESTORE_FAILED);
       restoringSaved.current = false;
@@ -286,12 +310,23 @@ function BookReader({
     },
     [here],
   );
+  // A new version gets a new frame and a new saving visit. It keeps the
+  // reader's place when switched to with View; otherwise a restore still in
+  // flight is asked of the new frame, and a settled visit has nothing to wait
+  // for.
   useEffect(() => {
+    if (!current) return;
     const target = versionRestore.current;
-    if (!target) return;
     versionRestore.current = null;
-    restoreSaved(target);
-  }, [current, restoreSaved]);
+    if (target) {
+      restoreSaved(target);
+    } else if (visited.current === docId) {
+      if (requested.current) restorePlace(requested.current);
+      else restoreDone();
+    }
+    // Per version only: docId changes come with a new visit below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current]);
 
   const goChapter = useCallback(
     (to: string, jump: boolean) => {
@@ -305,7 +340,6 @@ function BookReader({
   // another device's newer one.
   const [offer, setOffer] = useState<ReadingPosition | null>(null);
   const [stateNoteClosed, setStateNoteClosed] = useState(false);
-  const visited = useRef("");
   const opened = useRef("");
   useEffect(() => {
     if (!current || opened.current === docId) return;
@@ -316,6 +350,7 @@ function BookReader({
     setEndStrip("hidden");
     // A restore the old frame never reported (a link cancelled it) is over.
     restoringSaved.current = false;
+    requested.current = null;
     setSection("");
     lastView.current = null;
     setBack((location.state as ArrivalState)?.back ?? null);
@@ -364,7 +399,7 @@ function BookReader({
     const chapter = s?.chapters[docId];
     const furthest = chapter?.furthest_progression ?? 0;
     if (chapter?.state === "reading" && furthest > 0 && furthest < END_PROGRESSION) {
-      restoreRef.current?.({ progression: furthest });
+      restorePlace({ progression: furthest });
       return;
     }
     restoreDone();
@@ -554,6 +589,7 @@ function BookReader({
                 onSearch={() => setSearchOpen(true)}
                 onJump={(id) => jumpWithin({ section: id })}
                 onChipDismissed={refocus}
+                onViewNewest={viewNewest}
                 headings={headings.data?.items}
                 section={section}
                 user={me.data?.user || me.data?.principal}

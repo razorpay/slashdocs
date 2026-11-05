@@ -80,7 +80,7 @@ const NO_CHANGES: ChapterChanges = {
 
 function renderReader(
   url = "/app/b/b1/c/doc_2",
-  state: BookState | Error = bookState(),
+  state: BookState | Error | Promise<BookState> = bookState(),
   changes = NO_CHANGES,
   cached?: Manifest,
 ) {
@@ -92,6 +92,7 @@ function renderReader(
     vi.spyOn(booksApi, "manifest").mockResolvedValue(bookManifest());
   }
   if (state instanceof Error) vi.spyOn(booksApi, "state").mockRejectedValue(state);
+  else if (state instanceof Promise) vi.spyOn(booksApi, "state").mockReturnValue(state);
   else vi.spyOn(booksApi, "state").mockResolvedValue(state);
   vi.spyOn(booksApi, "changes").mockResolvedValue(changes);
   vi.spyOn(booksApi, "headings").mockResolvedValue({
@@ -407,6 +408,33 @@ describe("BookReader", () => {
     );
   });
 
+  // The restore gate times out 3 s after the restore is asked for, not after
+  // the chapter mounts: a slow /state must not let the frame's first report
+  // (the top of the page) overwrite the saved place.
+  it("waits for the saved-place restore however long the reading state took", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const save = vi.spyOn(booksApi, "savePosition");
+      let resolve!: (s: BookState) => void;
+      renderReader("/app/b/b1/c/doc_2", new Promise<BookState>((r) => (resolve = r)));
+      await screen.findByTestId("workspace");
+      await act(() => vi.advanceTimersByTimeAsync(5000));
+      act(() => resolve(bookState({}, { positions: [position({})] })));
+      await waitFor(() => expect(h.restore).toHaveBeenCalled());
+      act(() => reader().onViewport!({ section: "", progression: 0 }));
+      expect(save).not.toHaveBeenCalled();
+      act(() => reader().onRestored!("quote"));
+      act(() => reader().onViewport!({ section: "setup", progression: 0.4 }));
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(save).toHaveBeenCalledWith(
+        "b1",
+        expect.objectContaining({ progression: 0.4 }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("shows a toast when the saved place cannot be found", async () => {
     const info = vi.spyOn(toast, "info");
     renderReader("/app/b/b1/c/doc_2", bookState({}, { positions: [position({})] }));
@@ -643,6 +671,60 @@ describe("BookReader", () => {
     );
   });
 
+  // Following the newest version before reading starts restores nothing, so
+  // the new version's visit must not wait for a restore that never comes.
+  it("keeps saving after it follows the newest version", async () => {
+    const save = vi.spyOn(booksApi, "savePosition");
+    const newer = bookManifest();
+    newer.readingOrder[1].properties!.versionId = "ver_2b";
+    vi.spyOn(booksApi, "manifest").mockResolvedValue(newer);
+    renderReader("/app/b/b1/c/doc_2", bookState(), NO_CHANGES, bookManifest());
+    await waitFor(() => expect(booksApi.state).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByTestId("workspace")).toHaveAttribute("data-version", "ver_2b"),
+    );
+    act(() => reader().onViewport!({ section: "setup", progression: 0.4 }));
+    expect(save).toHaveBeenCalledWith(
+      "b1",
+      expect.objectContaining({ version_id: "ver_2b", progression: 0.4 }),
+    );
+  });
+
+  // A report the frame posts while it still restores shows where the page
+  // was; it must not become the place a version switch keeps.
+  it("does not take a mid-restore report as the reader's place", async () => {
+    const info = vi.spyOn(toast, "info");
+    const { client } = renderReader();
+    await screen.findByTestId("workspace");
+    await waitFor(() => expect(booksApi.state).toHaveBeenCalled());
+    act(() =>
+      reader().onViewport!({
+        anchor: { quote: "where I was" },
+        section: "setup",
+        progression: 0.6,
+      }),
+    );
+    act(() => reader().onViewport!({ section: "", progression: 0, restoring: true }));
+    const newer = bookManifest();
+    newer.readingOrder[1].properties!.versionId = "ver_2b";
+    vi.mocked(booksApi.manifest).mockResolvedValue(newer);
+    await act(() => client.invalidateQueries({ queryKey: ["book", "b1"] }));
+    await waitFor(() => expect(info).toHaveBeenCalled());
+    const [, options] = info.mock.calls.find(
+      ([message]) => message === "A new version of this chapter is available.",
+    )!;
+    h.restore.mockClear();
+    act(() =>
+      (options as unknown as { action: { onClick: () => void } }).action.onClick(),
+    );
+    await waitFor(() => expect(h.restore).toHaveBeenCalled());
+    expect(h.restore).toHaveBeenCalledWith({
+      anchor: { quote: "where I was" },
+      section: "setup",
+      progression: 0.6,
+    });
+  });
+
   it("View moves to the new version and keeps the reader's place", async () => {
     const info = vi.spyOn(toast, "info");
     const { client } = renderReader();
@@ -675,6 +757,41 @@ describe("BookReader", () => {
       section: "setup",
       progression: 0.6,
     });
+  });
+
+  // The toast goes after a few seconds; the bar keeps a way to switch for as
+  // long as a newer version is held back.
+  it("keeps a View control for the new version in the bar", async () => {
+    const user = userEvent.setup();
+    const { client } = renderReader();
+    await screen.findByTestId("workspace");
+    await waitFor(() => expect(booksApi.state).toHaveBeenCalled());
+    act(() =>
+      reader().onViewport!({
+        anchor: { quote: "where I was" },
+        section: "setup",
+        progression: 0.6,
+      }),
+    );
+    expect(screen.queryByRole("button", { name: /new version/i })).toBeNull();
+    const newer = bookManifest();
+    newer.readingOrder[1].properties!.versionId = "ver_2b";
+    vi.mocked(booksApi.manifest).mockResolvedValue(newer);
+    await act(() => client.invalidateQueries({ queryKey: ["book", "b1"] }));
+    const view = await screen.findByRole("button", { name: "New version · View" });
+    expect(view).toHaveTextContent("New version");
+    act(() => void toast.dismiss());
+    h.restore.mockClear();
+    await user.click(screen.getByRole("button", { name: "New version · View" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("workspace")).toHaveAttribute("data-version", "ver_2b"),
+    );
+    expect(h.restore).toHaveBeenCalledWith({
+      anchor: { quote: "where I was" },
+      section: "setup",
+      progression: 0.6,
+    });
+    expect(screen.queryByRole("button", { name: "New version · View" })).toBeNull();
   });
 
   it("binds the new-version toast to its chapter and drops it on chapter change", async () => {

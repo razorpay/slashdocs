@@ -41,19 +41,20 @@ export function Popover({
   children: React.ReactNode;
 }) {
   const triggerRef = React.useRef<HTMLButtonElement>(null);
-  const panelRef = React.useRef<HTMLDivElement>(null);
+  // The panel node, as state: the Portal renders nothing on the commit that
+  // opens it, so the panel is measured when it mounts, not when open flips.
+  const [panel, setPanel] = React.useState<HTMLDivElement | null>(null);
   const [place, setPlace] = React.useState<{ top: number; right: number }>();
   React.useLayoutEffect(() => {
-    if (!open) return;
+    if (!open || !panel) return;
     const measure = () => {
       const r = triggerRef.current?.getBoundingClientRect();
-      const width = panelRef.current?.offsetWidth ?? 0;
-      if (r) setPlace(panelPlace(r, width, window.innerWidth));
+      if (r) setPlace(panelPlace(r, panel.offsetWidth, window.innerWidth));
     };
     measure();
     window.addEventListener("resize", measure);
     return () => window.removeEventListener("resize", measure);
-  }, [open]);
+  }, [open, panel]);
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange} modal={false}>
       <DialogPrimitive.Trigger asChild ref={triggerRef}>
@@ -61,7 +62,7 @@ export function Popover({
       </DialogPrimitive.Trigger>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Content
-          ref={panelRef}
+          ref={setPanel}
           aria-describedby={undefined}
           // The trigger toggles the panel itself; closing on its pointerdown
           // would reopen it on the click that follows.
