@@ -7,8 +7,10 @@ import {
   Pencil,
   type LucideIcon,
 } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
+import { createPersistentStore } from "@/lib/persistent-store";
 import { useDoc, type SaveState } from "./doc-context";
 
 type Status = { label: string; title: string; Icon: LucideIcon };
@@ -73,10 +75,22 @@ const ACCESS: Record<"commenter" | "viewer", Status> = {
 // not saved, not each save of a pause.
 export function EditStatus({ access }: { access?: keyof typeof ACCESS }) {
   const { editable, saveState, text, frameReady } = useDoc();
+  const hint = useEditHint(!!text?.focused);
   const status = editable ? STATUS[saveState] : access && ACCESS[access];
   if (!status) return null;
-  const { label, title, Icon } = status;
+  const { title, Icon } = status;
   const failed = editable && Icon === AlertCircle;
+  const hinted = editable && hint && !failed;
+  const label = hinted ? (
+    <>
+      <span className="pointer-coarse:hidden">Type to edit. Press Esc to leave.</span>
+      <span className="hidden pointer-coarse:inline">
+        Type to edit. Tap Done to leave.
+      </span>
+    </>
+  ) : (
+    status.label
+  );
   if (!editable)
     return (
       <Status
@@ -106,6 +120,7 @@ export function EditStatus({ access }: { access?: keyof typeof ACCESS }) {
         title={title}
         Icon={Icon}
         failed={failed}
+        live={hinted}
         className={cn(
           "inline-flex",
           fade,
@@ -130,17 +145,45 @@ export function EditStatus({ access }: { access?: keyof typeof ACCESS }) {
   );
 }
 
+const editHintSeen = createPersistentStore<boolean>("slashdocs:edit-hint-seen", false);
+const HINT_MS = 8000;
+
+// useEditHint tells whether the bar shows the hint that an editor gets once,
+// the first time the text takes the caret: that they type, and how to leave
+// the text. It shows for a while in place of the status, where it covers no
+// words.
+function useEditHint(focused: boolean): boolean {
+  const [hint, setHint] = useState(false);
+  useEffect(() => {
+    if (!focused || editHintSeen.read()) return;
+    editHintSeen.write(true);
+    setHint(true);
+  }, [focused]);
+  useEffect(() => {
+    if (!hint) return;
+    const timer = setTimeout(() => setHint(false), HINT_MS);
+    return () => clearTimeout(timer);
+  }, [hint]);
+  return hint;
+}
+
 function Status({
   label,
   title,
   Icon,
   failed,
+  live,
   className,
-}: Status & { failed: boolean; className: string }) {
+}: Omit<Status, "label"> & {
+  label: ReactNode;
+  failed: boolean;
+  live?: boolean;
+  className: string;
+}) {
   return (
     <span
       role="status"
-      aria-live={failed ? "polite" : "off"}
+      aria-live={failed || live ? "polite" : "off"}
       title={title}
       className={cn(
         "shrink-0 items-center gap-1 text-xs text-[var(--color-fg-muted)]",
