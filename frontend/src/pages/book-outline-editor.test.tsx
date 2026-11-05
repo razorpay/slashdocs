@@ -411,4 +411,28 @@ describe("BookOutlineEditorPage", () => {
     ).toEqual(["Front matter", "Part Two", "Part One", "Back matter"]);
     expect(screen.getByRole("button", { name: "Move Part One up" })).toHaveFocus();
   });
+
+  it("can save at once when documents were removed from the outline", async () => {
+    mockLoad({ removed: ["doc_x"] });
+    renderEditor();
+    expect(
+      await screen.findByText(
+        "1 document was deleted or moved out of this folder. Save to drop it from the outline.",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Save outline" })).toBeEnabled();
+  });
+
+  it("treats a cleared subtitle as no change", async () => {
+    mockLoad();
+    const user = userEvent.setup();
+    renderEditor();
+    await screen.findByRole("listitem", { name: "Chapter 1: Alpha" });
+    const save = screen.getByRole("button", { name: "Save outline" });
+    expect(save).toBeDisabled();
+    await user.type(screen.getByLabelText("Subtitle"), "x");
+    expect(save).toBeEnabled();
+    await user.clear(screen.getByLabelText("Subtitle"));
+    expect(save).toBeDisabled();
+  });
 });

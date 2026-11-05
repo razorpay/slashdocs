@@ -512,7 +512,10 @@ function Editor({
   }, [titles, data.not_in_outline, draft.pool]);
   const titleOf = (id: string) => poolTitles.get(id) || "Untitled document";
 
-  const dirty = !sameOutline(draft.outline, data.outline);
+  const edited = !sameOutline(draft.outline, data.outline);
+  // The server already left removed documents out of data.outline, so
+  // saving it as it is still drops them for good.
+  const dirty = edited || data.removed.length > 0;
   const numbers = chapterNumbers(draft.outline);
   const { byRow, summary } = useMemo(
     () => groupProblems(problems, draft.outline),
@@ -626,7 +629,7 @@ function Editor({
       ) : null}
       {data.removed.length ? (
         <p className="mb-4 text-sm text-[var(--color-fg-muted)]">
-          {`${plural(data.removed.length, "document was", "documents were")} deleted or moved out of this folder. Saving drops them from the outline.`}
+          {`${plural(data.removed.length, "document was", "documents were")} deleted or moved out of this folder. Save to drop ${data.removed.length === 1 ? "it" : "them"} from the outline.`}
         </p>
       ) : null}
 
@@ -652,7 +655,7 @@ function Editor({
               variant="outline"
               className="mt-2"
               disabled={reloading}
-              onClick={() => (dirty ? setConfirmReload(true) : reload())}
+              onClick={() => (edited ? setConfirmReload(true) : reload())}
             >
               Reload
             </Button>
