@@ -14,7 +14,9 @@ import { useTitle } from "@/lib/use-title";
 export function LoginPage() {
   useTitle("Sign in");
   const [params] = useSearchParams();
-  const next = params.get("next") || "/app/documents";
+  // Only a path in this app: "//host" and "/\host" name another site.
+  const asked = params.get("next");
+  const next = asked && /^\/(?![/\\])/.test(asked) ? asked : "/app/documents";
   const me = useMe();
   const config = useQuery({
     queryKey: queryKeys.config(),
