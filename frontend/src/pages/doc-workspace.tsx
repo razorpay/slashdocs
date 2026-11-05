@@ -522,7 +522,11 @@ export function DocWorkspace({
   );
   const frame = (
     <>
-      {version ? <RenderFrame /> : <Center>Nothing to show yet.</Center>}
+      {version ? (
+        <RenderFrame chordArmed={chord.phase === "armed"} />
+      ) : (
+        <Center>Nothing to show yet.</Center>
+      )}
       <CommentMap comments={shownComments} />
       <Keycast state={chord} available={chordKeys} label={chordLabel} />
     </>

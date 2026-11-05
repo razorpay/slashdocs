@@ -52,7 +52,13 @@ const editHint = () =>
 // Renders the sandboxed document iframe for the document page. useBridgeHost
 // serves the theme and KV; this adds comments, selection, zoom, and links.
 // Painting is driven by the bridge's ready signal.
-export function RenderFrame() {
+export function RenderFrame({
+  chordArmed = false,
+}: {
+  // The Esc chord waits for a letter. The document gives the letter to it
+  // then, and not to its own keys.
+  chordArmed?: boolean;
+}) {
   const {
     docId,
     version,
@@ -678,6 +684,9 @@ export function RenderFrame() {
   useEffect(() => {
     if (ready) postToFrame({ type: "slashdocs:cursor-chat", color: chatColor });
   }, [ready, chatColor, postToFrame]);
+  useEffect(() => {
+    if (ready) postToFrame({ type: "slashdocs:chord", armed: chordArmed });
+  }, [ready, chordArmed, postToFrame]);
 
   // "/" opens cursor chat at the pointer even when the app has the focus, as
   // right after following someone from the bar. The document opens it only

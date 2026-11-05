@@ -876,7 +876,7 @@ export function createCursorLayer(
   // follow shows what another viewer sees. Once, it goes to their cursor, or
   // else to the center of their view. Continuous, it shows the center of
   // their view at their zoom, and keeps showing it as they move, until
-  // unfollow. A viewer who sends no view is gone to once.
+  // unfollow. A viewer who sent no view yet is followed from their first one.
   function follow(session: string, continuous: boolean) {
     unfollow();
     const cursor = cursors.get(session);
@@ -885,32 +885,24 @@ export function createCursorLayer(
     const view = viewOf(session);
     const shown = point && !point.hidden ? point : undefined;
     const target = continuous ? (view ?? shown) : (shown ?? view);
-    // Nothing to go to: say so, so the app does not show this as followed.
-    if (!target || !locate(target)) {
-      if (continuous) unfollowed();
-      return;
+    if (target && locate(target)) {
+      moveTo(target, performance.now());
+      // One short pulse as the view lands says whose cursor this is.
+      if (cursor && !reducedMotion(doc()))
+        cursor.label.animate(
+          [
+            { transform: "scale(1)" },
+            { transform: "scale(1.15)" },
+            { transform: "scale(1)" },
+          ],
+          { duration: 320, delay: 250, easing: "cubic-bezier(.77,0,.175,1)" },
+        );
     }
-    moveTo(target, performance.now());
-    // One short pulse as the view lands says whose cursor this is.
-    if (cursor && !reducedMotion(doc()))
-      cursor.label.animate(
-        [
-          { transform: "scale(1)" },
-          { transform: "scale(1.15)" },
-          { transform: "scale(1)" },
-        ],
-        { duration: 320, delay: 250, easing: "cubic-bezier(.77,0,.175,1)" },
-      );
     if (!continuous) return;
-    if (!view) {
-      unfollowed();
-      return;
-    }
     followed = session;
-    showFollowing(
-      cursor?.name ?? kept?.name ?? "",
-      cursor?.label.style.background || kept?.color || "",
-    );
+    // Their name and color come with their first report, if not known yet.
+    const name = cursor?.name ?? kept?.name;
+    if (name) showFollowing(name, cursor?.label.style.background || kept?.color || "");
   }
 
   // unfollow stops following. here tells that this reader moved the view or
