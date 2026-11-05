@@ -65,6 +65,35 @@ test("C opens the comments for as long as the chord shows, also after 800 ms", a
   await expect(page.getByRole("dialog", { name: "New comment" })).toBeVisible();
 });
 
+// Each chord letter runs its chord only: C does not also place a pin, from
+// the doc bar or from inside the document.
+for (const from of ["the doc bar", "the document"] as const) {
+  for (const key of ["t", "f", "c", "m", "h"]) {
+    test(`Esc then ${key.toUpperCase()} in ${from} runs its chord only`, async ({
+      page,
+      slashdocs,
+    }) => {
+      await openEarlier(page, slashdocs);
+      if (from === "the doc bar")
+        await page.getByRole("button", { name: "History" }).focus();
+      else await renderedDocument(page).locator("h1").click();
+      await page.keyboard.press("Escape");
+      await page.keyboard.press(key);
+      if (key === "h") await expect(page).toHaveURL(/\/app\/documents$/);
+      else
+        await expect(
+          page.locator('[aria-hidden="true"]', { hasText: /^ESC\+/ }),
+        ).toContainText(`ESC+${key.toUpperCase()}`);
+      await page.waitForTimeout(300);
+      await expect(
+        page
+          .frameLocator('iframe[title="Rendered document"]')
+          .locator(".sd-place-hint"),
+      ).toHaveCount(0);
+    });
+  }
+}
+
 test("the install command fades only on the side that hides text", async ({
   browser,
 }) => {

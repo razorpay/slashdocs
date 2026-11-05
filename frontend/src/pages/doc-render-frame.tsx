@@ -639,7 +639,15 @@ export function RenderFrame({
         typeof e.data.key === "string" &&
         FORWARDED_KEYS.has(e.data.key)
       ) {
-        window.dispatchEvent(new KeyboardEvent("keydown", { key: e.data.key }));
+        // It comes to the app as a key on the page does: the window's capture
+        // listeners, as the Esc chord's, take it first, and may keep it.
+        document.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: e.data.key,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
       }
       if (e.data?.type === "slashdocs:zoom" && typeof e.data.deltaY === "number") {
         const frameRect = ref.current?.getBoundingClientRect();
