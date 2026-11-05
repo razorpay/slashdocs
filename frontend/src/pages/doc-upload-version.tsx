@@ -17,6 +17,7 @@ import { HtmlFileInput } from "@/components/ui/upload";
 import { DraftNotice } from "@/components/draft-notice";
 import { api, type Version } from "@/api";
 import { useEditDraft } from "@/lib/edit-drafts";
+import type { ShowSaved } from "./use-show-saved";
 import { queryKeys } from "@/lib/queryKeys";
 
 // The menu item only asks for the sheet to open. The sheet is rendered by the
@@ -37,7 +38,8 @@ export function UploadVersionSheet({
 }: {
   docId: string;
   baseVersion: string;
-  onUploaded?: (uploaded: Version) => void;
+  // useShowSaved of the page, which stays while the sheet comes and goes.
+  showSaved?: ShowSaved;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -64,23 +66,27 @@ export function UploadVersionSheet({
 function UploadVersionForm({
   docId,
   baseVersion,
-  onUploaded,
+  showSaved,
   onClose,
 }: {
   docId: string;
   baseVersion: string;
-  onUploaded?: (uploaded: Version) => void;
+  showSaved?: ShowSaved;
   onClose: () => void;
 }) {
   const q = useQueryClient();
   const summary = useEditDraft(`version-summary:${docId}`, baseVersion);
   const [file, setFile] = useState<File | null>(null);
   const m = useMutation({
-    mutationFn: (sent: { base: string; summary: string; file: File }) =>
-      api.createVersion(docId, sent.base, sent.summary, sent.file),
+    mutationFn: (sent: {
+      base: string;
+      summary: string;
+      file: File;
+      show?: (uploaded: Version) => void;
+    }) => api.createVersion(docId, sent.base, sent.summary, sent.file),
     onSuccess: (uploaded, sent) => {
       summary.sent(sent.summary);
-      onUploaded?.(uploaded);
+      sent.show?.(uploaded);
       toast.success("Uploaded. The previous content is in the history.");
       q.invalidateQueries({ queryKey: queryKeys.versions(docId) });
       q.invalidateQueries({ queryKey: queryKeys.document(docId) });
@@ -96,7 +102,7 @@ function UploadVersionForm({
         e.preventDefault();
         if (file && !summary.stale && !m.isPending)
           m.mutate(
-            { base: summary.about, summary: summary.value, file },
+            { base: summary.about, summary: summary.value, file, show: showSaved?.() },
             { onSuccess: onClose },
           );
       }}

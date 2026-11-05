@@ -7,6 +7,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import { MemoryRouter, useNavigate, type NavigateFunction } from "react-router-dom";
 import { toast } from "sonner";
 import { afterEach, expect, it, vi } from "vitest";
 import { api, type Document, type Version } from "@/api";
@@ -38,6 +39,12 @@ function renderHeldRestore() {
   client.setQueryData(queryKeys.document("doc_1"), { title: "Plan B" } as Document);
   client.setQueryData(queryKeys.versions("doc_1"), { items: [v3, v5] });
   const invalidate = vi.spyOn(client, "invalidateQueries");
+  let nav!: NavigateFunction;
+  function Nav() {
+    nav = useNavigate();
+    return null;
+  }
+  // The preview is in the link, as on the document page.
   const ui = (version: Version) => (
     <QueryClientProvider client={client}>
       <DocProvider value={doc as unknown as DocContextValue}>
@@ -45,10 +52,21 @@ function renderHeldRestore() {
       </DocProvider>
     </QueryClientProvider>
   );
-  const view = render(ui(v3));
+  const view = render(ui(v3), {
+    wrapper: ({ children }) => (
+      <MemoryRouter initialEntries={["/app/d/doc_1?version=v3"]}>
+        <Nav />
+        {children}
+      </MemoryRouter>
+    ),
+  });
+  const preview = (version: Version) => {
+    act(() => void nav(`/app/d/doc_1?version=${version.id}`));
+    view.rerender(ui(version));
+  };
   fireEvent.click(screen.getByRole("button", { name: "Restore" }));
   const release = () => act(async () => answer({ id: "v6", number: 6 } as Version));
-  return { doc, view, ui, invalidate, release };
+  return { doc, view, preview, invalidate, release };
 }
 
 it("refreshes the document but stays where the reader went, after a Restore ends", async () => {
@@ -69,8 +87,8 @@ it("refreshes the document but stays where the reader went, after a Restore ends
 });
 
 it("leaves another preview on screen, after a Restore ends", async () => {
-  const { doc, view, ui, release } = renderHeldRestore();
-  view.rerender(ui(v5));
+  const { doc, preview, release } = renderHeldRestore();
+  preview(v5);
   await release();
 
   await waitFor(() => expect(toast.success).toHaveBeenCalled());
