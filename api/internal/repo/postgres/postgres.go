@@ -519,6 +519,9 @@ func (s *Store) CreateVersion(ctx context.Context, documentID, baseVersionID, ch
 	if err != nil {
 		return repo.Version{}, err
 	}
+	if err := s.indexPublishedSections(ctx, tx, documentID, id, html); err != nil {
+		return repo.Version{}, err
+	}
 	if err := q.UpdateDocumentCurrentVersion(ctx, dbsqlc.UpdateDocumentCurrentVersionParams{CurrentVersionID: pgtype.Text{String: id, Valid: true}, ID: documentID}); err != nil {
 		return repo.Version{}, err
 	}
@@ -872,16 +875,23 @@ func (s *Store) DeleteDocument(ctx context.Context, id string) error {
 	}
 	defer rollback(ctx, tx)
 	q := s.q.WithTx(tx)
-	deleted, err := q.DeleteDocument(ctx, id)
+	folderID, err := q.DeleteDocument(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return tx.Commit(ctx)
+	}
 	if err != nil {
 		return err
 	}
-	if deleted > 0 {
-		// The event rows cascade with the document, so the notification tells
-		// brokers to fetch, observe ErrNotFound, and close active subscribers.
-		if err := q.NotifyDocumentKVEvent(ctx, id); err != nil {
-			return err
-		}
+	// The event rows cascade with the document, so the notification tells
+	// brokers to fetch, observe ErrNotFound, and close active subscribers.
+	if err := q.NotifyDocumentKVEvent(ctx, id); err != nil {
+		return err
+	}
+	// A10: a deleted chapter leaves its book's outline in the same
+	// transaction. The book row lock comes after the document row lock, as
+	// in the move paths.
+	if err := removeFromFolderBook(ctx, q, folderID, id, removedDeleted); err != nil {
+		return err
 	}
 	return tx.Commit(ctx)
 }

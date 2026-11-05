@@ -122,6 +122,7 @@ func run() error {
 		indexSearch(workerCtx, "versions", store.IndexVersions)
 		indexSearch(workerCtx, "documents", store.IndexDocuments)
 	})
+	workers.Go(func() { indexSearch(workerCtx, "version sections", store.IndexVersionSections) })
 	defer func() { cancelWorkers(); workers.Wait() }()
 	return serve(ctx, srv.Handler(), ":"+envOrDefault("SLASHDOCS_PORT", "8080"), ":"+envOrDefault("SLASHDOCS_METRICS_PORT", "9090"))
 }

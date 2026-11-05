@@ -25,6 +25,13 @@ func Headings(raw []byte) ([]Heading, error) {
 	if err != nil {
 		return nil, err
 	}
+	_, hs := headingNodes(d)
+	return hs, nil
+}
+
+// headingNodes returns the heading elements of a parsed document in document
+// order, with the Heading each one gets. The two slices are parallel.
+func headingNodes(d *html.Node) ([]*html.Node, []Heading) {
 	used := map[string]bool{}
 	var nodes []*html.Node
 	var walk func(*html.Node)
@@ -73,7 +80,7 @@ func Headings(raw []byte) ([]Heading, error) {
 		}
 		result = append(result, Heading{ID: id, Text: text, Level: int(n.Data[1] - '0')})
 	}
-	return result, nil
+	return nodes, result
 }
 
 func htmlID(n *html.Node) string {

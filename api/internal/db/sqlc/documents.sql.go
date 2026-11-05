@@ -11,16 +11,17 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const deleteDocument = `-- name: DeleteDocument :execrows
-DELETE FROM documents WHERE id=$1
+const deleteDocument = `-- name: DeleteDocument :one
+DELETE FROM documents WHERE id=$1 RETURNING COALESCE(parent_folder_id,'')::text AS parent_folder_id
 `
 
-func (q *Queries) DeleteDocument(ctx context.Context, id string) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteDocument, id)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+// Returns the folder the document was in (” at the root), so that a book on
+// that folder can drop the chapter in the same transaction.
+func (q *Queries) DeleteDocument(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, deleteDocument, id)
+	var parent_folder_id string
+	err := row.Scan(&parent_folder_id)
+	return parent_folder_id, err
 }
 
 const getDocument = `-- name: GetDocument :one
@@ -305,7 +306,7 @@ func (q *Queries) MoveDocumentToFolder(ctx context.Context, arg MoveDocumentToFo
 	return result.RowsAffected(), nil
 }
 
-const moveDocumentToRoot = `-- name: MoveDocumentToRoot :exec
+const moveDocumentToRoot = `-- name: MoveDocumentToRoot :execrows
 UPDATE documents SET parent_folder_id=NULL, updated_at=now() WHERE id= $1 AND parent_folder_id= $2::text
 `
 
@@ -314,9 +315,12 @@ type MoveDocumentToRootParams struct {
 	FolderID   string
 }
 
-func (q *Queries) MoveDocumentToRoot(ctx context.Context, arg MoveDocumentToRootParams) error {
-	_, err := q.db.Exec(ctx, moveDocumentToRoot, arg.DocumentID, arg.FolderID)
-	return err
+func (q *Queries) MoveDocumentToRoot(ctx context.Context, arg MoveDocumentToRootParams) (int64, error) {
+	result, err := q.db.Exec(ctx, moveDocumentToRoot, arg.DocumentID, arg.FolderID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const recordWorkspaceEntry = `-- name: RecordWorkspaceEntry :exec
