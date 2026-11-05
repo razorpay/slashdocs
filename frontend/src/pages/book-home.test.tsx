@@ -206,6 +206,14 @@ describe("BookHomePage", () => {
     ).toBeTruthy();
   });
 
+  it("leaves out the chapter clause before the reader has a place", async () => {
+    vi.spyOn(booksApi, "manifest").mockResolvedValue(manifest([1, 2, 3]));
+    vi.spyOn(booksApi, "state").mockResolvedValue(state());
+    renderHome();
+    expect(await screen.findByText(/0% of the book/)).toBeTruthy();
+    expect(screen.queryByText(/Chapter 0 of/)).toBeNull();
+  });
+
   it("says so quietly when the reading state cannot be loaded", async () => {
     vi.spyOn(booksApi, "manifest").mockResolvedValue(manifest([1, 2]));
     const st = vi

@@ -395,8 +395,11 @@ export function BookHomePage() {
                 />
               </div>
               <p className="mt-1.5 text-xs text-[var(--color-fg-muted)]">
-                Chapter {s.progress.chapter} of {s.progress.of} · {share}% of the book ·{" "}
-                {read} chapters read
+                {/* chapter is 0 before the reader has a place in a chapter. */}
+                {s.progress.chapter > 0
+                  ? `Chapter ${s.progress.chapter} of ${s.progress.of} · `
+                  : ""}
+                {share}% of the book · {read} chapters read
               </p>
             </div>
           ) : null}
