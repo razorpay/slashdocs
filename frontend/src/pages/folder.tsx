@@ -18,7 +18,6 @@ import {
 } from "lucide-react";
 import { Page } from "@/components/layout/page";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Skeleton, EmptyState } from "@/components/ui/misc";
 import {
   ErrorState,
@@ -41,13 +40,6 @@ import {
   AlertDialogFooter,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { api, type FolderEntry } from "@/api";
 import { canManageSharing } from "@/lib/constants";
 import { queryKeys } from "@/lib/queryKeys";
@@ -60,7 +52,11 @@ import { BrowseDragOverlay } from "@/components/browse/drag-overlay";
 import { UnifiedGrid } from "@/components/browse/unified-grid";
 import { UnifiedTable } from "@/components/browse/unified-table";
 import { ViewModeToggle } from "@/components/browse/view-mode-toggle";
-import { AccessWarningDialog, NewFolderDialog } from "@/components/browse/dialogs";
+import {
+  AccessWarningDialog,
+  NewFolderDialog,
+  RenameFolderDialog,
+} from "@/components/browse/dialogs";
 import { MoveDialog } from "@/components/browse/move-dialog";
 import { useMoveResource } from "@/components/browse/use-resource-actions";
 import { sortEntries } from "@/components/browse/sort-entries";
@@ -127,7 +123,6 @@ function FolderView({ id }: { id: string }) {
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
-  const [renameTitle, setRenameTitle] = useState("");
 
   // A toast names the folder, so that it reaches a reader who left. Only a
   // page that is still open closes its dialog or leaves.
@@ -141,15 +136,6 @@ function FolderView({ id }: { id: string }) {
       qc.removeQueries({ queryKey: queryKeys.folder(id) });
     },
     onError: (e) => toast.error(errorMessage(e, "Delete failed")),
-  });
-
-  const renameFolder = useMutation({
-    mutationFn: (title: string) => api.updateFolder(id, title),
-    onSuccess: (_, title) => {
-      qc.invalidateQueries({ queryKey: queryKeys.folder(id) });
-      toast.success(`Renamed to “${title}”.`);
-    },
-    onError: (e) => toast.error(errorMessage(e, "Rename failed")),
   });
 
   const [activeDrag, setActiveDrag] = useState<ActiveDrag | null>(null);
@@ -306,12 +292,7 @@ function FolderView({ id }: { id: string }) {
                 </Button>
               </DropdownTrigger>
               <DropdownContent>
-                <DropdownItem
-                  onSelect={() => {
-                    setRenameTitle(f.title);
-                    setRenameOpen(true);
-                  }}
-                >
+                <DropdownItem onSelect={() => setRenameOpen(true)}>
                   <Pencil className="h-4 w-4" /> Rename
                 </DropdownItem>
                 <DropdownItem onSelect={() => setNewFolderOpen(true)}>
@@ -407,45 +388,12 @@ function FolderView({ id }: { id: string }) {
           parentFolderId={id}
         />
 
-        {/* Rename dialog */}
-        <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Rename folder</DialogTitle>
-            </DialogHeader>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (renameTitle.trim())
-                  renameFolder.mutate(renameTitle, {
-                    onSuccess: () => setRenameOpen(false),
-                  });
-              }}
-            >
-              <Input
-                aria-label="Folder name"
-                value={renameTitle}
-                onChange={(e) => setRenameTitle(e.target.value)}
-                autoFocus
-              />
-              <DialogFooter className="mt-4">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => setRenameOpen(false)}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="submit"
-                  disabled={!renameTitle.trim() || renameFolder.isPending}
-                >
-                  Rename
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
+        <RenameFolderDialog
+          open={renameOpen}
+          onOpenChange={setRenameOpen}
+          id={id}
+          title={f.title}
+        />
 
         <MoveDialog
           open={moveOpen}

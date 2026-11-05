@@ -14,7 +14,9 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { HtmlFileInput } from "@/components/ui/upload";
+import { DraftNotice } from "@/components/draft-notice";
 import { api, type Version } from "@/api";
+import { useEditDraft } from "@/lib/edit-drafts";
 import { queryKeys } from "@/lib/queryKeys";
 
 // The menu item only asks for the sheet to open. The sheet is rendered by the
@@ -53,8 +55,12 @@ export function UploadVersionSheet({
   );
 }
 
-// The form mounts each time the sheet opens. An upload that ends after the
-// sheet closed still says so, and does not close or clear a later form.
+// The form mounts each time the sheet opens. Its summary is a draft of the
+// document (`version-summary:<docId>`), written for the latest version when
+// the form opened: the upload replaces that version only. If a new version
+// comes first, the form says so, and the reader replaces the new version or
+// discards the upload. An upload that ends after the sheet closed still says
+// so, and does not close or clear a later form.
 function UploadVersionForm({
   docId,
   baseVersion,
@@ -67,11 +73,13 @@ function UploadVersionForm({
   onClose: () => void;
 }) {
   const q = useQueryClient();
-  const [summary, setSummary] = useState("");
+  const summary = useEditDraft(`version-summary:${docId}`, baseVersion);
   const [file, setFile] = useState<File | null>(null);
   const m = useMutation({
-    mutationFn: (file: File) => api.createVersion(docId, baseVersion, summary, file),
-    onSuccess: (uploaded) => {
+    mutationFn: (sent: { base: string; summary: string; file: File }) =>
+      api.createVersion(docId, sent.base, sent.summary, sent.file),
+    onSuccess: (uploaded, sent) => {
+      summary.sent(sent.summary);
       onUploaded?.(uploaded);
       toast.success("Uploaded. The previous content is in the history.");
       q.invalidateQueries({ queryKey: queryKeys.versions(docId) });
@@ -86,17 +94,35 @@ function UploadVersionForm({
       className="space-y-3"
       onSubmit={(e) => {
         e.preventDefault();
-        if (file) m.mutate(file, { onSuccess: onClose });
+        if (file && !summary.stale && !m.isPending)
+          m.mutate(
+            { base: summary.about, summary: summary.value, file },
+            { onSuccess: onClose },
+          );
       }}
     >
       <Input
         placeholder="Change summary"
-        value={summary}
-        onChange={(e) => setSummary(e.target.value)}
+        aria-label="Change summary"
+        value={summary.value}
+        onChange={(e) => summary.setValue(e.target.value)}
+      />
+      <DraftNotice
+        draft={summary}
+        cameBack="Your summary from earlier came back. Choose the file again."
+        stale={{
+          say: "A new version was published after you opened this form. The upload would replace it.",
+          take: "Discard",
+          keep: "Replace the new version",
+          onTake: () => {
+            summary.discard();
+            onClose();
+          },
+        }}
       />
       <HtmlFileInput file={file} onFile={setFile} />
-      <Button type="submit" disabled={!file || m.isPending}>
-        {m.isPending ? "Uploading…" : "Upload"}
+      <Button type="submit" disabled={!file || summary.stale} busy={m.isPending}>
+        Upload
       </Button>
     </form>
   );

@@ -113,7 +113,9 @@ describe("dialogs launched from a dropdown menu", () => {
     await chooseFile(user, dialog);
     expect(upload).toBeEnabled();
     // The empty title takes the file's first heading.
-    await waitFor(() => expect(screen.getByLabelText("Title")).toHaveValue("hi"));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Title")).toHaveAttribute("placeholder", "hi"),
+    );
     await user.click(upload);
 
     await waitFor(() => expect(create).toHaveBeenCalledWith("hi", HTML));
