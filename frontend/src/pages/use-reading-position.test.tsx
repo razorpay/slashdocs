@@ -256,11 +256,126 @@ describe("useReadingPosition", () => {
     expect(save).toHaveBeenCalledTimes(1);
   });
 
-  it("stops waiting for the restore after 3 seconds", () => {
+  it("stops waiting for the restore 3 seconds after it was requested", () => {
     const hook = renderHook(() => useReadingPosition(base));
-    act(() => void vi.advanceTimersByTime(3000));
+    // The frame and /state can take longer than 3 s; that time does not count.
+    act(() => void vi.advanceTimersByTime(5000));
+    act(() => hook.result.current.onViewport(view(0.4)));
+    expect(save).not.toHaveBeenCalled();
+    act(() => hook.result.current.onRestoreRequested());
+    act(() => void vi.advanceTimersByTime(2999));
+    act(() => hook.result.current.onViewport(view(0.4)));
+    expect(save).not.toHaveBeenCalled();
+    act(() => void vi.advanceTimersByTime(1));
     act(() => hook.result.current.onViewport(view(0.4)));
     expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  // The frame posts its first viewport about 300 ms after setup, and nothing
+  // else when the chapter does not scroll. When that report comes before the
+  // restore is done it must not be lost, or the read timer never starts.
+  it("starts the read timer for a chapter that fits when its only report came before the restore", () => {
+    const hook = renderHook(() => useReadingPosition(base));
+    act(() => hook.result.current.onViewport(fits));
+    act(() => hook.result.current.onRestored());
+    expect(save).toHaveBeenCalledTimes(1);
+    act(() => void vi.advanceTimersByTime(FITS_READ_MS));
+    expect(ends()).toHaveLength(1);
+  });
+
+  it("replays a fits report when the restore times out", () => {
+    const hook = renderHook(() => useReadingPosition(base));
+    act(() => hook.result.current.onRestoreRequested());
+    act(() => hook.result.current.onViewport(fits));
+    act(() => void vi.advanceTimersByTime(3000));
+    expect(save).toHaveBeenCalledTimes(1);
+    act(() => void vi.advanceTimersByTime(FITS_READ_MS));
+    expect(ends()).toHaveLength(1);
+  });
+
+  // A report from before the restore shows the top of the page: replaying it
+  // would overwrite the saved place and arm the end rule.
+  it("does not replay a pre-restore report of a chapter that scrolls", () => {
+    const hook = renderHook(() => useReadingPosition(base));
+    act(() => hook.result.current.onViewport(view(0)));
+    act(() => hook.result.current.onRestored());
+    expect(save).not.toHaveBeenCalled();
+    act(() => hook.result.current.onViewport(view(0.995)));
+    expect(ends()).toHaveLength(0);
+  });
+
+  // The frame, the token and /state with its retries can take more than 3 s
+  // before the restore is even sent; the top-of-page report that the frame
+  // posts meanwhile must not open the gate.
+  it("a slow restore with a pre-restore top report saves no top position and sends no end", () => {
+    const hook = renderHook(() => useReadingPosition(base));
+    act(() => void vi.advanceTimersByTime(3100));
+    act(() => hook.result.current.onViewport(view(0)));
+    act(() => hook.result.current.onRestoreRequested());
+    act(() => hook.result.current.onViewport(view(0)));
+    act(() => hook.result.current.onRestored());
+    act(() => hook.result.current.onViewport(view(0.995)));
+    expect(save.mock.calls[0]![1]).toMatchObject({ progression: 0.995 });
+    expect(
+      save.mock.calls.some(
+        (c: unknown[]) => (c[1] as { progression: number }).progression === 0,
+      ),
+    ).toBe(false);
+    expect(ends()).toHaveLength(0);
+  });
+
+  // The frame tags reports it posts while a restore is still waiting for
+  // content; they show where the page was, not where the reader is.
+  it("ignores reports the frame posts while it is still restoring", () => {
+    const hook = renderHook(() => useReadingPosition(base));
+    act(() => hook.result.current.onRestoreRequested());
+    act(() => void vi.advanceTimersByTime(3000));
+    act(() => hook.result.current.onViewport({ ...view(0), restoring: true }));
+    expect(save).not.toHaveBeenCalled();
+    act(() => hook.result.current.onViewport(view(0.995)));
+    expect(save.mock.calls[0]![1]).toMatchObject({ progression: 0.995 });
+    expect(ends()).toHaveLength(0);
+  });
+
+  // Without the old mount timer, a restore reported before saving was
+  // enabled (no version yet) must still open the gate of that chapter.
+  it("keeps a restore reported before it was enabled for the chapter", () => {
+    const hook = renderHook((p) => useReadingPosition(p), {
+      initialProps: { ...base, enabled: false },
+    });
+    act(() => hook.result.current.onRestored());
+    hook.rerender(base);
+    act(() => hook.result.current.onViewport(view(0.4)));
+    expect(save).toHaveBeenCalledTimes(1);
+    // It is not carried into another chapter.
+    hook.rerender({ ...base, documentId: "doc_b" });
+    act(() => hook.result.current.onViewport(view(0.4)));
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries the fits end after a 503", async () => {
+    failFirstEnd(new APIError(503, "group_membership_unavailable", ""));
+    const { result } = setup();
+    act(() => result.current.onViewport(fits));
+    act(() => void vi.advanceTimersByTime(FITS_READ_MS));
+    expect(ends()).toHaveLength(1);
+    await settle();
+    act(() => void vi.advanceTimersByTime(3000));
+    expect(ends()).toHaveLength(2);
+    await settle();
+    act(() => void vi.advanceTimersByTime(120_000));
+    expect(ends()).toHaveLength(2);
+  });
+
+  it("sends the fits end after the 429 backoff", async () => {
+    save.mockRejectedValueOnce(new APIError(429, "rate_limited", ""));
+    const { result } = setup();
+    act(() => result.current.onViewport(fits));
+    await settle();
+    act(() => void vi.advanceTimersByTime(FITS_READ_MS));
+    expect(ends()).toHaveLength(0);
+    act(() => void vi.advanceTimersByTime(60_000 - FITS_READ_MS));
+    expect(ends()).toHaveLength(1);
   });
 
   it("does not carry a pending save into the next chapter", () => {

@@ -841,6 +841,8 @@ type Theme = "dark" | "light";
         // fits: nothing scrolls, so progression says nothing about reading.
         progression: p ?? 0,
         fits: p === null,
+        // A restore still waiting for content will move the page.
+        restoring: positionRestore.pending(),
       },
       targetOrigin(),
     );
@@ -1844,6 +1846,9 @@ type Theme = "dark" | "light";
       { type: "slashdocs:position-restored", method: plan.method },
       targetOrigin(),
     );
+    // Every restore is followed by a report of where it landed, even when it
+    // did not scroll (a chapter that fits on screen posts nothing else).
+    scheduleViewport();
   }
 
   // Restore a saved reading position: the fuzzy-matched quote, else its

@@ -31,6 +31,9 @@ export type ReaderViewport = {
   // True when nothing in the chapter scrolls (it fits on screen), so
   // progression says nothing about how far the reader got.
   fits?: boolean;
+  // True when the frame posted it while a saved place was still being
+  // restored, so it shows where the page was, not where the reader is.
+  restoring?: boolean;
 };
 
 // A saved reading position to scroll back to. The bridge tries the quote,

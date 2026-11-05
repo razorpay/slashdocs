@@ -392,7 +392,13 @@ export function RenderFrame() {
             Number.isFinite(e.data.progression)
               ? Math.min(1, Math.max(0, e.data.progression))
               : 0;
-          onViewport({ anchor, section, progression, fits: e.data.fits === true });
+          onViewport({
+            anchor,
+            section,
+            progression,
+            fits: e.data.fits === true,
+            restoring: e.data.restoring === true,
+          });
         }
       }
       if (

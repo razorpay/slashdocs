@@ -136,7 +136,17 @@ describe("RenderFrame in book mode", () => {
       section: "intro",
       progression: 1,
       fits: false,
+      restoring: false,
     });
+    // A report posted while the frame still restores a saved place says so.
+    send({ type: "slashdocs:viewport", section: "", progression: 0, restoring: true });
+    expect(reader.onViewport).toHaveBeenLastCalledWith(
+      expect.objectContaining({ restoring: true }),
+    );
+    send({ type: "slashdocs:viewport", section: "", progression: 0, restoring: 1 });
+    expect(reader.onViewport).toHaveBeenLastCalledWith(
+      expect.objectContaining({ restoring: false }),
+    );
     // Only a literal true says the chapter fits on screen.
     send({ type: "slashdocs:viewport", section: "", progression: 0, fits: true });
     expect(reader.onViewport).toHaveBeenLastCalledWith(

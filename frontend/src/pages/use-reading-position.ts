@@ -18,6 +18,8 @@ type Viewport = {
   section: string;
   progression: number;
   fits?: boolean;
+  // The frame posted it while a restore was still waiting for content.
+  restoring?: boolean;
 };
 
 type Visit = {
@@ -35,11 +37,17 @@ type Visit = {
   retried: boolean;
   backoffUntil: number;
   pending: ReadingPosition | null;
+  // The last report dropped because the restore was not done yet.
+  early?: Viewport;
+  // Failed or throttled reached_end sends since the last success.
+  endRetries: number;
   timer?: ReturnType<typeof setTimeout>;
   restoreTimer?: ReturnType<typeof setTimeout>;
   fitsTimer?: ReturnType<typeof setTimeout>;
+  endTimer?: ReturnType<typeof setTimeout>;
   flush?: (final?: boolean) => void;
   reachEnd?: (progression: number) => void;
+  accept?: (view: Viewport) => void;
 };
 const newVisit = (): Visit => ({
   restored: false,
@@ -52,6 +60,7 @@ const newVisit = (): Visit => ({
   retried: false,
   backoffUntil: 0,
   pending: null,
+  endRetries: 0,
 });
 
 const visible = () => document.visibilityState !== "hidden";
@@ -69,10 +78,20 @@ const visible = () => document.visibilityState !== "hidden";
 // - Fits on screen: nothing in the chapter scrolls, and it stays on screen,
 //   with the page visible, for FITS_READ_MS.
 //
+// Restore gate: reports are ignored until the frame has restored the saved
+// place (onRestored), or 3 s after the restore was requested
+// (onRestoreRequested); before that they show the top of the page. Reports
+// the frame tags as posted mid-restore are always ignored. A dropped report
+// for a chapter that fits on screen is replayed once the gate opens: it has
+// no scroll position to go stale, and it may be the only report the visit
+// gets.
+//
 // Failed writes: 4xx refusals are dropped. Outages and network errors keep
 // the position pending, retry once after 3 s, and otherwise go with the next
 // report or page hide. 429 holds throttled saves for a minute; the save on
-// page hide is sent anyway, since it is the last chance.
+// page hide is sent anyway, since it is the last chance. A reached_end that
+// fails or is throttled is retried on its own, with backoff, since a chapter
+// that fits sends no more reports.
 export function useReadingPosition(opts: {
   bookId: string;
   documentId: string;
@@ -80,20 +99,24 @@ export function useReadingPosition(opts: {
   enabled: boolean;
 }): {
   onViewport: (v: Viewport) => void;
-  // Call when the frame has restored the saved position (reader.onRestored).
+  // Call when a saved position is sent to the frame to restore; the gate
+  // opens anyway 3 s later.
+  onRestoreRequested: () => void;
+  // Call when the frame has restored the saved position (reader.onRestored),
+  // or when there is nothing to restore.
   onRestored: () => void;
 } {
   const { bookId, documentId, versionId, enabled } = opts;
   // Per-visit state; replaced when the chapter changes.
   const visit = useRef<Visit>(newVisit());
+  // A restore requested or done while no visit was live (saving not enabled
+  // yet), applied when this chapter's visit starts.
+  const beforeVisit = useRef<{ documentId: string; done: boolean } | null>(null);
 
   useEffect(() => {
     if (!enabled) return;
     const v = newVisit();
     visit.current = v;
-    v.restoreTimer = setTimeout(() => {
-      v.restored = true;
-    }, RESTORE_TIMEOUT_MS);
 
     const schedule = (wait: number) => {
       if (v.timer === undefined) v.timer = setTimeout(() => flush(), wait);
@@ -141,43 +164,43 @@ export function useReadingPosition(opts: {
       }
     };
 
+    // One timer; a chapter that fits gets no later report to resend with.
+    const retryEnd = (progression: number) => {
+      if (v.endTimer !== undefined || v.closed) return;
+      const wait = Math.min(
+        RATE_LIMIT_BACKOFF_MS,
+        SAVE_INTERVAL_MS * 2 ** Math.min(v.endRetries, 5),
+      );
+      v.endRetries++;
+      v.endTimer = setTimeout(
+        () => {
+          v.endTimer = undefined;
+          reachEnd(progression);
+        },
+        Math.max(wait, v.backoffUntil - Date.now()),
+      );
+    };
     const reachEnd = (progression: number) => {
-      if (v.reachedEnd || v.closed || Date.now() < v.backoffUntil) return;
+      if (v.reachedEnd || v.closed) return;
+      if (Date.now() < v.backoffUntil) return retryEnd(progression);
+      clearTimeout(v.endTimer);
+      v.endTimer = undefined;
       v.reachedEnd = true;
-      booksApi
-        .progress(bookId, documentId, versionId, progression, true)
-        .catch((err: unknown) => {
-          // Sent again with the next report at the end.
-          if (failed(err)) v.reachedEnd = false;
-        });
+      booksApi.progress(bookId, documentId, versionId, progression, true).then(
+        () => {
+          v.endRetries = 0;
+        },
+        (err: unknown) => {
+          // Sent again on its own, or with the next report at the end.
+          if (failed(err)) {
+            v.reachedEnd = false;
+            retryEnd(progression);
+          }
+        },
+      );
     };
 
-    const onVisibility = () => {
-      if (!visible()) {
-        clearTimeout(v.fitsTimer);
-        v.fitsTimer = undefined;
-        flush(true);
-      } else if (v.fits) startFitsTimer(v);
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-    v.flush = flush;
-    v.reachEnd = reachEnd;
-    return () => {
-      document.removeEventListener("visibilitychange", onVisibility);
-      clearTimeout(v.restoreTimer);
-      clearTimeout(v.fitsTimer);
-      flush(true);
-      clearTimeout(v.timer);
-      // Anything arriving after cleanup belongs to no visit.
-      v.closed = true;
-      v.restored = false;
-    };
-  }, [bookId, documentId, versionId, enabled]);
-
-  const onViewport = useCallback(
-    (view: Viewport) => {
-      const v = visit.current;
-      if (!enabled || !v.restored || !v.flush) return;
+    const accept = (view: Viewport) => {
       v.pending = {
         device_id: deviceIdStore.read(),
         document_id: documentId,
@@ -194,22 +217,89 @@ export function useReadingPosition(opts: {
         clearTimeout(v.fitsTimer);
         v.fitsTimer = undefined;
         if (view.progression < END_PROGRESSION) v.armed = true;
-        else if (v.armed) v.reachEnd?.(view.progression);
+        else if (v.armed) reachEnd(view.progression);
       }
       const wait = v.lastSent + SAVE_INTERVAL_MS - Date.now();
-      if (wait <= 0) v.flush();
-      else if (v.timer === undefined) v.timer = setTimeout(v.flush, wait);
+      if (wait <= 0) flush();
+      else if (v.timer === undefined) v.timer = setTimeout(flush, wait);
+    };
+
+    const onVisibility = () => {
+      if (!visible()) {
+        clearTimeout(v.fitsTimer);
+        v.fitsTimer = undefined;
+        flush(true);
+      } else if (v.fits) startFitsTimer(v);
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    v.flush = flush;
+    v.reachEnd = reachEnd;
+    v.accept = accept;
+    const early = beforeVisit.current;
+    beforeVisit.current = null;
+    if (early?.documentId === documentId) {
+      if (early.done) openGate(v);
+      else v.restoreTimer = setTimeout(() => openGate(v), RESTORE_TIMEOUT_MS);
+    }
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      clearTimeout(v.restoreTimer);
+      clearTimeout(v.fitsTimer);
+      clearTimeout(v.endTimer);
+      flush(true);
+      clearTimeout(v.timer);
+      // Anything arriving after cleanup belongs to no visit.
+      v.closed = true;
+      v.restored = false;
+    };
+  }, [bookId, documentId, versionId, enabled]);
+
+  const onViewport = useCallback(
+    (view: Viewport) => {
+      const v = visit.current;
+      if (!enabled || !v.accept || view.restoring) return;
+      if (!v.restored) {
+        v.early = view;
+        return;
+      }
+      v.accept(view);
     },
-    [documentId, versionId, enabled],
+    [enabled],
   );
+
+  const onRestoreRequested = useCallback(() => {
+    const v = visit.current;
+    if (!v.accept || v.closed) {
+      if (beforeVisit.current?.documentId !== documentId)
+        beforeVisit.current = { documentId, done: false };
+      return;
+    }
+    if (v.restored || v.restoreTimer !== undefined) return;
+    v.restoreTimer = setTimeout(() => openGate(v), RESTORE_TIMEOUT_MS);
+  }, [documentId]);
 
   const onRestored = useCallback(() => {
     const v = visit.current;
-    v.restored = true;
+    if (!v.accept || v.closed) {
+      beforeVisit.current = { documentId, done: true };
+      return;
+    }
     clearTimeout(v.restoreTimer);
-  }, []);
+    openGate(v);
+  }, [documentId]);
 
-  return { onViewport, onRestored };
+  return { onViewport, onRestoreRequested, onRestored };
+}
+
+// Opens the restore gate and replays a dropped report for a chapter that
+// fits on screen (see the restore gate above).
+function openGate(v: Visit): void {
+  if (v.closed || v.restored) return;
+  v.restored = true;
+  v.restoreTimer = undefined;
+  const early = v.early;
+  v.early = undefined;
+  if (early?.fits) v.accept?.(early);
 }
 
 function startFitsTimer(v: Visit): void {
