@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState, type ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ApprovalListItem, ApprovalStatus, Principal } from "@/api";
@@ -31,6 +32,8 @@ type FetchOptions = {
   users?: Array<{ id: string; email: string; name: string }>;
   // The approvals endpoint fails with this status.
   approvalsStatus?: number;
+  // The approver cannot open the document until it is shared with them.
+  noAccess?: boolean;
 };
 
 // Decisions the page posted, in order.
@@ -38,6 +41,7 @@ type PostedDecision = { version_id: string; decision: string; note?: string };
 
 function installFetch(options: FetchOptions = {}, posted: PostedDecision[] = []) {
   const calls: string[] = [];
+  let shared = false;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -88,7 +92,22 @@ function installFetch(options: FetchOptions = {}, posted: PostedDecision[] = [])
           items: found.items ?? [],
         });
       }
+      if (url === "/v1/documents/doc_1/grants" && init?.method === "POST") {
+        shared = true;
+        return jsonResponse({ id: "grt_1", role: "viewer" }, 201);
+      }
       if (url.startsWith("/v1/documents/doc_1/approvers")) {
+        if (init?.method === "POST" && options.noAccess && !shared)
+          return jsonResponse(
+            {
+              error: {
+                code: "approver_no_access",
+                message:
+                  "That person can't open this document. Share it with them first.",
+              },
+            },
+            400,
+          );
         if (init?.method === "POST") return jsonResponse({ id: "apr_1" }, 201);
         return jsonResponse({ items: [] });
       }
@@ -98,6 +117,17 @@ function installFetch(options: FetchOptions = {}, posted: PostedDecision[] = [])
     }),
   );
   return calls;
+}
+
+// The doc bar keeps the dialog's open state, so the More menu opens it too.
+function Dialog({
+  defaultOpen = false,
+  ...props
+}: Omit<ComponentProps<typeof ApprovalsDialog>, "open" | "onOpenChange"> & {
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return <ApprovalsDialog {...props} open={open} onOpenChange={setOpen} />;
 }
 
 function renderDialog(
@@ -126,7 +156,7 @@ function renderDialog(
   return render(
     <QueryClientProvider client={client}>
       <DocProvider value={ctx}>
-        <ApprovalsDialog
+        <Dialog
           status={props.status}
           approved={props.approved}
           total={props.total}
@@ -240,6 +270,31 @@ describe("ApprovalsDialog", () => {
         '/v1/documents/doc_1/approvers {"address":"reviewer@example.com"}',
       ),
     );
+  });
+
+  it("shares as a viewer and adds a person who cannot open the document", async () => {
+    const calls = installFetch({ noAccess: true });
+    renderDialog({ isOwner: true });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Request approval" }));
+    const input = await screen.findByRole("combobox", { name: "Approver" });
+    await user.type(input, "reviewer@example.com");
+    await user.click(screen.getByRole("button", { name: "Add" }));
+
+    // The reason shows in the dialog, under the field, with the fix beside it.
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "That person can't open this document. Share it with them first.",
+    );
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    await user.click(screen.getByRole("button", { name: "Share as viewer and add" }));
+
+    await waitFor(() => expect(input).toHaveValue(""));
+    expect(calls.filter((c) => c.includes("reviewer@example.com"))).toEqual([
+      '/v1/documents/doc_1/approvers {"address":"reviewer@example.com"}',
+      '/v1/documents/doc_1/grants {"address":"reviewer@example.com","role":"viewer"}',
+      '/v1/documents/doc_1/approvers {"address":"reviewer@example.com"}',
+    ]);
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("picks the only match with one Enter", async () => {
