@@ -13,7 +13,7 @@ import { toast } from "sonner";
 import { Check, KeyRound, Send } from "lucide-react";
 import { api, APIError, currentVersionID, docTitle, versionID } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
-import { useDocumentRole, useMe } from "@/lib/hooks";
+import { useDocumentRole, useMe, useMounted } from "@/lib/hooks";
 import { samePrincipal } from "@/lib/principals";
 import { useSignInPath } from "@/lib/auth-state";
 import { Skeleton } from "@/components/ui/misc";
@@ -188,9 +188,12 @@ export function DocumentPage() {
   // The version on screen is in the link, so a reload or a copied link keeps
   // a preview from the history. The link keeps its fragment, such as a text
   // link. Going to the latest version follows it, so the reader's own edits
-  // keep the page on it.
+  // keep the page on it. A page that the reader left changes no link, so a
+  // late result, such as the Undo of a Restore, does not bring them back.
+  const onPage = useMounted();
   const showVersion = useCallback(
     (version?: string, hash = location.hash) => {
+      if (!onPage.current) return;
       const search = new URLSearchParams(location.search);
       if (!version || version === latest) {
         setPinnedVersion(undefined);
@@ -198,7 +201,7 @@ export function DocumentPage() {
       } else search.set("version", version);
       nav({ search: search.toString(), hash }, { replace: true });
     },
-    [nav, location.search, location.hash, latest],
+    [onPage, nav, location.search, location.hash, latest],
   );
   const showLatest = useCallback(() => showVersion(), [showVersion]);
   // A link to the latest version is a link to the document.

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, APIError, type Principal } from "@/api";
 import { ROLE_RANK } from "@/lib/constants";
@@ -89,4 +89,15 @@ export function useLastDefined<T>(value: T | undefined): T | undefined {
   const [last, setLast] = useState(value);
   if (value !== undefined && value !== last) setLast(value);
   return value ?? last;
+}
+
+// useMounted is true while the component is on screen. A late result checks
+// it before it changes the view, so that it never moves a reader who left.
+export function useMounted() {
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => void (mounted.current = false);
+  }, []);
+  return mounted;
 }
