@@ -144,10 +144,17 @@ export function RenderFrame({
     refresh: token.refetch,
   });
   // The bar says that the reader can edit only once the frame shows the text.
+  // A frame that loads its version again, as after a save, keeps the bar as
+  // it was, unless that load fails.
+  const [readyVersion, setReadyVersion] = useState<string>();
   useEffect(() => {
-    setFrameReady(ready);
+    if (ready) setReadyVersion(frameVersion);
+  }, [ready, frameVersion]);
+  const shown = ready || (readyVersion === frameVersion && !failed && !token.error);
+  useEffect(() => {
+    setFrameReady(shown);
     return () => setFrameReady(false);
-  }, [ready, setFrameReady]);
+  }, [shown, setFrameReady]);
   // Paint results from a frame that is navigating away (its WindowProxy
   // survives navigation) must not bring back the state reset below.
   const readyRef = useRef(ready);
