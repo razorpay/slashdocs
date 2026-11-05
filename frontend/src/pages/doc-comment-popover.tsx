@@ -47,13 +47,14 @@ function parseRect(value: unknown): Rect | null {
 }
 
 // Popover floats beside its anchor, or at the top right of the document when
-// it has none. On a narrow screen it is a sheet at the bottom of the screen,
-// which leaves the document above it, and tells onCover its height while it
-// is open.
+// it has none, clear of a panel at the right. On a narrow screen it is a
+// sheet at the bottom of the screen, which leaves the document above it, and
+// tells onCover its height while it is open.
 function Popover({
   anchor,
   beside,
   bounds,
+  panel,
   label,
   onCover,
   onClose,
@@ -63,6 +64,8 @@ function Popover({
   // The boxes that the popover keeps off, as placeBeside takes them.
   beside?: Rect[];
   bounds: RefObject<HTMLElement | null>;
+  // The pixels at the right of bounds that a panel covers.
+  panel: number;
   label: string;
   onCover: (sheet: string, height: number) => void;
   onClose: () => void;
@@ -76,39 +79,41 @@ function Popover({
     const el = ref.current;
     if (mobile || !box || !el) return;
     const size = { width: el.offsetWidth, height: el.offsetHeight };
+    const right = box.right - panel;
     setAt(
       placeBeside(
-        anchor ?? { left: box.right - EDGE, top: box.top, width: 0, height: 0 },
+        anchor ?? { left: right - EDGE, top: box.top, width: 0, height: 0 },
         size,
-        box,
+        { left: box.left, top: box.top, width: right - box.left, height: box.height },
         beside?.length ? beside : undefined,
       ),
     );
-  }, [anchor, beside, bounds, mobile, children]);
+  }, [anchor, beside, bounds, panel, mobile, children]);
   // It takes the focus that a post or a pick in a list left behind, so Esc
   // and Tab reach it. Focus in the document stays there. When it closes, it
-  // gives the focus back to where it came from, or to the Comments button
-  // when that is gone, unless the reader moved it on.
-  const opener = useRef<Element | null>(null);
+  // gives the focus back to the control that had it before it opened, or
+  // else to the Comments button, unless the reader moved it on. The next
+  // popover, as the thread of a posted comment, then takes it from there.
+  const [opener] = useState(() => document.activeElement);
+  const fromDocument = opener instanceof HTMLIFrameElement;
   const present = useIsPresent();
   useEffect(() => {
     const el = ref.current;
-    const focus = document.activeElement;
-    opener.current = focus;
-    if (el && !el.contains(focus) && !(focus instanceof HTMLIFrameElement))
+    if (el && !el.contains(document.activeElement) && !fromDocument)
       el.focus({ preventScroll: true });
-  }, []);
+  }, [fromDocument]);
   useEffect(() => {
     const focus = document.activeElement;
     if (present || !(focus === document.body || ref.current?.contains(focus))) return;
     const back =
-      opener.current instanceof HTMLElement &&
-      opener.current !== document.body &&
-      opener.current.isConnected
-        ? opener.current
+      opener instanceof HTMLElement &&
+      opener !== document.body &&
+      !fromDocument &&
+      opener.isConnected
+        ? opener
         : document.querySelector<HTMLElement>('button[aria-label="Comments"]');
     back?.focus({ preventScroll: true });
-  }, [present]);
+  }, [present, opener, fromDocument]);
   const sheet = useId();
   useEffect(() => {
     const el = ref.current;
@@ -172,12 +177,15 @@ function Popover({
 export function CommentPopovers({
   frame,
   bounds,
+  panel = 0,
   origin,
   ready,
   postToFrame,
 }: {
   frame: RefObject<HTMLIFrameElement | null>;
   bounds: RefObject<HTMLElement | null>;
+  // The pixels at the right of bounds that a panel covers.
+  panel?: number;
   origin: string | null;
   ready: boolean;
   postToFrame: (message: Record<string, unknown>) => void;
@@ -265,6 +273,7 @@ export function CommentPopovers({
           anchor={rect}
           beside={placedAnchor?.beside}
           bounds={bounds}
+          panel={panel}
           label={draft ? "New comment" : "Comment thread"}
           onCover={cover}
           onClose={close}
@@ -283,6 +292,7 @@ export function CommentPopovers({
           key="cluster"
           anchor={cluster.rect}
           bounds={bounds}
+          panel={panel}
           label="Comment threads"
           onCover={cover}
           onClose={() => setCluster(undefined)}

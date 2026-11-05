@@ -706,24 +706,14 @@ export function RenderFrame({
   useEffect(() => {
     if (ready) postToFrame({ type: "slashdocs:chord", armed: chordArmed });
   }, [ready, chordArmed, postToFrame]);
-  const [shift, setShift] = useState(0);
-  // The room that the document leaves shows its paper, not the app.
-  const [paper, setPaper] = useState<string>();
-  const coverRef = useRef(cover);
-  coverRef.current = cover;
   const onCrowdedRef = useRef(onCrowded);
   onCrowdedRef.current = onCrowded;
   useEffect(() => {
-    setShift(0);
-    if (ready && cover)
-      postToFrame({ type: "slashdocs:room", cover: cover / scaleRef.current });
+    if (ready) postToFrame({ type: "slashdocs:room", cover: cover / scaleRef.current });
   }, [ready, cover, postToFrame]);
   useFrameMessage(ref, frameOrigin, ready, (data) => {
-    if (data.type !== "slashdocs:room" || !coverRef.current) return;
-    if (typeof data.paper === "string" && CSS.supports("color", data.paper))
-      setPaper(data.paper);
-    if (typeof data.shift === "number") setShift(data.shift * scaleRef.current);
-    else onCrowdedRef.current?.();
+    if (data.type === "slashdocs:room" && data.crowded === true)
+      onCrowdedRef.current?.();
   });
 
   // "/" opens cursor chat at the pointer even when the app has the focus, as
@@ -790,11 +780,7 @@ export function RenderFrame({
   const showZoomBadge = Math.round(scale * 100) !== 100;
 
   return (
-    <div
-      ref={wrapperRef}
-      className="relative h-full w-full overflow-auto"
-      style={{ background: paper }}
-    >
+    <div ref={wrapperRef} className="relative h-full w-full overflow-auto">
       {/* Spacer creates the scrollable area at zoomed size */}
       <div
         style={{
@@ -814,12 +800,10 @@ export function RenderFrame({
             height: `${100 / scale}%`,
             transform: `scale(${scale})`,
             transformOrigin: "0 0",
-            translate: `${-shift}px 0`,
             // Paper white: theming is opt-in, so a document that ignores the
             // theme keeps its light look in a dark app.
             background: "#fff",
           }}
-          className="transition-[translate] duration-200 ease-out"
           src={frameSrc}
           sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
         />
@@ -827,6 +811,7 @@ export function RenderFrame({
       <CommentPopovers
         frame={ref}
         bounds={wrapperRef}
+        panel={cover}
         origin={frameOrigin}
         ready={ready}
         postToFrame={postToFrame}

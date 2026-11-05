@@ -196,30 +196,73 @@ export function covered(d: Document): number {
 }
 
 const COVER = "slashdocs-cover";
+const SLIDE = "slashdocs-slide";
 
 // cover tells document d that the app covers the bottom px of its viewport,
 // or none for 0. Its scroll padding then centers what comes into view above
 // that part, and as much room after the page lets the end of the page come
 // up above it.
 export function cover(d: Document, px: number) {
-  d.getElementById(COVER)?.remove();
-  if (!(px > 0)) return;
-  const style = d.createElement("style");
-  style.id = COVER;
-  style.dataset.px = String(px);
-  style.setAttribute("data-slashdocs-injected", "");
-  style.textContent = `html{scroll-padding-bottom:${px}px!important;padding-bottom:${px}px!important}`;
-  d.head.appendChild(style);
+  const { scrollHeight, clientHeight } = d.scrollingElement ?? d.documentElement;
+  makeRoom(
+    d,
+    COVER,
+    px,
+    `html{scroll-padding-bottom:${px}px!important;padding-bottom:${px}px!important}`,
+    { top: Math.min(d.defaultView!.scrollY, scrollHeight - covered(d) - clientHeight) },
+  );
+}
+
+// slide moves the content of document d px to the left, from under a panel,
+// or back for 0. It scrolls into room after the right edge of the page, so
+// that the scroll bar stays at the edge of the viewport.
+export function slide(d: Document, px: number) {
+  makeRoom(
+    d,
+    SLIDE,
+    px,
+    `html{overflow-x:hidden!important}html::after{content:""!important;position:absolute!important;top:0!important;left:0!important;width:calc(100% + ${px}px)!important;height:1px!important;pointer-events:none!important}`,
+    { left: 0 },
+  );
+  if (px > 0) d.defaultView!.scrollTo({ left: px, behavior: scrollBehavior(d) });
+}
+
+// makeRoom keeps px of room in document d, with the style id and its css, or
+// none for 0. Room that goes stays until the view scrolls to back, so that
+// the page does not jump.
+function makeRoom(
+  d: Document,
+  id: string,
+  px: number,
+  css: string,
+  back: ScrollToOptions,
+) {
+  const last = d.getElementById(id);
+  last?.removeAttribute("id");
+  if (px > 0) {
+    last?.remove();
+    const style = d.createElement("style");
+    style.id = id;
+    style.dataset.px = String(px);
+    style.setAttribute("data-slashdocs-injected", "");
+    style.textContent = css;
+    d.head.appendChild(style);
+  } else if (last) {
+    const view = d.defaultView!;
+    view.scrollTo({ ...back, behavior: scrollBehavior(d) });
+    settled(view, () => last.remove());
+  }
 }
 
 // settled calls fn once the view stops scrolling, as at the end of a smooth
 // scroll.
 export function settled(view: Window, fn: () => void) {
-  let last = NaN;
+  let last = "";
   let still = 0;
   const check = () => {
-    still = view.scrollY === last ? still + 1 : 0;
-    last = view.scrollY;
+    const at = `${view.scrollX} ${view.scrollY}`;
+    still = at === last ? still + 1 : 0;
+    last = at;
     if (still < 2) requestAnimationFrame(check);
     else fn();
   };
