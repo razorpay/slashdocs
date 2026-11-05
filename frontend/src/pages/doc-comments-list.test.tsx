@@ -301,7 +301,10 @@ it("keeps the words typed while a comment posts, as a reply to the new thread", 
   );
   await act(async () => settle(thread("cmt_new", "open")));
   expect(ctx.discardDraft).toHaveBeenCalledWith("draft:1");
-  expect(ctx.setActiveComment).toHaveBeenCalledWith("cmt_new");
+  const open = vi.mocked(ctx.setActiveComment).mock.lastCall![0] as (
+    id?: string,
+  ) => string;
+  expect(open("draft:1")).toBe("cmt_new");
   expect(
     JSON.parse(localStorage.getItem("slashdocs.reply-drafts")!)["doc-1"].cmt_new,
   ).toMatchObject({ body: "KEEP THE LATER WORDS" });

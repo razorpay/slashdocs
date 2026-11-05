@@ -1,4 +1,4 @@
-import { createContext, useContext } from "react";
+import { createContext, useContext, type Dispatch, type SetStateAction } from "react";
 import type { Anchor, AnchorPoint, Comment, CursorSpot, Principal } from "@/api";
 import type { CommentDraft } from "@/lib/comment-drafts";
 import type { Region, ScriptChange } from "../../bridge/source-pieces";
@@ -58,7 +58,7 @@ export type DocContextValue = {
   discardDraft: (id: string) => void;
   // The thread or draft whose popover is open.
   activeComment?: string;
-  setActiveComment: (id?: string) => void;
+  setActiveComment: Dispatch<SetStateAction<string | undefined>>;
   // Ids of comments and drafts that the bridge could not place in the version
   // on screen; replaced wholesale on every repaint.
   unanchoredComments: ReadonlySet<string>;
