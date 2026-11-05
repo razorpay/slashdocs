@@ -64,6 +64,8 @@ const noop = () => {};
 // the left, so that a document with no margin of its own does not touch the
 // edge.
 const FRAME_AREA = "relative h-full max-sm:bg-white max-sm:px-3";
+// The comments list and its gap at the right of the document.
+const PANEL_ROOM = 392;
 
 // The intents in the sign-in path of a reader who asked to comment on a spot,
 // or on the text that they selected.
@@ -178,6 +180,13 @@ export function DocWorkspace({
   }, []);
   const isMobile = useIsMobile();
   const [listOpen, setListOpen] = useState(false);
+  // The comments list covers the document's right margin, and the document
+  // glides left from under it when it can. When its margins are too narrow
+  // for that, it is crowded: the list takes room beside it.
+  const [crowded, setCrowded] = useState(false);
+  useEffect(() => {
+    if (!listOpen) setCrowded(false);
+  }, [listOpen]);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [showFullscreenHint, setShowFullscreenHint] = useState(false);
   const [chordLabel, setChordLabel] = useState<string>();
@@ -419,10 +428,18 @@ export function DocWorkspace({
     else if (listOpen) setListOpen(false);
     else setActiveComment(undefined);
   }, [fullscreen, exitFullscreen, listOpen]);
+  // An Esc from anywhere stops placing a pin, or closes the open thread.
+  const takeEscape = useCallback(() => {
+    if (placingPin) setPlacingPin(false);
+    else if (activeComment) setActiveComment(undefined);
+    else return false;
+    return true;
+  }, [placingPin, activeComment]);
   const chord = useEscChord({
     available: chordKeys,
     onRun: runChord,
     onEscape: onBareEscape,
+    takeEscape,
   });
 
   const ctx = useMemo(
@@ -523,7 +540,11 @@ export function DocWorkspace({
   const frame = (
     <>
       {version ? (
-        <RenderFrame chordArmed={chord.phase === "armed"} />
+        <RenderFrame
+          chordArmed={chord.phase === "armed"}
+          cover={listOpen && !isMobile && !crowded ? PANEL_ROOM : 0}
+          onCrowded={() => setCrowded(true)}
+        />
       ) : (
         <Center>Nothing to show yet.</Center>
       )}
@@ -563,13 +584,13 @@ export function DocWorkspace({
           })}
           {banner?.(false)}
           <section className="relative min-w-0 flex-1 overflow-hidden bg-[var(--color-surface-muted)]">
-            {/* A wide screen makes room for the list beside the document, as
-                Google Docs does. The room opens at once, so the text reflows
-                one time, and only the list slides in. Under the sheet of a
-                narrow one, the document is out of reach. */}
+            {/* A wide screen makes room for the list beside a crowded
+                document, as Google Docs does. The room opens at once, so the
+                text reflows one time, and only the list slides in. Under the
+                sheet of a narrow one, the document is out of reach. */}
             <div
               inert={listOpen && isMobile}
-              className={cn(FRAME_AREA, listOpen && "lg:mr-[392px]")}
+              className={cn(FRAME_AREA, crowded && "lg:mr-[392px]")}
             >
               {frame}
             </div>

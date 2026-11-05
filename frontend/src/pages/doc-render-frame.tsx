@@ -22,6 +22,7 @@ import { principalColor } from "@/lib/principals";
 import { useDocumentExport } from "./use-document-export";
 import { useDoc } from "./doc-context";
 import { useBridgeHost } from "./use-bridge-host";
+import { useFrameMessage } from "./use-frame-message";
 import { useTextAutosave } from "./use-text-autosave";
 import { typingOrInLayer, useCommentPins } from "./use-comment-pins";
 import { CommentPopovers } from "./doc-comment-popover";
@@ -54,10 +55,17 @@ const editHint = () =>
 // Painting is driven by the bridge's ready signal.
 export function RenderFrame({
   chordArmed = false,
+  cover = 0,
+  onCrowded,
 }: {
   // The Esc chord waits for a letter. The document gives the letter to it
   // then, and not to its own keys.
   chordArmed?: boolean;
+  // A panel covers this many pixels at the right. The document glides left
+  // from under it when its left margin has room, or else onCrowded asks for
+  // room beside the panel.
+  cover?: number;
+  onCrowded?: () => void;
 }) {
   const {
     docId,
@@ -698,6 +706,25 @@ export function RenderFrame({
   useEffect(() => {
     if (ready) postToFrame({ type: "slashdocs:chord", armed: chordArmed });
   }, [ready, chordArmed, postToFrame]);
+  const [shift, setShift] = useState(0);
+  // The room that the document leaves shows its paper, not the app.
+  const [paper, setPaper] = useState<string>();
+  const coverRef = useRef(cover);
+  coverRef.current = cover;
+  const onCrowdedRef = useRef(onCrowded);
+  onCrowdedRef.current = onCrowded;
+  useEffect(() => {
+    setShift(0);
+    if (ready && cover)
+      postToFrame({ type: "slashdocs:room", cover: cover / scaleRef.current });
+  }, [ready, cover, postToFrame]);
+  useFrameMessage(ref, frameOrigin, ready, (data) => {
+    if (data.type !== "slashdocs:room" || !coverRef.current) return;
+    if (typeof data.paper === "string" && CSS.supports("color", data.paper))
+      setPaper(data.paper);
+    if (typeof data.shift === "number") setShift(data.shift * scaleRef.current);
+    else onCrowdedRef.current?.();
+  });
 
   // "/" opens cursor chat at the pointer even when the app has the focus, as
   // right after following someone from the bar. The document opens it only
@@ -763,7 +790,11 @@ export function RenderFrame({
   const showZoomBadge = Math.round(scale * 100) !== 100;
 
   return (
-    <div ref={wrapperRef} className="relative h-full w-full overflow-auto">
+    <div
+      ref={wrapperRef}
+      className="relative h-full w-full overflow-auto"
+      style={{ background: paper }}
+    >
       {/* Spacer creates the scrollable area at zoomed size */}
       <div
         style={{
@@ -783,10 +814,12 @@ export function RenderFrame({
             height: `${100 / scale}%`,
             transform: `scale(${scale})`,
             transformOrigin: "0 0",
+            translate: `${-shift}px 0`,
             // Paper white: theming is opt-in, so a document that ignores the
             // theme keeps its light look in a dark app.
             background: "#fff",
           }}
+          className="transition-[translate] duration-200 ease-out"
           src={frameSrc}
           sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
         />
