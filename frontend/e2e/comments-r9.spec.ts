@@ -203,9 +203,10 @@ test("a reply shows as sending while it posts, and a failed one goes back in the
     `**/v1/documents/${document.id}/comments/*/replies`,
     async (route) => {
       if (fail) return route.fulfill({ status: 503, body: "" });
-      const response = await route.fetch();
+      // The server gets the reply only on release. A reply that the server
+      // already holds comes back by the live stream, and shows as posted.
       await released;
-      await route.fulfill({ response });
+      await route.fulfill({ response: await route.fetch() });
     },
   );
   const thread = await openThread(page, document.id, comment.id, "R9 sending");
