@@ -2,6 +2,22 @@
 // they are unit tested in tests/reading.test.ts; bridge.ts only applies what
 // they return.
 
+// A report at or past this share of the page is at the end of the chapter
+// (the app's end rule uses the same value).
+export const END_SHARE = 0.98;
+
+// When the viewport changes height while the reader is at the end of the page
+// (the end-of-chapter strip opens under the frame, say), the scroll that keeps
+// the bottom of the page in view; null leaves the scroll alone.
+export function endPinnedScrollTop(
+  atEnd: boolean,
+  box: { scrollTop: number; scrollHeight: number; clientHeight: number },
+): number | null {
+  if (!atEnd) return null;
+  const bottom = Math.max(0, box.scrollHeight - box.clientHeight);
+  return box.scrollTop < bottom ? bottom : null;
+}
+
 // The allowed reader settings, listed once: the bridge maps them to CSS and
 // the app's settings store validates saved values against them.
 export const READER_SIZES = ["s", "m", "l"] as const;

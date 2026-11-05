@@ -1,4 +1,4 @@
-import type { Anchor } from "@/api";
+import type { Anchor, Document } from "@/api";
 import { APIError, request } from "@/api";
 
 // Types mirror the server JSON (api/internal/server/handlers_book*.go and
@@ -82,6 +82,9 @@ export type ChapterChanges = {
   changed_sections: { id: string; title: string; removed: boolean }[];
 };
 
+// One heading of a rendered version, from GET /v1/documents/:id/headings.
+export type ChapterHeading = { id: string; text: string; level: number; url: string };
+
 export type OutlineEntry = { doc?: string; planned?: string };
 export type Outline = {
   title: string;
@@ -142,6 +145,20 @@ export const booksApi = {
   seenAll: (id: string) => request<void>(`${b(id)}/seen`, post()),
   changes: (id: string, doc: string) =>
     request<ChapterChanges>(`${ch(id, doc)}/changes`),
+  // Full-text search of the chapters this reader can open (A16). documentId
+  // narrows it to one chapter.
+  search: (id: string, q: string, documentId?: string) => {
+    const params = new URLSearchParams({
+      q,
+      tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    });
+    if (documentId) params.set("document_id", documentId);
+    return request<{ items: Document[] }>(`${b(id)}/search?${params}`);
+  },
+  headings: (doc: string, versionId: string) =>
+    request<{ items: ChapterHeading[] }>(
+      `/v1/documents/${encodeURIComponent(doc)}/headings?version=${encodeURIComponent(versionId)}`,
+    ),
   folderBook: (folderId: string) =>
     request<{ book_id: string }>(`/v1/folders/${encodeURIComponent(folderId)}/book`),
   createBook: (folderId: string) =>
@@ -173,6 +190,25 @@ export function chapterByNumber(m: Manifest, n: number): ManifestLink | undefine
   return m.readingOrder.find(
     (l) => l.properties?.kind === "chapter" && l.properties.number === n,
   );
+}
+
+// The title of the part a chapter belongs to. Parts with no visible chapter
+// are left out of the toc, so the part number cannot index it.
+export function partTitle(m: Manifest, part: number): string | undefined {
+  return m.toc.find((t) => t.children.some((l) => l.properties?.part === part))?.title;
+}
+
+// "Chapter 3, Retries" for the frame title and the announcement; front and
+// back matter have no number.
+export function chapterName(l: ManifestLink): string {
+  const n = l.properties?.number;
+  return n ? `Chapter ${n}, ${l.title}` : l.title;
+}
+
+// "3 · Retries" for the breadcrumb and chapter cards.
+export function chapterCrumb(l: ManifestLink): string {
+  const n = l.properties?.number;
+  return n ? `${n} · ${l.title}` : l.title;
 }
 
 // The links either side of href in reading order.

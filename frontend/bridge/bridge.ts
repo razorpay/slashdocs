@@ -17,6 +17,8 @@ import { createCursorLayer, trackPointer } from "./cursors.ts";
 import {
   applyChangeDots,
   CHANGE_DOT_CSS,
+  END_SHARE,
+  endPinnedScrollTop,
   markedHeadingIds,
   progression,
   READER_KEYS,
@@ -828,11 +830,16 @@ type Theme = "dark" | "light";
     viewportTimer = setTimeout(postViewport, 300);
   }
 
+  // The last report was at the end of the page (see keepEndInView).
+  let atPageEnd = false;
   function postViewport(): void {
     const d = doc();
     const view = d?.defaultView;
     if (!d?.body || !view) return;
     const p = readingProgression(d, view);
+    const root = d.scrollingElement || d.documentElement;
+    const page = progression(view.scrollY, root.scrollHeight, root.clientHeight);
+    atPageEnd = page !== null && page >= END_SHARE;
     parent.postMessage(
       {
         type: "slashdocs:viewport",
@@ -846,6 +853,22 @@ type Theme = "dark" | "light";
       },
       targetOrigin(),
     );
+  }
+
+  // A reader at the end of a chapter keeps its last lines in view when the
+  // frame gets shorter, as it does when the end-of-chapter strip opens below
+  // it. Book mode only.
+  function keepEndInView(): void {
+    const d = doc();
+    const view = d?.defaultView;
+    if (!d || !view || !readerCSS) return;
+    const root = d.scrollingElement || d.documentElement;
+    const top = endPinnedScrollTop(atPageEnd, {
+      scrollTop: view.scrollY,
+      scrollHeight: root.scrollHeight,
+      clientHeight: root.clientHeight,
+    });
+    if (top !== null) view.scrollTo({ top, behavior: "instant" });
   }
 
   // The element the reader last scrolled other than the page itself.
@@ -2133,6 +2156,7 @@ type Theme = "dark" | "light";
     d.addEventListener("scroll", noteScroll, { capture: true, passive: true });
     d.addEventListener("scroll", cursors.refresh, { capture: true, passive: true });
     d.defaultView?.addEventListener("resize", cursors.refresh);
+    d.defaultView?.addEventListener("resize", keepEndInView);
     trackPointer(d, (spot) =>
       parent.postMessage({ type: "slashdocs:pointer", spot }, targetOrigin()),
     );

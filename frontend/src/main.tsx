@@ -18,6 +18,8 @@ import { ServiceAccountsPage } from "@/pages/service-accounts";
 import { DevelopersPage } from "@/pages/developers";
 import { ProfilePage } from "@/pages/profile";
 import { StartPage } from "@/pages/start";
+import { BookHomePage } from "@/pages/book-home";
+import { BookNumberRoute, BookReaderRoute } from "@/pages/book-reader";
 import { migrateLegacyStorage } from "@/lib/legacy-storage";
 import { finishLegacySignOut } from "@/lib/auth-state";
 
@@ -54,6 +56,9 @@ function App() {
                 <Route path="documents" element={<DocumentsPage />} />
                 <Route path="d/:id" element={<DocumentPage />} />
                 <Route path="folders/:id" element={<FolderPage />} />
+                <Route path="b/:bookId" element={<BookHomePage />} />
+                <Route path="b/:bookId/c/:docId" element={<BookReaderRoute />} />
+                <Route path="b/:bookId/:number" element={<BookNumberRoute />} />
                 <Route
                   path="settings/service-accounts"
                   element={<ServiceAccountsPage />}
