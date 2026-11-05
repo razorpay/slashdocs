@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
+import type { ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/api";
 import { DocBar } from "./doc-bar";
@@ -57,6 +58,7 @@ function renderDocBar(
   viewers: Viewer[] = [],
   requesters: unknown[] = [],
   role: "owner" | "editor" = "owner",
+  props: Partial<ComponentProps<typeof DocBar>> = {},
 ) {
   vi.stubGlobal(
     "fetch",
@@ -145,6 +147,7 @@ function renderDocBar(
             onShowShortcuts={vi.fn()}
             shareOpen={false}
             onShareOpenChange={vi.fn()}
+            {...props}
           />
         </DocProvider>
       </MemoryRouter>
@@ -252,6 +255,46 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     await user.keyboard("{Enter}");
     await user.click(await screen.findByRole("menuitem", { name: "Follow Reviewer" }));
     expect(onFollowViewer).toHaveBeenLastCalledWith(viewer, true);
+  });
+
+  it("names the followed viewer in the bar, and stops following there", async () => {
+    const user = userEvent.setup();
+    const viewer: Viewer = {
+      session: "s_1",
+      principal: { type: "user", id: "u_2", name: "Reviewer" },
+      seenAt: 0,
+    };
+    const onUnfollowViewer = vi.fn();
+    renderDocBar(true, [viewer], [], "owner", {
+      followedSession: "s_1",
+      onUnfollowViewer,
+    });
+
+    const stop = screen.getByRole("button", { name: "Stop following Reviewer" });
+    expect(stop).toHaveTextContent("Following Reviewer");
+    stop.focus();
+    await user.keyboard("{Enter}");
+    expect(onUnfollowViewer).toHaveBeenCalledOnce();
+  });
+
+  it("puts the approvals and the people in the More menu, for a phone bar", async () => {
+    const user = userEvent.setup();
+    const viewer: Viewer = {
+      session: "s_1",
+      principal: { type: "user", id: "u_2", name: "Reviewer" },
+      seenAt: 0,
+    };
+    renderDocBar(true, [viewer], [], "owner", {
+      approvalStatus: "pending",
+      approvalSummary: { approved: 0, total: 1, rejected: 0, pending: 1 },
+    });
+
+    await user.click(screen.getByRole("button", { name: "More" }));
+    expect(
+      await screen.findByRole("menuitem", { name: "Follow Reviewer" }),
+    ).toBeVisible();
+    await user.click(screen.getByRole("menuitem", { name: /Approvals/ }));
+    expect(await screen.findByRole("dialog")).toBeVisible();
   });
 
   it("counts the requests for access on the Share button", async () => {

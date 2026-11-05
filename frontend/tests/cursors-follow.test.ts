@@ -40,7 +40,8 @@ test("a follow before the first view keeps waiting, and follows that view", () =
   expect(moves).toEqual([expect.objectContaining({ x: 500, y: 3600 })]);
   const frame = document.querySelector(".slashdocs-follow");
   expect(frame).toHaveAttribute("data-on");
-  expect(frame).toHaveTextContent("Following Asha");
+  // The app's doc bar names whom the view follows: the frame covers no text.
+  expect(frame).toBeEmptyDOMElement();
   expect(unfollowed).not.toHaveBeenCalled();
 });
 

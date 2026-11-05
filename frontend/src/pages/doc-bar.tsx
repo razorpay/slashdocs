@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { errorMessage } from "@/lib/errors";
 import { cn } from "@/lib/cn";
 import {
+  ClipboardCheck,
   ExternalLink,
   Eye,
   EyeOff,
@@ -24,7 +25,9 @@ import {
   Tag,
   Trash2,
   Users,
+  X,
 } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
 import { AccountMenu } from "@/components/layout/topbar";
 import { CommentsToggle, DocBarFrame } from "@/components/layout/doc-bar-frame";
 import { Button } from "@/components/ui/button";
@@ -140,6 +143,7 @@ export function DocBar({
   const [moveOpen, setMoveOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [labelsOpen, setLabelsOpen] = useState(false);
+  const [approvalsDialogOpen, setApprovalsDialogOpen] = useState(!!approvalsOpen);
   const backTo = parentFolder ? `/app/folders/${parentFolder.id}` : "/app/documents";
   const config = useQuery({ queryKey: queryKeys.config(), queryFn: api.getConfig });
   // Behind: the document changed elsewhere while the reader stayed on the
@@ -207,7 +211,8 @@ export function DocBar({
         approved={approvalSummary?.approved}
         total={approvalSummary?.total}
         isOwner={canManage}
-        defaultOpen={approvalsOpen}
+        open={approvalsDialogOpen}
+        onOpenChange={setApprovalsDialogOpen}
       />
       <Viewers
         viewers={viewers}
@@ -358,6 +363,33 @@ export function DocBar({
           <DropdownItem className="sm:hidden" onSelect={() => setHistoryOpen(true)}>
             <History className="h-4 w-4" /> History
           </DropdownItem>
+          {approvalStatus || canManage ? (
+            <DropdownItem
+              className="xs:hidden"
+              onSelect={() => setApprovalsDialogOpen(true)}
+            >
+              <ClipboardCheck className="h-4 w-4" />
+              {approvalStatus ? "Approvals" : "Request approval"}
+              {approvalSummary ? (
+                <span className="ml-auto pl-4 text-xs tabular-nums text-[var(--color-fg-muted)]">
+                  {approvalSummary.approved} of {approvalSummary.total}
+                </span>
+              ) : null}
+            </DropdownItem>
+          ) : null}
+          {viewers.length ? (
+            <DropdownGroup className="xs:hidden">
+              <DropdownSeparator />
+              <ViewerList
+                viewers={viewers}
+                onFollow={onFollowViewer}
+                followedSession={followedSession}
+                onUnfollow={onUnfollowViewer}
+              />
+              <CursorsItem />
+              <DropdownSeparator />
+            </DropdownGroup>
+          ) : null}
           {config.data?.labels_enabled === true ? (
             <DropdownItem className="lg:hidden" onSelect={() => setLabelsOpen(true)}>
               <Tag className="h-4 w-4" /> Document labels
@@ -569,6 +601,15 @@ function Viewers({
   const hidden = viewers.slice(MAX_VIEWER_AVATARS);
   return (
     <>
+      <AnimatePresence initial={false}>
+        {followed ? (
+          <StopFollowing
+            key="following"
+            viewer={followed}
+            onUnfollow={actions.onUnfollow}
+          />
+        ) : null}
+      </AnimatePresence>
       <div
         role="group"
         aria-label="People viewing this document"
@@ -606,13 +647,9 @@ function Viewers({
             variant="ghost"
             size="icon"
             aria-label="People"
-            className="relative shrink-0 sm:hidden"
+            className="relative hidden shrink-0 xs:max-sm:inline-flex"
           >
-            {followed ? (
-              <FollowedFace viewer={followed} />
-            ) : (
-              <Users className="h-4 w-4" />
-            )}
+            <Users className="h-4 w-4" />
             <span className="absolute right-0.5 top-0.5 min-w-4 rounded-full bg-[var(--color-accent)] px-1 text-[10px] font-medium leading-4 tabular-nums text-white">
               {viewers.length}
             </span>
@@ -712,15 +749,39 @@ function ViewerItems({
   );
 }
 
-// FollowedFace is the followed viewer's avatar in a ring of their color.
-function FollowedFace({ viewer }: { viewer: Viewer }) {
+// StopFollowing tells, in the followed viewer's color, whom the view follows,
+// and stops following on a click. It sits in the bar, over no text of the
+// document. On a phone only the face shows.
+function StopFollowing({
+  viewer,
+  onUnfollow,
+}: {
+  viewer: Viewer;
+  onUnfollow: () => void;
+}) {
+  const name = principalLabel(viewer.principal);
   return (
-    <span
-      className="shrink-0 rounded-full"
-      style={{ boxShadow: `0 0 0 2px ${principalColor(viewer.principal)}` }}
+    <motion.div
+      className="shrink-0"
+      initial={{ opacity: 0, scale: 0.96 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.96, transition: { duration: 0.1 } }}
+      transition={{ type: "spring", duration: 0.25, bounce: 0 }}
     >
-      <PersonAvatar who={viewer.principal} size={22} />
-    </span>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={onUnfollow}
+        aria-label={`Stop following ${name}`}
+        tooltip={`Stop following ${name} (Esc)`}
+        style={{ background: principalColor(viewer.principal) }}
+        className="gap-1.5 rounded-full pl-1 pr-2 text-white hover:opacity-90 touch:h-10"
+      >
+        <PersonAvatar who={viewer.principal} size={22} />
+        <span className="hidden max-w-32 truncate sm:inline">Following {name}</span>
+        <X className="h-3.5 w-3.5" />
+      </Button>
+    </motion.div>
   );
 }
 

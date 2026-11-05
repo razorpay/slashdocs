@@ -56,7 +56,7 @@ test("chats at the cursor, and follows a viewer until the reader scrolls", async
   // The menu of an avatar follows the viewer, or goes there only once.
   await avatar.click();
   await page.getByRole("menuitem", { name: /Follow reviewer/ }).click();
-  const stop = bridge(page).getByRole("button", { name: /Stop following reviewer/ });
+  const stop = page.getByRole("button", { name: /Stop following reviewer/ });
   await expect(stop).toBeVisible();
   const scrollY = (p: Page) =>
     renderedDocument(p)
