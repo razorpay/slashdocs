@@ -11,7 +11,14 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type Anchor } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { COMMENT_STATUS } from "@/lib/constants";
-import { Center } from "@/components/ui/misc";
+import { Center, CodeBlock } from "@/components/ui/misc";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { LoadError } from "@/components/error-state";
 import { CHORD_KEYS } from "@/lib/esc-chord";
 import { cursorsShownStore, parseCursorSpot } from "@/lib/live-cursors";
@@ -390,6 +397,8 @@ export function RenderFrame({
   // What a screen reader hears of a control in the document that confirms
   // in place.
   const [said, setSaid] = useState("");
+  // A heading link that the browser did not let the app copy.
+  const [headingLink, setHeadingLink] = useState<string>();
   useEffect(() => {
     if (!said) return;
     const timer = setTimeout(() => setSaid(""), COPIED_MS);
@@ -521,26 +530,26 @@ export function RenderFrame({
         url.searchParams.delete("fullscreen");
         url.hash = e.data.id;
         // The # control says Copied, over its heading. A toast would cover
-        // the words.
+        // the words. When the browser refuses the copy, the link shows to
+        // copy by hand, and the address has the heading too.
         const id = e.data.id;
         void navigator.clipboard.writeText(url.toString()).then(
           () => {
             postToFrame({ type: "slashdocs:heading-copied", id });
             setSaid("Heading link copied.");
           },
-          () => toast.error("Could not copy the heading link."),
+          () => {
+            setHeadingLink(url.toString());
+            showHeading(id);
+          },
         );
       }
       if (
         e.data?.type === "slashdocs:heading" &&
         typeof e.data.id === "string" &&
         e.data.id.length <= 1024
-      ) {
-        const url = new URL(window.location.href);
-        url.searchParams.delete("comment");
-        url.hash = e.data.id;
-        window.history.replaceState(window.history.state, "", url);
-      }
+      )
+        showHeading(e.data.id);
       if (e.data?.type === "slashdocs:activate" && typeof e.data.id === "string") {
         handleDocCommentClick(e.data.id);
       }
@@ -846,6 +855,22 @@ export function RenderFrame({
       <p role="status" className="sr-only">
         {said}
       </p>
+      <Dialog
+        open={!!headingLink}
+        onOpenChange={(open) => !open && setHeadingLink(undefined)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Copy the heading link</DialogTitle>
+            <DialogDescription>
+              The browser did not let the app copy it. Select the link and copy it.
+            </DialogDescription>
+          </DialogHeader>
+          <CodeBlock copy="always" wrap onCopied={() => setHeadingLink(undefined)}>
+            {headingLink ?? ""}
+          </CodeBlock>
+        </DialogContent>
+      </Dialog>
       {showZoomBadge && (
         <button
           type="button"
@@ -961,4 +986,13 @@ function isPiece(p: unknown): boolean {
   return (
     typeof p.open === "string" && typeof p.close === "string" && isPieces(p.children)
   );
+}
+
+// showHeading puts a heading of the document in the address, in place of
+// the history entry, with no comment open.
+function showHeading(id: string) {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("comment");
+  url.hash = id;
+  window.history.replaceState(window.history.state, "", url);
 }
