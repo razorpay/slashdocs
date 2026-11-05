@@ -137,8 +137,8 @@ export function CommentComposer({ draft }: { draft: CommentDraft }) {
         created.id,
         edit((now) => now),
       );
-      discardDraft(draft.id);
       setActiveComment((active) => (active === draft.id ? created.id : active));
+      discardDraft(draft.id);
     },
     // The words go back in the field, and the toast sends them again.
     onError: (e, sent) => {
