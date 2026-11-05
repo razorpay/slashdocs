@@ -102,3 +102,12 @@ export function isChordBlocked(target: EventTarget | null): boolean {
     '[role="dialog"][data-state="open"], [role="menu"][data-state="open"]',
   );
 }
+
+// An Esc in a layer, as a popover, a panel or a menu, is the layer's own: it
+// closes the layer, and arms no chord.
+export function isInLayer(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    !!target.closest('[role="dialog"], [role="menu"], [role="listbox"]')
+  );
+}
