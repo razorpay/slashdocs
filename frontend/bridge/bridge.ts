@@ -1736,6 +1736,10 @@ type Theme = "dark" | "light";
           .slashdocs-selection-action button:focus-visible{outline:2px solid #6366f1!important;outline-offset:-2px!important}
           .slashdocs-selection-action svg{all:initial!important;color:inherit!important;width:17px!important;height:17px!important;fill:none!important;stroke:currentColor!important;stroke-width:1.8!important;stroke-linecap:round!important;stroke-linejoin:round!important;pointer-events:none!important}
           .slashdocs-selection-action path{fill:none!important;stroke:inherit!important;stroke-width:inherit!important}
+          .slashdocs-selection-action[data-docked]{left:0!important;right:0!important;width:auto!important;max-width:none!important;justify-content:center!important;padding:2px 2px max(2px,env(safe-area-inset-bottom))!important;border-radius:0!important}
+          .slashdocs-selection-action[data-docked=bottom]{bottom:0!important}
+          .slashdocs-selection-action[data-docked=top]{top:0!important}
+          html:has(>body>.slashdocs-selection-action[data-docked=bottom]){padding-bottom:48px!important}
           [data-slashdocs-surface=dark] .slashdocs-selection-action{background:#27272a!important;color:#d4d4d8!important;box-shadow:0 0 0 1px #fff2,0 4px 16px #0004!important}
           [data-slashdocs-surface=dark] .slashdocs-selection-action button:hover{background:#3f3f46!important;color:#fff!important}
           [data-slashdocs-surface=dark] .slashdocs-selection-action kbd{background:#3f3f46!important;color:#a1a1aa!important}
@@ -1767,14 +1771,20 @@ type Theme = "dark" | "light";
         );
         button.setAttribute("aria-pressed", String(on));
       });
+    // The buttons shrink to fit in one row. Comment keeps its name and key
+    // while they fit in it. Its tooltip shows only when they do not.
     selectionAction.removeAttribute("data-compact");
+    selectionAction.removeAttribute("data-docked");
     selectionAction.toggleAttribute(
       "data-compact",
-      selectionAction.scrollWidth > selectionAction.clientWidth,
+      comment.scrollWidth > comment.clientWidth,
     );
     // The actions sit where they cover no text: centered above the
     // selection, else below it, else after its last line, else beside its
-    // block, else where placeClear finds room.
+    // block, else where placeClear finds room. When placeClear puts them at
+    // an edge of the viewport, as in a narrow column of text, they dock
+    // there as a bar, and the document gets room to scroll out from under
+    // a bar at the bottom.
     const rect = range.getBoundingClientRect();
     const lines = Array.from(range.getClientRects()).filter((r) => r.width);
     const [first, last] = [lines[0] ?? rect, lines.at(-1) ?? rect];
@@ -1790,7 +1800,11 @@ type Theme = "dark" | "light";
       [block.right + gap, beside(first)],
       [block.left - gap - width, beside(first)],
     ];
-    placeClear(d, selectionAction, lines, places);
+    const edge = placeClear(d, selectionAction, lines, places);
+    if (!edge) return;
+    selectionAction.style.removeProperty("left");
+    selectionAction.style.removeProperty("top");
+    selectionAction.setAttribute("data-docked", edge);
   }
 
   function handleKVUndoRedoShortcut(d: Document, ev: KeyboardEvent): void {
@@ -2106,9 +2120,15 @@ type Theme = "dark" | "light";
       },
       { passive: true },
     );
-    d.defaultView?.addEventListener("scroll", dismissSelectionAction, {
-      passive: true,
-    });
+    // The actions at the selection go on scroll. Docked ones stay, so that
+    // the reader can scroll text out from under them.
+    d.defaultView?.addEventListener(
+      "scroll",
+      () => {
+        if (!selectionAction?.hasAttribute("data-docked")) dismissSelectionAction();
+      },
+      { passive: true },
+    );
     prepareHeadings(d);
     prepareLinks();
     // The prelude already stamped the current theme on a reload, so only
