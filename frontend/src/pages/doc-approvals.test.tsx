@@ -325,13 +325,13 @@ describe("ApprovalsDialog", () => {
     expect(screen.getByRole("dialog")).toBeVisible();
   });
 
-  it("opens who can approve above its link, and a press on it closes it", async () => {
+  it("opens who can approve beside its link, and a press on it closes it", async () => {
     installFetch();
     renderDialog({ isOwner: true, defaultOpen: true });
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Who can approve?" }));
     const help = document.querySelector<HTMLElement>(".icon-tooltip");
-    expect(help?.dataset.side).toBe("top");
+    expect(help?.dataset.side).toBe("right");
     await user.click(help!);
     await waitFor(() => expect(document.querySelector(".icon-tooltip")).toBeNull());
   });
