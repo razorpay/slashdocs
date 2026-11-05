@@ -1,7 +1,7 @@
 import * as React from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
-import { openFocus, SheetHandle } from "./sheet";
+import { SheetHandle, useLayerFocus } from "./sheet";
 import { keepToastsAbove } from "./toaster";
 import { Tooltip } from "./tooltip";
 import { cn } from "@/lib/cn";
@@ -19,6 +19,7 @@ export function DialogContent({
   children,
   anchor = "center",
   onOpenAutoFocus,
+  onCloseAutoFocus,
   ...p
 }: React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
   anchor?: "center" | "top";
@@ -34,7 +35,7 @@ export function DialogContent({
             "dialog-sheet top-[12vh] translate-y-0 max-md:bottom-0 max-md:left-0 max-md:top-auto max-md:max-w-none max-md:translate-x-0 max-md:rounded-b-none max-md:rounded-t-2xl max-md:pb-[calc(1.5rem+env(safe-area-inset-bottom))] max-md:pt-0",
           className,
         )}
-        onOpenAutoFocus={openFocus(onOpenAutoFocus)}
+        {...useLayerFocus({ onOpenAutoFocus, onCloseAutoFocus })}
         {...p}
       >
         {anchor === "top" && <SheetHandle className="mb-4 md:hidden" />}

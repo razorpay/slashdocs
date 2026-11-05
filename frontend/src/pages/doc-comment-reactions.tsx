@@ -1,5 +1,6 @@
 import { Tooltip } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
+import { keepEscape } from "@/components/ui/dropdown";
 import { useRef, useState, type ReactNode } from "react";
 import * as Menu from "@radix-ui/react-dropdown-menu";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -202,6 +203,7 @@ export function ReactionBar({
                   trigger.current?.focus({ preventScroll: true });
               }}
               className="pop z-50 w-[172px] rounded-2xl bg-[var(--color-surface)] p-2 text-[var(--color-fg)] shadow-[0_0_0_1px_var(--color-border),0_4px_8px_rgba(0,0,0,0.06),0_12px_32px_rgba(0,0,0,0.12)] outline-none"
+              onKeyDown={keepEscape}
               onKeyDownCapture={(event) => {
                 const step = {
                   ArrowRight: 1,
