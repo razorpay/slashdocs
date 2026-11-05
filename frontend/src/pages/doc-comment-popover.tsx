@@ -1,5 +1,7 @@
 import {
+  useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -45,12 +47,14 @@ function parseRect(value: unknown): Rect | null {
 
 // Popover floats beside its anchor, or at the top right of the document when
 // it has none. On a narrow screen it is a sheet at the bottom of the screen,
-// which leaves the document above it.
+// which leaves the document above it, and tells onCover its height while it
+// is open.
 function Popover({
   anchor,
   beside,
   bounds,
   label,
+  onCover,
   onClose,
   children,
 }: {
@@ -59,6 +63,7 @@ function Popover({
   beside?: Rect[];
   bounds: RefObject<HTMLElement | null>;
   label: string;
+  onCover: (sheet: string, height: number) => void;
   onClose: () => void;
   children: ReactNode;
 }) {
@@ -103,6 +108,19 @@ function Popover({
         : document.querySelector<HTMLElement>('button[aria-label="Comments"]');
     back?.focus({ preventScroll: true });
   }, [present]);
+  const sheet = useId();
+  useEffect(() => {
+    const el = ref.current;
+    if (!mobile || !el) return;
+    const observer = new ResizeObserver(() =>
+      onCover(sheet, present ? el.offsetHeight : 0),
+    );
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      onCover(sheet, 0);
+    };
+  }, [mobile, present, sheet, onCover]);
   const closeOnEscape = (e: KeyboardEvent) => {
     if (e.key !== "Escape") return;
     e.stopPropagation();
@@ -171,6 +189,29 @@ export function CommentPopovers({
     beside: Rect[];
   }>();
   const [cluster, setCluster] = useState<{ ids: string[]; rect: Rect }>();
+  // The height of each open sheet. The bridge keeps the open thread's anchor
+  // above the tallest, which covers the bottom of the frame.
+  const sheets = useRef(new Map<string, number>());
+  const cover = useCallback(
+    (sheet: string, height: number) => {
+      const iframe = frame.current;
+      if (height) sheets.current.set(sheet, height);
+      else sheets.current.delete(sheet);
+      if (!iframe) return;
+      const f = iframe.getBoundingClientRect();
+      const scale = iframe.offsetHeight > 0 ? f.height / iframe.offsetHeight : 1;
+      const top = window.innerHeight - Math.max(0, ...sheets.current.values());
+      postToFrame({
+        type: "slashdocs:cover",
+        bottom: Math.max(0, f.bottom - top) / scale,
+      });
+    },
+    [frame, postToFrame],
+  );
+  // A new version of the document comes without it.
+  useEffect(() => {
+    if (ready) cover("", 0);
+  }, [ready, cover]);
   useEffect(() => {
     if (ready) postToFrame({ type: "slashdocs:watch", id: activeComment ?? null });
   }, [ready, activeComment, postToFrame]);
@@ -212,6 +253,7 @@ export function CommentPopovers({
           beside={placedAnchor?.beside}
           bounds={bounds}
           label={draft ? "New comment" : "Comment thread"}
+          onCover={cover}
           onClose={close}
         >
           {draft ? (
@@ -227,6 +269,7 @@ export function CommentPopovers({
           anchor={cluster.rect}
           bounds={bounds}
           label="Comment threads"
+          onCover={cover}
           onClose={() => setCluster(undefined)}
         >
           <ul className="p-1.5">
