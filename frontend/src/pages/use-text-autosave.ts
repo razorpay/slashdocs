@@ -19,7 +19,7 @@ import {
 } from "@/lib/source-edits";
 import { readTextDraft, removeTextDraft, writeTextDraft } from "@/lib/text-drafts";
 import { randomId } from "@/lib/uuid";
-import type { Region, ScriptChange } from "../../bridge/source-pieces";
+import type { Piece, Region, ScriptChange } from "../../bridge/source-pieces";
 import type { SaveState, TextEditResult } from "./doc-context";
 
 // A pause in typing this long saves the edits.
@@ -72,6 +72,10 @@ type Save = {
 
 // The edits cannot be written into the source.
 class Refused extends Error {}
+
+// The source of the loaded version did not load, so no edit can be written
+// into it yet. It says nothing about the save, so it loads again.
+class Unread extends Error {}
 
 // useTextAutosave saves what an editor types in the rendered document. A
 // pause in typing takes the edited regions from the frame, writes them into
@@ -182,7 +186,10 @@ export function useTextAutosave(options: {
       id: EARLIER_TOAST,
       duration: Infinity,
       action: copyAction(async () =>
-        draftText(await readBase(docId, earlier.version), earlier.edits),
+        draftText(
+          await readBase(docId, earlier.version).catch(() => undefined),
+          earlier.edits,
+        ),
       ),
       cancel: {
         label: "Discard my change",
@@ -198,7 +205,11 @@ export function useTextAutosave(options: {
 
   const loadBase = useCallback(async (): Promise<Base> => {
     const { docId, loaded } = latest.current;
-    return (base.current ??= await readBase(docId, loaded.version));
+    try {
+      return (base.current ??= await readBase(docId, loaded.version));
+    } catch {
+      throw new Unread();
+    }
   }, []);
 
   // The approvers whose approval counts on a version. Without them, the
@@ -339,7 +350,7 @@ export function useTextAutosave(options: {
     () =>
       copyAction(async () => {
         const result = await edits();
-        return result ? draftText(base.current!, result) : "";
+        return result ? draftText(base.current, result) : "";
       }),
     [edits],
   );
@@ -417,13 +428,18 @@ export function useTextAutosave(options: {
             cancel: { label: "Show their version", onClick: showLatest },
           },
         );
-      } else if (passing(e)) {
+      } else if (e instanceof Unread || passing(e)) {
         state = "failed";
         attempts.current++;
-        toast.error(
-          `Your edits are not saved yet. Trying again (attempt ${attempts.current})…`,
-          { id: FAILED_TOAST, action: copyTyped },
-        );
+        const why =
+          e instanceof Unread
+            ? "The saved version of this document did not load, so your edits are not saved yet."
+            : "Your edits are not saved yet.";
+        toast.error(`${why} Trying again (attempt ${attempts.current})…`, {
+          id: FAILED_TOAST,
+          action: copyTyped,
+          cancel: { label: "Try now", onClick: () => void save() },
+        });
       } else {
         // The server refused the save, and saving again cannot help. The
         // text stays on screen until the reader copies or discards it.
@@ -640,12 +656,23 @@ function approvalsText(people: Principal[], change: "reset" | "restored") {
 }
 
 // draftText is the text that the reader typed: the text of each region and
-// each script text.
-function draftText(base: Base, { regions, scripts }: TextEditResult): string {
-  return [regionText(base.tree, regions), ...scripts.map((s) => s.after.trim())]
-    .filter(Boolean)
-    .join("\n\n");
+// each script text. When the source of the version did not load, a region
+// gives only the text of its pieces, which holds the words that changed.
+function draftText(
+  base: Base | undefined,
+  { regions, scripts }: TextEditResult,
+): string {
+  const text = base
+    ? regionText(base.tree, regions)
+    : regions.map((r) => piecesText(r.pieces)).join("\n\n");
+  return [text, ...scripts.map((s) => s.after.trim())].filter(Boolean).join("\n\n");
 }
+
+const piecesText = (pieces: Piece[]): string =>
+  pieces
+    .map((p) => ("text" in p ? p.text : "children" in p ? piecesText(p.children) : ""))
+    .join("")
+    .trim();
 
 // Elements that start a new line in the text to copy.
 const BLOCKS = "address,blockquote,dd,div,dt,figcaption,h1,h2,h3,h4,h5,h6,li,p,pre,tr";
