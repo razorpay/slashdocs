@@ -9,7 +9,6 @@ import {
 } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
 import { Check, KeyRound, Send } from "lucide-react";
 import { api, APIError, currentVersionID, docTitle, versionID } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
@@ -127,8 +126,6 @@ function AccessDeniedState({ documentID }: { documentID: string }) {
   );
 }
 
-const CHANGED_TOAST = "document-changed";
-
 export function DocumentPage() {
   const { id = "" } = useParams();
   const [searchParams] = useSearchParams();
@@ -230,24 +227,6 @@ export function DocumentPage() {
       if (editable || !samePrincipal(by, me.data?.principal)) stayOnVersion();
     },
   });
-
-  // Offer the edits made elsewhere while this reader stayed on the version
-  // before them. The offer waits for the reader, until they take it, close
-  // it, or reach the latest version on their own.
-  const seenLatest = useRef(latest);
-  useEffect(() => {
-    const previous = seenLatest.current;
-    seenLatest.current = latest;
-    if (current === latest) toast.dismiss(CHANGED_TOAST);
-    if (!previous || previous === latest || current !== previous) return;
-    toast.info("This document changed elsewhere.", {
-      id: CHANGED_TOAST,
-      duration: Infinity,
-      closeButton: true,
-      action: { label: "Show changes", onClick: showLatest },
-    });
-  }, [latest, current, showLatest]);
-  useEffect(() => () => void toast.dismiss(CHANGED_TOAST), [id]);
 
   const { followedCursor, followedSession, followViewer, unfollow } = useFollowViewer(
     stream,

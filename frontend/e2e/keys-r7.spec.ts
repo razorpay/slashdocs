@@ -18,10 +18,7 @@ function documentHTML(title: string, step = "Write the notes.") {
 </html>`;
 }
 
-test("Show the latest version flashes the list item that changed", async ({
-  page,
-  slashdocs,
-}) => {
+test("Show changes flashes the list item that changed", async ({ page, slashdocs }) => {
   const title = uniqueName("Change flash");
   const document = await slashdocs.createDocument(title, documentHTML(title));
   await page.goto(`/app/d/${document.id}`);
@@ -32,7 +29,7 @@ test("Show the latest version flashes the list item that changed", async ({
     document.id,
     documentHTML(title, "Write the notes again."),
   );
-  await page.getByRole("button", { name: "Show the latest version" }).click();
+  await page.getByRole("button", { name: "Show changes" }).click();
   await expect(doc.locator("#step")).toHaveText("Write the notes again.");
   await expect(doc.locator(".slashdocs-text-flash")).toHaveCount(1);
 });
@@ -50,15 +47,16 @@ test("the offer of changes made elsewhere waits for the reader", async ({
     document.id,
     documentHTML(title, "Write the notes again."),
   );
-  const offer = page.getByText("This document changed elsewhere.");
+  // The offer waits in the doc bar, and does not go by itself.
+  const offer = page.getByRole("button", { name: "Show changes" });
   await expect(offer).toBeVisible();
-  // A toast that closes by itself goes after 4 seconds.
+  await expect(
+    page.getByRole("status").getByText("This document changed elsewhere."),
+  ).toBeAttached();
   await page.waitForTimeout(5000);
   await expect(offer).toBeVisible();
-  await expect(page.getByRole("button", { name: "Close toast" })).toBeVisible();
 
-  // The latest version from the doc bar takes the offer too.
-  await page.getByRole("button", { name: "Show the latest version" }).click();
+  await offer.click();
   await expect(offer).toBeHidden();
 });
 
