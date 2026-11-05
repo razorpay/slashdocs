@@ -258,6 +258,7 @@ export function RenderFrame({
     changed: textChanged,
     drafted: textDrafted,
     scriptEditable,
+    focused: textFocused,
   } = useTextAutosave({
     docId,
     loaded,
@@ -570,6 +571,7 @@ export function RenderFrame({
           });
       }
       if (e.data?.type === "slashdocs:text-focus") {
+        if (e.data.on === true) void textFocused();
         setText({
           focused: e.data.on === true,
           leave: () => postToFrame({ type: "slashdocs:leave-text" }),
@@ -671,6 +673,7 @@ export function RenderFrame({
     setText,
     textChanged,
     textDrafted,
+    textFocused,
     scriptEditable,
     postToFrame,
     onUnfollowCursor,
