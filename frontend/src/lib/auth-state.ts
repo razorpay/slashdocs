@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "@/api";
 import { clearCommentDrafts } from "./comment-drafts";
+import { clearFieldDrafts } from "./field-drafts";
 import { clearTextDrafts } from "./text-drafts";
 
 // Sign-out once only set this flag and kept the session cookie.
@@ -34,6 +35,7 @@ export function useSignOut() {
       // Unsent comments and text must not outlive the session on a shared
       // browser.
       clearCommentDrafts();
+      clearFieldDrafts();
       clearTextDrafts();
       qc.clear();
       nav("/", { replace: true });
