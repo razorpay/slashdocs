@@ -462,8 +462,6 @@ type Cursor = {
   y: number;
   // The newest view of this cursor's viewer, if they send it.
   view?: CursorPlace;
-  // The viewer's name, which the label shows unless they chat.
-  name: string;
   // The place the cursor heads for and where it was on the last frame, to
   // tell this view's own pans and zooms from the remote viewer's movement.
   anchor?: { place: CursorPlace; x: number; y: number };
@@ -498,15 +496,12 @@ type EditMark = {
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 // Styles for the follow frame and the cursor chat field in the bridge window.
+// The app's doc bar names the followed viewer and stops following, so the
+// frame covers no text of the document.
 // --c is the followed viewer's color, or this viewer's own for the chat.
 const BRIDGE_CSS = `
 .slashdocs-follow{position:fixed;inset:0;z-index:2147483646;pointer-events:none;border:2px solid var(--c);opacity:0;visibility:hidden;transition:opacity 100ms ease-out,visibility 0s linear 100ms}
 .slashdocs-follow[data-on]{opacity:1;visibility:visible;transition:opacity 150ms cubic-bezier(.23,1,.32,1),visibility 0s}
-.slashdocs-follow button{all:unset;position:absolute;top:-2px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:6px;padding:3px 8px 5px 10px;border-radius:0 0 8px 8px;background:var(--c);color:#fff;font:500 12px/16px system-ui,-apple-system,sans-serif;white-space:nowrap;cursor:pointer;pointer-events:auto;transition:transform 160ms ease-out,filter 150ms ease}
-.slashdocs-follow button:active{transform:translateX(-50%) scale(.97)}
-.slashdocs-follow button:focus-visible{outline:2px solid var(--c);outline-offset:2px}
-.slashdocs-follow svg{width:12px;height:12px;opacity:.85}
-@media (hover:hover) and (pointer:fine){.slashdocs-follow button:hover{filter:brightness(.92)}}
 .slashdocs-edit{position:absolute;left:0;top:0;opacity:0;transition:opacity 120ms ease-out}
 .slashdocs-edit[data-on]{opacity:1;transition-duration:180ms}
 .slashdocs-edit>*{position:absolute;background:var(--c)}
@@ -543,32 +538,17 @@ export function createCursorLayer(
   let followed: string | null = null;
   // The newest view of each session that sent one, kept after its cursor
   // goes, so a viewer whose pointer is outside the document can be followed.
-  const views = new Map<string, { view: CursorPlace; name: string; color: string }>();
+  const views = new Map<string, { view: CursorPlace; color: string }>();
   let followMoved = -Infinity;
   let followTimer = 0;
 
-  // While the view follows a cursor, a frame in its color shows it, with a
-  // button that stops following.
+  // While the view follows a cursor, a frame in its color shows it.
   const style = document.createElement("style");
   style.textContent = BRIDGE_CSS;
   document.head.appendChild(style);
   const followFrame = document.createElement("div");
   followFrame.className = "slashdocs-follow";
-  const stopFollowing = document.createElement("button");
-  stopFollowing.type = "button";
-  const followLabel = document.createElement("span");
-  const close = document.createElementNS(SVG_NS, "svg");
-  close.setAttribute("viewBox", "0 0 12 12");
-  close.setAttribute("aria-hidden", "true");
-  const cross = document.createElementNS(SVG_NS, "path");
-  cross.setAttribute("d", "M3 3l6 6M9 3l-6 6");
-  cross.setAttribute("stroke", "currentColor");
-  cross.setAttribute("stroke-width", "1.5");
-  cross.setAttribute("stroke-linecap", "round");
-  close.appendChild(cross);
-  stopFollowing.append(followLabel, close);
-  stopFollowing.addEventListener("click", () => unfollow(true));
-  followFrame.appendChild(stopFollowing);
+  followFrame.setAttribute("aria-hidden", "true");
   document.body.appendChild(followFrame);
 
   // locate gives a point's place in the document viewport, or null when the
@@ -611,7 +591,6 @@ export function createCursorLayer(
       shown: false,
       x: 0,
       y: 0,
-      name: "",
       labelSize: { w: 0, h: 0 },
       flip: "",
     };
@@ -761,7 +740,6 @@ export function createCursorLayer(
         color,
       );
     const cursor = cursors.get(session) ?? create(session);
-    cursor.name = name;
     // A cursor chat message shows in the label, in the viewer's color.
     const message = points.at(-1)?.m ?? "";
     const text = message || name;
@@ -792,9 +770,9 @@ export function createCursorLayer(
     let view: CursorPlace | undefined;
     for (const point of points) view = point.v ?? view;
     if (view) cursor.view = view;
-    if (cursor.view) views.set(session, { view: cursor.view, name, color });
+    if (cursor.view) views.set(session, { view: cursor.view, color });
     if (session === followed) {
-      showFollowing(name, color);
+      showFollowing(color);
       if (view) scheduleFollow();
     }
     refresh();
@@ -866,10 +844,8 @@ export function createCursorLayer(
     }, wait);
   }
 
-  function showFollowing(name: string, color: string) {
+  function showFollowing(color: string) {
     followFrame.style.setProperty("--c", color);
-    followLabel.textContent = `Following ${name}`;
-    stopFollowing.setAttribute("aria-label", `Stop following ${name}`);
     followFrame.toggleAttribute("data-on", true);
   }
 
@@ -900,9 +876,9 @@ export function createCursorLayer(
     }
     if (!continuous) return;
     followed = session;
-    // Their name and color come with their first report, if not known yet.
-    const name = cursor?.name ?? kept?.name;
-    if (name) showFollowing(name, cursor?.label.style.background || kept?.color || "");
+    // Their color comes with their first report, if not known yet.
+    const color = cursor?.label.style.background || kept?.color;
+    if (color) showFollowing(color);
   }
 
   // unfollow stops following. here tells that this reader moved the view or
