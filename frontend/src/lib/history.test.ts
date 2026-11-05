@@ -63,6 +63,46 @@ describe("withoutUndone", () => {
     expect(ids(withoutUndone(versions, new Set()))).toEqual(["ver_1", "ver_6"]);
   });
 
+  it("leaves out every run by one person that ends where it started", () => {
+    const shas = (...s: string[]) => s.map((sha, i) => entry(i + 2, ana, i + 1, sha));
+    // A key and its Backspace.
+    expect(
+      ids(withoutUndone([entry(1, bot, 0, "a"), ...shas("ax", "a", "b")], new Set())),
+    ).toEqual(["ver_1", "ver_4"]);
+    // "Green" to "Greener" and back, in two saves each way.
+    expect(
+      ids(
+        withoutUndone(
+          [entry(1, bot, 0, "a"), ...shas("ae", "aer", "ae", "a", "b")],
+          new Set(),
+        ),
+      ),
+    ).toEqual(["ver_1", "ver_6"]);
+    // q, qz, and back to the start in one save.
+    expect(
+      ids(
+        withoutUndone(
+          [entry(1, bot, 0, "a"), ...shas("aq", "aqz", "a", "b")],
+          new Set(),
+        ),
+      ),
+    ).toEqual(["ver_1", "ver_5"]);
+    // "Greeny" and back as the newest run: the entry before it is the newest.
+    expect(
+      ids(withoutUndone([entry(1, bot, 0, "a"), ...shas("b", "by", "b")], new Set())),
+    ).toEqual(["ver_1", "ver_2"]);
+  });
+
+  it("keeps a run that someone else's edit splits", () => {
+    const versions = [
+      entry(1, ana, 0, "a"),
+      entry(2, ana, 1, "b"),
+      entry(3, bot, 2, "c"),
+      entry(4, ana, 3, "a"),
+    ];
+    expect(ids(withoutUndone(versions, new Set()))).toEqual(ids(versions));
+  });
+
   it("keeps an undo of someone else's edit, and the entries to keep", () => {
     const versions = [
       entry(1, ana, 0, "a"),

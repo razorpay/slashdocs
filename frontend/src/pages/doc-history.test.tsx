@@ -22,6 +22,7 @@ function renderHistory(
   current: string,
   fetch = vi.fn(async () => json({ items: versions })),
   latest = "ver_2",
+  onSelectVersion = () => {},
 ) {
   vi.stubGlobal("fetch", fetch);
   render(
@@ -35,7 +36,7 @@ function renderHistory(
         current={current}
         latest={latest}
         canRestore
-        onSelectVersion={() => {}}
+        onSelectVersion={onSelectVersion}
       />
     </QueryClientProvider>,
   );
@@ -97,6 +98,32 @@ describe("HistoryDialog", () => {
     expect(within(dialog).getByText("Created")).toBeInTheDocument();
     expect(within(dialog).queryByText("Added “x”")).toBeNull();
     expect(within(dialog).queryByText("Removed “x”")).toBeNull();
+  });
+
+  it("lets the entry before an undone newest run stand for the latest version", async () => {
+    const undone: Version[] = [
+      { ...versions[0], sha256: "a" },
+      { ...versions[1], sha256: "b", change_summary: "Changed “Green” to “Greeny”" },
+      {
+        id: "ver_3",
+        number: 3,
+        created_by: ana,
+        sha256: "a",
+        change_summary: "Changed “Greeny” to “Green”",
+      },
+    ];
+    const onSelectVersion = vi.fn();
+    const dialog = renderHistory(
+      "ver_3",
+      vi.fn(async () => json({ items: undone })),
+      "ver_3",
+      onSelectVersion,
+    );
+    const entry = (await within(dialog).findByText("Created")).closest("button")!;
+    expect(within(entry).getByText("Current")).toBeVisible();
+    expect(within(dialog).queryByText(/Greeny/)).toBeNull();
+    fireEvent.click(entry);
+    expect(onSelectVersion).not.toHaveBeenCalled();
   });
 
   it("gives each earlier edit its own time, small and muted", async () => {
