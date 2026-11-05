@@ -38,6 +38,8 @@ type FetchOptions = {
   // The approvers list, and the user search, fail with these statuses.
   approversStatus?: number;
   usersStatus?: number;
+  // Every write waits for this before it answers.
+  held?: Promise<unknown>;
 };
 
 // Decisions the page posted, in order.
@@ -51,6 +53,8 @@ function installFetch(options: FetchOptions = {}, posted: PostedDecision[] = [])
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       calls.push(init?.body ? `${url} ${String(init.body)}` : url);
+      if (init?.method && init.method !== "GET") await options.held;
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
       if (url === "/v1/documents/doc_1/approvals" && init?.method === "POST") {
         const body = JSON.parse(String(init.body)) as PostedDecision;
         posted.push(body);
@@ -655,5 +659,127 @@ describe("the approver's review actions", () => {
     expect(
       screen.getByText("All your comments are resolved. Ready to approve?"),
     ).toBeTruthy();
+  });
+});
+
+// A late answer names what it was about, and leaves what the reader did
+// since alone.
+describe("late answers in approvals", () => {
+  const reviewer: Principal = { type: "user", id: "rev", name: "Rev" };
+
+  function hold() {
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    return { held, release };
+  }
+
+  it("names the document in a late decision, and waits for it before the next one", async () => {
+    const { held, release } = hold();
+    const success = vi.spyOn(toast, "success");
+    installFetch({
+      held,
+      approvalsByVersion: {
+        ver_2: {
+          status: "pending",
+          approved: 0,
+          total: 1,
+          items: [{ approver: OWNER, decision: null }],
+        },
+      },
+    });
+    renderDialog({ status: "pending", approved: 0, total: 1 });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: /Open approvals/ }));
+    await user.click(await screen.findByRole("button", { name: "Reject" }));
+    const dialog = await screen.findByRole("dialog", { name: "Reject" });
+    await user.type(within(dialog).getByRole("textbox", { name: "Reason" }), "No plan");
+    await user.click(within(dialog).getByRole("button", { name: "Reject" }));
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Reject" })).toBeNull(),
+    );
+    // The rejection is on its way, so no other decision starts.
+    expect(screen.getByRole("button", { name: "Reject" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+
+    release();
+    await waitFor(() => expect(success).toHaveBeenCalledWith("Rejected “Doc”."));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled(),
+    );
+    await user.click(screen.getByRole("button", { name: "Reject" }));
+    expect(
+      within(await screen.findByRole("dialog", { name: "Reject" })).getByRole(
+        "textbox",
+        {
+          name: "Reason",
+        },
+      ),
+    ).toHaveValue("");
+  });
+
+  it("keeps an address typed while an add was on its way, and names the approver", async () => {
+    const { held, release } = hold();
+    const success = vi.spyOn(toast, "success");
+    installFetch({ held });
+    renderDialog({ isOwner: true, defaultOpen: true });
+    const user = userEvent.setup();
+    const input = await screen.findByRole("combobox", { name: "Approver" });
+    await user.type(input, "reviewer@example.com");
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    await user.clear(input);
+    await user.type(input, "other@example.com");
+    release();
+    await waitFor(() =>
+      expect(success).toHaveBeenCalledWith("Added Reviewer as approver."),
+    );
+    expect(input).toHaveValue("other@example.com");
+  });
+
+  it("toasts a failed add when the dialog closed before the answer", async () => {
+    const { held, release } = hold();
+    const error = vi.spyOn(toast, "error");
+    installFetch({ held, noAccess: true });
+    renderDialog({ isOwner: true, defaultOpen: true });
+    const user = userEvent.setup();
+    await user.type(
+      await screen.findByRole("combobox", { name: "Approver" }),
+      "reviewer@example.com",
+    );
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    release();
+    await waitFor(() =>
+      expect(error).toHaveBeenCalledWith(
+        "That person can't open this document. Share it with them first.",
+      ),
+    );
+  });
+
+  it("says that an approver was removed", async () => {
+    const success = vi.spyOn(toast, "success");
+    installFetch({
+      approvalsByVersion: {
+        ver_2: {
+          status: "pending",
+          approved: 0,
+          total: 1,
+          items: [{ approver: reviewer, decision: null }],
+        },
+      },
+    });
+    renderDialog({ status: "pending", approved: 0, total: 1, isOwner: true });
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Open approvals/ }),
+    );
+    const remove = await screen.findByRole("button", {
+      name: "Remove Rev as approver",
+    });
+    await waitFor(() => expect(remove).toBeEnabled());
+    await userEvent.click(remove);
+    await waitFor(() =>
+      expect(success).toHaveBeenCalledWith("Removed Rev as approver."),
+    );
   });
 });
