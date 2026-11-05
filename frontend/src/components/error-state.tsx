@@ -53,18 +53,28 @@ export function LoadError({ title, query }: { title: string; query: RetryQuery }
 }
 
 // LoadErrorLine is the small form of LoadError, for a hint, a menu or a row
-// in a sheet.
+// in a sheet. A boxed line sits on a page, above the parts that did load.
 export function LoadErrorLine({
   children,
   query,
+  boxed = false,
   className,
 }: {
   children: ReactNode;
   query: RetryQuery;
+  boxed?: boolean;
   className?: string;
 }) {
   return (
-    <div role="alert" className={cn("flex items-center gap-3 text-xs", className)}>
+    <div
+      role="alert"
+      className={cn(
+        "flex items-center gap-3 text-xs",
+        boxed &&
+          "mb-4 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] py-2 pl-4 pr-2 text-sm dark:border-transparent",
+        className,
+      )}
+    >
       <CloudOff className="h-4 w-4 shrink-0 text-[var(--color-fg-muted)]" />
       <span className="min-w-0 flex-1 text-pretty">{children}</span>
       <RetryButton query={query} variant="outline" size="sm" className="shrink-0" />

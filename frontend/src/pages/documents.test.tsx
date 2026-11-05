@@ -118,4 +118,17 @@ describe("DocumentsPage search", () => {
     expect(await screen.findByRole("link", { name: /Reports/ })).toBeInTheDocument();
     expect(screen.queryByRole("alert")).toBeNull();
   });
+
+  it("says when the pins do not load, and loads them on Retry", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.listPins).mockRejectedValue(new Error("503"));
+    renderDocuments("/app/documents");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not load your pins",
+    );
+
+    vi.mocked(api.listPins).mockResolvedValue({ items: [] });
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  });
 });
