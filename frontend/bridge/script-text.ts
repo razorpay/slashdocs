@@ -351,6 +351,9 @@ export function startScriptText(
         const el = t.parentElement!;
         if (edit && !edits.has(el)) allowTyping(el, edit);
       }
+      // New text empties the marks of the other places, so they mark again.
+      if (view?.CSS?.highlights?.has(SAME_TEXT))
+        mark(textsShowing(to).filter((t) => !hint?.el.contains(t)));
       return texts;
     },
     // The places of one string give one change: the text of the place that
