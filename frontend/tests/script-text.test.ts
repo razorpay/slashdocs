@@ -152,6 +152,28 @@ test("script text that shows in several places says so before the first key", ()
   expect(el("t").getAttribute("aria-describedby")).toBe(note.id);
 });
 
+test("each entry into a place of a string that shows in several places says so again", async () => {
+  const el = render(
+    `<div ${SOURCE_ATTR}="0" contenteditable="false"><b id="a">Needs review</b><b id="b">Needs review</b><b id="c">Needs review</b></div>`,
+  );
+  start();
+  el("b").click();
+  scriptText!.answer("script-1", true);
+  el("b").textContent = "Needs reviewx";
+  await Promise.resolve();
+  scriptText!.replace("Needs review", "Needs reviewx");
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+  expect(document.querySelector(".slashdocs-script-hint")).toBeNull();
+
+  // The other place takes keys already, and says where they go.
+  el("a").click();
+  const note = document.querySelector(".slashdocs-script-hint")!;
+  expect(note.textContent).toBe(
+    "This text shows in 3 places. Your change goes to all of them.",
+  );
+  expect(el("a").getAttribute("aria-describedby")).toBe(note.id);
+});
+
 test("a failed check offers to try again", () => {
   const el = render(
     `<div ${SOURCE_ATTR}="0" contenteditable="false"><span id="t">Total: 7</span></div>`,
