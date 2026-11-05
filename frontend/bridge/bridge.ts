@@ -154,6 +154,8 @@ type Theme = "dark" | "light";
   // this window, not the document. Give them the document's shortcuts (Esc,
   // C, the Esc chords) but leave the button its own keys.
   let documentKeys: ((ev: KeyboardEvent) => void) | null = null;
+  // The app shows the Esc chord, and says while it waits for a letter.
+  let chordArmed = false;
   document.addEventListener("keydown", (ev) => {
     const target = ev.target as Element | null;
     if (!target?.closest?.(".sd-pins")) return;
@@ -2174,7 +2176,6 @@ type Theme = "dark" | "light";
       selTimer = setTimeout(selection, 350);
     });
     const chordKeys: string[] = CHORD_KEYS.map((item) => item.key);
-    let chordArmedAt = 0;
     let vimGArmed = false;
     let vimGTimer = 0;
     let glide = 0;
@@ -2242,29 +2243,24 @@ type Theme = "dark" | "light";
       // after it work as shortcuts.
       if (ev.key === "Escape" && ev.target === d.body) d.body.blur();
       if (ev.defaultPrevented || isEditableTarget(d, ev.target)) {
-        chordArmedAt = 0;
         vimGArmed = false;
         clearTimeout(vimGTimer);
         handleKVUndoRedoShortcut(d, ev);
         return;
       }
 
+      const key = ev.key.toLowerCase();
       if (ev.key === "Escape") {
-        chordArmedAt = modified ? 0 : Date.now();
         parent.postMessage(
           { type: "slashdocs:keydown", key: "Escape" },
           targetOrigin(),
         );
-      } else if (chordArmedAt) {
-        const withinWindow = Date.now() - chordArmedAt <= 800;
-        chordArmedAt = 0;
-        const key = ev.key.toLowerCase();
-        if (withinWindow && !modified && chordKeys.includes(key)) {
-          // The chord takes the key: it types nothing, and C after Esc
-          // opens the comments instead of placing a pin.
-          ev.preventDefault();
-          parent.postMessage({ type: "slashdocs:keydown", key }, targetOrigin());
-        }
+      } else if (chordArmed && !modified && chordKeys.includes(key)) {
+        // While the app shows the Esc chord, the chord takes the key: it
+        // types nothing, and C opens the comments instead of placing a pin.
+        chordArmed = false;
+        ev.preventDefault();
+        parent.postMessage({ type: "slashdocs:keydown", key }, targetOrigin());
       }
       if (ev.key === "?" && !modified) {
         parent.postMessage({ type: "slashdocs:keydown", key: "?" }, targetOrigin());
@@ -2567,6 +2563,8 @@ type Theme = "dark" | "light";
       cursors.unfollow();
     } else if (e.data.type === "slashdocs:open-cursor-chat") {
       chat?.open();
+    } else if (e.data.type === "slashdocs:chord") {
+      chordArmed = e.data.armed === true;
     } else if (e.data.type === "slashdocs:cursor-chat") {
       chatColor =
         typeof e.data.color === "string" && /^#[0-9a-f]{3,8}$/i.test(e.data.color)
