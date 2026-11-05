@@ -128,7 +128,9 @@ The response lists the documents placed and the ones left out.
   states the outline version it was based on and fails with a conflict if the
   outline has changed since, the same way document pushes work today.
 - Every change creates a new outline version with an optional change note.
-  Editors can see the list of outline versions.
+  Editors can list the outline versions through the API
+  (`GET /v1/books/{id}/outline/versions`); the outline editor shows the
+  current version number.
 
 The authoring format is small and easy to write by hand or generate:
 
@@ -312,8 +314,10 @@ where you were" note stays available for that chapter visit.
 | Done                   | The reader pressed "Mark chapter done". It can be undone.                                                                                |
 | Updated since you read | The chapter has a newer version than the one the reader last saw, and the reader had opened it before. Shown alongside the other states. |
 
-"Reached the end" means the last section came into view and the reader scrolled
-to the end of it.
+"Reached the end" means the reader scrolled to the end of the chapter during
+this visit: a restore that lands at the end does not count until the reader
+scrolls away and back. A chapter that fits on screen, so that nothing scrolls,
+counts as reached once it has stayed on screen for 15 seconds.
 
 ### Updated since you read
 
@@ -373,8 +377,8 @@ storage only. Signing in does not merge local state into the account.
 
 Search in a book uses a book-scoped endpoint (`GET /v1/books/{id}/search`) over
 the existing full-text index, limited to the book's folder, and returns only
-chapters the reader can open. Results are listed by
-chapter number. A toggle narrows the search to the current chapter. Opening a
+chapters the reader can open. Results are listed in relevance order, as the
+full-text search ranks them. A toggle narrows the search to the current chapter. Opening a
 result takes the reader to the first match in the chapter, using the existing
 text navigation. Hits pointing to individual sections are left for later,
 because search covers whole documents today.
