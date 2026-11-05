@@ -7,7 +7,7 @@ import { api } from "@/api";
 import { AppShell } from "@/components/layout/app-shell";
 import { OneTimeKeyDialog } from "@/components/one-time-key-dialog";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { clearFieldDrafts } from "@/lib/field-drafts";
+import { clearFieldDrafts, saveFieldDraft } from "@/lib/field-drafts";
 import { clearOneTimeKeys } from "@/lib/one-time-keys";
 import { ServiceAccountsPage } from "./service-accounts";
 
@@ -78,6 +78,26 @@ describe("ServiceAccountsPage", () => {
     await user.click(screen.getByRole("button", { name: "New bot" }));
     expect(await screen.findByRole("textbox")).toHaveValue("");
     expect(screen.queryByText("sd_secret")).not.toBeInTheDocument();
+  });
+
+  it("shows both names of a two-tab conflict, and creates no bot until the reader chooses", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, "listServiceAccounts").mockResolvedValue({ items: [] });
+    renderPage();
+    await user.click(screen.getByRole("button", { name: "New bot" }));
+    await user.type(screen.getByRole("textbox", { name: "Name" }), "r11-local");
+    // Another tab saves the same draft first.
+    act(() => saveFieldDraft("bot-name", "r11-other"));
+
+    expect(
+      await screen.findByText("This draft changed in another tab. It now says:"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("r11-other")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("r11-local");
+    expect(screen.getByRole("button", { name: "Create bot" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Use the new text" }));
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("r11-other");
+    expect(screen.getByRole("button", { name: "Create bot" })).toBeEnabled();
   });
 
   it("names the bot name field, and ties its hint and error to it", async () => {
@@ -380,5 +400,25 @@ describe("the Bots list", () => {
       "sol-r10-17938699412@hearty.review.bot",
     );
     expect(screen.getByRole("button", { name: "New key" })).toBeInTheDocument();
+  });
+
+  it("brings the detail into view on each pick, also of the bot that shows", async () => {
+    const user = userEvent.setup();
+    window.matchMedia = (query: string) =>
+      ({
+        matches: query.includes("max-width"),
+        addEventListener() {},
+        removeEventListener() {},
+      }) as never;
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    renderPage();
+
+    const first = await screen.findByRole("button", { name: /^sol-r10-17938699410\b/ });
+    expect(first).toHaveAttribute("aria-current", "true");
+    await user.click(first);
+    await waitFor(() => expect(scrolled).toHaveBeenCalledTimes(1));
+    await user.click(first);
+    await waitFor(() => expect(scrolled).toHaveBeenCalledTimes(2));
   });
 });
