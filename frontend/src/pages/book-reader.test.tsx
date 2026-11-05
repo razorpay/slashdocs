@@ -542,6 +542,38 @@ describe("BookReader", () => {
     expect(h.restore).toHaveBeenCalledTimes(1);
   });
 
+  it("does not try to restore a saved place at the very top", async () => {
+    renderReader(
+      "/app/b/b1/c/doc_2",
+      bookState(
+        {},
+        { positions: [position({ anchor: {}, section_id: "", progression: 0 })] },
+      ),
+    );
+    await screen.findByTestId("workspace");
+    await waitFor(() => expect(booksApi.state).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(h.restore).not.toHaveBeenCalled();
+  });
+
+  it("forgets a saved-place restore that never reported when the chapter changes", async () => {
+    const user = userEvent.setup();
+    const info = vi.spyOn(toast, "info");
+    renderReader(
+      "/app/b/b1/c/doc_2",
+      bookState(
+        { doc_3: { state: "reading", furthest: 0.5 } },
+        { positions: [position({})] },
+      ),
+    );
+    await waitFor(() => expect(h.restore).toHaveBeenCalledTimes(1));
+    // The frame never reports that restore (a link cancelled it).
+    await user.keyboard("{ArrowRight}");
+    await waitFor(() => expect(h.restore).toHaveBeenCalledWith({ progression: 0.5 }));
+    act(() => reader().onRestored!("none"));
+    expect(info).not.toHaveBeenCalledWith(expect.stringContaining("saved place"));
+  });
+
   it("falls back to how far the reader got when there is no saved place", async () => {
     const info = vi.spyOn(toast, "info");
     renderReader(

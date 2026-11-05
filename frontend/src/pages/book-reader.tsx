@@ -305,6 +305,8 @@ function BookReader({
   }, [bookId, docId, current, invalidateBook]);
   useEffect(() => {
     setEndStrip("hidden");
+    // A restore the old frame never reported (a link cancelled it) is over.
+    restoringSaved.current = false;
     setSection("");
     lastView.current = null;
     setBack((location.state as ArrivalState)?.back ?? null);
@@ -341,8 +343,11 @@ function BookReader({
       restoreDone();
       return;
     }
-    if (mine?.document_id === docId) {
-      restoreSaved(toTarget(mine));
+    // A place at the very top needs no restore, and a progression-only
+    // restore of 0 would report a miss.
+    const target = mine?.document_id === docId ? toTarget(mine) : undefined;
+    if (target && (target.anchor || target.section || target.progression)) {
+      restoreSaved(target);
       return;
     }
     // No saved place here, but the reader got partway through before (say
