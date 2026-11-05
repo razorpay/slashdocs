@@ -262,7 +262,7 @@ const wordsOf = ({ body, mentions }: MentionDraft): MentionDraft => ({
 
 // useDraftText keeps the text of a field that is saved as a draft in `stored`.
 // What is typed goes to save after a short pause, and at once when the field
-// closes. As with setState, edit also takes a function of the text now, and
+// closes or the page hides. As with setState, edit also takes a function of the text now, and
 // it gives back the new text.
 //
 // Another tab can change the stored draft. If the field has no unsaved words,
@@ -326,7 +326,20 @@ export function useDraftText(stored: DraftText, save: (text: DraftText) => void)
     if (untouched) take(next);
     else setTheirs(next);
   }, [stored.body, take]);
-  useEffect(() => flush, [flush]);
+  // A reload or a closed tab unmounts nothing, so the words of the last pause
+  // also save when the page hides or goes.
+  useEffect(() => {
+    const onHidden = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    document.addEventListener("visibilitychange", onHidden);
+    window.addEventListener("pagehide", flush);
+    return () => {
+      document.removeEventListener("visibilitychange", onHidden);
+      window.removeEventListener("pagehide", flush);
+      flush();
+    };
+  }, [flush]);
   // The reader's choice ends the conflict, here and in storage.
   const choose = (chosen: MentionDraft) => {
     take(chosen);
