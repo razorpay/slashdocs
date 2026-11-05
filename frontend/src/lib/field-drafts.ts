@@ -31,6 +31,7 @@ const store = createPersistentStore<Record<string, FieldDraft>>(
           d.updatedAt > Date.now() - MAX_AGE,
       ),
     ),
+  (all) => Object.values(all).flatMap((d) => [d.body, d.held ?? ""]),
 );
 
 export const readFieldDraft = (key: string): FieldDraft | undefined =>

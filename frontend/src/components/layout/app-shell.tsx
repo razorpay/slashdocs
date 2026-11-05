@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Center, RetryButton } from "@/components/ui/misc";
 import { ErrorState } from "@/components/error-state";
 import { OneTimeKeyDialog } from "@/components/one-time-key-dialog";
+import { UnsavedWords } from "@/components/unsaved-words";
 import { cn } from "@/lib/cn";
 
 // The app bar of every page but a document, which has its own bar. A
@@ -77,8 +78,10 @@ export function AppShell() {
     >
       {!documentPage && <AppBar />}
       <Outlet />
-      {/* A key that shows once reaches the reader on any page. */}
+      {/* A key that shows once, and words that only this tab holds, reach
+          the reader on any page. */}
       <OneTimeKeyDialog />
+      <UnsavedWords />
     </main>
   );
 }

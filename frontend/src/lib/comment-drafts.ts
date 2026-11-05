@@ -42,6 +42,8 @@ const NONE = {};
 const fresh = (updatedAt: number) => updatedAt > Date.now() - MAX_AGE;
 // hasWords tells whether a draft holds words to keep, in either of its texts.
 const hasWords = (d?: DraftText) => !!(d?.body?.trim() || d?.held?.body.trim());
+// The words of a draft, as text.
+const words = (d: DraftText) => textsOf(d).map((t) => t.body);
 
 type DraftsByDocument = Record<string, CommentDraft[]>;
 type ByDocument<T> = Record<string, Record<string, T>>;
@@ -50,17 +52,27 @@ type ByDocument<T> = Record<string, Record<string, T>>;
 function entriesStore<T extends DraftText & { updatedAt: number }>(
   key: string,
   keep: (entry: T) => boolean,
+  // The entries whose words the reader would lose.
+  unsent: (entry: T) => boolean = hasWords,
 ) {
-  const entries = createPersistentStore<ByDocument<T>>(key, {}, (parsed) => {
-    const out: ByDocument<T> = {};
-    for (const [docId, byId] of Object.entries(parsed as ByDocument<T>)) {
-      const kept = Object.entries(byId ?? {}).filter(
-        ([, d]) => Array.isArray(d?.mentions) && fresh(d.updatedAt) && keep(d),
-      );
-      if (kept.length) out[docId] = Object.fromEntries(kept);
-    }
-    return out;
-  });
+  const entries = createPersistentStore<ByDocument<T>>(
+    key,
+    {},
+    (parsed) => {
+      const out: ByDocument<T> = {};
+      for (const [docId, byId] of Object.entries(parsed as ByDocument<T>)) {
+        const kept = Object.entries(byId ?? {}).filter(
+          ([, d]) => Array.isArray(d?.mentions) && fresh(d.updatedAt) && keep(d),
+        );
+        if (kept.length) out[docId] = Object.fromEntries(kept);
+      }
+      return out;
+    },
+    (all) =>
+      Object.values(all).flatMap((byId) =>
+        Object.values(byId).filter(unsent).flatMap(words),
+      ),
+  );
   // put sets the entry `id` of a document, or removes it.
   const put = (docId: string, id: string, entry?: T) => {
     const all = { ...entries.read() };
@@ -89,12 +101,14 @@ const store = createPersistentStore<DraftsByDocument>(
     }
     return out;
   },
+  (all) => Object.values(all).flat().flatMap(words),
 );
 
 const replies = entriesStore<ReplyDraft>("slashdocs.reply-drafts", hasWords);
 const edits = entriesStore<Edit>(
   "slashdocs.comment-edits",
   (e) => typeof e.base === "string" && typeof e.body === "string",
+  (e) => changed(e),
 );
 
 const pending = createPersistentStore<PendingComment | null>(
@@ -174,7 +188,7 @@ export const textsOf = ({ body, mentions, held }: DraftText): MentionDraft[] =>
   held ? [{ body, mentions }, held] : [{ body, mentions }];
 
 // copyWords copies the words that the reader did not send.
-export function copyWords(texts: MentionDraft[]) {
+export function copyWords(texts: Pick<MentionDraft, "body">[]) {
   void navigator.clipboard.writeText(texts.map((t) => t.body).join("\n\n")).then(
     () => toast.success("Your text is copied."),
     () => toast.error("Could not copy your text."),
