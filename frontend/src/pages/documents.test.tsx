@@ -88,6 +88,37 @@ describe("DocumentsPage search", () => {
     expect(screen.getByRole("heading", { name: "Results" })).toBeInTheDocument();
   });
 
+  it("writes each key to the URL at once, so that a result opened at once keeps the query", async () => {
+    const user = userEvent.setup({ delay: null });
+    renderDocuments("/app/documents?q=plan");
+    const input = await screen.findByRole("combobox", { name: "Search documents" });
+    await screen.findByRole("link", { name: /Q3 plan/ });
+    await user.type(input, " altered");
+    expect(screen.getByTestId("search")).toHaveTextContent("?q=plan+altered");
+    await user.click(screen.getByRole("link", { name: /Q3 plan/ }));
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    expect(
+      await screen.findByRole("combobox", { name: "Search documents" }),
+    ).toHaveValue("plan altered");
+  });
+
+  it.each([
+    [
+      "from:nobody@example.com",
+      "No documents match the filter from:nobody@example.com.",
+    ],
+    [
+      "budget from:nobody@example.com",
+      'No documents that match the filter from:nobody@example.com have "budget" on a page.',
+    ],
+    ["budget", 'We read every page of every document. "budget" is not on any of them.'],
+  ])("says what a search for %s found nothing for", async (q, said) => {
+    vi.mocked(api.listDocuments).mockResolvedValue({ items: [], has_more: false });
+    renderDocuments(`/app/documents?q=${encodeURIComponent(q)}`);
+    expect(await screen.findByText("No matches")).toBeInTheDocument();
+    expect(screen.getByText(said)).toBeInTheDocument();
+  });
+
   it("keeps every letter of fast typing", async () => {
     const user = userEvent.setup({ delay: null });
     renderDocuments("/app/documents");

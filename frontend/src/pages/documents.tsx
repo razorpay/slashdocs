@@ -29,7 +29,7 @@ import {
 import { DocumentSearchInput } from "@/components/browse/document-search-input";
 import { FeaturedItems } from "@/components/browse/featured-items";
 import { sortEntries } from "@/components/browse/sort-entries";
-import { hasDocumentSearchOperators } from "@/lib/search-query";
+import { hasDocumentSearchOperators, searchTokens } from "@/lib/search-query";
 import {
   DndContext,
   PointerSensor,
@@ -42,25 +42,27 @@ import {
 export function DocumentsPage() {
   useTitle("Documents");
   // The search is in the URL, so Back from a result returns to the results.
-  // The field keeps its own value, because a URL update can come after the
-  // next key and drop a letter. The URL follows the field after a pause, and
-  // replaces the history entry, so Back does not step through letters.
+  // Each key writes the field to the URL at once, in place of the history
+  // entry, so that a result opened at once keeps the whole query, and Back
+  // does not step through letters. The search waits for a pause. The URL
+  // shows a write after the next key can come, so the field keeps its own
+  // value: a query that the field did not write, from Back, forward or a
+  // link, replaces it.
   const [params, setParams] = useSearchParams();
   const urlQ = params.get("q") || "";
   const [q, setQ] = useState(urlQ);
-  // The query that the URL has, from the field or from Back, forward or a
-  // link. A query that the field did not write replaces the field.
-  const [seenQ, setSeenQ] = useState(urlQ);
-  if (urlQ !== seenQ) {
-    setSeenQ(urlQ);
-    setQ(urlQ);
+  const [seen, setSeen] = useState({ url: urlQ, written: [] as string[] });
+  if (urlQ !== seen.url) {
+    const i = seen.written.lastIndexOf(urlQ);
+    setSeen({ url: urlQ, written: i < 0 ? [] : seen.written.slice(i + 1) });
+    if (i < 0) setQ(urlQ);
   }
+  const search = (next: string) => {
+    setQ(next);
+    setSeen((s) => ({ ...s, written: [...s.written, next] }));
+    setParams(next ? { q: next } : {}, { replace: true });
+  };
   const pausedQ = useDebounced(q, 250);
-  useEffect(() => {
-    if (pausedQ !== q || pausedQ === seenQ) return;
-    setSeenQ(pausedQ);
-    setParams(pausedQ ? { q: pausedQ } : {}, { replace: true });
-  }, [pausedQ, q, seenQ, setParams]);
   const debouncedQ = pausedQ.trim();
   const me = useQuery({ queryKey: queryKeys.me(), queryFn: api.me });
   // The server sends documents a page at a time.
@@ -208,7 +210,7 @@ export function DocumentsPage() {
           What did your agents publish?
         </h1>
         <div className="enter mx-auto mt-8 max-w-2xl" style={beat(2)}>
-          <DocumentSearchInput value={q} onChange={setQ} />
+          <DocumentSearchInput value={q} onChange={search} />
         </div>
       </section>
       <div
@@ -290,9 +292,9 @@ export function DocumentsPage() {
         documents.length === 0 && folders.length === 0 ? (
           <EmptyState
             title="No matches"
-            description={`We read every page of every document. "${q}" is not on any of them.`}
+            description={noMatches(debouncedQ)}
             action={
-              <Button variant="outline" onClick={() => setQ("")}>
+              <Button variant="outline" onClick={() => search("")}>
                 Clear search
               </Button>
             }
@@ -373,4 +375,20 @@ function EmptyDocs() {
       </div>
     </div>
   );
+}
+
+// noMatches says what a search with no results looked for: its words on the
+// pages, the documents that its filters name, or both.
+function noMatches(q: string) {
+  const tokens = searchTokens(q);
+  const words = tokens
+    .filter((t) => !t.key)
+    .map((t) => t.text)
+    .join(" ");
+  const filters = tokens.filter((t) => t.key).map((t) => t.text);
+  if (!filters.length)
+    return `We read every page of every document. "${words}" is not on any of them.`;
+  const named = `the ${filters.length === 1 ? "filter" : "filters"} ${filters.join(" ")}`;
+  if (!words) return `No documents match ${named}.`;
+  return `No documents that match ${named} have "${words}" on a page.`;
 }
