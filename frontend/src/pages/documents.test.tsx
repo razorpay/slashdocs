@@ -9,7 +9,7 @@ import {
   useNavigate,
 } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api, type Document } from "@/api";
+import { api, APIError, type Document } from "@/api";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { DocumentsPage } from "./documents";
 
@@ -130,5 +130,62 @@ describe("DocumentsPage search", () => {
     vi.mocked(api.listPins).mockResolvedValue({ items: [] });
     await user.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  });
+
+  it.each([
+    ["a 503", new APIError(503, "unavailable", "unavailable")],
+    ["a lost network", new TypeError("Failed to fetch")],
+  ])(
+    "says that a search failed with %s, with the shared error and Retry",
+    async (_, error) => {
+      const user = userEvent.setup();
+      vi.mocked(api.listDocuments).mockRejectedValueOnce(error);
+      renderDocuments("/app/documents?q=plan");
+      expect(await screen.findByText("Could not search documents")).toBeInTheDocument();
+      expect(
+        screen.getByText("Check your connection, then try again."),
+      ).toBeInTheDocument();
+      expect(screen.queryByText("No matches")).toBeNull();
+
+      await user.click(screen.getByRole("button", { name: "Retry" }));
+      expect(await screen.findByRole("link", { name: /Q3 plan/ })).toBeInTheDocument();
+      expect(screen.getByRole("combobox", { name: "Search documents" })).toHaveValue(
+        "plan",
+      );
+    },
+  );
+
+  it("tells a search that the server cannot read apart from a failure", async () => {
+    vi.mocked(api.listDocuments).mockRejectedValue(
+      new APIError(400, "invalid_query", "Unknown operator nope:"),
+    );
+    renderDocuments("/app/documents?q=nope:x");
+    expect(await screen.findByText("Search query not valid")).toBeInTheDocument();
+    expect(screen.getByText("Unknown operator nope:")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
+  it("keeps the earlier documents when Show more fails, with Retry", async () => {
+    const user = userEvent.setup();
+    const more: Document = { id: "doc_more", title: "Later notes" };
+    vi.mocked(api.listDocuments)
+      .mockResolvedValueOnce({ items: [plan], has_more: true })
+      .mockRejectedValueOnce(new APIError(503, "unavailable", "unavailable"))
+      .mockResolvedValue({ items: [more], has_more: false });
+    renderDocuments("/app/documents");
+    await user.click(
+      await screen.findByRole("button", { name: "Show more documents" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not load more documents",
+    );
+    expect(screen.getByRole("link", { name: /Q3 plan/ })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(
+      await screen.findByRole("link", { name: /Later notes/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Q3 plan/ })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });
