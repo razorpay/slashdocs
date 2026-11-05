@@ -46,6 +46,9 @@ it("says that the workspace did not load, not a blank page, and loads it on Retr
   );
 
   expect(await screen.findByText("Could not load your workspace")).toBeVisible();
+  // The reader keeps the bar with the logo, and a way out.
+  expect(screen.getByRole("link", { name: "slashdocs home" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Sign out" })).toBeEnabled();
   fail = false;
   await userEvent.click(screen.getByRole("button", { name: "Retry" }));
   expect(await screen.findByText("Documents page")).toBeVisible();
