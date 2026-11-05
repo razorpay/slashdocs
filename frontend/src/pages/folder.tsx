@@ -94,8 +94,6 @@ export function FolderPage() {
   });
   const currentAccessRole = access.data?.current_role;
   const canManageAccess = isOwner || canManageSharing(currentAccessRole);
-  // Only folder editors may build a book from the folder (R1).
-  const canEditFolder = canManageAccess;
 
   const viewMode = viewModeStore.useStore();
   useTitle(folder.data?.title || "Folder");
@@ -282,7 +280,8 @@ export function FolderPage() {
           </div>
           <div className="flex items-center gap-2">
             <ViewModeToggle />
-            <FolderBookAction folderId={id} canEdit={canEditFolder} />
+            {/* Only folder editors may build a book from the folder (R1). */}
+            <FolderBookAction folderId={id} canEdit={canManageAccess} />
             <Button
               variant="outline"
               size="md"
