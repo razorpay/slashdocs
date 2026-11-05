@@ -48,11 +48,14 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
+  changed,
+  copyWords,
   forgetWords,
   lostEdits,
   readEdit,
   sentBack,
   setEdit,
+  textsOf,
   unsentText,
   useDraftText,
   useEdit,
@@ -161,10 +164,12 @@ export function MoreMenu({
             <DropdownItem
               onSelect={() =>
                 (afterClose.current = () =>
-                  setEdit(c.id, {
+                  // An unsent edit of the message stays as it is.
+                  readEdit(docId, c.id) ||
+                  setEdit(docId, c.id, {
                     thread: c.parent_comment_id || c.id,
                     base: c.body,
-                    text: textOf(c),
+                    ...textOf(c),
                   }))
               }
             >
@@ -276,7 +281,7 @@ const textOf = (c: Comment): MentionDraft => ({
 // EditableBody is a message's text, or, while its author edits it, a field
 // with the text to change.
 function EditableBody({ c, docId }: { c: Comment; docId: string }) {
-  const edit = useEdit(c.id);
+  const edit = useEdit(docId, c.id);
   if (edit) return <EditForm c={c} docId={docId} edit={edit} />;
   return (
     <>
@@ -287,25 +292,32 @@ function EditableBody({ c, docId }: { c: Comment; docId: string }) {
 }
 
 // EditForm changes a message's text, from the text on screen when the edit
-// starts. Enter saves, Shift+Enter starts a new line, Esc cancels. If another
-// person changes the message during the edit, the field takes their text when
-// the reader changed nothing. Else it tells them, so that Save does not replace
-// the other change without notice. The server refuses a save from a text that
-// the reader did not see, and then the new text shows here as well.
+// starts. Enter saves, Shift+Enter starts a new line. Esc cancels an edit
+// with no changes, and else only closes the thread: the changed words stay
+// until Save or Cancel. If another person changes the message during the
+// edit, the field takes their text when the reader changed nothing. Else it
+// tells them, so that Save does not replace the other change without notice.
+// The server refuses a save from a text that the reader did not see, and
+// then the new text shows here as well.
 function EditForm({ c, docId, edit }: { c: Comment; docId: string; edit: Edit }) {
   const q = useQueryClient();
   const noun = c.parent_comment_id ? "reply" : "comment";
-  const { base, text: draft } = edit;
-  const update = (next: Partial<Edit>) => setEdit(c.id, { ...edit, ...next });
+  const { base } = edit;
+  // A write after Cancel or Save finds no edit, and adds none.
+  const put = (next: Partial<Edit>) => {
+    const now = readEdit(docId, c.id);
+    if (now) setEdit(docId, c.id, { ...now, ...next });
+  };
+  const [draft, type, conflict] = useDraftText(edit, put);
+  const back = useCameBack(draft, changed(edit) && !conflict);
   const save = useMutation({
     mutationFn: (sent: MentionDraft) =>
       api.patchComment(docId, c.id, { ...sent, base_body: c.body }),
     onSuccess: async (_, sent) => {
       await q.invalidateQueries({ queryKey: queryKeys.comments(docId) });
-      const now = readEdit(c.id);
       // Words typed while it saved keep the field open.
-      if (now?.text.body === sent.body) setEdit(c.id);
-      else if (now) setEdit(c.id, { ...now, base: sent.body });
+      if (type((now) => now).body === sent.body) setEdit(docId, c.id);
+      else put({ base: sent.body });
     },
     onError: (e) => {
       // A change or a delete by someone else shows here once the thread loads.
@@ -314,15 +326,18 @@ function EditForm({ c, docId, edit }: { c: Comment; docId: string; edit: Edit })
       toast.error(errorMessage(e, "Could not update comment"));
     },
   });
-  const takeLive = () => update({ base: c.body, text: textOf(c) });
+  const takeLive = () => {
+    put({ base: c.body });
+    type(textOf(c));
+  };
   // The reader's own save changes the text too, so the check waits for it.
-  const changed = !save.isPending && c.body !== base;
+  const changedElsewhere = !save.isPending && c.body !== base;
   const untouched = draft.body === base || draft.body === c.body;
   useLayoutEffect(() => {
-    if (changed && untouched) takeLive();
+    if (changedElsewhere && untouched) takeLive();
   });
   const ready = !!draft.body.trim() && draft.body !== c.body && !save.isPending;
-  const cancel = () => setEdit(c.id);
+  const cancel = () => setEdit(docId, c.id);
   return (
     <form
       className="min-w-0"
@@ -336,9 +351,9 @@ function EditForm({ c, docId, edit }: { c: Comment; docId: string; edit: Edit })
         autoFocus
         label={`Edit ${noun}`}
         draft={draft}
-        onChange={(text) => update({ text })}
+        onChange={type}
         onKeyDown={(event) => {
-          if (event.key === "Escape") {
+          if (event.key === "Escape" && draft.body === c.body && !conflict) {
             event.preventDefault();
             event.stopPropagation();
             cancel();
@@ -349,20 +364,26 @@ function EditForm({ c, docId, edit }: { c: Comment; docId: string; edit: Edit })
           if (ready) save.mutate(draft);
         }}
       />
-      {changed && !untouched ? (
+      {changedElsewhere && !untouched ? (
         <Notice
           say={`This ${noun} changed while you edited. It now says:`}
           quotes={[quote(textOf(c))]}
         >
           <NoticeAction onClick={takeLive}>Use the new text</NoticeAction>
         </Notice>
-      ) : null}
+      ) : (
+        <DraftNotice
+          conflict={conflict}
+          back={back && "You did not save this edit yet."}
+          onDiscard={cancel}
+        />
+      )}
       <div className="mt-2 flex justify-end gap-2">
         <Button
           type="button"
           variant="ghost"
           size="sm"
-          title="Cancel (Esc)"
+          title="Cancel the edit"
           disabled={save.isPending}
           onClick={cancel}
         >
@@ -382,31 +403,71 @@ function EditForm({ c, docId, edit }: { c: Comment; docId: string; edit: Edit })
   );
 }
 
+// useCameBack tells, until the reader changes them, that a field opened with
+// words from an earlier visit.
+function useCameBack(text: MentionDraft, back: boolean) {
+  const [opened] = useState(() => (back ? text.body : undefined));
+  return opened !== undefined && text.body === opened;
+}
+
+// DraftNotice tells of the words in a draft field that the reader did not
+// write just now: another tab changed them, or they came back.
+function DraftNotice({
+  conflict,
+  back,
+  onDiscard,
+}: {
+  conflict?: DraftConflict;
+  // What to say when the words came back, or false.
+  back?: string | false;
+  onDiscard?: () => void;
+}) {
+  if (conflict)
+    return (
+      <Notice
+        say="This draft changed in another tab. It now says:"
+        quotes={[quote(conflict.theirs)]}
+      >
+        <NoticeAction onClick={conflict.take}>Use the new text</NoticeAction>
+        <NoticeAction onClick={conflict.keep}>Keep mine</NoticeAction>
+      </Notice>
+    );
+  if (!back || !onDiscard) return null;
+  return (
+    <Notice say={back}>
+      <NoticeAction onClick={onDiscard}>Discard</NoticeAction>
+    </Notice>
+  );
+}
+
 // quote shows the words of a draft in a notice.
 const quote = (text: MentionDraft) => (
   <CommentBody text={text.body} mentions={text.mentions} preview />
 );
 
 // LostWords keeps the words that the reader did not send in a message that
-// someone deleted, to copy.
+// someone deleted, to copy, until they discard them.
 export function LostWords({
   what,
   texts,
-  onDismiss,
+  onDiscard,
 }: {
   what: string;
   texts: MentionDraft[];
-  onDismiss: () => void;
+  onDiscard: () => void;
 }) {
-  const copy = () =>
-    void navigator.clipboard.writeText(texts.map((t) => t.body).join("\n\n")).then(
-      () => toast.success("Your text is copied."),
-      () => toast.error("Could not copy your text."),
-    );
   return (
     <Notice say={`${what} Your words were not sent:`} quotes={texts.map(quote)}>
-      <NoticeAction onClick={copy}>Copy my text</NoticeAction>
-      <NoticeAction onClick={onDismiss}>Dismiss</NoticeAction>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="mt-1 h-7 px-2 text-xs"
+        onClick={() => copyWords(texts)}
+      >
+        Copy my text
+      </Button>
+      <NoticeAction onClick={onDiscard}>Discard</NoticeAction>
     </Notice>
   );
 }
@@ -436,7 +497,8 @@ export function SendingMessage({ text, who }: { text: MentionDraft; who?: Princi
 // ComposeField is the field for a reply or a new pin's comment: one line that
 // grows with the text, and a send button. Enter sends, Shift+Enter starts a
 // new line. When another tab changed the same draft, it tells, and offers
-// both texts.
+// both texts. When the words came back from an earlier visit, it says so,
+// and offers to discard them.
 export function ComposeField({
   value,
   onChange,
@@ -446,6 +508,8 @@ export function ComposeField({
   autoFocus,
   sendLabel,
   conflict,
+  restored,
+  onDiscard,
 }: {
   value: MentionDraft;
   onChange: (next: MentionDraft) => void;
@@ -455,7 +519,12 @@ export function ComposeField({
   autoFocus?: boolean;
   sendLabel: string;
   conflict?: DraftConflict;
+  // The field opened with words from an earlier visit.
+  restored?: boolean;
+  onDiscard?: () => void;
 }) {
+  // A conflict tells of the words already.
+  const back = useCameBack(value, !!restored && !conflict);
   const ready = !!value.body.trim() && !pending;
   const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -493,15 +562,11 @@ export function ComposeField({
           </Button>
         }
       />
-      {conflict ? (
-        <Notice
-          say="This draft changed in another tab. It now says:"
-          quotes={[quote(conflict.theirs)]}
-        >
-          <NoticeAction onClick={conflict.take}>Use the new text</NoticeAction>
-          <NoticeAction onClick={conflict.keep}>Keep mine</NoticeAction>
-        </Notice>
-      ) : null}
+      <DraftNotice
+        conflict={conflict}
+        back={back && "You did not send these words yet."}
+        onDiscard={onDiscard}
+      />
     </form>
   );
 }
@@ -574,6 +639,8 @@ export function ReplyRow({
         autoFocus={autoFocus}
         onSubmit={send}
         conflict={conflict}
+        restored={!!saved?.body.trim()}
+        onDiscard={() => edit(emptyMentionDraft())}
       />
     </div>
   );
@@ -630,22 +697,24 @@ export function ResolveButton({
 // "N replies" label with a rule, then each reply indented to the first
 // comment's text, so the one parent and its replies read at a glance. After
 // them come the edits of replies that someone deleted, and the replies that
-// are on their way.
+// are on their way, which the count holds already, so nothing moves when they
+// post.
 export function Replies({ c, docId }: { c: Comment; docId: string }) {
   const { principal } = useDoc();
   const self = useSelf(principal);
   const replies = c.replies || [];
-  const lost = lostEdits(useEdits(), c.id, [c.id, ...replies.map((r) => r.id)]);
+  const lost = lostEdits(useEdits(docId), c.id, [c.id, ...replies.map((r) => r.id)]);
   const sending = useMutationState({
     filters: { mutationKey: replyKey(docId, c.id), status: "pending" },
     select: (mutation) => mutation.state.variables as MentionDraft,
   });
-  if (!replies.length && !lost.length && !sending.length) return null;
+  const count = replies.length + sending.length;
+  if (!count && !lost.length) return null;
   return (
     <div className="ml-7 mt-3">
-      {replies.length ? (
+      {count ? (
         <div className={cn("flex items-center gap-2 text-[11px] font-medium", muted)}>
-          {replies.length} {replies.length === 1 ? "reply" : "replies"}
+          {count} {count === 1 ? "reply" : "replies"}
           <span aria-hidden className="h-px flex-1 bg-[var(--color-border)]" />
         </div>
       ) : null}
@@ -658,8 +727,8 @@ export function Replies({ c, docId }: { c: Comment; docId: string }) {
         <LostWords
           key={id}
           what="This reply was deleted."
-          texts={[edit.text]}
-          onDismiss={() => setEdit(id)}
+          texts={textsOf(edit)}
+          onDiscard={() => setEdit(docId, id)}
         />
       ))}
       {sending.map((text, i) => (

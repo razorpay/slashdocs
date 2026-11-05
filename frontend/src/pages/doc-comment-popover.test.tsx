@@ -1,12 +1,12 @@
 import { createRef, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { toast, type Action } from "sonner";
 import { api, type Comment } from "@/api";
-import type { CommentDraft } from "@/lib/comment-drafts";
+import { saveReplyDraft, type CommentDraft } from "@/lib/comment-drafts";
 import { CommentPopovers } from "./doc-comment-popover";
 import { DocProvider, type DocContextValue } from "./doc-context";
 
@@ -340,4 +340,51 @@ it.each([
   await vi.waitFor(() => expect(renders.at(-1)).toBe(opened));
   await new Promise((r) => setTimeout(r, 50));
   expect(renders.at(-1)).toBe(opened);
+});
+
+it("keeps the header and its close button on a deleted thread, and Close keeps the words", async () => {
+  localStorage.clear();
+  const user = userEvent.setup();
+  const setActiveComment = vi.fn();
+  saveReplyDraft("doc-1", "c1", { body: "UNSENT REPLY", mentions: [] });
+  render(
+    <Thread comments={[]} setActiveComment={setActiveComment} signIn={undefined} />,
+  );
+  const dialog = screen.getByRole("dialog", { name: "Comment thread" });
+  expect(within(dialog).getByText("Thread deleted")).toBeInTheDocument();
+  await user.click(within(dialog).getByRole("button", { name: "Close" }));
+  expect(setActiveComment).toHaveBeenCalledWith(undefined);
+  expect(localStorage.getItem("slashdocs.reply-drafts")).toContain("UNSENT REPLY");
+});
+
+it("puts the focus in Reply when the posted thread opens from its own composer", async () => {
+  localStorage.clear();
+  vi.spyOn(api, "createComment").mockResolvedValueOnce({ id: "c2" } as Comment);
+  const posted = { ...c, id: "c2" };
+  function Composer() {
+    const [active, setActive] = useState<string | undefined>("d1");
+    const [drafts, setDrafts] = useState<CommentDraft[]>([
+      { id: "d1", version: "v1", quote: "Look", body: "", mentions: [], updatedAt: 0 },
+    ]);
+    return (
+      <Thread
+        principal={{ type: "user", id: "me" }}
+        signIn={undefined}
+        comments={active === "c2" ? [posted] : []}
+        drafts={drafts}
+        activeComment={active}
+        setActiveComment={setActive}
+        unanchoredComments={new Set(["d1", "c2"])}
+        saveDraft={() => {}}
+        discardDraft={(id: string) => {
+          setDrafts([]);
+          setActive((now) => (now === id ? undefined : now));
+        }}
+      />
+    );
+  }
+  render(<Composer />);
+  await userEvent.type(screen.getByPlaceholderText("Add a comment…"), "Sent{Enter}");
+  const reply = await screen.findByPlaceholderText("Reply…");
+  await vi.waitFor(() => expect(reply).toHaveFocus());
 });

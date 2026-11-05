@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
@@ -19,6 +19,7 @@ import { DocProvider, type DocContextValue } from "./doc-context";
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  localStorage.clear();
 });
 
 function Field({
@@ -366,7 +367,7 @@ it("keeps the words of an edit when someone deletes its reply, with Copy my text
   );
   await user.click(screen.getByRole("button", { name: "Copy my text" }));
   expect(writeText).toHaveBeenCalledWith("Original words UNSAVED EDIT");
-  await user.click(screen.getByRole("button", { name: "Dismiss" }));
+  await user.click(screen.getByRole("button", { name: "Discard" }));
   expect(screen.queryByRole("status")).toBeNull();
 });
 
@@ -393,4 +394,72 @@ it("sends the text that an edit started from, so that a stale edit fails", async
   expect(box).toHaveValue("Original words MINE");
   expect(error).not.toHaveBeenCalled();
   await user.keyboard("{Escape}");
+});
+
+it("keeps both texts of a two-tab conflict after the thread closes, and shows them again", async () => {
+  const user = userEvent.setup();
+  const first = renderReply();
+  await user.type(screen.getByPlaceholderText("Reply…"), "SHARED");
+  await pause();
+  await user.type(screen.getByPlaceholderText("Reply…"), " IMPORTANT LOCAL WORDS");
+  act(() => otherTab("THE OTHER TAB SAVED"));
+  expect(screen.getByRole("status")).toHaveTextContent("THE OTHER TAB SAVED");
+  first.unmount();
+
+  renderReply();
+  expect(screen.getByPlaceholderText("Reply…")).toHaveValue(
+    "SHARED IMPORTANT LOCAL WORDS",
+  );
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "This draft changed in another tab. It now says:THE OTHER TAB SAVED",
+  );
+  expect(storedReply()).toBe("THE OTHER TAB SAVED");
+  await user.click(screen.getByRole("button", { name: "Keep mine" }));
+  expect(storedReply()).toBe("SHARED IMPORTANT LOCAL WORDS");
+  expect(screen.queryByRole("status")).toBeNull();
+});
+
+it("says that the words of a reply came back, and discards them on request", async () => {
+  const user = userEvent.setup();
+  const first = renderReply();
+  await user.type(screen.getByPlaceholderText("Reply…"), "Half a thought");
+  first.unmount();
+  renderReply();
+  const notice = screen.getByRole("status");
+  expect(notice).toHaveTextContent("You did not send these words yet.");
+  await user.click(within(notice).getByRole("button", { name: "Discard" }));
+  expect(screen.getByPlaceholderText("Reply…")).toHaveValue("");
+  await pause();
+  expect(storedReply()).toBeUndefined();
+});
+
+it("shows the reply count with a reply that sends, so that nothing moves when it posts", async () => {
+  vi.spyOn(api, "createCommentReply").mockReturnValueOnce(new Promise(() => {}));
+  const user = userEvent.setup();
+  renderThreadReplies(thread);
+  await user.type(screen.getByPlaceholderText("Reply…"), "First reply{Enter}");
+  expect(screen.getByText("1 reply")).toBeVisible();
+});
+
+it("closes the view on Esc but keeps a changed edit, and Cancel discards it", async () => {
+  const user = userEvent.setup();
+  const outer = vi.fn();
+  document.addEventListener("keydown", outer);
+  renderMessage(mine);
+  const box = await startEdit(user);
+  await user.type(box, " KEEP ME{Escape}");
+  expect(outer).toHaveBeenCalledWith(expect.objectContaining({ key: "Escape" }));
+  document.removeEventListener("keydown", outer);
+  cleanup();
+
+  renderMessage(mine);
+  expect(screen.getByRole("combobox", { name: "Edit reply" })).toHaveValue(
+    "Original words KEEP ME",
+  );
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "You did not save this edit yet.",
+  );
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("combobox", { name: "Edit reply" })).toBeNull();
+  expect(screen.getByText("Original words")).toBeVisible();
 });

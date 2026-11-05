@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { useDraftText } from "./comment-drafts";
+import { useDraftText, type DraftText } from "./comment-drafts";
 import { createPersistentStore } from "./persistent-store";
 
 // The unsent words of a form field that is not a comment: a reject reason,
@@ -8,8 +8,14 @@ import { createPersistentStore } from "./persistent-store";
 // the words come back when the reader opens that form again, after Esc, a
 // close, a new version, a route change or a reload. `about` keeps what the
 // words were written for, such as the version that a reason describes.
-// Sending or discarding the words removes them.
-export type FieldDraft = { body: string; about?: string; updatedAt: number };
+// Sending or discarding the words removes them. `held` keeps the words of a
+// field that closed during a two-tab conflict, beside the stored ones.
+export type FieldDraft = {
+  body: string;
+  about?: string;
+  held?: string;
+  updatedAt: number;
+};
 
 const MAX_AGE = 30 * 24 * 60 * 60 * 1000;
 
@@ -21,7 +27,7 @@ const store = createPersistentStore<Record<string, FieldDraft>>(
       Object.entries(parsed as Record<string, FieldDraft>).filter(
         ([, d]) =>
           typeof d?.body === "string" &&
-          d.body.trim() !== "" &&
+          !!(d.body.trim() || d.held?.trim()) &&
           d.updatedAt > Date.now() - MAX_AGE,
       ),
     ),
@@ -30,9 +36,15 @@ const store = createPersistentStore<Record<string, FieldDraft>>(
 export const readFieldDraft = (key: string): FieldDraft | undefined =>
   store.read()[key];
 
-export function saveFieldDraft(key: string, body: string, about?: string) {
+export function saveFieldDraft(
+  key: string,
+  body: string,
+  about?: string,
+  held?: string,
+) {
   const all = { ...store.read() };
-  if (body.trim()) all[key] = { body, about, updatedAt: Date.now() };
+  if (body.trim() || held?.trim())
+    all[key] = { body, about, held, updatedAt: Date.now() };
   else if (all[key]) delete all[key];
   else return;
   try {
@@ -52,7 +64,8 @@ const NO_MENTIONS: never[] = [];
 // useFieldDraft is the text of one field, kept as the draft under `key`. It
 // saves as the comment drafts do (useDraftText): after a short pause, and at
 // once when the field goes. If another tab changes the same draft while this
-// one holds unsaved words, conflict gives the other text and the choice. Set
+// one holds unsaved words, conflict gives the other text and the choice, also
+// after the field closes or the page reloads, until the reader chooses. Set
 // the text to "" to discard it, or to a function of the text now, so that a
 // late success clears only the words that it sent:
 // `setText((now) => (now === sent ? "" : now))`. Mount the field again
@@ -60,11 +73,15 @@ const NO_MENTIONS: never[] = [];
 export function useFieldDraft(key: string, about?: string) {
   const stored = store.useStore()[key];
   const save = useCallback(
-    ({ body }: { body: string }) => saveFieldDraft(key, body, about),
+    ({ body, held }: DraftText) => saveFieldDraft(key, body, about, held?.body),
     [key, about],
   );
   const [text, edit, conflict] = useDraftText(
-    { body: stored?.body ?? "", mentions: NO_MENTIONS },
+    {
+      body: stored?.body ?? "",
+      mentions: NO_MENTIONS,
+      held: stored?.held ? { body: stored.held, mentions: NO_MENTIONS } : undefined,
+    },
     save,
   );
   const setText = useCallback(

@@ -150,7 +150,7 @@ for (const size of [
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
       "R9 to delete IMPORTANT UNSAVED EDIT\n\nUNSENT REPLY WORDS",
     );
-    await notice.getByRole("button", { name: "Dismiss" }).click();
+    await notice.getByRole("button", { name: "Discard" }).click();
     await expect(thread).toBeHidden();
   });
 }
