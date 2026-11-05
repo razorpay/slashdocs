@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { toast } from "sonner";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Version } from "@/api";
@@ -25,11 +26,14 @@ function renderBanner(props: { version?: Version; canRestore: boolean }) {
   const doc = { showLatest: vi.fn(), stayOnVersion: vi.fn() };
   const client = new QueryClient();
   client.setQueryData(queryKeys.versions("doc_1"), { items: [earlier, newest] });
+  // The preview is in the link, as on the document page.
   render(
     <QueryClientProvider client={client}>
-      <DocProvider value={doc as unknown as DocContextValue}>
-        <PreviewBanner docId="doc_1" {...props} />
-      </DocProvider>
+      <MemoryRouter initialEntries={[`/app/d/doc_1?version=${props.version?.id}`]}>
+        <DocProvider value={doc as unknown as DocContextValue}>
+          <PreviewBanner docId="doc_1" {...props} />
+        </DocProvider>
+      </MemoryRouter>
     </QueryClientProvider>,
   );
   return doc;
@@ -142,9 +146,11 @@ it("says that the history did not load, with Retry, and does not just drop Resto
     <QueryClientProvider
       client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
     >
-      <DocProvider value={doc as unknown as DocContextValue}>
-        <Banner />
-      </DocProvider>
+      <MemoryRouter initialEntries={["/app/d/doc_1?version=v3"]}>
+        <DocProvider value={doc as unknown as DocContextValue}>
+          <Banner />
+        </DocProvider>
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 
