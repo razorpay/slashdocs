@@ -7,7 +7,49 @@ export type Draft = { outline: Outline; pool: BookDoc[] };
 export type ChapterPos = { part: number; index: number };
 export type Section = "front" | "back";
 
-const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+const clone = <T>(v: T): T => structuredClone(v);
+
+// Parts and planned chapters have no id of their own, so the draft gives each
+// a client-only key: a row keeps its React state and focus when it moves.
+// outlineOf drops the keys before anything is compared or sent.
+type Keyed = { key?: string };
+type Part = Outline["parts"][number];
+let lastKey = 0;
+const newKey = () => `k${++lastKey}`;
+
+export function draftOf(outline: Outline, pool: BookDoc[]): Draft {
+  const o = clone(outline);
+  const key = (e: OutlineEntry) => {
+    if (e.doc === undefined) (e as Keyed).key = newKey();
+  };
+  o.front.forEach(key);
+  o.back.forEach(key);
+  for (const p of o.parts) {
+    (p as Keyed).key = newKey();
+    p.chapters.forEach(key);
+  }
+  return { outline: o, pool };
+}
+
+// The outline as the server takes it: no row keys.
+export function outlineOf(o: Outline): Outline {
+  const strip = <T extends object>(v: T): T => {
+    const rest = { ...v } as T & Keyed;
+    delete rest.key;
+    return rest;
+  };
+  return {
+    ...o,
+    front: o.front.map(strip),
+    parts: o.parts.map((p) => ({ ...strip(p), chapters: p.chapters.map(strip) })),
+    back: o.back.map(strip),
+  };
+}
+
+// A stable React key for a row.
+export const entryKey = (e: OutlineEntry): string =>
+  e.doc !== undefined ? `doc:${e.doc}` : `new:${(e as Keyed).key ?? ""}`;
+export const partKey = (p: Part): string => `part:${(p as Keyed).key ?? ""}`;
 
 function insertAt<T>(list: T[], index: number, item: T) {
   list.splice(Math.max(0, Math.min(index, list.length)), 0, item);
@@ -21,8 +63,15 @@ export function chapterNumbers(o: Outline): number[][] {
   return o.parts.map((p) => p.chapters.map(() => ++n));
 }
 
+// An empty subtitle is the same as none.
+function canonical(o: Outline): string {
+  const c = outlineOf(o);
+  if (!c.subtitle) delete c.subtitle;
+  return JSON.stringify(c);
+}
+
 export function sameOutline(a: Outline, b: Outline): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+  return canonical(a) === canonical(b);
 }
 
 // Moves a chapter one step. At the edge of a part it crosses into the
@@ -77,7 +126,7 @@ export function moveChapterToPart(d: Draft, from: ChapterPos, part: number): Dra
 
 export function addPart(d: Draft, title = "New part"): Draft {
   const next = clone(d);
-  next.outline.parts.push({ title, chapters: [] });
+  next.outline.parts.push({ title, chapters: [], key: newKey() } as Part);
   return next;
 }
 
@@ -85,9 +134,7 @@ export function removePart(d: Draft, part: number, titleOf: (id: string) => stri
   if (!d.outline.parts[part]) return d;
   const next = clone(d);
   const [gone] = next.outline.parts.splice(part, 1);
-  for (const e of gone.chapters) {
-    if (e.doc) next.pool.push({ id: e.doc, title: titleOf(e.doc) });
-  }
+  for (const e of gone.chapters) poolEntry(next, e, titleOf);
   return next;
 }
 
@@ -106,7 +153,10 @@ export function setTitle(d: Draft, field: "title" | "subtitle", value: string): 
 export function addPlanned(d: Draft, part: number): Draft {
   if (!d.outline.parts[part]) return d;
   const next = clone(d);
-  next.outline.parts[part].chapters.push({ planned: "" });
+  next.outline.parts[part].chapters.push({
+    planned: "",
+    key: newKey(),
+  } as OutlineEntry);
   return next;
 }
 

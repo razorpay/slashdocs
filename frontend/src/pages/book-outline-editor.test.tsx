@@ -77,10 +77,10 @@ function mockLoad(over: Partial<OutlineResponse> = {}, front: ManifestLink[] = [
 }
 
 // Errors the app's global query handler would toast (main.tsx).
-let globalErrors: ReturnType<typeof vi.fn>;
+let globalErrors = vi.fn<(e: unknown) => void>();
 
 function renderEditor(state?: unknown) {
-  globalErrors = vi.fn();
+  globalErrors = vi.fn<(e: unknown) => void>();
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
     queryCache: new QueryCache({
@@ -214,6 +214,9 @@ describe("BookOutlineEditorPage", () => {
     expect(base).toBe("bov_1");
     expect(note).toBe("swap intro");
     expect(sent.parts[0].chapters.map((c) => c.doc)).toEqual(["doc_b", "doc_a"]);
+    // The editor's row keys stay in the browser.
+    expect(sent).toEqual({ ...outline(), parts: sent.parts });
+    expect(JSON.stringify(sent)).not.toContain('"key"');
   });
 
   it("moves documents between Not in outline and parts", async () => {
@@ -356,5 +359,56 @@ describe("BookOutlineEditorPage", () => {
     await user.click(within(row).getByRole("button", { name: "Remove Roadmap" }));
     const pool = screen.getByRole("region", { name: "Not in outline" });
     expect(within(pool).getByText("Roadmap")).toBeTruthy();
+  });
+
+  it("keeps focus on the moved chapter so Move can be pressed again", async () => {
+    mockLoad();
+    const user = userEvent.setup();
+    renderEditor();
+    await screen.findByRole("listitem", { name: "Chapter 1: Alpha" });
+    screen.getByRole("button", { name: "Move Alpha down" }).focus();
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("button", { name: "Move Alpha down" })).toHaveFocus();
+    // The second press crosses into Part Two, and the third moves on.
+    await user.keyboard("{Enter}");
+    const partTwo = screen.getByRole("group", { name: "Part Two" });
+    expect(
+      within(partTwo).getByRole("listitem", { name: "Chapter 2: Alpha" }),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Move Alpha down" })).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(chapterRows()).toEqual([
+      "Chapter 1: Beta",
+      "Chapter 2: Gamma",
+      "Chapter 3: Alpha",
+    ]);
+  });
+
+  it("keeps focus on a moved planned chapter and a moved part", async () => {
+    mockLoad();
+    const user = userEvent.setup();
+    renderEditor();
+    const partOne = await screen.findByRole("group", { name: "Part One" });
+    await user.click(
+      within(partOne).getByRole("button", { name: "Add planned chapter" }),
+    );
+    await user.type(
+      within(partOne).getByRole("textbox", { name: "Planned chapter title" }),
+      "Retries",
+    );
+    screen.getByRole("button", { name: "Move Retries (planned) up" }).focus();
+    await user.keyboard("{Enter}{Enter}");
+    expect(chapterRows()[0]).toBe("Chapter 1: Retries (planned)");
+    // The up button is now disabled, so focus moves to the down button.
+    expect(
+      screen.getByRole("button", { name: "Move Retries (planned) down" }),
+    ).toHaveFocus();
+
+    screen.getByRole("button", { name: "Move Part One down" }).focus();
+    await user.keyboard("{Enter}");
+    expect(
+      screen.getAllByRole("group").map((g) => g.getAttribute("aria-label")),
+    ).toEqual(["Front matter", "Part Two", "Part One", "Back matter"]);
+    expect(screen.getByRole("button", { name: "Move Part One up" })).toHaveFocus();
   });
 });

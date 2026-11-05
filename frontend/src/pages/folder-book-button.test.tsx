@@ -22,7 +22,7 @@ function Where() {
 }
 
 // Errors the app's global query handler would toast (main.tsx).
-let globalErrors: ReturnType<typeof vi.fn>;
+let globalErrors = vi.fn<(e: unknown) => void>();
 
 function setup(opts: {
   enabled: boolean;
@@ -40,7 +40,7 @@ function setup(opts: {
         ? Promise.resolve({ book_id: "b1" })
         : Promise.reject(opts.lookupError ?? new APIError(404, "not_found", "no book")),
     );
-  globalErrors = vi.fn();
+  globalErrors = vi.fn<(e: unknown) => void>();
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
     queryCache: new QueryCache({

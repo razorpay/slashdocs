@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -22,11 +22,15 @@ import {
   addPlanned,
   applyDrop,
   chapterNumbers,
+  draftOf,
+  entryKey,
   groupProblems,
   moveChapterBy,
   moveChapterToPart,
   moveMatterBy,
   movePartBy,
+  outlineOf,
+  partKey,
   removeChapter,
   removeMatter,
   removePart,
@@ -93,15 +97,20 @@ function Handle({ handle, label }: { handle: DragHandle; label: string }) {
   );
 }
 
+type Dir = "up" | "down";
+
 function IconButton({
   label,
   onClick,
   disabled,
+  move,
   children,
 }: {
   label: string;
   onClick: () => void;
   disabled?: boolean;
+  // Marks a Move button, so focus can follow its row (Editor).
+  move?: Dir;
   children: ReactNode;
 }) {
   return (
@@ -113,6 +122,7 @@ function IconButton({
       aria-label={label}
       tooltip={label}
       disabled={disabled}
+      data-move={move}
       onClick={onClick}
     >
       {children}
@@ -149,6 +159,8 @@ type Ops = {
   update: (next: Draft) => void;
   titleOf: (id: string) => string;
   errors: Errors;
+  // Applies a Move and keeps focus on the moved row's Move button.
+  move: (next: Draft, rowKey: string, dir: Dir) => void;
 };
 
 function ChapterRow({
@@ -164,8 +176,9 @@ function ChapterRow({
   canUp: boolean;
   canDown: boolean;
 }) {
-  const { draft, update, titleOf, errors } = ops;
+  const { draft, update, titleOf, errors, move } = ops;
   const entry = draft.outline.parts[at.part].chapters[at.index];
+  const key = entryKey(entry);
   const planned = entry.doc === undefined;
   const title = planned ? entry.planned || "" : titleOf(entry.doc!);
   const row = useRow(`ch:${at.part}:${at.index}`);
@@ -174,7 +187,8 @@ function ChapterRow({
     <li
       ref={row.ref}
       style={row.style}
-      aria-label={`Chapter ${number}: ${planned ? (title ? `${title} (planned)` : "(planned)") : title}`}
+      data-row-key={key}
+      aria-label={`Chapter ${number}: ${planned && !title ? "(planned)" : name}`}
       className={cn(
         "rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-2",
         row.over && "ring-2 ring-[var(--color-accent)]",
@@ -217,15 +231,17 @@ function ChapterRow({
         </select>
         <IconButton
           label={`Move ${name} up`}
+          move="up"
           disabled={!canUp}
-          onClick={() => update(moveChapterBy(draft, at, -1))}
+          onClick={() => move(moveChapterBy(draft, at, -1), key, "up")}
         >
           <ArrowUp className="h-4 w-4" />
         </IconButton>
         <IconButton
           label={`Move ${name} down`}
+          move="down"
           disabled={!canDown}
-          onClick={() => update(moveChapterBy(draft, at, 1))}
+          onClick={() => move(moveChapterBy(draft, at, 1), key, "down")}
         >
           <ArrowDown className="h-4 w-4" />
         </IconButton>
@@ -250,14 +266,16 @@ function PartSection({
   index: number;
   numbers: number[][];
 }) {
-  const { draft, update, errors } = ops;
+  const { draft, update, errors, move } = ops;
   const parts = draft.outline.parts;
   const part = parts[index];
+  const key = partKey(part);
   const head = useRow(`part:${index}`);
   const end = useDroppable({ id: `end:${index}` });
   const label = part.title || `Part ${index + 1}`;
   return (
     <section
+      data-row-key={key}
       role="group"
       aria-label={label}
       className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-muted)]/40 p-3"
@@ -279,15 +297,17 @@ function PartSection({
         />
         <IconButton
           label={`Move ${label} up`}
+          move="up"
           disabled={index === 0}
-          onClick={() => update(movePartBy(draft, index, -1))}
+          onClick={() => move(movePartBy(draft, index, -1), key, "up")}
         >
           <ArrowUp className="h-4 w-4" />
         </IconButton>
         <IconButton
           label={`Move ${label} down`}
+          move="down"
           disabled={index === parts.length - 1}
-          onClick={() => update(movePartBy(draft, index, 1))}
+          onClick={() => move(movePartBy(draft, index, 1), key, "down")}
         >
           <ArrowDown className="h-4 w-4" />
         </IconButton>
@@ -305,9 +325,9 @@ function PartSection({
         <FieldErrors messages={errors.get(`part:${index}`)} />
       </div>
       <ol className="mt-2 flex flex-col gap-2">
-        {part.chapters.map((_, c) => (
+        {part.chapters.map((e, c) => (
           <ChapterRow
-            key={c}
+            key={entryKey(e)}
             ops={ops}
             at={{ part: index, index: c }}
             number={numbers[index][c]}
@@ -351,7 +371,7 @@ function Matter({
   section: Section;
   label: string;
 }) {
-  const { draft, update, titleOf, errors } = ops;
+  const { draft, update, titleOf, errors, move } = ops;
   const list = draft.outline[section];
   return (
     <section role="group" aria-label={label} className="flex flex-col gap-2">
@@ -364,9 +384,11 @@ function Matter({
         <ol className="flex flex-col gap-2">
           {list.map((e, i) => {
             const title = titleOf(e.doc ?? "");
+            const key = entryKey(e);
             return (
               <li
-                key={i}
+                key={key}
+                data-row-key={key}
                 aria-label={`${label}: ${title}`}
                 className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-2"
               >
@@ -374,15 +396,19 @@ function Matter({
                   <span className="min-w-0 flex-1 truncate text-sm">{title}</span>
                   <IconButton
                     label={`Move ${title} up`}
+                    move="up"
                     disabled={i === 0}
-                    onClick={() => update(moveMatterBy(draft, section, i, -1))}
+                    onClick={() => move(moveMatterBy(draft, section, i, -1), key, "up")}
                   >
                     <ArrowUp className="h-4 w-4" />
                   </IconButton>
                   <IconButton
                     label={`Move ${title} down`}
+                    move="down"
                     disabled={i === list.length - 1}
-                    onClick={() => update(moveMatterBy(draft, section, i, 1))}
+                    onClick={() =>
+                      move(moveMatterBy(draft, section, i, 1), key, "down")
+                    }
                   >
                     <ArrowDown className="h-4 w-4" />
                   </IconButton>
@@ -469,10 +495,9 @@ function Editor({
   placed?: { placed: number; notInOutline: number };
 }) {
   const qc = useQueryClient();
-  const [draft, setDraft] = useState<Draft>({
-    outline: data.outline,
-    pool: data.not_in_outline,
-  });
+  const [draft, setDraft] = useState<Draft>(() =>
+    draftOf(data.outline, data.not_in_outline),
+  );
   const [note, setNote] = useState("");
   const [problems, setProblems] = useState<Problem[]>([]);
   const [conflict, setConflict] = useState(false);
@@ -501,6 +526,27 @@ function Editor({
     if (problems.length) setProblems([]);
   };
 
+  // After a Move, focus that row's Move button in the same direction, or
+  // the other one at an edge. Without this, focus stays at the old place
+  // and pressing again moves a different row.
+  const focusAfter = useRef<{ rowKey: string; dir: Dir } | null>(null);
+  const move = (next: Draft, rowKey: string, dir: Dir) => {
+    focusAfter.current = { rowKey, dir };
+    update(next);
+  };
+  useEffect(() => {
+    const f = focusAfter.current;
+    if (!f) return;
+    focusAfter.current = null;
+    const row = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-row-key]"),
+    ).find((el) => el.dataset.rowKey === f.rowKey);
+    const button = (d: Dir) =>
+      row?.querySelector<HTMLButtonElement>(`button[data-move="${d}"]`);
+    const same = button(f.dir);
+    (same && !same.disabled ? same : button(f.dir === "up" ? "down" : "up"))?.focus();
+  });
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor),
@@ -511,7 +557,12 @@ function Editor({
 
   const save = useMutation({
     mutationFn: () =>
-      booksApi.pushOutline(bookId, data.version_id, draft.outline, note.trim()),
+      booksApi.pushOutline(
+        bookId,
+        data.version_id,
+        outlineOf(draft.outline),
+        note.trim(),
+      ),
     onSuccess: async (r) => {
       toast.success(`Saved the outline as version ${r.number}.`);
       setProblems([]);
@@ -545,7 +596,7 @@ function Editor({
     }
   };
 
-  const ops: Ops = { draft, update, titleOf, errors: byRow };
+  const ops: Ops = { draft, update, titleOf, errors: byRow, move };
   const o = draft.outline;
   return (
     <Page lane="focus" backdrop={false}>
@@ -651,8 +702,8 @@ function Editor({
         <div className="flex flex-col gap-6">
           <Matter ops={ops} section="front" label="Front matter" />
           <div className="flex flex-col gap-3">
-            {o.parts.map((_, i) => (
-              <PartSection key={i} ops={ops} index={i} numbers={numbers} />
+            {o.parts.map((p, i) => (
+              <PartSection key={partKey(p)} ops={ops} index={i} numbers={numbers} />
             ))}
             <div>
               <Button
