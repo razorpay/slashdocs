@@ -10,6 +10,7 @@ import {
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { Textarea } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { Avatar } from "@/components/ui/misc";
 import { principalColor } from "@/lib/principals";
 import { api, type Comment, type UserPrincipal } from "@/api";
@@ -28,6 +29,8 @@ import {
 
 // The text of a comment: the field that writes it, with @mention suggestions,
 // and the body that shows it, with mentions and web links marked.
+
+const NONE: UserPrincipal[] = [];
 
 export function MentionTextarea({
   draft,
@@ -59,14 +62,24 @@ export function MentionTextarea({
   const afterMention = useRef<number | null>(null);
   const [caret, setCaret] = useState(0);
   const [target, setTarget] = useState<MentionTarget | null>(null);
-  const [suggestions, setSuggestions] = useState<UserPrincipal[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
-  const [open, setOpen] = useState(false);
+  const [focused, setFocused] = useState(false);
+  // The words for which Escape closed the list. New words open it again.
+  const [closed, setClosed] = useState<string>();
   const listID = useId();
-  const [suggestionQuery, setSuggestionQuery] = useState("");
   const [position, setPosition] = useState({ left: 0, top: 0, width: 0 });
-  const visible =
-    open && suggestions.length > 0 && suggestionQuery === target?.query.trim();
+  // The people found for some words, or a search for them that failed.
+  const [found, setFound] = useState<{
+    query: string;
+    people: UserPrincipal[];
+    failed?: boolean;
+  }>();
+  const [attempt, setAttempt] = useState(0);
+  const query = target?.query.trim() || "";
+  // Only the people found for the words at the caret, never an older search.
+  const result = query.length >= 2 && found?.query === query ? found : undefined;
+  const suggestions = result?.people ?? NONE;
+  const visible = focused && suggestions.length > 0 && query !== closed;
 
   // Use the browser event: React's synthetic beforeinput omits paste and some
   // native edits, which previously cleared every accepted mention on change.
@@ -137,33 +150,21 @@ export function MentionTextarea({
   }, [draft.body, draft.mentions, caret]);
 
   useEffect(() => {
-    const query = target?.query.trim() || "";
-    if (query.length < 2) {
-      setSuggestions([]);
-      setOpen(false);
-      return;
-    }
+    if (query.length < 2) return;
     let cancelled = false;
-    const timeout = window.setTimeout(async () => {
-      try {
-        const result = await api.searchUsers(query);
-        if (cancelled) return;
-        setSuggestionQuery(query);
-        setSuggestions(result.items || []);
-        setActiveIndex(0);
-        setOpen((result.items || []).length > 0);
-      } catch {
-        if (!cancelled) {
-          setSuggestions([]);
-          setOpen(false);
-        }
-      }
+    const timeout = window.setTimeout(() => {
+      api.searchUsers(query).then(
+        (r) => !cancelled && setFound({ query, people: r.items || [] }),
+        () => !cancelled && setFound({ query, people: [], failed: true }),
+      );
     }, 250);
     return () => {
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [target?.query]);
+  }, [query, attempt]);
+
+  useEffect(() => setActiveIndex(0), [suggestions]);
 
   useLayoutEffect(() => {
     const at = caretRestore.current;
@@ -180,14 +181,12 @@ export function MentionTextarea({
     if (!target) return;
     if (draft.mentions.length >= MAX_COMMENT_MENTIONS) {
       toast.error(`A comment can mention up to ${MAX_COMMENT_MENTIONS} people.`);
-      setOpen(false);
+      setClosed(query);
       return;
     }
     const label = `@${mentionPrincipalLabel(user)}`;
     const nextCaret = target.start + label.length + 1;
     onChange(insertMention(draft, target.start, target.end, user));
-    setOpen(false);
-    setSuggestions([]);
     setCaret(nextCaret);
     caretRestore.current = nextCaret;
   };
@@ -216,7 +215,7 @@ export function MentionTextarea({
         // It closes the suggestions only, not the popover around the field.
         event.preventDefault();
         event.stopPropagation();
-        setOpen(false);
+        setClosed(query);
         return;
       }
     }
@@ -248,7 +247,8 @@ export function MentionTextarea({
           aria-controls={visible ? listID : undefined}
           aria-activedescendant={visible ? `${listID}-${activeIndex}` : undefined}
           onClick={(event) => syncTarget(event.currentTarget)}
-          onBlur={() => setOpen(false)}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
           onKeyUp={(event) => syncTarget(event.currentTarget)}
           onSelect={(event) => syncTarget(event.currentTarget)}
           onKeyDown={handleKeyDown}
@@ -273,13 +273,12 @@ export function MentionTextarea({
                 return (
                   // The pointer moves the highlight too, so one option shows
                   // what Enter picks, as in a menu.
-                  <button
+                  <div
                     key={user.id || user.email}
                     id={`${listID}-${index}`}
                     role="option"
                     aria-selected={index === activeIndex}
-                    type="button"
-                    className="flex min-h-10 w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm transition-[background-color,color] duration-150 ease-out aria-selected:bg-[var(--color-highlight)]"
+                    className="flex min-h-10 w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm transition-[background-color,color] duration-150 ease-out aria-selected:bg-[var(--color-highlight)]"
                     onPointerDown={(event) => event.preventDefault()}
                     onMouseEnter={() => setActiveIndex(index)}
                     onClick={(event) => {
@@ -301,7 +300,7 @@ export function MentionTextarea({
                         </span>
                       ) : null}
                     </span>
-                  </button>
+                  </div>
                 );
               })}
             </div>,
@@ -322,9 +321,28 @@ export function MentionTextarea({
         </p>
       )}
       {target && !visible && (
-        <p className="mt-1 text-xs text-[var(--color-fg-muted)]">
-          Choose a person from suggestions to notify them.
-        </p>
+        <div className="mt-1 flex items-center gap-2 text-xs text-[var(--color-fg-muted)]">
+          <p className="min-w-0 flex-1" role={result?.failed ? "alert" : undefined}>
+            {result?.failed
+              ? "Could not search people. Your words stay."
+              : result && suggestions.length === 0
+                ? `No one matches @${query}.`
+                : "Choose a person from suggestions to notify them."}
+          </p>
+          {result?.failed ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                setFound(undefined);
+                setAttempt((n) => n + 1);
+              }}
+            >
+              Retry
+            </Button>
+          ) : null}
+        </div>
       )}
     </div>
   );

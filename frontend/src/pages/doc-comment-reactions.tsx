@@ -193,7 +193,6 @@ export function ReactionBar({
               sideOffset={8}
               collisionPadding={12}
               loop
-              aria-label="Choose a reaction"
               onInteractOutside={() => {
                 interactedOutside.current = true;
               }}

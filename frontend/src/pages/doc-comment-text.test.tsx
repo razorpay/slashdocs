@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
@@ -11,18 +12,34 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function Field({ onChange }: { onChange: (draft: MentionDraft) => void }) {
+function Field({
+  onChange,
+  onKeyDown,
+}: {
+  onChange: (draft: MentionDraft) => void;
+  onKeyDown?: (event: { key: string }) => void;
+}) {
   const [draft, setDraft] = useState(emptyMentionDraft);
   return (
-    <MentionTextarea
-      draft={draft}
-      onChange={(next) => {
-        setDraft(next);
-        onChange(next);
-      }}
-    />
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+    >
+      <MentionTextarea
+        draft={draft}
+        onKeyDown={onKeyDown}
+        onChange={(next) => {
+          setDraft(next);
+          onChange(next);
+        }}
+      />
+    </QueryClientProvider>
   );
 }
+
+const people = (...names: string[]) =>
+  ({
+    items: names.map((name, i) => ({ type: "user", id: `u${i}`, name })),
+  }) as Awaited<ReturnType<typeof api.searchUsers>>;
 
 it.each([
   ["a click", () => userEvent.click(screen.getByRole("option", { name: /reviewer/ }))],
@@ -72,4 +89,50 @@ it("marks the option that Enter picks, and the pointer moves the mark", async ()
   await user.hover(second);
   expect(second).toHaveAttribute("aria-selected", "true");
   expect(first).toHaveAttribute("aria-selected", "false");
+});
+
+it("says that a mention search failed, keeps the words, and Retry finds the people", async () => {
+  const search = vi.spyOn(api, "searchUsers").mockRejectedValue(new Error("503"));
+  const onChange = vi.fn();
+  render(<Field onChange={onChange} />);
+  const user = userEvent.setup();
+  const field = screen.getByRole("combobox");
+  await user.type(field, "Ask @re");
+  expect(await screen.findByText(/Could not search people/)).toBeVisible();
+  expect(screen.queryByText(/Choose a person/)).toBeNull();
+  expect(field).toHaveValue("Ask @re");
+
+  search.mockResolvedValue(people("reviewer"));
+  await user.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByRole("option", { name: /reviewer/ })).toBeVisible();
+  expect(field).toHaveFocus();
+});
+
+it("says that nobody matches, not to pick from suggestions that are not there", async () => {
+  vi.spyOn(api, "searchUsers").mockResolvedValue(people());
+  render(<Field onChange={() => {}} />);
+  await userEvent.type(screen.getByRole("combobox"), "@zz");
+  expect(await screen.findByText("No one matches @zz.")).toBeVisible();
+});
+
+it("closes only the list on Escape, and typing opens it again", async () => {
+  vi.spyOn(api, "searchUsers").mockResolvedValue(people("reviewer", "researcher"));
+  const onKeyDown = vi.fn();
+  render(<Field onChange={() => {}} onKeyDown={onKeyDown} />);
+  const user = userEvent.setup();
+  const field = screen.getByRole("combobox");
+  await user.type(field, "@re");
+  await screen.findByRole("listbox");
+  await user.keyboard("{ArrowUp}");
+  expect(screen.getByRole("option", { name: /researcher/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("listbox")).toBeNull();
+  expect(onKeyDown).not.toHaveBeenCalledWith(
+    expect.objectContaining({ key: "Escape" }),
+  );
+  await user.type(field, "s");
+  expect(await screen.findByRole("listbox")).toBeVisible();
 });
