@@ -288,6 +288,34 @@ func (q *Queries) ListFolderDocuments(ctx context.Context, folderID string) ([]L
 	return items, nil
 }
 
+const lockDocumentForMove = `-- name: LockDocumentForMove :one
+SELECT id, COALESCE(parent_folder_id,'') AS parent_folder_id, owner_type, owner_id
+FROM documents
+WHERE id=$1
+FOR UPDATE
+`
+
+type LockDocumentForMoveRow struct {
+	ID             string
+	ParentFolderID string
+	OwnerType      string
+	OwnerID        string
+}
+
+// Lock the document after the folder-tree advisory lock. The caller derives
+// the actual source from this row before checking expected_source and roles.
+func (q *Queries) LockDocumentForMove(ctx context.Context, id string) (LockDocumentForMoveRow, error) {
+	row := q.db.QueryRow(ctx, lockDocumentForMove, id)
+	var i LockDocumentForMoveRow
+	err := row.Scan(
+		&i.ID,
+		&i.ParentFolderID,
+		&i.OwnerType,
+		&i.OwnerID,
+	)
+	return i, err
+}
+
 const moveDocumentToFolder = `-- name: MoveDocumentToFolder :execrows
 UPDATE documents SET parent_folder_id= $1::text, updated_at=now() WHERE id= $2
 `
@@ -305,7 +333,7 @@ func (q *Queries) MoveDocumentToFolder(ctx context.Context, arg MoveDocumentToFo
 	return result.RowsAffected(), nil
 }
 
-const moveDocumentToRoot = `-- name: MoveDocumentToRoot :exec
+const moveDocumentToRoot = `-- name: MoveDocumentToRoot :execrows
 UPDATE documents SET parent_folder_id=NULL, updated_at=now() WHERE id= $1 AND parent_folder_id= $2::text
 `
 
@@ -314,9 +342,12 @@ type MoveDocumentToRootParams struct {
 	FolderID   string
 }
 
-func (q *Queries) MoveDocumentToRoot(ctx context.Context, arg MoveDocumentToRootParams) error {
-	_, err := q.db.Exec(ctx, moveDocumentToRoot, arg.DocumentID, arg.FolderID)
-	return err
+func (q *Queries) MoveDocumentToRoot(ctx context.Context, arg MoveDocumentToRootParams) (int64, error) {
+	result, err := q.db.Exec(ctx, moveDocumentToRoot, arg.DocumentID, arg.FolderID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const recordWorkspaceEntry = `-- name: RecordWorkspaceEntry :exec

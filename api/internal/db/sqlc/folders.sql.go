@@ -378,7 +378,12 @@ WITH RECURSIVE chain(id, title, parent_folder_id, owner_type, owner_id, depth) A
   WHERE c.depth < 64
 )
 SELECT c.id, c.title,
-       (c.owner_type= $1::text AND c.owner_id= $2::text)::bool AS is_owner,
+       EXISTS (
+         SELECT 1 FROM chain owner_ancestor
+         WHERE owner_ancestor.depth >= c.depth
+           AND owner_ancestor.owner_type= $1::text
+           AND owner_ancestor.owner_id= $2::text
+       )::bool AS is_owner,
        COALESCE((
          SELECT max(CASE g.role WHEN 'owner' THEN 4 WHEN 'editor' THEN 3 WHEN 'commenter' THEN 2 WHEN 'viewer' THEN 1 ELSE 0 END)
          FROM resource_grants g
@@ -432,6 +437,102 @@ func (q *Queries) ListFolderAccessChain(ctx context.Context, arg ListFolderAcces
 			&i.Title,
 			&i.IsOwner,
 			&i.GrantRank,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFolderAccessChains = `-- name: ListFolderAccessChains :many
+WITH RECURSIVE chain(candidate_id, id, title, parent_folder_id, owner_type, owner_id, depth) AS (
+  SELECT f.id, f.id, f.title, f.parent_folder_id, f.owner_type, f.owner_id, 0
+  FROM folders f
+  WHERE f.id=ANY($4::text[])
+  UNION ALL
+  SELECT c.candidate_id, f.id, f.title, f.parent_folder_id, f.owner_type, f.owner_id, c.depth+1
+  FROM folders f
+  JOIN chain c ON f.id=c.parent_folder_id
+  WHERE c.depth < 64
+)
+SELECT c.candidate_id, c.id, c.title, c.depth,
+       (c.owner_type= $1::text AND c.owner_id= $2::text)::bool AS is_owner,
+       COALESCE(MAX(CASE
+         WHEN (g.principal_type= $1::text AND g.principal_id= $2::text)
+           OR (g.principal_type='google_group' AND g.principal_id=ANY($3::text[]))
+           OR g.principal_type='anyone'
+         THEN CASE g.role
+           WHEN 'owner' THEN 4
+           WHEN 'editor' THEN 3
+           WHEN 'commenter' THEN 2
+           WHEN 'viewer' THEN 1
+           ELSE 0
+         END
+         ELSE 0
+       END), 0)::int AS grant_rank,
+       ((c.owner_type= $1::text AND c.owner_id= $2::text)
+         OR COALESCE(BOOL_OR(
+           (g.principal_type= $1::text AND g.principal_id= $2::text)
+           OR (g.principal_type='google_group' AND g.principal_id=ANY($3::text[]))
+         ), false))::bool AS has_private_access,
+       COALESCE(BOOL_OR(g.principal_type='anyone'), false)::bool AS has_anyone_access
+FROM chain c
+LEFT JOIN resource_grants g
+  ON g.resource_type='folder'
+ AND g.resource_id=c.id
+ AND g.revoked_at IS NULL
+GROUP BY c.candidate_id, c.id, c.title, c.depth, c.owner_type, c.owner_id
+ORDER BY c.candidate_id, c.depth DESC
+`
+
+type ListFolderAccessChainsParams struct {
+	PrincipalType  string
+	PrincipalID    string
+	GoogleGroupIds []string
+	FolderIds      []string
+}
+
+type ListFolderAccessChainsRow struct {
+	CandidateID      string
+	ID               string
+	Title            string
+	Depth            int32
+	IsOwner          bool
+	GrantRank        int32
+	HasPrivateAccess bool
+	HasAnyoneAccess  bool
+}
+
+// Batch form used by folder search. It returns direct access facts for every
+// node in each requested root-first chain; the repository folds those facts
+// into inherited roles and safe breadcrumb suffixes without N+1 queries.
+func (q *Queries) ListFolderAccessChains(ctx context.Context, arg ListFolderAccessChainsParams) ([]ListFolderAccessChainsRow, error) {
+	rows, err := q.db.Query(ctx, listFolderAccessChains,
+		arg.PrincipalType,
+		arg.PrincipalID,
+		arg.GoogleGroupIds,
+		arg.FolderIds,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListFolderAccessChainsRow
+	for rows.Next() {
+		var i ListFolderAccessChainsRow
+		if err := rows.Scan(
+			&i.CandidateID,
+			&i.ID,
+			&i.Title,
+			&i.Depth,
+			&i.IsOwner,
+			&i.GrantRank,
+			&i.HasPrivateAccess,
+			&i.HasAnyoneAccess,
 		); err != nil {
 			return nil, err
 		}
@@ -714,38 +815,80 @@ func (q *Queries) RootFolderTitleTaken(ctx context.Context, arg RootFolderTitleT
 }
 
 const searchFoldersByTitle = `-- name: SearchFoldersByTitle :many
-WITH RECURSIVE accessible(id, depth) AS (
-  SELECT f.id, 1 FROM folders f WHERE f.owner_type= $3 AND f.owner_id= $4
-  UNION
-  SELECT g.resource_id, 1 FROM resource_grants g
-  WHERE g.resource_type='folder' AND g.revoked_at IS NULL
-    AND ((g.principal_type= $3 AND g.principal_id= $4)
-      OR (g.principal_type='google_group' AND g.principal_id=ANY($5::text[]))
-      OR ($6::boolean AND g.principal_type='anyone'))
+WITH RECURSIVE ancestors(candidate_id, ancestor_id, depth) AS (
+  SELECT f.id, f.id, 0
+  FROM folders f
+  WHERE f.title ILIKE '%' || $4::text || '%'
   UNION ALL
-  SELECT c.id, a.depth+1 FROM folders c JOIN accessible a ON c.parent_folder_id = a.id WHERE a.depth < 20
+  SELECT a.candidate_id, f.parent_folder_id, a.depth+1
+  FROM ancestors a
+  JOIN folders f ON f.id=a.ancestor_id
+  WHERE f.parent_folder_id IS NOT NULL AND a.depth < 64
+), effective_roles AS (
+  SELECT a.candidate_id,
+         GREATEST(
+           COALESCE(MAX(CASE
+             WHEN ancestor_folder.owner_type= $5 AND ancestor_folder.owner_id= $6 THEN 4
+             ELSE 0
+           END), 0),
+           COALESCE(MAX(CASE
+             WHEN (g.principal_type= $5 AND g.principal_id= $6)
+               OR (g.principal_type='google_group' AND g.principal_id=ANY($7::text[]))
+               OR g.principal_type='anyone'
+             THEN CASE g.role
+               WHEN 'owner' THEN 4
+               WHEN 'editor' THEN 3
+               WHEN 'commenter' THEN 2
+               WHEN 'viewer' THEN 1
+               ELSE 0
+             END
+             ELSE 0
+           END), 0)
+         )::int AS role_rank,
+         COALESCE(BOOL_OR(
+           (ancestor_folder.owner_type= $5 AND ancestor_folder.owner_id= $6)
+           OR (
+             (g.principal_type= $5 AND g.principal_id= $6)
+             OR (g.principal_type='google_group' AND g.principal_id=ANY($7::text[]))
+           )), false)::bool AS has_private_access,
+         COALESCE(BOOL_OR(g.principal_type='anyone'), false)::bool AS has_anyone_access
+  FROM ancestors a
+  JOIN folders ancestor_folder ON ancestor_folder.id=a.ancestor_id
+  LEFT JOIN resource_grants g
+    ON g.resource_type='folder'
+   AND g.resource_id=a.ancestor_id
+   AND g.revoked_at IS NULL
+  GROUP BY a.candidate_id
 )
-SELECT DISTINCT f.id, f.title, f.owner_type, f.owner_id,
+SELECT f.id, f.title, f.owner_type, f.owner_id,
        COALESCE(f.parent_folder_id,'') AS parent_folder_id,
        COALESCE(u.name,sa.name,'') AS owner_name, COALESCE(u.email,'') AS owner_email
 FROM folders f
-JOIN accessible a ON f.id = a.id
+JOIN effective_roles access ON access.candidate_id=f.id
 LEFT JOIN users u ON f.owner_type='user' AND f.owner_id=u.id
 LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
   -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
   ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
-WHERE f.title ILIKE '%' || $1::text || '%'
-ORDER BY f.title
-LIMIT $2
+WHERE access.role_rank > 0
+  AND access.role_rank >= $1::int
+  -- Anyone-only folders are link-addressable but must not appear in the
+  -- public search index. In org deployment, anyone grants are workspace-wide
+  -- discovery grants. Private access and effective role are intentionally
+  -- separate: a direct viewer plus an inherited anyone editor is discoverable
+  -- and qualifies for min_role=editor.
+  AND (access.has_private_access OR ($2::boolean AND access.has_anyone_access))
+ORDER BY f.title, f.id
+LIMIT $3
 `
 
 type SearchFoldersByTitleParams struct {
-	Query          string
+	MinRoleRank    int32
+	IncludeOrgWide bool
 	RowLimit       int32
+	Query          string
 	PrincipalType  string
 	PrincipalID    string
 	GoogleGroupIds []string
-	IncludeOrgWide bool
 }
 
 type SearchFoldersByTitleRow struct {
@@ -758,15 +901,19 @@ type SearchFoldersByTitleRow struct {
 	OwnerEmail     string
 }
 
+// Filter title candidates before walking their ancestors. Effective access and
+// access is then computed for every candidate before the result cap. A second
+// batch query loads safe breadcrumbs for the returned ids.
 // nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) SearchFoldersByTitle(ctx context.Context, arg SearchFoldersByTitleParams) ([]SearchFoldersByTitleRow, error) {
 	rows, err := q.db.Query(ctx, searchFoldersByTitle,
-		arg.Query,
+		arg.MinRoleRank,
+		arg.IncludeOrgWide,
 		arg.RowLimit,
+		arg.Query,
 		arg.PrincipalType,
 		arg.PrincipalID,
 		arg.GoogleGroupIds,
-		arg.IncludeOrgWide,
 	)
 	if err != nil {
 		return nil, err

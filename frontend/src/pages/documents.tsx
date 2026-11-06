@@ -154,6 +154,8 @@ export function DocumentsPage() {
         { message?: string } | undefined;
       if (warning?.message) {
         setAccessWarning(warning.message);
+      } else if ((data as { moved?: boolean })?.moved === false) {
+        toast("Already in that folder.");
       } else {
         toast.success("Moved.");
       }

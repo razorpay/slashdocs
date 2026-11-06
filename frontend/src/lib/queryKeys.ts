@@ -14,6 +14,7 @@ export const queryKeys = {
   // to invalidate after moves and deletes that can touch any folder.
   foldersAll: () => ["folders"] as const,
   folders: (folderId?: string) => ["folders", folderId || "root"] as const,
+  foldersSearch: (query: string) => ["folders", "search", query] as const,
   folder: (id: string) => ["folder", id] as const,
   // Prefix key matching folder access lists for every folder.
   folderAccessAll: () => ["folder-access"] as const,

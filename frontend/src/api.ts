@@ -135,6 +135,14 @@ export type Folder = {
   owner?: Principal;
   parent_folder_id?: string;
   ancestors?: FolderBreadcrumb[];
+  ancestors_truncated?: boolean;
+};
+export type ExpectedSource = { kind: "root" } | { kind: "folder"; folder_id: string };
+export type MoveDocumentResponse = {
+  document_id: string;
+  folder_id: string;
+  moved: boolean;
+  permission_warning?: { kind: string; message: string };
 };
 export type FolderEntry = {
   type: "folder" | "document";
@@ -528,11 +536,17 @@ export const api = {
       method: "DELETE",
     }),
   // Folders
-  listFolders: (folderId?: string, path?: string, q?: string) => {
+  listFolders: (
+    folderId?: string,
+    path?: string,
+    q?: string,
+    minRole?: "viewer" | "commenter" | "editor",
+  ) => {
     const params = new URLSearchParams();
     if (folderId) params.set("folder_id", folderId);
     if (path) params.set("path", path);
-    if (q) params.set("q", q);
+    if (q !== undefined) params.set("q", q);
+    if (minRole) params.set("min_role", minRole);
     const qs = params.toString();
     return request<{ folder?: Folder; items: FolderEntry[]; has_more: boolean }>(
       `/v1/folders${qs ? `?${qs}` : ""}`,
@@ -586,14 +600,17 @@ export const api = {
     }),
   listFolderDocuments: (id: string) =>
     request<{ items: Document[] }>(`/v1/folders/${id}/documents`),
-  moveDocumentToFolder: (folderId: string, documentId: string) =>
-    request<{
-      document_id: string;
-      moved: boolean;
-      permission_warning?: { message: string };
-    }>(`/v1/folders/${folderId}/documents`, {
+  moveDocumentToFolder: (
+    folderId: string,
+    documentId: string,
+    expectedSource?: ExpectedSource,
+  ) =>
+    request<MoveDocumentResponse>(`/v1/folders/${folderId}/documents`, {
       method: "POST",
-      body: JSON.stringify({ document_id: documentId }),
+      body: JSON.stringify({
+        document_id: documentId,
+        ...(expectedSource ? { expected_source: expectedSource } : {}),
+      }),
     }),
   moveDocumentToRoot: (folderId: string, documentId: string) =>
     request<void>(`/v1/folders/${folderId}/documents/${documentId}`, {
@@ -603,11 +620,13 @@ export const api = {
     request<{
       items: EffectiveAccessItem[];
       current_role: string;
+      canonical_owner: boolean;
     }>(`/v1/folders/${id}/access`),
   documentAccess: (id: string) =>
     request<{
       items: EffectiveAccessItem[];
       current_role: string;
+      canonical_owner: boolean;
     }>(`/v1/documents/${id}/access`),
   // Pins
   listPins: () => request<{ items: Pin[] }>("/v1/pins"),
