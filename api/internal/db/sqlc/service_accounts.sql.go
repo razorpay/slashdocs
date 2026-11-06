@@ -14,8 +14,8 @@ const disableServiceAccount = `-- name: DisableServiceAccount :exec
 UPDATE service_accounts SET disabled_at=COALESCE(disabled_at,now()) WHERE id=$1
 `
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) DisableServiceAccount(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, disableServiceAccount, id)
 	return err
@@ -26,8 +26,8 @@ const enableServiceAccount = `-- name: EnableServiceAccount :exec
 UPDATE service_accounts SET disabled_at=NULL WHERE id=$1
 `
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) EnableServiceAccount(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, enableServiceAccount, id)
 	return err
@@ -36,7 +36,7 @@ func (q *Queries) EnableServiceAccount(ctx context.Context, id string) error {
 const getServiceAccount = `-- name: GetServiceAccount :one
 
 SELECT sa.id, sa.name, (sa.disabled_at IS NOT NULL)::bool AS disabled, u.id AS owner_id, u.email AS owner_email, u.name AS owner_name
-FROM service_accounts sa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+FROM service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 JOIN users u ON u.id = sa.owner_user_id
 WHERE sa.id = $1
 `
@@ -50,8 +50,8 @@ type GetServiceAccountRow struct {
 	OwnerName  string
 }
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) GetServiceAccount(ctx context.Context, id string) (GetServiceAccountRow, error) {
 	row := q.db.QueryRow(ctx, getServiceAccount, id)
 	var i GetServiceAccountRow
@@ -68,7 +68,7 @@ func (q *Queries) GetServiceAccount(ctx context.Context, id string) (GetServiceA
 
 const getServiceAccountByName = `-- name: GetServiceAccountByName :one
 SELECT sa.id, sa.name, (sa.disabled_at IS NOT NULL)::bool AS disabled, u.id AS owner_id, u.email AS owner_email, u.name AS owner_name
-FROM service_accounts sa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+FROM service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 JOIN users u ON u.id = sa.owner_user_id
 WHERE sa.name = $1
 `
@@ -82,7 +82,7 @@ type GetServiceAccountByNameRow struct {
 	OwnerName  string
 }
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) GetServiceAccountByName(ctx context.Context, name string) (GetServiceAccountByNameRow, error) {
 	row := q.db.QueryRow(ctx, getServiceAccountByName, name)
 	var i GetServiceAccountByNameRow
@@ -107,7 +107,7 @@ type InsertServiceAccountParams struct {
 	OwnerUserID string
 }
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) InsertServiceAccount(ctx context.Context, arg InsertServiceAccountParams) error {
 	_, err := q.db.Exec(ctx, insertServiceAccount, arg.ID, arg.Name, arg.OwnerUserID)
 	return err
@@ -125,8 +125,8 @@ type InsertServiceAccountKeyParams struct {
 	TokenHash        string
 }
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) InsertServiceAccountKey(ctx context.Context, arg InsertServiceAccountKeyParams) error {
 	_, err := q.db.Exec(ctx, insertServiceAccountKey,
 		arg.ID,
@@ -147,8 +147,8 @@ type ListServiceAccountKeysRow struct {
 	Name string
 }
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) ListServiceAccountKeys(ctx context.Context, serviceAccountID string) ([]ListServiceAccountKeysRow, error) {
 	rows, err := q.db.Query(ctx, listServiceAccountKeys, serviceAccountID)
 	if err != nil {
@@ -184,8 +184,8 @@ type ListServiceAccountsRow struct {
 	OwnerName  string
 }
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) ListServiceAccounts(ctx context.Context, ownerUserID string) ([]ListServiceAccountsRow, error) {
 	rows, err := q.db.Query(ctx, listServiceAccounts, ownerUserID)
 	if err != nil {
@@ -223,8 +223,8 @@ type RevokeServiceAccountKeyParams struct {
 	ID               string
 }
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) RevokeServiceAccountKey(ctx context.Context, arg RevokeServiceAccountKeyParams) error {
 	_, err := q.db.Exec(ctx, revokeServiceAccountKey, arg.ServiceAccountID, arg.ID)
 	return err
@@ -235,8 +235,8 @@ const serviceAccountExists = `-- name: ServiceAccountExists :one
 SELECT EXISTS(SELECT 1 FROM service_accounts WHERE id = $1)::bool
 `
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) ServiceAccountExists(ctx context.Context, id string) (bool, error) {
 	row := q.db.QueryRow(ctx, serviceAccountExists, id)
 	var column_1 bool
@@ -254,8 +254,8 @@ type UpdateServiceAccountNameParams struct {
 	ID   string
 }
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) UpdateServiceAccountName(ctx context.Context, arg UpdateServiceAccountNameParams) error {
 	_, err := q.db.Exec(ctx, updateServiceAccountName, arg.Name, arg.ID)
 	return err

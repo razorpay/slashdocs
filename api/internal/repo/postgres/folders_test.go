@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
-	"github.com/razorpay/aidocs/api/internal/repo"
-	pgrepo "github.com/razorpay/aidocs/api/internal/repo/postgres"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/repo"
+	pgrepo "github.com/razorpay/slashdocs/api/internal/repo/postgres"
 )
 
 // TestPostgresFolderInvariants exercises the folder rules (inheritance,
@@ -107,6 +107,26 @@ func TestPostgresFolderInvariants(t *testing.T) {
 			t.Fatalf("missing folder provenance: %#v", items)
 		}
 	})
+	t.Run("effective access hydrates canonical owner", func(t *testing.T) {
+		r := newFolderStore(t)
+		doc, _, err := r.CreateDocument(ctx, owner, "Owned doc", []byte("x"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		items, err := r.ListEffectiveAccess(ctx, "document", doc.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range items {
+			if item.EffectiveRole == repo.RoleOwner && item.Principal.ID == owner.ID {
+				if item.Principal.Name != owner.Name || item.Principal.Email != owner.Email {
+					t.Fatalf("owner profile = %#v, want name %q and email %q", item.Principal, owner.Name, owner.Email)
+				}
+				return
+			}
+		}
+		t.Fatalf("canonical owner missing from effective access: %#v", items)
+	})
 	t.Run("cycle prevention", func(t *testing.T) {
 		r := newFolderStore(t)
 		a, _ := r.CreateFolder(ctx, owner, "A", "")
@@ -181,6 +201,25 @@ func TestPostgresFolderInvariants(t *testing.T) {
 		pins, _ := r.ListPins(ctx, owner)
 		if len(pins) != 1 || pins[0].ResourceID != f1.ID {
 			t.Fatalf("pins=%#v", pins)
+		}
+	})
+	t.Run("delete keeps folders that others own", func(t *testing.T) {
+		r := newFolderStore(t)
+		root, _ := r.CreateFolder(ctx, owner, "Root", "")
+		mine, _ := r.CreateFolder(ctx, owner, "Mine", root.ID)
+		theirs, _ := r.CreateFolder(ctx, other, "Notes", mine.ID)
+		if _, err := r.CreateFolder(ctx, other, "Notes", ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.DeleteFolder(ctx, root.ID, owner); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.GetFolder(ctx, mine.ID); !errors.Is(err, repo.ErrNotFound) {
+			t.Fatalf("own subfolder err=%v, want deleted", err)
+		}
+		kept, err := r.GetFolder(ctx, theirs.ID)
+		if err != nil || kept.ParentFolderID != "" || kept.Title != "Notes (2)" {
+			t.Fatalf("kept=%#v err=%v, want root folder %q", kept, err, "Notes (2)")
 		}
 	})
 }

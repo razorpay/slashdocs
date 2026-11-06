@@ -7,7 +7,7 @@ function documentHTML(heading: string) {
 
 async function createRootFolder(
   page: Page,
-  aidocs: { trackFolder: (id: string) => void },
+  slashdocs: { trackFolder: (id: string) => void },
   title: string,
 ) {
   await page.getByRole("button", { name: "New folder" }).click();
@@ -22,7 +22,7 @@ async function createRootFolder(
   expect(response.ok()).toBeTruthy();
   const folder = (await response.json()) as { id: string };
   expect(folder.id).toMatch(/^fld_/);
-  aidocs.trackFolder(folder.id);
+  slashdocs.trackFolder(folder.id);
   await expect(page.getByText(title, { exact: true }).first()).toBeVisible();
   return folder.id;
 }
@@ -54,19 +54,19 @@ async function openMoveDialog(page: Page) {
 
 test("moves one open document through root, two folders, and back to root", async ({
   page,
-  aidocs,
+  slashdocs,
 }) => {
   const documentTitle = uniqueName("Move journey document");
   const folderATitle = uniqueName("Move journey folder A");
   const folderBTitle = uniqueName("Move journey folder B");
-  const document = await aidocs.createDocument(
+  const document = await slashdocs.createDocument(
     documentTitle,
     documentHTML(documentTitle),
   );
 
   await page.goto("/app/documents");
-  const folderAID = await createRootFolder(page, aidocs, folderATitle);
-  const folderBID = await createRootFolder(page, aidocs, folderBTitle);
+  const folderAID = await createRootFolder(page, slashdocs, folderATitle);
+  const folderBID = await createRootFolder(page, slashdocs, folderBTitle);
 
   // Root documents cannot be moved to root. The modal still exposes the
   // server-filtered folder list and supports autocomplete search.
@@ -96,7 +96,7 @@ test("moves one open document through root, two folders, and back to root", asyn
     expected_source: { kind: "root" },
   });
   await expect
-    .poll(async () => (await aidocs.getDocument(document.id)).parent_folder_id)
+    .poll(async () => (await slashdocs.getDocument(document.id)).parent_folder_id)
     .toBe(folderAID);
 
   // A reload proves the current folder comes from persisted document state.
@@ -133,7 +133,7 @@ test("moves one open document through root, two folders, and back to root", asyn
     expected_source: { kind: "folder", folder_id: folderAID },
   });
   await expect
-    .poll(async () => (await aidocs.getDocument(document.id)).parent_folder_id)
+    .poll(async () => (await slashdocs.getDocument(document.id)).parent_folder_id)
     .toBe(folderBID);
 
   // The source folder is excluded again after the second move, while root is
@@ -163,7 +163,7 @@ test("moves one open document through root, two folders, and back to root", asyn
   const folderToRootResponse = await folderToRootResponsePromise;
   expect(folderToRootResponse.status()).toBe(204);
   await expect
-    .poll(async () => (await aidocs.getDocument(document.id)).parent_folder_id)
+    .poll(async () => (await slashdocs.getDocument(document.id)).parent_folder_id)
     .toBeFalsy();
 
   await page.reload();
@@ -172,11 +172,11 @@ test("moves one open document through root, two folders, and back to root", asyn
 
 test("keeps Move to folder reachable from the compact document menu", async ({
   page,
-  aidocs,
+  slashdocs,
 }) => {
   await page.setViewportSize({ width: 568, height: 320 });
   const documentTitle = uniqueName("Compact move document");
-  const document = await aidocs.createDocument(
+  const document = await slashdocs.createDocument(
     documentTitle,
     documentHTML(documentTitle),
   );

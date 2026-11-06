@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,21 +20,39 @@ import (
 // environment, or config. There is deliberately no built-in default host: the
 // CLI only ever talks to a server the user (or the server's own install.sh)
 // pointed it at.
-var errNoServer = errors.New("no aidocs server configured; pass --server <url> (e.g. --server https://aidocs.example.com), set AIDOCS_SERVER, or run `aidocs auth login <server>`")
+var errNoServer = errors.New("no slashdocs server configured; pass --server <url> (e.g. --server https://slashdocs.example.com), set SLASHDOCS_SERVER, or run `slashdocs auth login <server>`")
 
 // newHTTPClient builds an http.Client with explicit connection and overall
 // timeouts so a slow or unreachable server can never hang the CLI.
 func newHTTPClient(timeout time.Duration) *http.Client {
+	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
 	return &http.Client{
-		Timeout: timeout,
+		Timeout:       timeout,
+		CheckRedirect: keepCredentialsOnMove,
 		Transport: &http.Transport{
-			Proxy:               http.ProxyFromEnvironment,
-			DialContext:         (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+			Proxy: func(r *http.Request) (*url.URL, error) {
+				if isLoopbackHost(r.URL.Hostname()) {
+					return nil, nil // a proxy cannot reach this machine
+				}
+				return http.ProxyFromEnvironment(r)
+			},
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return dialer.DialContext(ctx, network, localhostAddr(addr))
+			},
 			ForceAttemptHTTP2:   true,
 			TLSHandshakeTimeout: 10 * time.Second,
 			IdleConnTimeout:     90 * time.Second,
 		},
 	}
+}
+
+// localhostAddr sends a *.localhost name to this machine, as RFC 6761 tells
+// and browsers do. The resolver of Go does not do it on all systems.
+func localhostAddr(addr string) string {
+	if host, port, err := net.SplitHostPort(addr); err == nil && isLocalhostName(host) {
+		return net.JoinHostPort("127.0.0.1", port)
+	}
+	return addr
 }
 
 var (
@@ -44,21 +63,50 @@ var (
 	updateHTTPClient = newHTTPClient(5 * time.Second)
 )
 
-// Client is a thin HTTP transport for the aidocs API.
+// keepCredentialsOnMove follows redirects like the default policy. A server
+// that moved permanently keeps the caller's credentials: Go removes them on a
+// redirect to another host, so they are added back, except on a downgrade
+// from HTTPS to HTTP.
+func keepCredentialsOnMove(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	auth := via[0].Header.Get("Authorization")
+	if auth != "" && movedPermanently(req) && (req.URL.Scheme == "https" || via[0].URL.Scheme == "http") {
+		//nolint:gosec // G119: intended; only a permanent move of the server the user configured keeps the token.
+		req.Header.Set("Authorization", auth)
+	}
+	return nil
+}
+
+// movedPermanently reports whether req follows a permanent redirect.
+func movedPermanently(req *http.Request) bool {
+	return req.Response != nil && (req.Response.StatusCode == http.StatusMovedPermanently || req.Response.StatusCode == http.StatusPermanentRedirect)
+}
+
+// Client is a thin HTTP transport for the slashdocs API.
 type Client struct {
 	Base, Token string
 	HTTP        *http.Client
+	// saved is true when Base comes from the saved config, which the client
+	// updates when the server moves.
+	saved bool
 }
 
 // client builds a Client from flags, environment, and the active config context.
 func client(g *globals) (*Client, error) {
-	srv := first(g.server, os.Getenv("AIDOCS_SERVER"))
-	tok := first(g.token, os.Getenv("AIDOCS_TOKEN"))
+	srv := first(g.server, env("SLASHDOCS_SERVER"))
+	tok := first(g.token, env("SLASHDOCS_TOKEN"))
+	if g.local {
+		// slashdocs local needs no token, so no token goes to it.
+		return &Client{Base: srv, HTTP: apiHTTPClient}, nil
+	}
 	cfg, err := loadConfig()
 	if err != nil {
 		return nil, err
 	}
-	if srv == "" && cfg.ActiveContext != "" {
+	saved := srv == "" && cfg.ActiveContext != ""
+	if saved {
 		srv = cfg.Contexts[cfg.ActiveContext].serverOr(srv)
 	}
 	if srv == "" {
@@ -72,7 +120,7 @@ func client(g *globals) (*Client, error) {
 			tok = credentialToken(ctxName(srv), c.Credential)
 		}
 	}
-	return &Client{Base: normalizeServer(srv), Token: tok, HTTP: apiHTTPClient}, nil
+	return &Client{Base: normalizeServer(srv), Token: tok, HTTP: apiHTTPClient, saved: saved}, nil
 }
 
 // APIError represents a non-2xx response from the API.
@@ -112,6 +160,9 @@ func (c *Client) do(method, path string, body io.Reader, ct string) ([]byte, err
 	if err != nil {
 		return nil, err
 	}
+	if res.StatusCode < 400 {
+		c.followMove(res.Request)
+	}
 	if res.StatusCode >= 400 {
 		ae := &APIError{Status: res.StatusCode, Message: strings.TrimSpace(string(b)), Body: string(b)}
 		var payload struct {
@@ -127,6 +178,22 @@ func (c *Client) do(method, path string, body io.Reader, ct string) ([]byte, err
 		return nil, ae
 	}
 	return b, nil
+}
+
+// followMove saves the new server origin after the saved server answered with
+// a permanent redirect to another origin, so later commands go there directly.
+func (c *Client) followMove(final *http.Request) {
+	base, err := url.Parse(c.Base)
+	if !c.saved || err != nil || !movedPermanently(final) || final.URL.Host == base.Host {
+		return
+	}
+	moved := final.URL.Scheme + "://" + final.URL.Host + base.Path
+	if err := moveContext(c.Base, moved); err != nil {
+		fmt.Fprintf(os.Stderr, "The slashdocs server moved to %s, but the CLI config was not updated: %v\n", moved, err)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "The slashdocs server moved to %s. The CLI config now uses it.\n", moved)
+	c.Base = moved
 }
 
 func (c *Client) doJSON(method, path string, in any) ([]byte, error) {

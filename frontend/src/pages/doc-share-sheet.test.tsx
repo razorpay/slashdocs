@@ -1,12 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Sheet } from "@/components/ui/sheet";
@@ -18,7 +11,7 @@ type FetchOptions = {
   groupSearchDelayMs?: number;
   groupItems?: Array<{ id: string; email: string; name: string }>;
   accessFails?: boolean;
-  canonicalOwner?: boolean;
+  owner?: { id: string; email?: string; name?: string };
 };
 
 function installFetch(options: FetchOptions = {}) {
@@ -68,14 +61,15 @@ function installFetch(options: FetchOptions = {}) {
         }
         return jsonResponse({
           current_role: "owner",
-          canonical_owner: options.canonicalOwner ?? true,
           items: [
             {
               principal: {
                 type: "user",
-                id: "owner",
-                email: "owner@example.com",
-                name: "Owner",
+                ...(options.owner ?? {
+                  id: "owner",
+                  email: "owner@example.com",
+                  name: "Owner",
+                }),
               },
               effective_role: "owner",
               sources: [
@@ -90,18 +84,18 @@ function installFetch(options: FetchOptions = {}) {
             {
               principal: {
                 type: "google_group",
-                id: "groups/owners",
-                email: "owners@example.com",
-                name: "Owners",
+                id: "groups/editors",
+                email: "editors@example.com",
+                name: "Editors",
               },
-              effective_role: "owner",
+              effective_role: "editor",
               sources: [
                 {
                   resource_type: "document",
                   resource_id: "doc_1",
                   resource_title: "Doc",
-                  role: "owner",
-                  grant_id: "gr_owner",
+                  role: "editor",
+                  grant_id: "gr_editors",
                 },
               ],
             },
@@ -129,7 +123,7 @@ function installFetch(options: FetchOptions = {}) {
       if (url === "/v1/documents/doc_1/grants") {
         return jsonResponse({ id: "gr_new", role: "commenter" }, 201);
       }
-      if (url.includes("/grants/")) return jsonResponse({ id: "gr_owner" });
+      if (url.includes("/grants/")) return jsonResponse({ id: "gr_editors" });
       throw new Error(`unexpected fetch: ${url}`);
     }),
   );
@@ -143,18 +137,14 @@ function jsonResponse(payload: unknown, status = 200) {
   });
 }
 
-function renderShare(props: { isCanonicalOwner?: boolean } = {}) {
+function renderShare() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
       <Sheet open>
-        <ShareSheet
-          docId="doc_1"
-          canManageAccess
-          isCanonicalOwner={props.isCanonicalOwner ?? true}
-        />
+        <ShareSheet docId="doc_1" canManageAccess />
       </Sheet>
     </QueryClientProvider>,
   );
@@ -232,39 +222,18 @@ describe("Google Group sharing", () => {
     expect(await screen.findByText("Could not load access list.")).toBeVisible();
   });
 
-  it("offers owner only when the current user is the canonical owner", async () => {
-    installFetch();
-    renderShare({ isCanonicalOwner: false });
-    await userEvent.click(await screen.findByRole("tab", { name: "Google Groups" }));
-    const form = screen.getByRole("button", { name: "Share" }).closest("form");
-    expect(form).not.toBeNull();
-    expect(within(form!).queryByRole("option", { name: "Owner" })).toBeNull();
-
-    cleanup();
-    renderShare({ isCanonicalOwner: true });
-    await userEvent.click(await screen.findByRole("tab", { name: "Google Groups" }));
-    const ownerForm = screen.getByRole("button", { name: "Share" }).closest("form");
-    expect(within(ownerForm!).getByRole("option", { name: "Owner" })).toBeVisible();
-  });
-
-  it("distinguishes canonical, co-owner, direct, and inherited access", async () => {
+  it("distinguishes owner, direct, and inherited access", async () => {
     installFetch();
     renderShare();
-    expect(await screen.findByText("Canonical owner")).toBeVisible();
-    expect(screen.getByText("Google Group co-owner · direct access")).toBeVisible();
+    expect(await screen.findByText("Google Group · direct access")).toBeVisible();
     expect(screen.getByText("Inherited from Parent folder")).toBeVisible();
+    expect(screen.getAllByText("Owner").length).toBeGreaterThan(0);
   });
 
-  it("shows owner only to canonical owners and confirms owner-grant changes", async () => {
-    installFetch();
-    renderShare({ isCanonicalOwner: true });
-    await screen.findByText("Google Group co-owner · direct access");
-    const ownerSelect = screen
-      .getAllByLabelText("Access role")
-      .find((select) => (select as HTMLSelectElement).value === "owner")!;
-    expect(ownerSelect).toBeEnabled();
-    fireEvent.change(ownerSelect, { target: { value: "editor" } });
-    expect(await screen.findByText(/Owner-level Google Group access/i)).toBeVisible();
-    expect(screen.getByRole("button", { name: "Change owner access" })).toBeVisible();
+  it("does not expose an internal id for an unhydrated owner", async () => {
+    installFetch({ owner: { id: "usr_google_123456789" } });
+    renderShare();
+    expect((await screen.findAllByText("Owner")).length).toBeGreaterThan(0);
+    expect(screen.queryByText("usr_google_123456789")).toBeNull();
   });
 });

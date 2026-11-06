@@ -10,6 +10,8 @@ export type CommentRailPlacement = CommentRailItem & { y: number };
 export type CommentRailLayoutOptions = {
   padding?: number;
   gap?: number;
+  priorityId?: string;
+  viewport?: { top: number; height: number };
 };
 
 // Places unanchored cards at the start of the document timeline, then anchored
@@ -25,22 +27,46 @@ export function layoutCommentRail(
   const anchored = items
     .filter((item) => !item.atStart)
     .sort((a, b) => a.anchorTop - b.anchorTop || a.id.localeCompare(b.id));
-  const placements: CommentRailPlacement[] = [];
-  let cursor = padding;
-
-  for (const item of atStart) {
-    placements.push({ ...item, y: cursor });
-    cursor += Math.max(1, item.height) + gap;
+  const ordered = [...atStart, ...anchored];
+  const priority = anchored.find((item) => item.id === options.priorityId);
+  let reserved: CommentRailPlacement | undefined;
+  if (priority) {
+    const height = Math.max(1, priority.height);
+    let y = Math.max(padding, priority.anchorTop);
+    const viewport = options.viewport;
+    // Keep the active box beside a visible highlight, shifting it upward only
+    // enough to fit. It should still scroll away when its highlight does.
+    if (viewport && y >= viewport.top && y < viewport.top + viewport.height) {
+      const minY = viewport.top + padding;
+      const maxY = Math.max(minY, viewport.top + viewport.height - padding - height);
+      y = Math.max(minY, Math.min(y, maxY));
+    }
+    reserved = { ...priority, y };
   }
 
-  for (const item of anchored) {
+  const placements: CommentRailPlacement[] = reserved ? [reserved] : [];
+  let cursor = padding;
+  for (const item of ordered) {
+    if (item.id === reserved?.id) continue;
     const height = Math.max(1, item.height);
     const maxY = Math.max(cursor, contentHeight - padding - height);
-    const desired = Math.min(maxY, Math.max(padding, item.anchorTop));
-    const y = Math.max(cursor, desired);
+    const desired = item.atStart
+      ? cursor
+      : Math.min(maxY, Math.max(padding, item.anchorTop));
+    let y = Math.max(cursor, desired);
+    // Reserve the focused item's space first. Nearby cards that cannot fit
+    // above it move below it, rather than pushing the focused item offscreen.
+    if (
+      reserved &&
+      y < reserved.y + reserved.height + gap &&
+      y + height + gap > reserved.y
+    ) {
+      y = reserved.y + Math.max(1, reserved.height) + gap;
+    }
     placements.push({ ...item, y });
     cursor = y + height + gap;
   }
+  if (reserved) placements.sort((a, b) => a.y - b.y);
 
   return placements;
 }

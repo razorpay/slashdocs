@@ -20,14 +20,14 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/auth"
 )
 
-// JSON string escaping can expand a valid 10 MiB HTML document by up to 6x
+// JSON string escaping can expand a valid HTML document by up to 6x
 // before the MCP envelope reaches the server (for example, for control bytes
 // or clients that escape HTML characters). Keep enough authenticated
 // transport headroom to preserve parity with the REST and CLI HTML limit.
-const maxMCPRequestBytes int64 = 64 << 20
+const maxMCPRequestBytes int64 = maxHTMLBytes*6 + (1 << 20)
 
 type mcpPrincipalContextKey struct{}
 
@@ -64,15 +64,21 @@ func authenticateMCPRequest(w http.ResponseWriter, r *http.Request, authenticato
 	return principal
 }
 
+// mcpInstructions tells agents that links and names from before the rename
+// refer to this server, so a pasted aidocs link resolves here.
+const mcpInstructions = "slashdocs was formerly named aidocs. Treat an aidocs URL, document, or command as a slashdocs one. " +
+	"A document link ends in its ID (doc_...), which is the same on both names. Call get_authoring_guidelines before you create or update a document."
+
 func newMCPHTTPHandler(deps dependencies) http.Handler {
 	metrics := newMCPMetricRecorder()
 	protocol := mcpserver.NewMCPServer(
-		"aidocs",
+		"slashdocs",
 		BuildVersion,
 		mcpserver.WithToolCapabilities(false),
 		mcpserver.WithToolHandlerMiddleware(metrics.toolMiddleware),
 		mcpserver.WithRecovery(),
 		mcpserver.WithHooks(metrics.hooks()),
+		mcpserver.WithInstructions(mcpInstructions),
 	)
 	api := mcpAPIAdapter{handlers: handlers{deps: deps}}
 	registerMCPTools(protocol, api)

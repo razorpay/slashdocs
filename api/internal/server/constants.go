@@ -4,7 +4,7 @@ import "time"
 
 // Cookie / session
 const (
-	sessionCookieName = "aidocs_session"
+	sessionCookieName = "slashdocs_session"
 	sessionTTLSeconds = int(30 * 24 * time.Hour / time.Second) // 30 days
 )
 
@@ -29,7 +29,10 @@ const (
 	commentStatusResolved = "resolved"
 	// commentMentionsMediaType is a rolling-upgrade sentinel: old servers reject
 	// it before writing, so structured metadata can never be silently dropped.
-	commentMentionsMediaType = "application/vnd.aidocs.comment-mentions+json"
+	commentMentionsMediaType = "application/vnd.slashdocs.comment-mentions+json"
+	// legacyCommentMentionsMediaType is the same sentinel as sent by clients
+	// released before the rename from aidocs.
+	legacyCommentMentionsMediaType = "application/vnd.aidocs.comment-mentions+json"
 )
 
 // Comment placement statuses relative to the rendered version.

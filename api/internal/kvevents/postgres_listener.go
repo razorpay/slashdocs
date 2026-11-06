@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	postgresNotificationChannel = "aidocs_kv_events"
-	probePayloadPrefix          = "__aidocs_kv_probe__:"
+	postgresNotificationChannel = "slashdocs_kv_events"
+	probePayloadPrefix          = "__slashdocs_kv_probe__:"
 	listenerProbeWait           = 3 * time.Second
 )
 
@@ -69,7 +69,7 @@ func (f *PostgresListenerFactory) Open(ctx context.Context) (_ Listener, returnE
 	if err != nil {
 		return nil, err
 	}
-	if _, err := f.sender.Exec(ctx, "SELECT pg_notify($1, $2)", postgresNotificationChannel, probe); err != nil {
+	if err := f.Notify(ctx, probe); err != nil {
 		return nil, fmt.Errorf("send LISTEN verification probe: %w", err)
 	}
 	pending, err := waitForProbe(ctx, conn, probe)
@@ -79,6 +79,12 @@ func (f *PostgresListenerFactory) Open(ctx context.Context) (_ Listener, returnE
 
 	keep = true
 	return &postgresListener{conn: conn, pending: pending}, nil
+}
+
+// Notify publishes a payload to every listener through the application's pool.
+func (f *PostgresListenerFactory) Notify(ctx context.Context, payload string) error {
+	_, err := f.sender.Exec(ctx, "SELECT pg_notify($1, $2)", postgresNotificationChannel, payload)
+	return err
 }
 
 func (f *PostgresListenerFactory) connect(ctx context.Context) (*pgx.Conn, error) {

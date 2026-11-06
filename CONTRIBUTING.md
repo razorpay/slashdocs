@@ -1,6 +1,6 @@
-# Contributing to aidocs
+# Contributing to slashdocs
 
-Thank you for your interest in contributing to aidocs! This document outlines the process for contributing to this project.
+Thank you for your interest in contributing to slashdocs! This document outlines the process for contributing to this project.
 
 ## Code of Conduct
 
@@ -18,19 +18,19 @@ make format
 
 We use a fork-based workflow for all contributions:
 
-1. **Fork the repository**: Start by forking the [aidocs repository](https://github.com/razorpay/aidocs) to your GitHub account.
+1. **Fork the repository**: Start by forking the [slashdocs repository](https://github.com/razorpay/slashdocs) to your GitHub account.
 
 2. **Clone your fork**: Clone your fork to your local machine:
 
    ```bash
-   git clone https://github.com/YOUR-USERNAME/aidocs.git
-   cd aidocs
+   git clone https://github.com/YOUR-USERNAME/slashdocs.git
+   cd slashdocs
    ```
 
 3. **Add upstream remote**: Add the original repository as an "upstream" remote:
 
    ```bash
-   git remote add upstream https://github.com/razorpay/aidocs.git
+   git remote add upstream https://github.com/razorpay/slashdocs.git
    ```
 
 4. **Create a branch**: Create a new branch for your changes:
@@ -69,7 +69,7 @@ We use a fork-based workflow for all contributions:
    git rebase upstream/master
    ```
 
-10. **Push to your fork** and open a pull request against `razorpay/aidocs`.
+10. **Push to your fork** and open a pull request against `razorpay/slashdocs`.
 
 ## Pull Request Process
 
@@ -83,10 +83,11 @@ We use a fork-based workflow for all contributions:
 
 ### Prerequisites
 
-- Go 1.25 or later
+- Go 1.27 or later
 - Node.js 22.18 or later (the React frontend is built with Vite and embedded into the Go binary)
 - Postgres 14+
-- S3-compatible object storage (MinIO works well locally)
+- S3-compatible object storage (the compose stack uses versitygw)
+- For the compose stack and image builds: Docker with Compose v2 and the Buildx plugin (`docker buildx version` should work; on Ubuntu or Debian, `sudo apt install docker-buildx`)
 
 ### Setting up the Development Environment
 
@@ -110,13 +111,13 @@ make build-frontend  # embedded frontend assets
 make swagger         # regenerate OpenAPI docs
 ```
 
-Binaries are written to `bin/aidocs-server` and `bin/aidocs`.
+Binaries are written to `bin/slashdocs-server` and `bin/slashdocs`.
 
 ### Running the Server Locally
 
 ```bash
 set -a && source .env && set +a
-./bin/aidocs-server
+./bin/slashdocs-server
 ```
 
 ### Running Tests
@@ -125,7 +126,7 @@ set -a && source .env && set +a
 make test
 ```
 
-This regenerates the Swagger docs, rebuilds and type-checks the frontend, runs the Go API and CLI tests, and runs the frontend unit tests with `npm test`. The frontend tests use the type stripping built into Node.js 22.18 and later. Handler and repository tests run against a real PostgreSQL database: with Docker available they start a disposable `postgres:17-alpine` container automatically (via testcontainers); otherwise set `AIDOCS_TEST_DATABASE_URL` to a PostgreSQL server whose role may `CREATE DATABASE`. Without either, the database-backed tests are skipped.
+This regenerates the Swagger docs, rebuilds and type-checks the frontend, runs the Go API and CLI tests, and runs the frontend unit tests with `npm test`. The frontend tests use the type stripping built into Node.js 22.18 and later. Handler and repository tests run against a real PostgreSQL database: with Docker available they start a disposable `postgres:17-alpine` container automatically (via testcontainers); otherwise set `SLASHDOCS_TEST_DATABASE_URL` to a PostgreSQL server whose role may `CREATE DATABASE`. Without either, the database-backed tests are skipped.
 
 On macOS with [colima](https://github.com/abiosoft/colima), point testcontainers at the colima socket first:
 
@@ -141,8 +142,8 @@ headless Chromium:
 make e2e-browser
 ```
 
-The target reuses a healthy aidocs + Dex stack already listening on ports 8080
-and 5556; otherwise it boots the isolated `aidocs-e2e` project, installs the
+The target reuses a healthy slashdocs + Dex stack already listening on ports 8080
+and 5556; otherwise it boots the isolated `slashdocs-e2e` project, installs the
 matching Chromium build, and leaves the stack up for debugging. For a manual
 frontend-only run, use `npm ci`, `npm run e2e:install`, and `npm run e2e` from
 `frontend/`. On Linux, if Playwright reports missing browser libraries, run
@@ -169,6 +170,12 @@ When adding new features or modifying existing ones, please update the documenta
 
 ## Getting Help
 
-If you have questions or need help with the contribution process, please open a [GitHub issue](https://github.com/razorpay/aidocs/issues).
+## Releases
 
-Thank you for contributing to aidocs!
+Maintainers cut releases by pushing a `v*` tag; CI builds and publishes the
+Docker image, CLI archives, and Helm chart from that tag. Contributors do not
+need to touch versions or tags; see [docs/releasing.md](docs/releasing.md).
+
+If you have questions or need help with the contribution process, please open a [GitHub issue](https://github.com/razorpay/slashdocs/issues).
+
+Thank you for contributing to slashdocs!

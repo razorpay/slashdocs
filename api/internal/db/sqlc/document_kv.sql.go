@@ -48,10 +48,30 @@ func (q *Queries) DeleteDocumentKV(ctx context.Context, arg DeleteDocumentKVPara
 	return err
 }
 
-const getDocumentKVRevision = `-- name: GetDocumentKVRevision :one
-SELECT COALESCE(MAX(revision), 0)::bigint FROM document_kv WHERE document_id=$1
+const deleteStaleDocumentPresenceEvents = `-- name: DeleteStaleDocumentPresenceEvents :exec
+DELETE FROM document_kv_events
+WHERE document_id=$1 AND kind='presence' AND updated_at < now() - make_interval(secs => $2::int)
 `
 
+type DeleteStaleDocumentPresenceEventsParams struct {
+	DocumentID    string
+	MaxAgeSeconds int32
+}
+
+func (q *Queries) DeleteStaleDocumentPresenceEvents(ctx context.Context, arg DeleteStaleDocumentPresenceEventsParams) error {
+	_, err := q.db.Exec(ctx, deleteStaleDocumentPresenceEvents, arg.DocumentID, arg.MaxAgeSeconds)
+	return err
+}
+
+const getDocumentKVRevision = `-- name: GetDocumentKVRevision :one
+SELECT GREATEST(
+  (SELECT COALESCE(MAX(kv.revision), 0) FROM document_kv kv WHERE kv.document_id=$1),
+  (SELECT COALESCE(MAX(e.revision), 0) FROM document_kv_events e WHERE e.document_id=$1)
+)::bigint
+`
+
+// Live events share the KV revision sequence, so the high-water mark spans
+// both the KV rows and the event log.
 func (q *Queries) GetDocumentKVRevision(ctx context.Context, documentID string) (int64, error) {
 	row := q.db.QueryRow(ctx, getDocumentKVRevision, documentID)
 	var column_1 int64
@@ -60,14 +80,16 @@ func (q *Queries) GetDocumentKVRevision(ctx context.Context, documentID string) 
 }
 
 const insertDocumentKVEvent = `-- name: InsertDocumentKVEvent :exec
-INSERT INTO document_kv_events(document_id,revision,changes,updated_by_type,updated_by_id,updated_by_email,updated_by_name)
-VALUES($1,$2,$3,$4,$5,$6,$7)
+INSERT INTO document_kv_events(document_id,revision,kind,changes,data,updated_by_type,updated_by_id,updated_by_email,updated_by_name)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
 `
 
 type InsertDocumentKVEventParams struct {
 	DocumentID     string
 	Revision       int64
+	Kind           string
 	Changes        []byte
+	Data           []byte
 	UpdatedByType  string
 	UpdatedByID    string
 	UpdatedByEmail string
@@ -78,7 +100,9 @@ func (q *Queries) InsertDocumentKVEvent(ctx context.Context, arg InsertDocumentK
 	_, err := q.db.Exec(ctx, insertDocumentKVEvent,
 		arg.DocumentID,
 		arg.Revision,
+		arg.Kind,
 		arg.Changes,
+		arg.Data,
 		arg.UpdatedByType,
 		arg.UpdatedByID,
 		arg.UpdatedByEmail,
@@ -135,7 +159,7 @@ func (q *Queries) ListDocumentKV(ctx context.Context, documentID string) ([]List
 }
 
 const listDocumentKVEventsAfter = `-- name: ListDocumentKVEventsAfter :many
-SELECT document_id,revision,changes,updated_at,updated_by_type,updated_by_id,updated_by_email,updated_by_name
+SELECT document_id,revision,changes,updated_at,updated_by_type,updated_by_id,updated_by_email,updated_by_name,kind,data
 FROM document_kv_events
 WHERE document_id=$1 AND revision>$2
 ORDER BY revision
@@ -166,6 +190,51 @@ func (q *Queries) ListDocumentKVEventsAfter(ctx context.Context, arg ListDocumen
 			&i.UpdatedByID,
 			&i.UpdatedByEmail,
 			&i.UpdatedByName,
+			&i.Kind,
+			&i.Data,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecentDocumentPresenceEvents = `-- name: ListRecentDocumentPresenceEvents :many
+SELECT document_id,revision,changes,updated_at,updated_by_type,updated_by_id,updated_by_email,updated_by_name,kind,data
+FROM document_kv_events
+WHERE document_id=$1 AND kind='presence' AND updated_at > now() - make_interval(secs => $2::int)
+ORDER BY revision
+`
+
+type ListRecentDocumentPresenceEventsParams struct {
+	DocumentID    string
+	MaxAgeSeconds int32
+}
+
+func (q *Queries) ListRecentDocumentPresenceEvents(ctx context.Context, arg ListRecentDocumentPresenceEventsParams) ([]DocumentKvEvent, error) {
+	rows, err := q.db.Query(ctx, listRecentDocumentPresenceEvents, arg.DocumentID, arg.MaxAgeSeconds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DocumentKvEvent
+	for rows.Next() {
+		var i DocumentKvEvent
+		if err := rows.Scan(
+			&i.DocumentID,
+			&i.Revision,
+			&i.Changes,
+			&i.UpdatedAt,
+			&i.UpdatedByType,
+			&i.UpdatedByID,
+			&i.UpdatedByEmail,
+			&i.UpdatedByName,
+			&i.Kind,
+			&i.Data,
 		); err != nil {
 			return nil, err
 		}
@@ -178,9 +247,12 @@ func (q *Queries) ListDocumentKVEventsAfter(ctx context.Context, arg ListDocumen
 }
 
 const lockDocumentForKV = `-- name: LockDocumentForKV :one
-SELECT id FROM documents WHERE id=$1 FOR UPDATE
+SELECT id FROM documents WHERE id=$1 FOR NO KEY UPDATE
 `
 
+// Serializes revision allocation. NO KEY UPDATE still excludes every other
+// allocator but, unlike FOR UPDATE, does not wait on foreign-key checks from
+// concurrent comment and version writes.
 func (q *Queries) LockDocumentForKV(ctx context.Context, id string) (string, error) {
 	row := q.db.QueryRow(ctx, lockDocumentForKV, id)
 	var id_2 string
@@ -189,7 +261,7 @@ func (q *Queries) LockDocumentForKV(ctx context.Context, id string) (string, err
 }
 
 const notifyDocumentKVEvent = `-- name: NotifyDocumentKVEvent :exec
-SELECT pg_notify('aidocs_kv_events', $1::text)
+SELECT pg_notify('slashdocs_kv_events', $1::text)
 `
 
 func (q *Queries) NotifyDocumentKVEvent(ctx context.Context, documentID string) error {

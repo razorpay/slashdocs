@@ -18,10 +18,10 @@ SELECT f.id, f.title, f.owner_type, f.owner_id,
        COALESCE(u.email,'') AS owner_email
 FROM folders f
 LEFT JOIN users u ON f.owner_type='user' AND f.owner_id=u.id
--- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-  -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
-  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+-- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE f.id= @id;
 
 -- name: ListFolderAncestors :many
@@ -84,13 +84,35 @@ UPDATE folders SET parent_folder_id=NULLIF(@parent_folder_id::text,''), updated_
 SELECT EXISTS(SELECT 1 FROM folders f WHERE f.id = @folder_id)::bool AS folder_exists,
        EXISTS(SELECT 1 FROM folders f WHERE f.id = @folder_id AND f.owner_type = @owner_type AND f.owner_id = @owner_id)::bool AS is_owner;
 
--- name: DeleteFolderSubtree :execrows
+-- name: ListFolderSubtreeOrphans :many
+-- The folders that other principals own directly inside the folders that
+-- DeleteFolderSubtree removes. Like Google Drive, a folder delete keeps them.
 WITH RECURSIVE d(id, depth) AS (
   SELECT @folder_id::text, 1
   UNION ALL
-  SELECT f.id, d.depth+1 FROM folders f JOIN d ON f.parent_folder_id=d.id WHERE d.depth < 64
+  SELECT f.id, d.depth+1 FROM folders f JOIN d ON f.parent_folder_id=d.id
+  WHERE d.depth < 64 AND f.owner_type= @owner_type AND f.owner_id= @owner_id
+)
+SELECT f.id, f.title, f.owner_type, f.owner_id
+FROM folders f JOIN d ON f.parent_folder_id=d.id
+WHERE NOT (f.owner_type= @owner_type AND f.owner_id= @owner_id);
+
+-- name: DeleteFolderSubtree :execrows
+-- Deletes the folder and every folder below it that the same principal owns.
+-- The walk stops at folders that other principals own.
+WITH RECURSIVE d(id, depth) AS (
+  SELECT @folder_id::text, 1
+  UNION ALL
+  SELECT f.id, d.depth+1 FROM folders f JOIN d ON f.parent_folder_id=d.id
+  WHERE d.depth < 64 AND f.owner_type= @owner_type AND f.owner_id= @owner_id
 )
 DELETE FROM folders WHERE id IN (SELECT id FROM d);
+
+-- name: RootFolderTitleTaken :one
+SELECT EXISTS(
+  SELECT 1 FROM folders
+  WHERE parent_folder_id IS NULL AND owner_type= @owner_type AND owner_id= @owner_id AND lower(title)=lower(@title)
+)::bool;
 
 -- name: FindRootFoldersByTitle :many
 -- Resolves the first segment of a folder path: root folders with the given
@@ -100,10 +122,10 @@ SELECT f.id, f.title, f.owner_type, f.owner_id,
        COALESCE(u.name,sa.name,'') AS owner_name, COALESCE(u.email,'') AS owner_email
 FROM folders f
 LEFT JOIN users u ON f.owner_type='user' AND f.owner_id=u.id
--- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-  -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
-  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+-- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE COALESCE(f.parent_folder_id,'')=''
   AND lower(f.title)=lower(@title)
   AND (
@@ -140,10 +162,10 @@ SELECT f.id, f.title, f.owner_type, f.owner_id,
        COALESCE(we.last_opened_at, f.created_at)::timestamptz AS last_active
 FROM folders f
 LEFT JOIN users u ON f.owner_type='user' AND f.owner_id=u.id
--- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-  -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
-  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+-- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 LEFT JOIN folder_workspace_entries we ON we.folder_id=f.id AND we.principal_type= @principal_type AND we.principal_id= @principal_id
 WHERE (
   COALESCE(f.parent_folder_id,'')=''
@@ -218,32 +240,34 @@ SELECT f.id, f.title, f.owner_type, f.owner_id,
        COALESCE(u.name,sa.name,'') AS owner_name, COALESCE(u.email,'') AS owner_email
 FROM folders f
 LEFT JOIN users u ON f.owner_type='user' AND f.owner_id=u.id
--- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-  -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
-  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+-- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE COALESCE(f.parent_folder_id,'')= @parent_folder_id::text
 ORDER BY f.title
 LIMIT 51;
 
 -- name: SearchFoldersByTitle :many
--- Compute the effective role for every folder before applying the result cap.
--- A grant on a folder is inherited by all descendants, so each candidate's
--- ancestor chain is folded into one maximum role. This is deliberately
--- set-wise: filtering after LIMIT would allow low-role rows to hide eligible
--- destinations from the move picker.
-WITH RECURSIVE ancestors(folder_id, ancestor_id, depth) AS (
+-- Filter title candidates before walking their ancestors. Effective access is
+-- then computed for every candidate before the result cap. A second
+-- batch query loads safe breadcrumbs for the returned ids.
+WITH RECURSIVE ancestors(candidate_id, ancestor_id, depth) AS (
   SELECT f.id, f.id, 0
   FROM folders f
+  WHERE f.title ILIKE '%' || @query::text || '%'
   UNION ALL
-  SELECT a.folder_id, p.parent_folder_id, a.depth+1
+  SELECT a.candidate_id, f.parent_folder_id, a.depth+1
   FROM ancestors a
-  JOIN folders p ON p.id=a.ancestor_id
-  WHERE p.parent_folder_id IS NOT NULL AND a.depth < 64
+  JOIN folders f ON f.id=a.ancestor_id
+  WHERE f.parent_folder_id IS NOT NULL AND a.depth < 64
 ), effective_roles AS (
-  SELECT f.id,
+  SELECT a.candidate_id,
          GREATEST(
-           CASE WHEN f.owner_type= @principal_type AND f.owner_id= @principal_id THEN 4 ELSE 0 END,
+           COALESCE(MAX(CASE
+             WHEN ancestor_folder.owner_type= @principal_type AND ancestor_folder.owner_id= @principal_id THEN 4
+             ELSE 0
+           END), 0),
            COALESCE(MAX(CASE
              WHEN (g.principal_type= @principal_type AND g.principal_id= @principal_id)
                OR (g.principal_type='google_group' AND g.principal_id=ANY(@google_group_ids::text[]))
@@ -258,41 +282,84 @@ WITH RECURSIVE ancestors(folder_id, ancestor_id, depth) AS (
              ELSE 0
            END), 0)
          )::int AS role_rank,
-         (f.owner_type= @principal_type AND f.owner_id= @principal_id)
-           OR COALESCE(BOOL_OR(
+         COALESCE(BOOL_OR(
+           (ancestor_folder.owner_type= @principal_type AND ancestor_folder.owner_id= @principal_id)
+           OR (
              (g.principal_type= @principal_type AND g.principal_id= @principal_id)
              OR (g.principal_type='google_group' AND g.principal_id=ANY(@google_group_ids::text[]))
-           ), false) AS has_private_access,
-         COALESCE(BOOL_OR(g.principal_type='anyone'), false) AS has_anyone_access
-  FROM folders f
-  JOIN ancestors a ON a.folder_id=f.id
+           )), false)::bool AS has_private_access,
+         COALESCE(BOOL_OR(g.principal_type='anyone'), false)::bool AS has_anyone_access
+  FROM ancestors a
+  JOIN folders ancestor_folder ON ancestor_folder.id=a.ancestor_id
   LEFT JOIN resource_grants g
     ON g.resource_type='folder'
    AND g.resource_id=a.ancestor_id
    AND g.revoked_at IS NULL
-  GROUP BY f.id, f.owner_type, f.owner_id
+  GROUP BY a.candidate_id
 )
-SELECT DISTINCT f.id, f.title, f.owner_type, f.owner_id,
+SELECT f.id, f.title, f.owner_type, f.owner_id,
        COALESCE(f.parent_folder_id,'') AS parent_folder_id,
        COALESCE(u.name,sa.name,'') AS owner_name, COALESCE(u.email,'') AS owner_email
 FROM folders f
-JOIN effective_roles er ON er.id = f.id
+JOIN effective_roles access ON access.candidate_id=f.id
 LEFT JOIN users u ON f.owner_type='user' AND f.owner_id=u.id
--- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-  -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
-  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-WHERE f.title ILIKE '%' || @query::text || '%'
-  AND er.role_rank > 0
-  AND er.role_rank >= @min_role_rank::int
+-- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+WHERE access.role_rank > 0
+  AND access.role_rank >= @min_role_rank::int
   -- Anyone-only folders are link-addressable but must not appear in the
   -- public search index. In org deployment, anyone grants are workspace-wide
   -- discovery grants. Private access and effective role are intentionally
   -- separate: a direct viewer plus an inherited anyone editor is discoverable
   -- and qualifies for min_role=editor.
-  AND (er.has_private_access OR (@include_org_wide::boolean AND er.has_anyone_access))
+  AND (access.has_private_access OR (@include_org_wide::boolean AND access.has_anyone_access))
 ORDER BY f.title, f.id
 LIMIT @row_limit;
+
+-- name: ListFolderAccessChains :many
+-- Batch form used by folder search. It returns direct access facts for every
+-- node in each requested root-first chain; the repository folds those facts
+-- into inherited roles and safe breadcrumb suffixes without N+1 queries.
+WITH RECURSIVE chain(candidate_id, id, title, parent_folder_id, owner_type, owner_id, depth) AS (
+  SELECT f.id, f.id, f.title, f.parent_folder_id, f.owner_type, f.owner_id, 0
+  FROM folders f
+  WHERE f.id=ANY(@folder_ids::text[])
+  UNION ALL
+  SELECT c.candidate_id, f.id, f.title, f.parent_folder_id, f.owner_type, f.owner_id, c.depth+1
+  FROM folders f
+  JOIN chain c ON f.id=c.parent_folder_id
+  WHERE c.depth < 64
+)
+SELECT c.candidate_id, c.id, c.title, c.depth,
+       (c.owner_type= @principal_type::text AND c.owner_id= @principal_id::text)::bool AS is_owner,
+       COALESCE(MAX(CASE
+         WHEN (g.principal_type= @principal_type::text AND g.principal_id= @principal_id::text)
+           OR (g.principal_type='google_group' AND g.principal_id=ANY(@google_group_ids::text[]))
+           OR g.principal_type='anyone'
+         THEN CASE g.role
+           WHEN 'owner' THEN 4
+           WHEN 'editor' THEN 3
+           WHEN 'commenter' THEN 2
+           WHEN 'viewer' THEN 1
+           ELSE 0
+         END
+         ELSE 0
+       END), 0)::int AS grant_rank,
+       ((c.owner_type= @principal_type::text AND c.owner_id= @principal_id::text)
+         OR COALESCE(BOOL_OR(
+           (g.principal_type= @principal_type::text AND g.principal_id= @principal_id::text)
+           OR (g.principal_type='google_group' AND g.principal_id=ANY(@google_group_ids::text[]))
+         ), false))::bool AS has_private_access,
+       COALESCE(BOOL_OR(g.principal_type='anyone'), false)::bool AS has_anyone_access
+FROM chain c
+LEFT JOIN resource_grants g
+  ON g.resource_type='folder'
+ AND g.resource_id=c.id
+ AND g.revoked_at IS NULL
+GROUP BY c.candidate_id, c.id, c.title, c.depth, c.owner_type, c.owner_id
+ORDER BY c.candidate_id, c.depth DESC;
 
 -- name: FolderOrAncestorsHaveGrants :one
 -- Whether the folder or any of its ancestors carries an active grant, i.e.
@@ -329,7 +396,12 @@ WITH RECURSIVE chain(id, title, parent_folder_id, owner_type, owner_id, depth) A
   WHERE c.depth < 64
 )
 SELECT c.id, c.title,
-       (c.owner_type= @principal_type::text AND c.owner_id= @principal_id::text)::bool AS is_owner,
+       EXISTS (
+         SELECT 1 FROM chain owner_ancestor
+         WHERE owner_ancestor.depth >= c.depth
+           AND owner_ancestor.owner_type= @principal_type::text
+           AND owner_ancestor.owner_id= @principal_id::text
+       )::bool AS is_owner,
        COALESCE((
          SELECT max(CASE g.role WHEN 'owner' THEN 4 WHEN 'editor' THEN 3 WHEN 'commenter' THEN 2 WHEN 'viewer' THEN 1 ELSE 0 END)
          FROM resource_grants g

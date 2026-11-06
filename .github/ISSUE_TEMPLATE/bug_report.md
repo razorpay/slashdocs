@@ -24,7 +24,7 @@ What you expected to happen instead.
 
 ## Environment
 
-- aidocs version (`/commit.txt` or `aidocs version`):
+- slashdocs version (`/commit.txt` or `slashdocs version`):
 - Deployment (Docker, Helm, bare metal):
 - Browser (for UI issues):
 - OS (for CLI issues):

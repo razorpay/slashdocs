@@ -1,0 +1,16 @@
+apiVersion: v2
+name: slashdocs
+description: Give your agents the power to publish reviewable HTML documents.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/razorpay/slashdocs
+sources:
+  - https://github.com/razorpay/slashdocs
+maintainers:
+  - name: slashdocs maintainers
+keywords:
+  - ai
+  - documents
+  - review
+  - html

@@ -10,8 +10,8 @@ import (
 
 	"github.com/pressly/goose/v3"
 
-	aidb "github.com/razorpay/aidocs/api/internal/db"
-	"github.com/razorpay/aidocs/api/internal/testdb"
+	aidb "github.com/razorpay/slashdocs/api/internal/db"
+	"github.com/razorpay/slashdocs/api/internal/testdb"
 )
 
 func TestCommentMentionMigrationsSplitTriggerFromLegacyCleanup(t *testing.T) {
@@ -96,8 +96,8 @@ func TestCommentMentionMigrationsSplitTriggerFromLegacyCleanup(t *testing.T) {
 	}
 	assertMentionMigrationObjects(t, database)
 	version, err := goose.GetDBVersion(database)
-	if err != nil || version != 23 {
-		t.Fatalf("migration version = %d, %v; want 23", version, err)
+	if err != nil || version != 33 {
+		t.Fatalf("migration version = %d, %v; want 33", version, err)
 	}
 
 	// The cleanup cannot reconstruct markers, so migration 19's Down is a
@@ -224,5 +224,53 @@ func assertMentionMigrationObjectsAbsent(t *testing.T, database *sql.DB) {
 	}
 	if trigger {
 		t.Fatal("normalization trigger remains after rollback")
+	}
+}
+
+func TestNotificationMigrationRecoversOccupiedVersion24(t *testing.T) {
+	databaseURL := testdb.New(t)
+	database, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	setMigrationTestFS(t)
+	if err := goose.SetDialect("postgres"); err != nil {
+		t.Fatal(err)
+	}
+	if err := goose.DownTo(database, "migrations", 23); err != nil {
+		t.Fatal(err)
+	}
+	// Reproduce the deployed state: version 24 is recorded, but notification
+	// objects are absent. Existing feature data must survive the repair.
+	if _, err := database.Exec(`CREATE TABLE previous_feature (id integer PRIMARY KEY);
+		INSERT INTO previous_feature VALUES (1);
+		INSERT INTO goose_db_version (version_id, is_applied) VALUES (24, true)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := aidb.Migrate(databaseURL); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"notification_preferences", "document_notification_mutes", "comment_notification_outbox"} {
+		var exists bool
+		if err := database.QueryRow(`SELECT to_regclass($1) IS NOT NULL`, "public."+table).Scan(&exists); err != nil || !exists {
+			t.Fatalf("notification table %s missing: %v", table, err)
+		}
+	}
+	var columnExists bool
+	if err := database.QueryRow(`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='users' AND column_name='next_notification_at')`).Scan(&columnExists); err != nil || !columnExists {
+		t.Fatalf("notification delivery gate missing: %v", err)
+	}
+	var count int
+	if err := database.QueryRow(`SELECT count(*) FROM previous_feature`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("existing feature data changed: %d, %v", count, err)
+	}
+	// Rolling back only the repair must not remove a schema also owned by 24.
+	setMigrationTestFS(t)
+	if err := goose.DownTo(database, "migrations", 24); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`SELECT 1 FROM notification_preferences LIMIT 1`); err != nil {
+		t.Fatal(err)
 	}
 }

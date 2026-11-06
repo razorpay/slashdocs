@@ -8,7 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
 func reactionPath(docID, commentID, emoji string) string {
@@ -241,5 +242,56 @@ func TestDeletingCommentRemovesReactions(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("reaction rows after comment delete = %d, want 0 via ON DELETE CASCADE", count)
+	}
+}
+
+func TestReactionIdentitiesIncludeUsersAndServiceAccounts(t *testing.T) {
+	e := newTestEnv(t)
+	// Deliberately share an ID across principal types to catch incorrect joins.
+	human := auth.Principal{Type: auth.PrincipalUser, ID: e.sa.ID, Name: "Reviewer", Email: "reviewer@example.com"}
+	bot := auth.Principal{Type: auth.PrincipalServiceAccount, ID: e.sa.ID, Name: e.sa.Name}
+	nameless := fixtureCommenter
+	nameless.Name = ""
+	e.seedUser(human)
+	e.seedUser(nameless)
+	for _, p := range []auth.Principal{human, bot} {
+		if _, err := e.store.CreateGrant(context.Background(), "document", e.doc.ID, p, repo.RoleCommenter, fixtureOwner); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, p := range []auth.Principal{human, bot, nameless} {
+		reactTo(t, e, http.MethodPut, e.doc.ID, e.cmt.ID, "heart", p)
+	}
+	for _, viewer := range []auth.Principal{fixtureViewer, bot} {
+		groups := reactionsOf(t, e, viewer)
+		if len(groups) != 1 || groups[0]["count"] != float64(3) || groups[0]["reacted"] != (viewer.Type == auth.PrincipalServiceAccount) {
+			t.Fatalf("unexpected reaction group: %#v", groups)
+		}
+		raw, err := json.Marshal(groups[0]["reactors"])
+		if err != nil {
+			t.Fatal(err)
+		}
+		var reactors []auth.Principal
+		if err := json.Unmarshal(raw, &reactors); err != nil {
+			t.Fatal(err)
+		}
+		if len(reactors) != 3 {
+			t.Fatalf("reactor count = %d, want 3", len(reactors))
+		}
+		byID := map[string]auth.Principal{}
+		for _, p := range reactors {
+			byID[string(p.Type)+":"+p.ID] = p
+		}
+		for _, want := range []auth.Principal{human, bot, nameless} {
+			got := byID[string(want.Type)+":"+want.ID]
+			if got.ID != want.ID || got.Name != want.Name || got.Email != want.Email {
+				t.Fatalf("reactor profile = %#v, want %#v", got, want)
+			}
+		}
+	}
+	rr := do(t, e.h, http.MethodGet, "/v1/documents/"+e.doc.ID+"/comments", "", map[string]string{"X-Test-Principal": principalHeader(fixtureStranger)})
+	assertStatus(t, rr, http.StatusForbidden)
+	if strings.Contains(rr.Body.String(), "reactors") {
+		t.Fatal("reactor identities exposed without document access")
 	}
 }

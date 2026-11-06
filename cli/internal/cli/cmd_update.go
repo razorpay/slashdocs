@@ -13,7 +13,7 @@ func updateCmd(g *globals, out io.Writer) *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
 		Use:   "update",
-		Short: "Update the aidocs CLI",
+		Short: "Update the slashdocs CLI",
 		Args:  exactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client(g)
@@ -27,16 +27,16 @@ func updateCmd(g *globals, out io.Writer) *cobra.Command {
 				return err
 			}
 			if binaryChanged {
-				_, _ = fmt.Fprintf(out, "Updated aidocs to %s.\n", v.Version)
+				_, _ = fmt.Fprintf(out, "Updated slashdocs to %s.\n", v.Version)
 				if skillRefreshed {
-					_, _ = fmt.Fprintln(out, "Refreshed aidocs skill.")
+					_, _ = fmt.Fprintln(out, "Refreshed slashdocs skill.")
 				}
 				return nil
 			}
 			if skillRefreshed {
-				_, _ = fmt.Fprintln(out, "Refreshed aidocs skill.")
+				_, _ = fmt.Fprintln(out, "Refreshed slashdocs skill.")
 				if v.Version != "" {
-					_, _ = fmt.Fprintf(out, "aidocs is already up to date (%s).\n", v.Version)
+					_, _ = fmt.Fprintf(out, "slashdocs is already up to date (%s).\n", v.Version)
 				}
 				return nil
 			}
@@ -44,7 +44,7 @@ func updateCmd(g *globals, out io.Writer) *cobra.Command {
 				_, _ = fmt.Fprintln(out, "No update information available.")
 				return nil
 			}
-			_, _ = fmt.Fprintf(out, "aidocs is already up to date (%s).\n", v.Version)
+			_, _ = fmt.Fprintf(out, "slashdocs is already up to date (%s).\n", v.Version)
 			return nil
 		},
 	}

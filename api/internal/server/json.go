@@ -3,8 +3,8 @@ package server
 import (
 	"strings"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
-	"github.com/razorpay/aidocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
 // principalResponse renders a principal with its optional identity fields.
@@ -62,6 +62,9 @@ type commentResponse struct {
 	Body               string                    `json:"body"`
 	Status             string                    `json:"status"`
 	CreatedOnVersionID string                    `json:"created_on_version_id"`
+	CreatedAt          string                    `json:"created_at,omitempty"`
+	ResolvedAt         string                    `json:"resolved_at,omitempty"`
+	Edited             bool                      `json:"edited,omitempty"`
 	ParentCommentID    string                    `json:"parent_comment_id,omitempty"`
 	Mentions           []commentMentionResponse  `json:"mentions"`
 	Reactions          []commentReactionResponse `json:"reactions"`
@@ -75,9 +78,10 @@ type commentResponse struct {
 // whether the principal making the request is among the reactors, which is why
 // rendering a comment needs a viewer.
 type commentReactionResponse struct {
-	Emoji   string `json:"emoji"`
-	Count   int    `json:"count"`
-	Reacted bool   `json:"reacted"`
+	Emoji    string              `json:"emoji"`
+	Count    int                 `json:"count"`
+	Reacted  bool                `json:"reacted"`
+	Reactors []principalResponse `json:"reactors"`
 }
 
 func commentsJSON(items []repo.Comment, placementVersionID string, placementHTML []byte, viewer auth.Principal) []commentResponse {
@@ -165,6 +169,9 @@ func commentBaseJSON(cm repo.Comment, viewer auth.Principal) commentResponse {
 		Body:               cm.Body,
 		Status:             cm.Status,
 		CreatedOnVersionID: cm.VersionID,
+		CreatedAt:          cm.CreatedAt,
+		ResolvedAt:         cm.ResolvedAt,
+		Edited:             cm.Edited,
 		ParentCommentID:    cm.ParentCommentID,
 		Mentions:           commentMentionsJSON(cm.Mentions),
 		Reactions:          commentReactionsJSON(cm.Reactions, viewer),
@@ -211,6 +218,7 @@ func commentReactionsJSON(items []repo.CommentReaction, viewer auth.Principal) [
 			out = append(out, commentReactionResponse{Emoji: reaction.Emoji})
 		}
 		out[i].Count++
+		out[i].Reactors = append(out[i].Reactors, principalJSON(reaction.Principal))
 		// Compare type as well as id: principal ids are only unique within a
 		// principal type, so id alone would conflate a user with a service
 		// account that happens to share it.

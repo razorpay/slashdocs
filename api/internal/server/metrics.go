@@ -18,94 +18,94 @@ var byteBuckets = []float64{0, 512, 1024, 10 * 1024, 100 * 1024, 1024 * 1024, 5 
 
 var (
 	httpRequestsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "aidocs_http_requests_total",
-		Help: "Total HTTP requests handled by the aidocs server.",
+		Name: "slashdocs_http_requests_total",
+		Help: "Total HTTP requests handled by the slashdocs server.",
 	}, []string{"method", "route", "status"})
 	httpRequestDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "aidocs_http_request_duration_seconds",
+		Name:    "slashdocs_http_request_duration_seconds",
 		Help:    "HTTP request latency by route.",
 		Buckets: prometheus.DefBuckets,
 	}, []string{"method", "route", "status"})
 	httpRequestSizeBytes = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "aidocs_http_request_size_bytes",
+		Name:    "slashdocs_http_request_size_bytes",
 		Help:    "HTTP request body size by route.",
 		Buckets: byteBuckets,
 	}, []string{"method", "route"})
 	httpResponseSizeBytes = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "aidocs_http_response_size_bytes",
+		Name:    "slashdocs_http_response_size_bytes",
 		Help:    "HTTP response body size by route.",
 		Buckets: byteBuckets,
 	}, []string{"method", "route", "status"})
 	authAttemptsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "aidocs_auth_attempts_total",
+		Name: "slashdocs_auth_attempts_total",
 		Help: "Authentication attempts by kind and outcome.",
 	}, []string{"kind", "outcome"})
 	documentEventsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "aidocs_document_events_total",
+		Name: "slashdocs_document_events_total",
 		Help: "Document lifecycle and interaction events.",
 	}, []string{"event", "actor_type"})
 	versionEventsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "aidocs_version_events_total",
+		Name: "slashdocs_version_events_total",
 		Help: "Document version lifecycle and interaction events.",
 	}, []string{"event", "actor_type"})
 	commentEventsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "aidocs_comment_events_total",
+		Name: "slashdocs_comment_events_total",
 		Help: "Comment lifecycle events.",
 	}, []string{"event", "status", "actor_type"})
 	grantEventsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "aidocs_grant_events_total",
+		Name: "slashdocs_grant_events_total",
 		Help: "Document grant lifecycle events.",
 	}, []string{"event", "role", "principal_type", "actor_type"})
 	serviceAccountEventsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "aidocs_service_account_events_total",
+		Name: "slashdocs_service_account_events_total",
 		Help: "Service account lifecycle and key events.",
 	}, []string{"event", "actor_type"})
 	renderEventsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "aidocs_render_events_total",
+		Name: "slashdocs_render_events_total",
 		Help: "Render token and document render events.",
 	}, []string{"event", "outcome"})
 	htmlBytes = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "aidocs_html_bytes",
+		Name:    "slashdocs_html_bytes",
 		Help:    "Uploaded or downloaded HTML payload sizes.",
 		Buckets: byteBuckets,
 	}, []string{"operation"})
 	mcpRequestsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "aidocs_mcp_requests_total",
+		Name: "slashdocs_mcp_requests_total",
 		Help: "MCP protocol requests by bounded method and outcome.",
 	}, []string{"method", "outcome"})
 	mcpRequestDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "aidocs_mcp_request_duration_seconds",
+		Name:    "slashdocs_mcp_request_duration_seconds",
 		Help:    "MCP protocol request latency by bounded method and outcome.",
 		Buckets: prometheus.DefBuckets,
 	}, []string{"method", "outcome"})
 	mcpToolCallsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "aidocs_mcp_tool_calls_total",
+		Name: "slashdocs_mcp_tool_calls_total",
 		Help: "MCP tool calls by registered tool, outcome, and actor type.",
 	}, []string{"tool", "outcome", "actor_type"})
 	mcpToolCallDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "aidocs_mcp_tool_call_duration_seconds",
+		Name:    "slashdocs_mcp_tool_call_duration_seconds",
 		Help:    "MCP tool call latency by registered tool and outcome.",
 		Buckets: prometheus.DefBuckets,
 	}, []string{"tool", "outcome"})
 	googleGroupRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "aidocs_google_group_requests_total",
+		Name: "slashdocs_google_group_requests_total",
 		Help: "Cloud Identity requests by operation and low-cardinality outcome.",
 	}, []string{"operation", "outcome"})
 	googleGroupRequestDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "aidocs_google_group_request_duration_seconds",
+		Name:    "slashdocs_google_group_request_duration_seconds",
 		Help:    "Cloud Identity request latency by operation.",
 		Buckets: prometheus.DefBuckets,
 	}, []string{"operation"})
 	googleGroupMembershipEvents = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "aidocs_google_group_membership_events_total",
+		Name: "slashdocs_google_group_membership_events_total",
 		Help: "Membership cache and refresh events.",
 	}, []string{"event", "outcome"})
 	googleGroupAuthorizationFailures = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "aidocs_google_group_authorization_failures_total",
+		Name: "slashdocs_google_group_authorization_failures_total",
 		Help: "Authorization responses caused by unavailable Google Group membership.",
 	})
 	googleGroupOperations = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "aidocs_google_group_operations_total",
+		Name: "slashdocs_google_group_operations_total",
 		Help: "Google Group search and grant resolution outcomes.",
 	}, []string{"operation", "outcome"})
 )
@@ -139,7 +139,7 @@ func init() {
 }
 
 // MetricsHandler serves Prometheus metrics. It is mounted on a separate,
-// private listener (see cmd/aidocs-server) so /metrics is never exposed on the
+// private listener (see cmd/slashdocs-server) so /metrics is never exposed on the
 // public app port.
 func MetricsHandler() http.Handler {
 	mux := http.NewServeMux()

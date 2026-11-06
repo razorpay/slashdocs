@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
-	"github.com/razorpay/aidocs/api/internal/repo"
-	"github.com/razorpay/aidocs/api/internal/server"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/server"
 )
 
 type fixedKVSubscriber struct {
@@ -29,6 +29,8 @@ func (s *fixedKVSubscriber) Subscribe(_ context.Context, documentID string) (<-c
 	}
 	return s.events, func() {}, nil
 }
+
+func (s *fixedKVSubscriber) Relay(context.Context, repo.DocumentKVEvent) error { return nil }
 
 type failingBacklogRepository struct {
 	repo.Repository

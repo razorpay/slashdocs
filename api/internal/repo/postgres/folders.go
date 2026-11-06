@@ -3,15 +3,16 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
-	dbsqlc "github.com/razorpay/aidocs/api/internal/db/sqlc"
-	"github.com/razorpay/aidocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	dbsqlc "github.com/razorpay/slashdocs/api/internal/db/sqlc"
+	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
 // folderTreeLockID keys the advisory lock that serializes folder-structure
@@ -19,7 +20,7 @@ import (
 // expressed as database constraints, so every transaction that reshapes the
 // tree takes this transaction-scoped lock first (see AcquireFolderTreeLock in
 // queries/folders.sql).
-const folderTreeLockID int64 = 0x6169646f63735f66 // "aidocs_f"
+const folderTreeLockID int64 = 0x6169646f63735f66 // "slashdocs_f"
 
 // folderMaxDepth is the deepest folder nesting the product allows.
 const folderMaxDepth = 15
@@ -266,7 +267,16 @@ func (s *Store) DeleteFolder(ctx context.Context, id string, p auth.Principal) e
 	if !own.IsOwner {
 		return repo.ErrForbidden
 	}
-	deleted, err := q.DeleteFolderSubtree(ctx, id)
+	orphans, err := q.ListFolderSubtreeOrphans(ctx, dbsqlc.ListFolderSubtreeOrphansParams{FolderID: id, OwnerType: string(p.Type), OwnerID: p.ID})
+	if err != nil {
+		return err
+	}
+	for _, o := range orphans {
+		if err := moveOrphanToRoot(ctx, q, o); err != nil {
+			return err
+		}
+	}
+	deleted, err := q.DeleteFolderSubtree(ctx, dbsqlc.DeleteFolderSubtreeParams{FolderID: id, OwnerType: string(p.Type), OwnerID: p.ID})
 	if err != nil {
 		return err
 	}
@@ -274,6 +284,23 @@ func (s *Store) DeleteFolder(ctx context.Context, id string, p auth.Principal) e
 		return repo.ErrNotFound
 	}
 	return tx.Commit(ctx)
+}
+
+// moveOrphanToRoot moves a folder that a folder delete keeps to its owner's
+// root. Root titles are unique for each owner, so it adds " (2)", " (3)", and
+// so on to the title when the owner already has a root folder with that title.
+func moveOrphanToRoot(ctx context.Context, q *dbsqlc.Queries, o dbsqlc.ListFolderSubtreeOrphansRow) error {
+	title := o.Title
+	for n := 2; ; n++ {
+		taken, err := q.RootFolderTitleTaken(ctx, dbsqlc.RootFolderTitleTakenParams{OwnerType: o.OwnerType, OwnerID: o.OwnerID, Title: title})
+		if err != nil {
+			return err
+		}
+		if !taken {
+			return q.UpdateFolderTitleAndParent(ctx, dbsqlc.UpdateFolderTitleAndParentParams{ID: o.ID, Title: title})
+		}
+		title = fmt.Sprintf("%s (%d)", o.Title, n)
+	}
 }
 
 func (s *Store) ListFolder(ctx context.Context, p auth.Principal, folderID, path string) ([]repo.FolderEntry, bool, *repo.Folder, error) {
@@ -381,27 +408,58 @@ func (s *Store) SearchFoldersByTitle(ctx context.Context, p auth.Principal, quer
 	if err != nil {
 		return nil, err
 	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	folderIDs := make([]string, 0, len(rows))
+	for _, r := range rows {
+		folderIDs = append(folderIDs, r.ID)
+	}
+	accessRows, err := s.q.ListFolderAccessChains(ctx, dbsqlc.ListFolderAccessChainsParams{
+		PrincipalType:  string(p.Type),
+		PrincipalID:    p.ID,
+		GoogleGroupIds: p.GoogleGroupIDs,
+		FolderIds:      folderIDs,
+	})
+	if err != nil {
+		return nil, err
+	}
+	type accessChain struct {
+		items     []repo.FolderAccess
+		private   bool
+		orgWide   bool
+		effective repo.Role
+	}
+	chains := make(map[string]*accessChain, len(rows))
+	for _, r := range accessRows {
+		chain := chains[r.CandidateID]
+		if chain == nil {
+			chain = &accessChain{}
+			chains[r.CandidateID] = chain
+		}
+		direct := grantRankRole(r.GrantRank)
+		if r.IsOwner {
+			direct = repo.MaxRole(direct, repo.RoleOwner)
+		}
+		chain.effective = repo.MaxRole(chain.effective, direct)
+		chain.private = chain.private || r.HasPrivateAccess
+		chain.orgWide = chain.orgWide || r.HasAnyoneAccess
+		chain.items = append(chain.items, repo.FolderAccess{ID: r.ID, Title: r.Title, Role: chain.effective})
+	}
 	var out []repo.Folder
 	for _, r := range rows {
 		f := repo.Folder{ID: r.ID, Title: r.Title, ParentFolderID: r.ParentFolderID, Owner: auth.Principal{Type: auth.PrincipalType(r.OwnerType), ID: r.OwnerID, Name: r.OwnerName, Email: r.OwnerEmail}}
-		chain, err := folderAccessChain(ctx, s.q, p, f.ID)
-		if errors.Is(err, repo.ErrNotFound) {
-			// The candidate may have been deleted between the set-wise search
-			// and this breadcrumb lookup. Do not return a stale or unverified
-			// destination.
+		chain := chains[f.ID]
+		// The set-wise query establishes the candidate cap; the one batch query
+		// supplies safe breadcrumbs and rechecks current eligibility without an
+		// N+1 lookup. Deleted or newly inaccessible candidates are omitted.
+		if chain == nil || len(chain.items) == 0 || !roleAtLeast(chain.effective, minRole) {
 			continue
 		}
-		if err != nil {
-			return nil, err
-		}
-		// The set-wise query establishes the candidate cap, while this
-		// per-result chain lookup supplies safe breadcrumbs. Re-check the
-		// candidate's current role after that lookup so a revocation observed
-		// between the two reads cannot be serialized as an eligible destination.
-		if len(chain) == 0 || !roleAtLeast(chain[len(chain)-1].Role, minRole) {
+		if !chain.private && !(includeOrgWide && chain.orgWide) {
 			continue
 		}
-		f.Ancestors, f.AncestorsTruncated = safeAncestorBreadcrumbs(chain)
+		f.Ancestors, f.AncestorsTruncated = safeAncestorBreadcrumbs(chain.items)
 		if r.ParentFolderID != "" && len(f.Ancestors) == 0 {
 			// A direct grant can make a nested folder visible while its parent
 			// remains hidden. Do not leak that parent's id through the legacy
@@ -490,7 +548,9 @@ func roleForFolderQ(ctx context.Context, q *dbsqlc.Queries, p auth.Principal, fo
 func roleForDocumentQ(ctx context.Context, q *dbsqlc.Queries, p auth.Principal, documentID string) (repo.Role, error) {
 	owner, err := q.GetDocumentOwner(ctx, documentID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return repo.RoleNone, repo.ErrNotFound
+		// A missing id and an inaccessible document are the same authorization
+		// verdict. Mutation callers must not gain a document-existence oracle.
+		return repo.RoleNone, nil
 	}
 	if err != nil {
 		return repo.RoleNone, err
@@ -519,7 +579,10 @@ func authorizeDocumentMove(ctx context.Context, q *dbsqlc.Queries, p auth.Princi
 	if !roleAtLeast(docRole, repo.RoleEditor) {
 		return repo.ErrForbidden
 	}
-	if source.Kind == "folder" {
+	// Canonical document owners can always rescue their document from a folder
+	// they cannot edit. Requiring source-folder access for them can otherwise
+	// permanently trap a document after another editor moves it.
+	if source.Kind == "folder" && docRole != repo.RoleOwner {
 		sourceRole, err := roleForFolderQ(ctx, q, p, source.FolderID)
 		if err != nil {
 			return err
@@ -564,7 +627,7 @@ func (s *Store) MoveDocumentToFolder(ctx context.Context, p auth.Principal, fold
 	doc, err := q.LockDocumentForMove(ctx, docID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return repo.MoveResult{}, repo.ErrNotFound
+			return repo.MoveResult{}, repo.ErrForbidden
 		}
 		return repo.MoveResult{}, err
 	}
@@ -617,7 +680,7 @@ func (s *Store) MoveDocumentToRoot(ctx context.Context, p auth.Principal, folder
 	}
 	doc, err := q.LockDocumentForMove(ctx, docID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return repo.MoveResult{}, repo.ErrNotFound
+		return repo.MoveResult{}, repo.ErrForbidden
 	}
 	if err != nil {
 		return repo.MoveResult{}, err

@@ -30,9 +30,9 @@ SELECT d.id,d.title,d.current_version_id,d.owner_type,d.owner_id,
        COALESCE(d.parent_folder_id,'') AS parent_folder_id
 FROM documents d
 LEFT JOIN users u ON d.owner_type='user' AND u.id=d.owner_id
-LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-  -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
-  ON d.owner_type='service_account' AND sa.id=d.owner_id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON d.owner_type='service_account' AND sa.id=d.owner_id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE d.id=$1
 `
 
@@ -47,7 +47,7 @@ type GetDocumentRow struct {
 	ParentFolderID   string
 }
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) GetDocument(ctx context.Context, id string) (GetDocumentRow, error) {
 	row := q.db.QueryRow(ctx, getDocument, id)
 	var i GetDocumentRow
@@ -97,6 +97,25 @@ func (q *Queries) GetDocumentVersionForUpdate(ctx context.Context, documentID st
 	return i, err
 }
 
+const indexDocuments = `-- name: IndexDocuments :execrows
+UPDATE documents SET title = title
+WHERE id IN (
+  SELECT id FROM documents WHERE search_vector IS NULL
+  LIMIT $1
+  FOR NO KEY UPDATE SKIP LOCKED
+)
+`
+
+// The trigger on title sets search_vector. Servers that index at the same
+// time skip each other's documents.
+func (q *Queries) IndexDocuments(ctx context.Context, rowLimit int32) (int64, error) {
+	result, err := q.db.Exec(ctx, indexDocuments, rowLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertDocument = `-- name: InsertDocument :exec
 INSERT INTO documents(id,title,owner_type,owner_id) VALUES($1,$2,$3,$4)
 `
@@ -125,9 +144,9 @@ SELECT d.id,d.title,d.current_version_id,d.owner_type,d.owner_id,
        d.updated_at
 FROM documents d
 LEFT JOIN users u ON d.owner_type='user' AND u.id=d.owner_id
-LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-  -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
-  ON d.owner_type='service_account' AND sa.id=d.owner_id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON d.owner_type='service_account' AND sa.id=d.owner_id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE d.parent_folder_id IS NULL
   AND (
    (d.owner_type=$2 AND d.owner_id=$1)
@@ -184,7 +203,7 @@ type ListDocumentsRow struct {
 // A bare "anyone" grant alone does NOT list the document: broad access grants
 // access via discovery/link, it does not place the document in every user's
 // workspace until they open it.
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) ListDocuments(ctx context.Context, arg ListDocumentsParams) ([]ListDocumentsRow, error) {
 	rows, err := q.db.Query(ctx, listDocuments, arg.OwnerID, arg.OwnerType, arg.Column3)
 	if err != nil {
@@ -222,9 +241,9 @@ SELECT d.id, d.title, d.owner_type, d.owner_id,
        COALESCE(u.email,'') AS owner_email
 FROM documents d
 LEFT JOIN users u ON d.owner_type='user' AND d.owner_id=u.id
-LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-  -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
-  ON d.owner_type='service_account' AND d.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON d.owner_type='service_account' AND d.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE d.parent_folder_id= $1::text
 `
 
@@ -239,7 +258,7 @@ type ListFolderDocumentsRow struct {
 	OwnerEmail       string
 }
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) ListFolderDocuments(ctx context.Context, folderID string) ([]ListFolderDocumentsRow, error) {
 	rows, err := q.db.Query(ctx, listFolderDocuments, folderID)
 	if err != nil {
@@ -364,91 +383,134 @@ docs_via_folder AS (
   SELECT DISTINCT fa.doc_id
   FROM folder_ancestors fa
   JOIN resource_grants g ON g.resource_type='folder' AND g.resource_id=fa.fid AND g.revoked_at IS NULL
-  WHERE (g.principal_type= $5 AND g.principal_id= $6)
-     OR (g.principal_type='google_group' AND g.principal_id=ANY($7::text[]))
-     OR ($8::boolean AND g.principal_type='anyone')
-)
-SELECT DISTINCT d.id,d.title,d.current_version_id,d.owner_type,d.owner_id,
-       COALESCE(u.email,'') AS owner_email,
-       COALESCE(u.name,sa.name,'') AS owner_name,
-       d.updated_at
-FROM documents d
-LEFT JOIN users u ON d.owner_type='user' AND u.id=d.owner_id
-LEFT JOIN service_accounts sa
-  ON d.owner_type='service_account' AND sa.id=d.owner_id
-WHERE ($1::text = '' OR d.title ~* $1::text)
+  WHERE (g.principal_type= $1 AND g.principal_id= $2)
+     OR (g.principal_type='google_group' AND g.principal_id=ANY($3::text[]))
+     OR ($4::boolean AND g.principal_type='anyone')
+),
+search AS NOT MATERIALIZED (
+  SELECT to_tsquery('english', $5::text) AS match,
+         to_tsquery('english', $6::text) AS exclude
+),
+matches AS (
+  SELECT d.id, d.title, d.current_version_id, d.owner_type, d.owner_id,
+         COALESCE(u.email,'') AS owner_email,
+         COALESCE(u.name,sa.name,'') AS owner_name,
+         COALESCE(pf.id,'') AS parent_folder_id,
+         COALESCE(pf.title,'') AS parent_folder_title,
+         d.updated_at,
+         cv.search_text,
+         cv.search_vector,
+         CASE WHEN numnode(search.match) > 0 THEN ts_rank(d.search_vector, search.match) ELSE 0 END AS rank
+  FROM documents d
+  CROSS JOIN search
+  LEFT JOIN versions cv ON cv.id=d.current_version_id
+  LEFT JOIN folders pf ON pf.id=d.parent_folder_id
+  LEFT JOIN users u ON d.owner_type='user' AND u.id=d.owner_id
+  LEFT JOIN service_accounts sa
+    ON d.owner_type='service_account' AND sa.id=d.owner_id
+  WHERE (numnode(search.match) = 0 OR d.search_vector @@ search.match)
+  AND (numnode(search.exclude) = 0 OR NOT d.search_vector @@ search.exclude)
   AND (
-    $2::text = ''
-    OR COALESCE(NULLIF(u.email,''), NULLIF(sa.name,''), d.owner_id) ~* $2::text
+    COALESCE(cardinality($7::text[]), 0) = 0
+    OR lower(d.owner_id) = ANY($7::text[])
+    OR lower(u.email) = ANY($7::text[])
+    OR lower(split_part(u.email, '@', 1)) = ANY($7::text[])
+    OR lower(sa.name) = ANY($7::text[])
   )
   AND (
-    $3::text = ''
+    COALESCE(cardinality($8::text[]), 0) = 0
     OR EXISTS (
       SELECT 1
       FROM folder_ancestors search_folder_ancestor
       JOIN folders search_folder ON search_folder.id=search_folder_ancestor.fid
       WHERE search_folder_ancestor.doc_id=d.id
-        AND search_folder.title ~* $3::text
+        AND (search_folder.id = ANY($8::text[]) OR lower(search_folder.title) = ANY($8::text[]))
     )
   )
   AND NOT EXISTS (
-    SELECT 1
-    FROM unnest($4::text[]) AS requested_label(pattern)
+    SELECT 1 FROM unnest($9::text[]) AS requested_label
     WHERE NOT EXISTS (
       SELECT 1 FROM document_labels dl
-      WHERE dl.document_id=d.id AND dl.label ~* requested_label.pattern
+      WHERE dl.document_id=d.id AND dl.label = requested_label
     )
   )
+  AND ($10::timestamptz IS NULL OR d.updated_at >= $10)
+  AND ($11::timestamptz IS NULL OR d.updated_at < $11)
   AND (
-    (d.owner_type= $5 AND d.owner_id= $6)
+    (d.owner_type= $1 AND d.owner_id= $2)
     OR EXISTS (
       SELECT 1 FROM resource_grants g
       WHERE g.resource_type='document'
         AND g.resource_id=d.id
         AND g.revoked_at IS NULL
-        AND ((g.principal_type= $5 AND g.principal_id= $6)
-          OR (g.principal_type='google_group' AND g.principal_id=ANY($7::text[]))
-          OR ($8::boolean AND g.principal_type='anyone'))
+        AND ((g.principal_type= $1 AND g.principal_id= $2)
+          OR (g.principal_type='google_group' AND g.principal_id=ANY($3::text[]))
+          OR ($4::boolean AND g.principal_type='anyone'))
     )
     OR d.id IN (SELECT doc_id FROM docs_via_folder)
   )
-ORDER BY d.updated_at DESC, d.title
-LIMIT $9
+  ORDER BY rank DESC, d.updated_at DESC, d.title
+  LIMIT $12
+)
+SELECT m.id, m.title, m.current_version_id, m.owner_type, m.owner_id,
+       m.owner_email, m.owner_name, m.parent_folder_id, m.parent_folder_title, m.updated_at,
+       CASE WHEN m.search_vector @@ search.match
+         THEN ts_headline('english', m.search_text, search.match,
+           'MaxFragments=1,MaxWords=24,MinWords=12,StartSel="'||chr(2)||'",StopSel="'||chr(3)||'"')
+         ELSE '' END::text AS snippet
+FROM matches m
+CROSS JOIN search
+ORDER BY m.rank DESC, m.updated_at DESC, m.title
 `
 
 type SearchDocumentsParams struct {
-	TitlePattern   string
-	AuthorPattern  string
-	FolderPattern  string
-	LabelPatterns  []string
 	OwnerType      string
 	OwnerID        string
 	GoogleGroupIds []string
 	IncludeOrgWide bool
+	MatchQuery     string
+	ExcludeQuery   string
+	Owners         []string
+	Folders        []string
+	Labels         []string
+	UpdatedSince   pgtype.Timestamptz
+	UpdatedBefore  pgtype.Timestamptz
 	RowLimit       int32
 }
 
 type SearchDocumentsRow struct {
-	ID               string
-	Title            string
-	CurrentVersionID pgtype.Text
-	OwnerType        string
-	OwnerID          string
-	OwnerEmail       string
-	OwnerName        string
-	UpdatedAt        pgtype.Timestamptz
+	ID                string
+	Title             string
+	CurrentVersionID  pgtype.Text
+	OwnerType         string
+	OwnerID           string
+	OwnerEmail        string
+	OwnerName         string
+	ParentFolderID    string
+	ParentFolderTitle string
+	UpdatedAt         pgtype.Timestamptz
+	Snippet           string
 }
 
+// @match_query and @exclude_query are tsquery text. A document matches when
+// its title or current text matches. Title words rank higher.
+// The planner puts the query values into the conditions below, so that the
+// search_vector index can find the matches, and an empty query reads no
+// vectors.
+// Snippets are made after LIMIT, because ts_headline reads the whole text.
 func (q *Queries) SearchDocuments(ctx context.Context, arg SearchDocumentsParams) ([]SearchDocumentsRow, error) {
 	rows, err := q.db.Query(ctx, searchDocuments,
-		arg.TitlePattern,
-		arg.AuthorPattern,
-		arg.FolderPattern,
-		arg.LabelPatterns,
 		arg.OwnerType,
 		arg.OwnerID,
 		arg.GoogleGroupIds,
 		arg.IncludeOrgWide,
+		arg.MatchQuery,
+		arg.ExcludeQuery,
+		arg.Owners,
+		arg.Folders,
+		arg.Labels,
+		arg.UpdatedSince,
+		arg.UpdatedBefore,
 		arg.RowLimit,
 	)
 	if err != nil {
@@ -466,7 +528,10 @@ func (q *Queries) SearchDocuments(ctx context.Context, arg SearchDocumentsParams
 			&i.OwnerID,
 			&i.OwnerEmail,
 			&i.OwnerName,
+			&i.ParentFolderID,
+			&i.ParentFolderTitle,
 			&i.UpdatedAt,
+			&i.Snippet,
 		); err != nil {
 			return nil, err
 		}

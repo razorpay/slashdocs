@@ -1,0 +1,95 @@
+# GoReleaser builds the standalone CLI archives and creates the GitHub Release.
+# It runs from .github/workflows/release.yml on a `v*` tag; the Docker image is
+# built separately in that workflow. Platforms match the CLI binaries the
+# server embeds and serves from /install.sh.
+version: 2
+
+project_name: slashdocs
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: slashdocs
+    main: ./cli
+    binary: slashdocs
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/razorpay/slashdocs/cli/internal/cli.Version={{ .Tag }}
+      - -X github.com/razorpay/slashdocs/cli/internal/cli.Commit={{ .ShortCommit }}
+      - -X github.com/razorpay/slashdocs/cli/internal/cli.SigningPublicKey={{ .Env.SLASHDOCS_CLI_SIGNING_PUBLIC_KEY }}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  use: github
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: Fixes
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: Other changes
+      order: 999
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - "Merge pull request"
+      - "Merge branch"
+
+release:
+  github:
+    owner: razorpay
+    name: slashdocs
+  draft: false
+  prerelease: auto
+  mode: replace
+  extra_files:
+    - glob: dist-chart/slashdocs-*.tgz
+  header: |
+    ## slashdocs {{ .Tag }}
+
+    **Docker image**
+
+    ```bash
+    docker pull razorpay/slashdocs:{{ .Version }}
+    ```
+
+    **Helm chart**: `slashdocs-{{ .Version }}.tgz` is attached below.
+
+    ```bash
+    helm upgrade --install slashdocs ./slashdocs-{{ .Version }}.tgz -n slashdocs --create-namespace -f my-values.yaml
+    ```
+
+    **CLI**: install from a running server with
+    `curl -fsSL https://<your-slashdocs-host>/install.sh | bash`, or download an
+    archive below.
+  footer: |
+    See [docs/self-hosting.md](https://github.com/razorpay/slashdocs/blob/{{ .Tag }}/docs/self-hosting.md) for configuration.

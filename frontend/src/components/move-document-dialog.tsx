@@ -167,6 +167,8 @@ export function MoveDocumentDialog({
           ? data.permission_warning?.message
           : undefined;
       if (message) setPendingWarning(message);
+      else if (data && "moved" in data && !data.moved)
+        toast("Document is already in that folder.");
       else toast.success("Document moved.");
     },
     onError: (cause) => {
@@ -353,7 +355,12 @@ export function MoveDocumentDialog({
             {error ? <p role="alert">{error}</p> : null}
           </div>
           <DialogFooter className="move-dialog-footer shrink-0">
-            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={move.isPending}
+              onClick={() => onOpenChange(false)}
+            >
               Cancel
             </Button>
             <Button

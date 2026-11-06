@@ -155,10 +155,13 @@ func (o OIDC) ExchangeAndVerify(ctx context.Context, code string, opts ...oauth2
 		return OIDCUser{}, errors.New("missing subject claim")
 	}
 	var claims struct {
-		Email         string `json:"email"`
-		EmailVerified *bool  `json:"email_verified"`
-		Name          string `json:"name"`
-		Picture       string `json:"picture"`
+		Email         string     `json:"email"`
+		EmailVerified *boolClaim `json:"email_verified"`
+		// Entra ID never sends email_verified. Its optional xms_edov claim
+		// says whether the owner of the email's domain is verified.
+		EntraEmailVerified *boolClaim `json:"xms_edov"`
+		Name               string     `json:"name"`
+		Picture            string     `json:"picture"`
 	}
 	if err := idToken.Claims(&claims); err != nil {
 		return OIDCUser{}, err
@@ -166,10 +169,26 @@ func (o OIDC) ExchangeAndVerify(ctx context.Context, code string, opts ...oauth2
 	if strings.TrimSpace(claims.Email) == "" {
 		return OIDCUser{}, errors.New("missing email claim")
 	}
-	if claims.EmailVerified != nil && !*claims.EmailVerified {
-		return OIDCUser{}, errors.New("email is not verified by the identity provider")
+	// Fail closed: a provider that omits the claim may let users choose any
+	// email, and the email gates org login and receives email-addressed shares.
+	verified := claims.EmailVerified
+	if verified == nil {
+		verified = claims.EntraEmailVerified
+	}
+	if verified == nil || !*verified {
+		return OIDCUser{}, errors.New("email is not verified by the identity provider: the id token needs email_verified or xms_edov set to true")
 	}
 	return OIDCUser{Sub: idToken.Subject, Email: claims.Email, Name: claims.Name, PictureURL: claims.Picture}, nil
+}
+
+// boolClaim reads a boolean claim that some providers send as a string, such
+// as Entra's xms_edov "1". Any value other than true, "true", or "1" is false.
+type boolClaim bool
+
+func (c *boolClaim) UnmarshalJSON(raw []byte) error {
+	v := strings.Trim(string(raw), `"`)
+	*c = v == "true" || v == "1"
+	return nil
 }
 
 func LoopbackRedirectAllowed(raw string) bool {

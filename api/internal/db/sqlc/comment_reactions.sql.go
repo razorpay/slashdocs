@@ -35,17 +35,23 @@ func (q *Queries) DeleteCommentReaction(ctx context.Context, arg DeleteCommentRe
 }
 
 const listCommentReactions = `-- name: ListCommentReactions :many
-SELECT comment_id, principal_type, principal_id, emoji
-FROM comment_reactions
-WHERE comment_id = ANY($1::text[])
-ORDER BY comment_id, created_at, emoji
+SELECT r.comment_id, r.principal_type, r.principal_id, r.emoji,
+  COALESCE(u.email, '') AS principal_email,
+  COALESCE(u.name, sa.name, '') AS principal_name
+FROM comment_reactions r
+LEFT JOIN users u ON r.principal_type = 'user' AND r.principal_id = u.id
+LEFT JOIN service_accounts sa ON r.principal_type = 'service_account' AND r.principal_id = sa.id
+WHERE r.comment_id = ANY($1::text[])
+ORDER BY r.comment_id, r.created_at, r.emoji, r.principal_type, r.principal_id
 `
 
 type ListCommentReactionsRow struct {
-	CommentID     string
-	PrincipalType string
-	PrincipalID   string
-	Emoji         string
+	CommentID      string
+	PrincipalType  string
+	PrincipalID    string
+	Emoji          string
+	PrincipalEmail string
+	PrincipalName  string
 }
 
 // Ordering by created_at before emoji lets the JSON layer aggregate in
@@ -64,6 +70,8 @@ func (q *Queries) ListCommentReactions(ctx context.Context, commentIds []string)
 			&i.PrincipalType,
 			&i.PrincipalID,
 			&i.Emoji,
+			&i.PrincipalEmail,
+			&i.PrincipalName,
 		); err != nil {
 			return nil, err
 		}

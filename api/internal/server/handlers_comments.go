@@ -7,8 +7,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
-	"github.com/razorpay/aidocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
 type commentMentionPrincipalType string
@@ -63,11 +63,11 @@ type patchCommentRequest struct {
 
 // CreateComment godoc
 // @Summary Create comment
-// @Description Requests with non-empty mentions must use Content-Type application/vnd.aidocs.comment-mentions+json so mixed-version deployments fail closed instead of dropping metadata.
+// @Description Requests with non-empty mentions must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed instead of dropping metadata.
 // @Tags comments
 // @Security bearerAuth
 // @Security cookieAuth
-// @Accept json,application/vnd.aidocs.comment-mentions+json
+// @Accept json,application/vnd.slashdocs.comment-mentions+json
 // @Param id path string true "Document ID"
 // @Param comment body createCommentRequest true "Comment body, anchor, and structured mentions"
 // @Success 201 {object} commentResponse
@@ -104,6 +104,7 @@ func (h handlers) createComment(c *gin.Context) {
 		return
 	}
 	incComment("created", cm.Status, actorType(c))
+	h.announce(c, repo.DocumentEventComments)
 	c.JSON(http.StatusCreated, commentJSON(cm, cm.VersionID, "", *p))
 }
 
@@ -143,11 +144,11 @@ func (h handlers) listComments(c *gin.Context) {
 
 // CreateCommentReply godoc
 // @Summary Create comment reply
-// @Description Requests with non-empty mentions must use Content-Type application/vnd.aidocs.comment-mentions+json so mixed-version deployments fail closed instead of dropping metadata.
+// @Description Requests with non-empty mentions must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed instead of dropping metadata.
 // @Tags comments
 // @Security bearerAuth
 // @Security cookieAuth
-// @Accept json,application/vnd.aidocs.comment-mentions+json
+// @Accept json,application/vnd.slashdocs.comment-mentions+json
 // @Param id path string true "Document ID"
 // @Param comment_id path string true "Parent Comment ID"
 // @Param reply body createCommentReplyRequest true "Reply body and structured mentions"
@@ -184,16 +185,17 @@ func (h handlers) createCommentReply(c *gin.Context) {
 		return
 	}
 	incComment("created", cm.Status, actorType(c))
+	h.announce(c, repo.DocumentEventComments)
 	c.JSON(http.StatusCreated, commentJSON(cm, "", "", *current(c)))
 }
 
 // PatchComment godoc
 // @Summary Update comment
-// @Description Any request containing the mentions key, including an empty array, must use Content-Type application/vnd.aidocs.comment-mentions+json so mixed-version deployments fail closed.
+// @Description Any request containing the mentions key, including an empty array, must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed.
 // @Tags comments
 // @Security bearerAuth
 // @Security cookieAuth
-// @Accept json,application/vnd.aidocs.comment-mentions+json
+// @Accept json,application/vnd.slashdocs.comment-mentions+json
 // @Param id path string true "Document ID"
 // @Param comment_id path string true "Comment ID"
 // @Param update body patchCommentRequest true "Fields to update; omitted mentions are preserved unless the body changes"
@@ -236,6 +238,7 @@ func (h handlers) patchComment(c *gin.Context) {
 		event = "reopened"
 	}
 	incComment(event, cm.Status, actorType(c))
+	h.announce(c, repo.DocumentEventComments)
 	c.JSON(http.StatusOK, commentJSON(cm, cm.VersionID, "", *current(c)))
 }
 
@@ -315,6 +318,7 @@ func (h handlers) deleteComment(c *gin.Context) {
 		return
 	}
 	incComment("deleted", labelUnknown, actorType(c))
+	h.announce(c, repo.DocumentEventComments)
 	c.Status(http.StatusNoContent)
 }
 
@@ -405,6 +409,7 @@ func (h handlers) writeCommentReaction(c *gin.Context, write reactionWrite) {
 		internalErr(c, err)
 		return
 	}
+	h.announce(c, repo.DocumentEventComments)
 	c.Status(http.StatusNoContent)
 }
 
@@ -441,7 +446,7 @@ func authoredBy(cm repo.Comment, p auth.Principal) bool {
 
 func (h handlers) canDeleteComment(c *gin.Context, docID, commentID string) bool {
 	cm, ok := h.loadCommentInDocument(c, docID, commentID)
-	if !ok {
+	if !ok || !h.needDocRole(c, docID, repo.RoleCommenter) {
 		return false
 	}
 	if authoredBy(cm, *current(c)) {
@@ -453,7 +458,7 @@ func (h handlers) canDeleteComment(c *gin.Context, docID, commentID string) bool
 
 func (h handlers) canMutateComment(c *gin.Context, docID, commentID string) bool {
 	cm, ok := h.loadCommentInDocument(c, docID, commentID)
-	if !ok {
+	if !ok || !h.needDocRole(c, docID, repo.RoleCommenter) {
 		return false
 	}
 	p := current(c)

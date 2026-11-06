@@ -15,7 +15,7 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
-        "/.well-known/aidocs.json": {
+        "/.well-known/slashdocs.json": {
             "get": {
                 "produces": [
                     "application/json"
@@ -254,6 +254,20 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/auth/logout": {
+            "post": {
+                "description": "Clears the session cookie. CLI credentials stay valid.",
+                "tags": [
+                    "auth"
+                ],
+                "summary": "End the browser session",
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
         "/v1/auth/oidc/callback": {
             "get": {
                 "tags": [
@@ -367,13 +381,19 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Search query; supports author:, labels:, in:, and /regex/ values",
+                        "description": "Slack-style search of titles and text: words, \\",
                         "name": "q",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "Deprecated exact label filter; use q=labels:\u003clabel\u003e",
+                        "description": "IANA time zone for date modifiers; defaults to UTC",
+                        "name": "tz",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Deprecated exact label filter; use q=label:\u003clabel\u003e",
                         "name": "label",
                         "in": "query"
                     }
@@ -530,6 +550,43 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/documents/{id}/access-requests": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Notifies the current owner without revealing whether the document or owner exists. Repeated requests are coalesced.",
+                "tags": [
+                    "documents"
+                ],
+                "summary": "Request access to a document",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/v1/documents/{id}/comments": {
             "get": {
                 "security": [
@@ -583,10 +640,10 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "Requests with non-empty mentions must use Content-Type application/vnd.aidocs.comment-mentions+json so mixed-version deployments fail closed instead of dropping metadata.",
+                "description": "Requests with non-empty mentions must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed instead of dropping metadata.",
                 "consumes": [
                     "application/json",
-                    "application/vnd.aidocs.comment-mentions+json"
+                    "application/vnd.slashdocs.comment-mentions+json"
                 ],
                 "tags": [
                     "comments"
@@ -665,10 +722,10 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "Any request containing the mentions key, including an empty array, must use Content-Type application/vnd.aidocs.comment-mentions+json so mixed-version deployments fail closed.",
+                "description": "Any request containing the mentions key, including an empty array, must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed.",
                 "consumes": [
                     "application/json",
-                    "application/vnd.aidocs.comment-mentions+json"
+                    "application/vnd.slashdocs.comment-mentions+json"
                 ],
                 "tags": [
                     "comments"
@@ -829,10 +886,10 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "Requests with non-empty mentions must use Content-Type application/vnd.aidocs.comment-mentions+json so mixed-version deployments fail closed instead of dropping metadata.",
+                "description": "Requests with non-empty mentions must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed instead of dropping metadata.",
                 "consumes": [
                     "application/json",
-                    "application/vnd.aidocs.comment-mentions+json"
+                    "application/vnd.slashdocs.comment-mentions+json"
                 ],
                 "tags": [
                     "comments"
@@ -976,6 +1033,174 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/repo.Grant"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}/headings": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Lists headings in stored HTML. Explicit HTML IDs are preserved. JavaScript-only headings appear in the viewer when created.",
+                "tags": [
+                    "documents"
+                ],
+                "summary": "List document headings and shareable links",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Version ID (pins links to this version)",
+                        "name": "version",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server.listResponse-server_headingResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}/link": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "tags": [
+                    "documents"
+                ],
+                "summary": "Get a shareable link to a document, comment, or heading",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comment or reply ID",
+                        "name": "comment",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Heading ID, including an ID created by document JavaScript",
+                        "name": "heading",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Version ID for a heading or document link",
+                        "name": "version",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server.documentLinkResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}/notifications": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "tags": [
+                    "notifications"
+                ],
+                "summary": "Read your notification preferences for a document",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/repo.NotificationPreferences"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Personal preference only. Global disable overrides this preference.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notifications"
+                ],
+                "summary": "Enable or mute your document notifications",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Notification preference",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/server.notificationPreferencesRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/repo.NotificationPreferences"
                         }
                     }
                 }
@@ -1311,6 +1536,67 @@ const docTemplate = `{
                         "description": "Unauthorized",
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/me/notifications": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "tags": [
+                    "notifications"
+                ],
+                "summary": "Read your notification preferences",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/repo.NotificationPreferences"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Applies only to the authenticated principal. Document preferences never change access or other users' notifications. Global disable overrides document preferences.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notifications"
+                ],
+                "summary": "Set your notification preferences",
+                "parameters": [
+                    {
+                        "description": "Notification preference",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/server.notificationPreferencesRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/repo.NotificationPreferences"
                         }
                     }
                 }
@@ -1719,6 +2005,10 @@ const docTemplate = `{
                 "parent_folder_id": {
                     "type": "string"
                 },
+                "snippet": {
+                    "description": "Snippet is set in search results when the text matches. U+0002 and\nU+0003 surround each match.",
+                    "type": "string"
+                },
                 "title": {
                     "type": "string"
                 },
@@ -1761,6 +2051,17 @@ const docTemplate = `{
                 },
                 "role": {
                     "$ref": "#/definitions/repo.Role"
+                }
+            }
+        },
+        "repo.NotificationPreferences": {
+            "type": "object",
+            "properties": {
+                "effective_enabled": {
+                    "type": "boolean"
+                },
+                "enabled": {
+                    "type": "boolean"
                 }
             }
         },
@@ -1988,6 +2289,12 @@ const docTemplate = `{
                 },
                 "reacted": {
                     "type": "boolean"
+                },
+                "reactors": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/server.principalResponse"
+                    }
                 }
             }
         },
@@ -2001,6 +2308,9 @@ const docTemplate = `{
                     "$ref": "#/definitions/server.principalResponse"
                 },
                 "body": {
+                    "type": "string"
+                },
+                "created_at": {
                     "type": "string"
                 },
                 "created_on_version_id": {
@@ -2033,6 +2343,9 @@ const docTemplate = `{
                         "$ref": "#/definitions/server.commentResponse"
                     }
                 },
+                "resolved_at": {
+                    "type": "string"
+                },
                 "selected_text": {
                     "type": "string"
                 },
@@ -2064,9 +2377,6 @@ const docTemplate = `{
                 },
                 "provider_name": {
                     "type": "string"
-                },
-                "search_tags_enabled": {
-                    "type": "boolean"
                 }
             }
         },
@@ -2229,6 +2539,14 @@ const docTemplate = `{
                 }
             }
         },
+        "server.documentLinkResponse": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
         "server.errorBody": {
             "type": "object",
             "properties": {
@@ -2298,8 +2616,7 @@ const docTemplate = `{
                     "enum": [
                         "viewer",
                         "commenter",
-                        "editor",
-                        "owner"
+                        "editor"
                     ],
                     "allOf": [
                         {
@@ -2360,6 +2677,23 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "server.headingResponse": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "level": {
+                    "type": "integer"
+                },
+                "text": {
+                    "type": "string"
+                },
+                "url": {
                     "type": "string"
                 }
             }
@@ -2441,6 +2775,17 @@ const docTemplate = `{
                 }
             }
         },
+        "server.listResponse-server_headingResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/server.headingResponse"
+                    }
+                }
+            }
+        },
         "server.meResponse": {
             "type": "object",
             "properties": {
@@ -2483,6 +2828,14 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                }
+            }
+        },
+        "server.notificationPreferencesRequest": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean"
                 }
             }
         },
@@ -2593,7 +2946,7 @@ const docTemplate = `{
         },
         "cookieAuth": {
             "type": "apiKey",
-            "name": "aidocs_session",
+            "name": "slashdocs_session",
             "in": "cookie"
         }
     }
@@ -2605,8 +2958,8 @@ var SwaggerInfo = &swag.Spec{
 	Host:             "",
 	BasePath:         "/",
 	Schemes:          []string{},
-	Title:            "aidocs API",
-	Description:      "This API powers a review tool where people can upload one self-contained HTML file, view it, and leave comments anchored to specific text ranges inside that HTML.",
+	Title:            "slashdocs API",
+	Description:      "This API powers slashdocs, a collaborative workspace where agents and people publish self-contained HTML documents, comment on specific text ranges inside them, and publish new versions.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

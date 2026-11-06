@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
-	"github.com/razorpay/aidocs/api/internal/repo"
-	"github.com/razorpay/aidocs/api/internal/server"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/server"
 )
 
 func TestMoveDocumentExpectedSourceAndLegacyCompatibility(t *testing.T) {
@@ -177,12 +177,20 @@ func TestMoveDocumentDoesNotRevealDestinationExistence(t *testing.T) {
 		t.Fatalf("authorized move returned moved=false: %s", rr.Body.String())
 	}
 
-	// Document lookup remains a genuine not-found response when the caller is
-	// otherwise authorized for the destination.
+	// A missing document must be indistinguishable from an inaccessible one,
+	// even when the caller can edit the destination.
 	rr = do(t, e.h, http.MethodPost, "/v1/folders/"+existingDestination+"/documents", `{"document_id":"doc_does_not_exist"}`, map[string]string{
 		"X-Test-Principal": principalHeader(fixtureOwner), "Content-Type": "application/json",
 	})
-	assertStatus(t, rr, http.StatusNotFound)
+	assertStatus(t, rr, http.StatusForbidden)
+	privateDocID, _ := e.createDocument("Private document", "<p>private</p>", fixtureStranger)
+	privateResponse := do(t, e.h, http.MethodPost, "/v1/folders/"+existingDestination+"/documents", `{"document_id":"`+privateDocID+`"}`, map[string]string{
+		"X-Test-Principal": principalHeader(fixtureOwner), "Content-Type": "application/json",
+	})
+	assertStatus(t, privateResponse, http.StatusForbidden)
+	if rr.Body.String() != privateResponse.Body.String() {
+		t.Fatalf("document existence leaked: missing=%s private=%s", rr.Body.String(), privateResponse.Body.String())
+	}
 }
 
 func TestMoveDocumentFolderSourceRequiresSourceEditor(t *testing.T) {
@@ -276,6 +284,36 @@ func TestMoveDocumentFolderLegacyOmittedSourceStillRequiresSourceEditor(t *testi
 	}
 	if got.ParentFolderID != source {
 		t.Fatalf("legacy move changed parent to %q, want %q", got.ParentFolderID, source)
+	}
+}
+
+func TestDocumentOwnerCanRescueDocumentWithoutSourceFolderAccess(t *testing.T) {
+	e := newTestEnv(t)
+	source := createFolder(t, e, `{"title":"Private source"}`, principalHeader(fixtureStranger))
+	docID, _ := e.createDocument("Owner rescue", "<p>doc</p>", fixtureOwner)
+
+	// An editor can move the owner's document into a folder that only the
+	// editor owns. This must not leave the canonical document owner unable to
+	// move their own document back out.
+	rr := do(t, e.h, http.MethodPost, "/v1/documents/"+docID+"/grants", `{"address":"`+fixtureStranger.Email+`","role":"editor"}`, map[string]string{
+		"X-Test-Principal": principalHeader(fixtureOwner), "Content-Type": "application/json",
+	})
+	assertStatus(t, rr, http.StatusCreated)
+	rr = do(t, e.h, http.MethodPost, "/v1/folders/"+source+"/documents", `{"document_id":"`+docID+`"}`, map[string]string{
+		"X-Test-Principal": principalHeader(fixtureStranger), "Content-Type": "application/json",
+	})
+	assertStatus(t, rr, http.StatusOK)
+
+	rr = do(t, e.h, http.MethodDelete, "/v1/folders/"+source+"/documents/"+docID, "", map[string]string{
+		"X-Test-Principal": principalHeader(fixtureOwner),
+	})
+	assertStatus(t, rr, http.StatusNoContent)
+	got, err := e.store.GetDocument(context.Background(), docID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ParentFolderID != "" {
+		t.Fatalf("owner rescue left parent=%q", got.ParentFolderID)
 	}
 }
 
@@ -457,6 +495,44 @@ func TestFolderSearchExplicitEmptyQueryHonorsMinimumRole(t *testing.T) {
 	if strings.Contains(rr.Body.String(), viewerOnly.ID) || strings.Contains(rr.Body.String(), viewerOnly.Title) {
 		t.Fatalf("viewer-only destination leaked from empty-query editor search: %s", rr.Body.String())
 	}
+}
+
+func TestFolderOwnershipIsInheritedByDescendants(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	root, err := e.store.CreateFolder(ctx, fixtureOwner, "Alice root", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.CreateGrant(ctx, "folder", root.ID, fixtureStranger, repo.RoleEditor, fixtureOwner); err != nil {
+		t.Fatal(err)
+	}
+	child, err := e.store.CreateFolder(ctx, fixtureStranger, "Bob child", root.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	role, err := e.store.RoleForFolder(ctx, fixtureOwner, child.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if role != repo.RoleOwner {
+		t.Fatalf("ancestor owner role=%q, want owner", role)
+	}
+
+	rr := do(t, e.h, http.MethodGet, "/v1/folders?q=Bob%20child&min_role=editor", "", map[string]string{
+		"X-Test-Principal": principalHeader(fixtureOwner),
+	})
+	assertStatus(t, rr, http.StatusOK)
+	if !strings.Contains(rr.Body.String(), child.ID) || !strings.Contains(rr.Body.String(), root.ID) {
+		t.Fatalf("owned descendant or breadcrumb missing from search: %s", rr.Body.String())
+	}
+
+	docID, _ := e.createDocument("Owned descendant move", "<p>doc</p>", fixtureOwner)
+	rr = do(t, e.h, http.MethodPost, "/v1/folders/"+child.ID+"/documents", `{"document_id":"`+docID+`","expected_source":{"kind":"root"}}`, map[string]string{
+		"X-Test-Principal": principalHeader(fixtureOwner), "Content-Type": "application/json",
+	})
+	assertStatus(t, rr, http.StatusOK)
 }
 
 func TestFolderSearchAnyoneVisibilityFollowsDeployment(t *testing.T) {

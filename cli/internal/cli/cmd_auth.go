@@ -12,7 +12,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -81,8 +80,8 @@ func startLoginCallbackServer(ln net.Listener, state string, resultCh chan<- cal
 
 func loginCmd(g *globals, out io.Writer) *cobra.Command {
 	var name string
-	cmd := &cobra.Command{Use: "login [server]", Short: "Log in through an aidocs server", Example: "  aidocs auth login aidocs.example.com\n  aidocs auth login   # reuses the active context's server", RunE: func(cmd *cobra.Command, args []string) error {
-		srv := first(g.server, os.Getenv("AIDOCS_SERVER"))
+	cmd := &cobra.Command{Use: "login [server]", Short: "Log in through a slashdocs server", Example: "  slashdocs auth login slashdocs.example.com\n  slashdocs auth login   # reuses the active context's server", RunE: func(cmd *cobra.Command, args []string) error {
+		srv := first(g.server, env("SLASHDOCS_SERVER"))
 		if len(args) > 0 {
 			srv = args[0]
 		}
@@ -131,7 +130,7 @@ func loginCmd(g *globals, out io.Writer) *cobra.Command {
 		case err := <-serveErrCh:
 			return fmt.Errorf("serve login callback: %w", err)
 		case <-ctx.Done():
-			return fmt.Errorf("timed out waiting for login callback after %s; run aidocs auth login again", loginTimeout)
+			return fmt.Errorf("timed out waiting for login callback after %s; run slashdocs auth login again", loginTimeout)
 		}
 
 		cl := &Client{Base: srv, HTTP: apiHTTPClient}
@@ -230,7 +229,7 @@ var loginPageHTML string
 
 var loginPageTmpl = template.Must(template.New("login").Parse(loginPageHTML))
 
-// writeLoginPage serves the OAuth callback tab, styled to match the aidocs web
+// writeLoginPage serves the OAuth callback tab, styled to match the slashdocs web
 // theme. The page lives in login_page.html (embedded); tone is selected by a
 // body class so no markup or styles are injected.
 func writeLoginPage(w http.ResponseWriter, status int, ok bool, detail string) {

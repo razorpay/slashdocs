@@ -34,6 +34,7 @@ type Comment struct {
 	ResolvedAt         pgtype.Timestamptz
 	ParentCommentID    pgtype.Text
 	RootCommentID      string
+	Edited             bool
 }
 
 // Structured principals mentioned in comment bodies. Mention metadata grants no access; future notification delivery must re-check effective document access and apply rate limits.
@@ -47,6 +48,15 @@ type CommentMention struct {
 	LengthUtf16 int32
 	// Internal snapshot of the exact visible @label, used to preserve valid mentions across principal renames.
 	LabelText string
+}
+
+type CommentNotificationOutbox struct {
+	CommentID   string
+	RecipientID string
+	Reason      string
+	Attempts    int32
+	AvailableAt pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
 }
 
 type CommentPlacement struct {
@@ -79,6 +89,37 @@ type Document struct {
 	UpdatedAt        pgtype.Timestamptz
 	OwnerType        string
 	ParentFolderID   pgtype.Text
+	SearchVector     interface{}
+}
+
+type DocumentAccessNotificationOutbox struct {
+	DocumentID   string
+	RecipientID  string
+	Source       string
+	Reason       string
+	PreviousRole string
+	Role         string
+	Attempts     int32
+	AvailableAt  pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+}
+
+type DocumentAccessRequest struct {
+	DocumentID    string
+	RequesterType string
+	RequesterID   string
+	RequestedAt   pgtype.Timestamptz
+}
+
+type DocumentAccessRequestNotificationOutbox struct {
+	DocumentID     string
+	RequesterType  string
+	RequesterID    string
+	RequesterLabel string
+	RecipientID    string
+	Attempts       int32
+	AvailableAt    pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
 }
 
 type DocumentKv struct {
@@ -103,6 +144,8 @@ type DocumentKvEvent struct {
 	UpdatedByID    string
 	UpdatedByEmail string
 	UpdatedByName  string
+	Kind           string
+	Data           []byte
 }
 
 type DocumentLabel struct {
@@ -111,6 +154,12 @@ type DocumentLabel struct {
 	CreatedByType string
 	CreatedByID   string
 	CreatedAt     pgtype.Timestamptz
+}
+
+type DocumentNotificationMute struct {
+	PrincipalType string
+	PrincipalID   string
+	DocumentID    string
 }
 
 type DocumentWorkspaceEntry struct {
@@ -148,6 +197,14 @@ type GithubConnection struct {
 	UpdatedAt             pgtype.Timestamptz
 }
 
+type GithubRepoAccess struct {
+	UserID    string
+	Owner     string
+	Repo      string
+	CanRead   bool
+	CheckedAt pgtype.Timestamptz
+}
+
 type GoogleGroup struct {
 	ID             string
 	CustomerID     string
@@ -169,6 +226,19 @@ type GoogleGroupSyncState struct {
 	LastAttemptAt pgtype.Timestamptz
 	LastSuccessAt pgtype.Timestamptz
 	LastErrorCode string
+}
+
+type HiddenFeaturedItem struct {
+	PrincipalType string
+	PrincipalID   string
+	ResourceID    string
+	HiddenAt      pgtype.Timestamptz
+}
+
+type NotificationPreference struct {
+	PrincipalType string
+	PrincipalID   string
+	Enabled       bool
 }
 
 type OauthState struct {
@@ -230,12 +300,13 @@ type ServiceAccountKey struct {
 }
 
 type User struct {
-	ID         string
-	Email      string
-	Name       string
-	PictureUrl string
-	GoogleSub  pgtype.Text
-	CreatedAt  pgtype.Timestamptz
+	ID                 string
+	Email              string
+	Name               string
+	PictureUrl         string
+	GoogleSub          pgtype.Text
+	CreatedAt          pgtype.Timestamptz
+	NextNotificationAt pgtype.Timestamptz
 }
 
 type Version struct {
@@ -249,4 +320,6 @@ type Version struct {
 	CreatedByID     string
 	ChangeSummary   string
 	CreatedAt       pgtype.Timestamptz
+	SearchText      pgtype.Text
+	SearchVector    interface{}
 }

@@ -1,8 +1,8 @@
 import { useEffect } from "react";
 
-const BASE = "aidocs";
+const BASE = "slashdocs";
 
-// Sets the browser tab title to "<title> · aidocs" (or just "aidocs" when no
+// Sets the browser tab title to "<title> · slashdocs" (or just "slashdocs" when no
 // page title is given), restoring the previous title on unmount so tabs stay
 // distinguishable as the user navigates.
 export function useTitle(title?: string) {

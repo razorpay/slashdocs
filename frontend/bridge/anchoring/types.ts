@@ -1,4 +1,4 @@
-// Wire format of a comment anchor, shared with the aidocs API (repo.Anchor).
+// Wire format of a comment anchor, shared with the slashdocs API (repo.Anchor).
 //
 // The fields map onto two W3C Web Annotation selectors:
 //   - quote/prefix/suffix        -> TextQuoteSelector

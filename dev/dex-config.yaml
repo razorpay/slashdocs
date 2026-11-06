@@ -9,8 +9,8 @@
 # Real deployments configure their own provider instead; see
 # docs/self-hosting.md ("Configure sign-in").
 
-# Browsers reach Dex at localhost:5556 (published port); the aidocs container
-# reaches it at dex:5556 via AIDOCS_OIDC_INTERNAL_ISSUER_URL.
+# Browsers reach Dex at localhost:5556 (published port); the slashdocs container
+# reaches it at dex:5556 via SLASHDOCS_OIDC_INTERNAL_ISSUER_URL.
 issuer: http://localhost:5556/dex
 
 storage:
@@ -23,9 +23,9 @@ oauth2:
   skipApprovalScreen: true
 
 staticClients:
-  - id: aidocs
-    secret: aidocs-dev-secret
-    name: aidocs
+  - id: slashdocs
+    secret: slashdocs-dev-secret
+    name: slashdocs
     redirectURIs:
       - http://localhost:8080/v1/auth/oidc/callback
 

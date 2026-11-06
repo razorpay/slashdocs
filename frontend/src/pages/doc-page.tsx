@@ -1,200 +1,134 @@
 import { useTitle } from "@/lib/use-title";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useSearchParams, useParams } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  Navigate,
+  useLocation,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { Check, KeyRound, Send } from "lucide-react";
 import { api, APIError, currentVersionID, docTitle, versionID } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
+import { useMe } from "@/lib/hooks";
+import { useSignInPath } from "@/lib/auth-state";
+import { textLinkFragment } from "../../bridge/text-link";
 import { Center, Skeleton } from "@/components/ui/misc";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { useIsMobile } from "@/lib/use-media-query";
-import { useTheme } from "@/lib/theme";
-import { useEscChord } from "@/lib/use-esc-chord";
-import type { ChordKey } from "@/lib/esc-chord";
-import {
-  DocProvider,
-  type CommentPosition,
-  type CommentViewport,
-  type PendingSelection,
-} from "./doc-context";
+import { Button } from "@/components/ui/button";
 import { DocBar } from "./doc-bar";
-import { RenderFrame } from "./doc-render-frame";
-import { CommentRail, Comments } from "./doc-comments";
-import { Keycast } from "./doc-keycast";
+import { DocWorkspace } from "./doc-workspace";
+import { cursorsShownStore } from "@/lib/live-cursors";
+import { useDocumentStream, type Viewer } from "./use-document-stream";
 
-const THEME_LABELS = { light: "Light", dark: "Dark", system: "System" } as const;
-
-const pageStagger = {
-  hidden: {},
-  visible: { transition: { staggerChildren: 0.1, delayChildren: 0.05 } },
-};
-const barSlide = {
-  hidden: { opacity: 0, y: -8 },
-  visible: {
-    opacity: 1,
-    y: 0,
-    transition: { duration: 0.35, ease: [0.25, 0.4, 0.25, 1] as const },
-  },
-};
-const contentFade = {
-  hidden: { opacity: 0 },
-  visible: {
-    opacity: 1,
-    transition: { duration: 0.4, ease: [0.25, 0.4, 0.25, 1] as const },
-  },
-};
+function retryDocumentLoad(failureCount: number, error: Error) {
+  if (error instanceof APIError && [401, 403, 404].includes(error.status)) {
+    return false;
+  }
+  return failureCount < 3;
+}
 
 function DocumentErrorState({
   title,
   description,
+  children,
 }: {
   title: string;
   description: string;
+  children?: ReactNode;
 }) {
   return (
     <Center>
       <div className="max-w-md text-center">
         <h1 className="text-lg font-semibold text-[var(--color-fg)]">{title}</h1>
         <p className="mt-2 text-sm text-[var(--color-fg-muted)]">{description}</p>
+        {children}
       </div>
     </Center>
   );
 }
 
+function AccessDeniedState({ documentID }: { documentID: string }) {
+  const requestAccess = useMutation({
+    mutationFn: () => api.requestDocumentAccess(documentID),
+  });
+  const sent = requestAccess.isSuccess;
+  return (
+    <DocumentErrorState
+      title="You don't have access to this document"
+      description={
+        sent
+          ? "The owner has been notified."
+          : "Send the owner a request to grant you access."
+      }
+    >
+      <div className="mt-5 flex flex-col items-center gap-2">
+        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--color-surface-muted)] text-[var(--color-fg-muted)]">
+          <KeyRound aria-hidden="true" className="h-5 w-5" />
+        </div>
+        <Button
+          className="mt-1"
+          disabled={requestAccess.isPending || sent}
+          onClick={() => requestAccess.mutate()}
+        >
+          <AnimatePresence initial={false} mode="wait">
+            <motion.span
+              key={sent ? "sent" : requestAccess.isPending ? "sending" : "request"}
+              className="inline-flex items-center gap-2"
+              initial={{ opacity: 0, y: 3 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -3 }}
+              transition={{ type: "spring", duration: 0.3, bounce: 0 }}
+            >
+              {sent ? <Check className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+              {sent
+                ? "Request sent"
+                : requestAccess.isPending
+                  ? "Sending…"
+                  : "Request access"}
+            </motion.span>
+          </AnimatePresence>
+        </Button>
+        {requestAccess.isError ? (
+          <p className="text-sm text-[var(--color-danger)]" role="alert">
+            Could not send the request. Please try again.
+          </p>
+        ) : null}
+      </div>
+    </DocumentErrorState>
+  );
+}
+
 export function DocumentPage() {
   const { id = "" } = useParams();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const fullscreen = searchParams.get("fullscreen") === "1";
+  const [searchParams] = useSearchParams();
   const queryVersion = searchParams.get("version") || undefined;
   const doc = useQuery({
     queryKey: queryKeys.document(id),
     queryFn: () => api.getDocument(id),
+    retry: retryDocumentLoad,
     meta: { suppressGlobalError: true },
   });
-  const me = useQuery({ queryKey: queryKeys.me(), queryFn: api.me });
+  const me = useMe();
   const versions = useQuery({
     queryKey: queryKeys.versions(id),
     queryFn: () => api.listVersions(id),
     enabled: !!id && !doc.error,
     meta: { suppressGlobalError: true },
   });
-  // One comments query feeds both the paint overlay and the comment rail so they
-  // stay in sync.
-  const comments = useQuery({
-    queryKey: queryKeys.comments(id),
-    queryFn: () => api.listComments(id),
-    enabled: !!id && !doc.error,
-    meta: { suppressGlobalError: true },
-  });
-  const [selection, setSelection] = useState<PendingSelection | null>(null);
-  const [activeComment, setActiveComment] = useState<string>();
-  const [unanchoredComments, setUnanchoredComments] = useState<ReadonlySet<string>>(
-    new Set(),
-  );
-  const [commentPositions, setCommentPositions] = useState<
-    ReadonlyMap<string, CommentPosition>
-  >(new Map());
-  const [commentViewport, setCommentViewport] = useState<CommentViewport>({
-    scrollTop: 0,
-    scrollHeight: 1,
-  });
-  const documentScrollerRef = useRef<((top: number) => void) | null>(null);
-  const registerDocumentScroller = useCallback(
-    (scroller: ((top: number) => void) | null) => {
-      documentScrollerRef.current = scroller;
-    },
-    [],
-  );
-  const scrollDocumentTo = useCallback((top: number) => {
-    documentScrollerRef.current?.(top);
-  }, []);
-  const commentRailSyncRef = useRef<((top: number) => void) | null>(null);
-  const registerCommentRailSync = useCallback(
-    (sync: ((top: number) => void) | null) => {
-      commentRailSyncRef.current = sync;
-    },
-    [],
-  );
-  const syncCommentRail = useCallback((top: number) => {
-    commentRailSyncRef.current?.(top);
-  }, []);
   const [selectedVersion, setSelectedVersion] = useState<string>();
-  const isMobile = useIsMobile();
-  const [commentsOpen, setCommentsOpen] = useState(true);
-  const [mobilePanelOpen, setMobilePanelOpen] = useState(false);
-  const [showFullscreenHint, setShowFullscreenHint] = useState(false);
-  const [chordLabel, setChordLabel] = useState<string>();
+  const [shareOpen, setShareOpen] = useState(searchParams.get("share") === "1");
+  const closeShare = useCallback(() => setShareOpen(false), []);
   const nav = useNavigate();
-  const { theme, setTheme } = useTheme();
+  const location = useLocation();
+  const signInPath = useSignInPath();
+  // A signed-out reader of a document shared with anyone signs in to comment
+  // or edit.
+  const goToSignIn = useCallback(() => nav(signInPath), [nav, signInPath]);
+  const signIn = me.unauth ? goToSignIn : undefined;
   useTitle(doc.data ? docTitle(doc.data) : undefined);
-
-  const handleDocCommentClick = useCallback(
-    (commentId: string) => {
-      setActiveComment(commentId);
-      if (fullscreen) return;
-      if (isMobile) setMobilePanelOpen(true);
-      else setCommentsOpen(true);
-    },
-    [fullscreen, isMobile],
-  );
-
-  // A text selection from the rendered doc should reveal the compose flow.
-  useEffect(() => {
-    if (fullscreen || !selection?.quote) return;
-    if (isMobile) setMobilePanelOpen(true);
-    else setCommentsOpen(true);
-  }, [isMobile, fullscreen, selection]);
-
-  const toggleComments = useCallback(() => {
-    if (isMobile) setMobilePanelOpen((o) => !o);
-    else setCommentsOpen((o) => !o);
-  }, [isMobile]);
-
-  // On mobile the comments sheet should be dismissable with the browser/OS
-  // Back gesture, without leaving the document. We push a dedicated history
-  // entry when it opens; Back pops that entry (closing the sheet) instead of
-  // navigating away. Closing via the UI removes the entry we added.
-  const sheetHistoryRef = useRef(false);
-  useEffect(() => {
-    if (!mobilePanelOpen) return;
-    window.history.pushState({ aidocsCommentsSheet: true }, "");
-    sheetHistoryRef.current = true;
-    const onPop = () => {
-      sheetHistoryRef.current = false;
-      setMobilePanelOpen(false);
-    };
-    window.addEventListener("popstate", onPop);
-    return () => {
-      window.removeEventListener("popstate", onPop);
-      // If the sheet closed via the UI (not via Back), remove the entry we
-      // pushed so the next Back returns to the documents list as expected.
-      if (sheetHistoryRef.current) {
-        sheetHistoryRef.current = false;
-        window.history.back();
-      }
-    };
-  }, [mobilePanelOpen]);
-
-  // Radix Dialog's scroll-lock (react-remove-scroll) can leave the body
-  // with `overflow: hidden` / `pointer-events: none` after the mobile
-  // comments sheet closes, which freezes document scrolling. Restore the
-  // body once the sheet is fully closed. (`modal={false}` on the Sheet
-  // would avoid the lock, but Radix then skips the overlay and outside
-  // dismissal entirely, so we keep modal behavior and clean up after it.)
-  useEffect(() => {
-    if (mobilePanelOpen) return;
-    const restore = () => {
-      for (const el of [document.body, document.documentElement]) {
-        el.style.removeProperty("overflow");
-        el.style.removeProperty("padding-right");
-        el.style.removeProperty("pointer-events");
-        el.removeAttribute("data-scroll-locked");
-      }
-    };
-    // Run after Radix's own close cleanup on the next frame.
-    const id = window.requestAnimationFrame(restore);
-    return () => window.cancelAnimationFrame(id);
-  }, [mobilePanelOpen]);
 
   const versionItems = versions.data?.items || [];
   const latest =
@@ -202,137 +136,44 @@ export function DocumentPage() {
     versionID(versionItems[versionItems.length - 1] || {});
   const current = selectedVersion || queryVersion || latest;
 
-  useEffect(() => {
-    setCommentPositions(new Map());
-    setCommentViewport({ scrollTop: 0, scrollHeight: 1 });
-  }, [current]);
-
-  const exitFullscreen = useCallback(() => {
-    setSearchParams(
-      (params) => {
-        const next = new URLSearchParams(params);
-        next.delete("fullscreen");
-        return next;
-      },
-      { replace: true },
-    );
-  }, [setSearchParams]);
-
-  const toggleFullscreen = useCallback(() => {
-    setSearchParams(
-      (params) => {
-        const next = new URLSearchParams(params);
-        if (next.get("fullscreen") === "1") next.delete("fullscreen");
-        else next.set("fullscreen", "1");
-        return next;
-      },
-      { replace: true },
-    );
-  }, [setSearchParams]);
-
-  useEffect(() => {
-    if (!fullscreen) return;
-    setShowFullscreenHint(true);
-    const timeout = window.setTimeout(() => setShowFullscreenHint(false), 4000);
-    return () => {
-      window.clearTimeout(timeout);
-    };
-  }, [fullscreen]);
-
-  const chordKeys = useMemo<ChordKey[]>(
-    () => (fullscreen ? ["t", "f", "h"] : ["t", "f", "c", "h"]),
-    [fullscreen],
-  );
-  const runChord = useCallback(
-    (key: ChordKey) => {
-      if (key === "t") {
-        const nextTheme =
-          theme === "light" ? "dark" : theme === "dark" ? "system" : "light";
-        setTheme(nextTheme);
-        setChordLabel(THEME_LABELS[nextTheme]);
-        return;
-      }
-      if (key === "f") {
-        setChordLabel(fullscreen ? "Exited full screen" : "Full screen");
-        toggleFullscreen();
-        return;
-      }
-      if (key === "c") {
-        setChordLabel(
-          (isMobile ? mobilePanelOpen : commentsOpen)
-            ? "Comments hidden"
-            : "Comments shown",
-        );
-        toggleComments();
-        return;
-      }
-      setChordLabel("Documents");
-      nav("/app/documents");
-    },
-    [
-      theme,
-      setTheme,
-      fullscreen,
-      toggleFullscreen,
-      isMobile,
-      mobilePanelOpen,
-      commentsOpen,
-      toggleComments,
-      nav,
-    ],
-  );
-  const onBareEscape = useCallback(() => {
-    if (fullscreen) exitFullscreen();
-  }, [fullscreen, exitFullscreen]);
-  const chord = useEscChord({
-    available: chordKeys,
-    onRun: runChord,
-    onEscape: onBareEscape,
+  const stream = useDocumentStream({
+    docId: id,
+    version: current,
+    principal: me.data?.principal,
+    // Keep the reader on the version they read when someone else publishes.
+    onRemoteDocumentChange: () => setSelectedVersion((version) => version || current),
   });
 
-  const ctx = useMemo(
-    () => ({
-      docId: id,
-      version: current,
-      comments: comments.data?.items || [],
-      commentsLoading: comments.isLoading,
-      commentsError: !!comments.error,
-      principal: me.data?.principal,
-      selection,
-      setSelection,
-      activeComment,
-      setActiveComment,
-      unanchoredComments,
-      setUnanchoredComments,
-      commentPositions,
-      setCommentPositions,
-      commentViewport,
-      setCommentViewport,
-      registerDocumentScroller,
-      scrollDocumentTo,
-      registerCommentRailSync,
-      syncCommentRail,
-      handleDocCommentClick,
-    }),
-    [
-      id,
-      current,
-      comments.data,
-      comments.isLoading,
-      comments.error,
-      me.data,
-      selection,
-      activeComment,
-      unanchoredComments,
-      commentPositions,
-      commentViewport,
-      setActiveComment,
-      registerDocumentScroller,
-      scrollDocumentTo,
-      registerCommentRailSync,
-      syncCommentRail,
-      handleDocCommentClick,
-    ],
+  // Offer the version someone else published while this reader stayed on the
+  // one before it.
+  const seenLatest = useRef(latest);
+  useEffect(() => {
+    const previous = seenLatest.current;
+    seenLatest.current = latest;
+    if (!previous || previous === latest || current !== previous) return;
+    toast.info("A new version is available.", {
+      action: { label: "View", onClick: () => setSelectedVersion(latest) },
+    });
+  }, [latest, current]);
+
+  // Show the version another viewer reads, at their cursor, or else at the
+  // passage they look at.
+  const cursorsShown = cursorsShownStore.useStore();
+  const [followedCursor, setFollowedCursor] = useState<{ session: string }>();
+  const { cursorVersion } = stream;
+  const followViewer = useCallback(
+    (viewer: Viewer) => {
+      const version = cursorsShown && cursorVersion(viewer.session);
+      if (version) {
+        setSelectedVersion(version);
+        setFollowedCursor({ session: viewer.session });
+        return;
+      }
+      if (viewer.version) setSelectedVersion(viewer.version);
+      const hash = textLinkFragment(viewer.anchor);
+      if (hash) nav({ search: location.search, hash }, { replace: true });
+    },
+    [cursorsShown, cursorVersion, nav, location.search],
   );
 
   if (doc.isLoading) {
@@ -345,13 +186,11 @@ export function DocumentPage() {
   }
   if (doc.error) {
     if (doc.error instanceof APIError) {
+      if (doc.error.status === 401) {
+        return <Navigate to={signInPath} replace />;
+      }
       if (doc.error.status === 403) {
-        return (
-          <DocumentErrorState
-            title="You don't have access to this document"
-            description="Please ask the document owner to grant you access."
-          />
-        );
+        return <AccessDeniedState documentID={id} />;
       }
       if (doc.error.status === 404) {
         return (
@@ -380,81 +219,36 @@ export function DocumentPage() {
   if (!doc.data) return null;
 
   return (
-    <DocProvider value={ctx}>
-      {fullscreen ? (
-        <div className="relative h-full bg-[var(--color-surface-muted)]">
-          {showFullscreenHint ? (
-            <div className="pointer-events-none absolute left-1/2 top-6 z-20 -translate-x-1/2 rounded-full bg-[var(--color-surface)] px-6 py-3 text-base font-semibold text-[var(--color-fg)] shadow-xl ring-1 ring-[var(--color-border)]">
-              <span className="hidden sm:inline">
-                Esc to exit · Esc t theme · Esc h home
-              </span>
-              <span className="sm:hidden">Go back to exit full screen</span>
-            </div>
-          ) : null}
-          {current ? <RenderFrame /> : <Center>No version available.</Center>}
-          <Keycast state={chord} available={chordKeys} label={chordLabel} />
-        </div>
-      ) : (
-        <motion.div
-          className="flex h-full flex-col"
-          initial="hidden"
-          animate="visible"
-          variants={pageStagger}
-        >
-          <motion.div variants={barSlide}>
-            <DocBar
-              title={docTitle(doc.data)}
-              docId={id}
-              owner={doc.data.owner}
-              principal={me.data?.principal}
-              parentFolder={doc.data.parent_folder}
-              current={current}
-              latest={latest}
-              versions={versions.data?.items || []}
-              labels={doc.data.labels || []}
-              onSelectVersion={setSelectedVersion}
-              commentsOpen={isMobile ? mobilePanelOpen : commentsOpen}
-              onToggleComments={toggleComments}
-            />
-          </motion.div>
-          <motion.div variants={contentFade} className="flex flex-1 overflow-hidden">
-            <section className="relative min-w-0 flex-1 bg-[var(--color-surface-muted)]">
-              {current ? <RenderFrame /> : <Center>No version available.</Center>}
-              <Keycast state={chord} available={chordKeys} label={chordLabel} />
-            </section>
-            <AnimatePresence initial={false}>
-              {commentsOpen && (
-                <motion.aside
-                  key="comment-rail"
-                  initial={{ width: 0, opacity: 0 }}
-                  animate={{ width: 360, opacity: 1 }}
-                  exit={{ width: 0, opacity: 0 }}
-                  transition={{ type: "spring", duration: 0.35, bounce: 0 }}
-                  className="relative hidden shrink-0 overflow-hidden bg-[var(--color-surface-muted)] md:block"
-                >
-                  <div className="h-full w-[360px]">
-                    <CommentRail />
-                  </div>
-                </motion.aside>
-              )}
-            </AnimatePresence>
-          </motion.div>
-
-          {/* Mobile: comments live in a slide-over sheet */}
-          <Sheet open={mobilePanelOpen} onOpenChange={setMobilePanelOpen}>
-            <SheetContent
-              side="right"
-              className="w-full max-w-md p-0 md:hidden"
-              aria-describedby={undefined}
-            >
-              <SheetHeader className="sr-only">
-                <SheetTitle>Comments</SheetTitle>
-              </SheetHeader>
-              <Comments />
-            </SheetContent>
-          </Sheet>
-        </motion.div>
+    <DocWorkspace
+      docId={id}
+      version={current}
+      principal={me.data?.principal}
+      home="/app/documents"
+      notifications={!signIn}
+      signIn={signIn}
+      stream={stream}
+      followedCursor={followedCursor}
+      onDocumentClick={closeShare}
+      bar={(controls) => (
+        <DocBar
+          {...controls}
+          title={docTitle(doc.data)}
+          docId={id}
+          owner={doc.data.owner}
+          principal={me.data?.principal}
+          accountUser={me.data?.user || me.data?.principal}
+          parentFolder={doc.data.parent_folder}
+          current={current}
+          latest={latest}
+          versions={versionItems}
+          labels={doc.data.labels || []}
+          onSelectVersion={setSelectedVersion}
+          viewers={stream.viewers}
+          onFollowViewer={followViewer}
+          shareOpen={shareOpen}
+          onShareOpenChange={setShareOpen}
+        />
       )}
-    </DocProvider>
+    />
   );
 }

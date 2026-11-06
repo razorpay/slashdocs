@@ -339,6 +339,68 @@ describe("MoveDocumentDialog", () => {
     );
   });
 
+  it.each([
+    [403, "forbidden", "You do not have permission to move this document."],
+    [409, "source_changed", "The document changed location. Refresh and try again."],
+  ])(
+    "keeps the dialog open and explains a %s move failure",
+    async (status, code, message) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+          if (init?.method === "POST") {
+            return jsonResponse({ error: { code, message: "server detail" } }, status);
+          }
+          return jsonResponse({
+            items: [{ type: "folder", folder: { id: "fld_target", title: "Target" } }],
+            has_more: false,
+          });
+        }),
+      );
+
+      const user = userEvent.setup();
+      render(<Harness />);
+      await user.click(await screen.findByRole("option", { name: /Target/ }));
+      await user.click(screen.getByRole("button", { name: "Move" }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(message);
+      expect(screen.getByRole("dialog", { name: "Move document" })).toBeVisible();
+    },
+  );
+
+  it("prevents canceling while a move request is pending", async () => {
+    let resolveMove!: (response: Response) => void;
+    const pendingMove = new Promise<Response>((resolve) => {
+      resolveMove = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === "POST") return pendingMove;
+        return jsonResponse({
+          items: [{ type: "folder", folder: { id: "fld_target", title: "Target" } }],
+          has_more: false,
+        });
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.click(await screen.findByRole("option", { name: /Target/ }));
+    await user.click(screen.getByRole("button", { name: "Move" }));
+
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    expect(screen.getByRole("dialog", { name: "Move document" })).toBeVisible();
+    resolveMove(
+      jsonResponse({ document_id: "doc_1", folder_id: "fld_target", moved: true }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Move document" }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
   it("shows a retryable folder error and keeps Move disabled without a destination", async () => {
     const fetchMock = vi
       .fn()

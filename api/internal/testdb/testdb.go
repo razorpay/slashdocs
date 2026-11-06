@@ -1,7 +1,7 @@
 // Package testdb hands tests isolated, fully migrated PostgreSQL databases.
 //
 // One PostgreSQL server is shared per test binary: either the one named by
-// AIDOCS_TEST_DATABASE_URL (for CI environments without Docker) or a
+// SLASHDOCS_TEST_DATABASE_URL (for CI environments without Docker) or a
 // disposable container started via testcontainers. A template database is
 // migrated once per schema version, and every call to New clones it, so each
 // test gets a private database in a few milliseconds.
@@ -21,13 +21,13 @@ import (
 	"github.com/jackc/pgx/v5"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
-	"github.com/razorpay/aidocs/api/internal/db"
+	"github.com/razorpay/slashdocs/api/internal/db"
 )
 
 // EnvURL is the environment variable that points tests at an existing
 // PostgreSQL server instead of starting a container. The referenced role must
 // be allowed to CREATE DATABASE.
-const EnvURL = "AIDOCS_TEST_DATABASE_URL"
+const EnvURL = "SLASHDOCS_TEST_DATABASE_URL"
 
 const containerImage = "postgres:17-alpine"
 
@@ -47,7 +47,7 @@ func closeConn(ctx context.Context, conn *pgx.Conn) {
 // New returns a connection string for a fresh database that already has all
 // migrations applied. The database is private to the calling test and dropped
 // on cleanup. If no PostgreSQL server is reachable (no Docker and no
-// AIDOCS_TEST_DATABASE_URL), the calling test is skipped with an explanation.
+// SLASHDOCS_TEST_DATABASE_URL), the calling test is skipped with an explanation.
 func New(t testing.TB) string {
 	t.Helper()
 	setup.once.Do(initServer)
@@ -63,7 +63,7 @@ func New(t testing.TB) string {
 	}
 	defer closeConn(ctx, admin)
 
-	name := "aidocs_test_" + randomSuffix()
+	name := "slashdocs_test_" + randomSuffix()
 	if _, err := admin.Exec(ctx, fmt.Sprintf(`CREATE DATABASE %q TEMPLATE %q`, name, setup.template)); err != nil {
 		t.Fatalf("testdb: clone template database: %v", err)
 	}
@@ -118,7 +118,7 @@ func startContainer() (string, error) {
 // the migrations, and creation runs under an advisory lock, so concurrent test
 // binaries sharing one server build it exactly once and reuse it afterwards.
 func ensureTemplate(adminURL string) (string, error) {
-	name := "aidocs_test_tmpl_" + db.Fingerprint()
+	name := "slashdocs_test_tmpl_" + db.Fingerprint()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	admin, err := pgx.Connect(ctx, adminURL)
@@ -127,7 +127,7 @@ func ensureTemplate(adminURL string) (string, error) {
 	}
 	defer closeConn(ctx, admin)
 
-	const templateLockID = int64(0x6169646f6373) // "aidocs"
+	const templateLockID = int64(0x6169646f6373) // "slashdocs"
 	if _, err := admin.Exec(ctx, `SELECT pg_advisory_lock($1)`, templateLockID); err != nil {
 		return "", err
 	}

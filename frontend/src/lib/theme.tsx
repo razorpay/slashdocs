@@ -3,7 +3,7 @@ import { createPersistentStore } from "./persistent-store";
 
 type Theme = "light" | "dark" | "system";
 
-const store = createPersistentStore<Theme>("aidocs.theme", "system", (parsed) =>
+const store = createPersistentStore<Theme>("slashdocs.theme", "system", (parsed) =>
   parsed === "light" || parsed === "dark" ? parsed : "system",
 );
 

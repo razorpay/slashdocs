@@ -27,9 +27,9 @@ SELECT
 FROM versions v
 LEFT JOIN users u
   ON v.created_by_type = 'user' AND v.created_by_id = u.id
-LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-  -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
-  ON v.created_by_type = 'service_account' AND v.created_by_id = sa.id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON v.created_by_type = 'service_account' AND v.created_by_id = sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE v.id=$1
 `
 
@@ -47,7 +47,7 @@ type GetVersionRow struct {
 	CreatedAt           pgtype.Timestamptz
 }
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) GetVersion(ctx context.Context, id string) (GetVersionRow, error) {
 	row := q.db.QueryRow(ctx, getVersion, id)
 	var i GetVersionRow
@@ -78,9 +78,10 @@ func (q *Queries) GetVersionBlobKey(ctx context.Context, id string) (string, err
 	return html_blob_key, err
 }
 
-const insertInitialVersion = `-- name: InsertInitialVersion :exec
-INSERT INTO versions(id,document_id,number,html_blob_key,sha256,parent_version_id,created_by_type,created_by_id,change_summary)
-VALUES($1,$2,1,$3,$4,NULL,$5,$6,'')
+const insertInitialVersion = `-- name: InsertInitialVersion :one
+INSERT INTO versions(id,document_id,number,html_blob_key,sha256,parent_version_id,created_by_type,created_by_id,change_summary,search_text)
+VALUES($1,$2,1,$3,$4,NULL,$5,$6,'',$7::text)
+RETURNING created_at
 `
 
 type InsertInitialVersionParams struct {
@@ -90,23 +91,28 @@ type InsertInitialVersionParams struct {
 	Sha256        string
 	CreatedByType string
 	CreatedByID   string
+	SearchText    string
 }
 
-func (q *Queries) InsertInitialVersion(ctx context.Context, arg InsertInitialVersionParams) error {
-	_, err := q.db.Exec(ctx, insertInitialVersion,
+func (q *Queries) InsertInitialVersion(ctx context.Context, arg InsertInitialVersionParams) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, insertInitialVersion,
 		arg.ID,
 		arg.DocumentID,
 		arg.HtmlBlobKey,
 		arg.Sha256,
 		arg.CreatedByType,
 		arg.CreatedByID,
+		arg.SearchText,
 	)
-	return err
+	var created_at pgtype.Timestamptz
+	err := row.Scan(&created_at)
+	return created_at, err
 }
 
-const insertVersion = `-- name: InsertVersion :exec
-INSERT INTO versions(id,document_id,number,html_blob_key,sha256,parent_version_id,created_by_type,created_by_id,change_summary)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+const insertVersion = `-- name: InsertVersion :one
+INSERT INTO versions(id,document_id,number,html_blob_key,sha256,parent_version_id,created_by_type,created_by_id,change_summary,search_text)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::text)
+RETURNING created_at
 `
 
 type InsertVersionParams struct {
@@ -119,10 +125,11 @@ type InsertVersionParams struct {
 	CreatedByType   string
 	CreatedByID     string
 	ChangeSummary   string
+	SearchText      string
 }
 
-func (q *Queries) InsertVersion(ctx context.Context, arg InsertVersionParams) error {
-	_, err := q.db.Exec(ctx, insertVersion,
+func (q *Queries) InsertVersion(ctx context.Context, arg InsertVersionParams) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, insertVersion,
 		arg.ID,
 		arg.DocumentID,
 		arg.Number,
@@ -132,8 +139,57 @@ func (q *Queries) InsertVersion(ctx context.Context, arg InsertVersionParams) er
 		arg.CreatedByType,
 		arg.CreatedByID,
 		arg.ChangeSummary,
+		arg.SearchText,
 	)
-	return err
+	var created_at pgtype.Timestamptz
+	err := row.Scan(&created_at)
+	return created_at, err
+}
+
+const listUnindexedVersions = `-- name: ListUnindexedVersions :many
+SELECT v.id, v.html_blob_key
+FROM versions v
+JOIN documents d ON d.current_version_id = v.id
+WHERE v.search_text IS NULL AND v.id <> ALL(COALESCE($1::text[], '{}'))
+ORDER BY v.id
+LIMIT $2
+FOR NO KEY UPDATE OF d SKIP LOCKED
+FOR UPDATE OF v SKIP LOCKED
+`
+
+type ListUnindexedVersionsParams struct {
+	Skipped  []string
+	RowLimit int32
+}
+
+type ListUnindexedVersionsRow struct {
+	ID          string
+	HtmlBlobKey string
+}
+
+// Locks the rows, so that servers that index at the same time skip each
+// other's versions. Only current versions are searched. The documents are
+// locked too, because the search text changes their search_vector. Without
+// that lock, a delete that holds the document and waits for its version
+// causes a deadlock.
+func (q *Queries) ListUnindexedVersions(ctx context.Context, arg ListUnindexedVersionsParams) ([]ListUnindexedVersionsRow, error) {
+	rows, err := q.db.Query(ctx, listUnindexedVersions, arg.Skipped, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListUnindexedVersionsRow
+	for rows.Next() {
+		var i ListUnindexedVersionsRow
+		if err := rows.Scan(&i.ID, &i.HtmlBlobKey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listVersions = `-- name: ListVersions :many
@@ -152,9 +208,9 @@ SELECT
 FROM versions v
 LEFT JOIN users u
   ON v.created_by_type = 'user' AND v.created_by_id = u.id
-LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-  -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
-  ON v.created_by_type = 'service_account' AND v.created_by_id = sa.id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON v.created_by_type = 'service_account' AND v.created_by_id = sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE v.document_id=$1
 ORDER BY v.number
 `
@@ -173,7 +229,7 @@ type ListVersionsRow struct {
 	CreatedAt           pgtype.Timestamptz
 }
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) ListVersions(ctx context.Context, documentID string) ([]ListVersionsRow, error) {
 	rows, err := q.db.Query(ctx, listVersions, documentID)
 	if err != nil {
@@ -204,4 +260,18 @@ func (q *Queries) ListVersions(ctx context.Context, documentID string) ([]ListVe
 		return nil, err
 	}
 	return items, nil
+}
+
+const setVersionSearchText = `-- name: SetVersionSearchText :exec
+UPDATE versions SET search_text = $1::text WHERE id = $2
+`
+
+type SetVersionSearchTextParams struct {
+	SearchText string
+	ID         string
+}
+
+func (q *Queries) SetVersionSearchText(ctx context.Context, arg SetVersionSearchTextParams) error {
+	_, err := q.db.Exec(ctx, setVersionSearchText, arg.SearchText, arg.ID)
+	return err
 }

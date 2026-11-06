@@ -10,16 +10,19 @@ import (
 const (
 	// MCPAccessTokenPrefix is a public token type marker, not a credential.
 	//nolint:gosec // A fixed prefix lets the authenticator select the token verifier.
-	MCPAccessTokenPrefix   = "aidocs_mcp_"
-	ServiceAccountPrefix   = "aidocs_sa_"
-	mcpAccessTokenAudience = "mcp:"
+	MCPAccessTokenPrefix = "slashdocs_mcp_"
+	ServiceAccountPrefix = "slashdocs_sa_"
+	// legacyServiceAccountPrefix marks keys issued before the rename from
+	// aidocs. They stay valid until their owners rotate them.
+	legacyServiceAccountPrefix = "aidocs_sa_"
+	mcpAccessTokenAudience     = "mcp:"
 )
 
 // MCPAuthenticator authenticates the remote MCP transport. Browser session
 // cookies are deliberately not accepted: every MCP request must carry a bearer
 // token so identity cannot leak between clients or transport sessions.
 //
-// Human access tokens are short-lived, audience-bound tokens minted by the MCP
+// Human access tokens are expiring, audience-bound tokens minted by the MCP
 // OAuth flow. Existing service-account keys remain available for unattended
 // agents and are resolved through the normal API authenticator.
 type MCPAuthenticator struct {
@@ -56,7 +59,7 @@ func (a MCPAuthenticator) Authenticate(r *http.Request) (*Principal, error) {
 		}
 		return &p, nil
 
-	case strings.HasPrefix(token, ServiceAccountPrefix):
+	case strings.HasPrefix(token, ServiceAccountPrefix), strings.HasPrefix(token, legacyServiceAccountPrefix):
 		if a.ServiceTokens == nil {
 			return nil, ErrUnauthorized
 		}

@@ -30,7 +30,7 @@ func (q *Queries) DeleteCommentMentions(ctx context.Context, commentID string) e
 }
 
 const getComment = `-- name: GetComment :one
-SELECT id, document_id, created_on_version_id, author_type, author_id, author_email, author_name, body, selected_text, anchor_json, status, parent_comment_id, root_comment_id
+SELECT id, document_id, created_on_version_id, author_type, author_id, author_email, author_name, body, selected_text, anchor_json, status, parent_comment_id, root_comment_id, created_at, resolved_at, edited
 FROM comments
 WHERE id = $1
 `
@@ -49,6 +49,9 @@ type GetCommentRow struct {
 	Status             string
 	ParentCommentID    pgtype.Text
 	RootCommentID      string
+	CreatedAt          pgtype.Timestamptz
+	ResolvedAt         pgtype.Timestamptz
+	Edited             bool
 }
 
 func (q *Queries) GetComment(ctx context.Context, id string) (GetCommentRow, error) {
@@ -68,12 +71,15 @@ func (q *Queries) GetComment(ctx context.Context, id string) (GetCommentRow, err
 		&i.Status,
 		&i.ParentCommentID,
 		&i.RootCommentID,
+		&i.CreatedAt,
+		&i.ResolvedAt,
+		&i.Edited,
 	)
 	return i, err
 }
 
 const getCommentForReply = `-- name: GetCommentForReply :one
-SELECT id, document_id, created_on_version_id, author_type, author_id, author_email, author_name, body, selected_text, anchor_json, status, parent_comment_id, root_comment_id
+SELECT id, document_id, created_on_version_id, author_type, author_id, author_email, author_name, body, selected_text, anchor_json, status, parent_comment_id, root_comment_id, created_at, resolved_at, edited
 FROM comments
 WHERE id = $1
 FOR KEY SHARE
@@ -93,6 +99,9 @@ type GetCommentForReplyRow struct {
 	Status             string
 	ParentCommentID    pgtype.Text
 	RootCommentID      string
+	CreatedAt          pgtype.Timestamptz
+	ResolvedAt         pgtype.Timestamptz
+	Edited             bool
 }
 
 func (q *Queries) GetCommentForReply(ctx context.Context, id string) (GetCommentForReplyRow, error) {
@@ -112,12 +121,15 @@ func (q *Queries) GetCommentForReply(ctx context.Context, id string) (GetComment
 		&i.Status,
 		&i.ParentCommentID,
 		&i.RootCommentID,
+		&i.CreatedAt,
+		&i.ResolvedAt,
+		&i.Edited,
 	)
 	return i, err
 }
 
 const getCommentForUpdate = `-- name: GetCommentForUpdate :one
-SELECT id, document_id, created_on_version_id, author_type, author_id, author_email, author_name, body, selected_text, anchor_json, status, parent_comment_id, root_comment_id
+SELECT id, document_id, created_on_version_id, author_type, author_id, author_email, author_name, body, selected_text, anchor_json, status, parent_comment_id, root_comment_id, created_at, resolved_at, edited
 FROM comments
 WHERE id = $1
 FOR UPDATE
@@ -137,6 +149,9 @@ type GetCommentForUpdateRow struct {
 	Status             string
 	ParentCommentID    pgtype.Text
 	RootCommentID      string
+	CreatedAt          pgtype.Timestamptz
+	ResolvedAt         pgtype.Timestamptz
+	Edited             bool
 }
 
 func (q *Queries) GetCommentForUpdate(ctx context.Context, id string) (GetCommentForUpdateRow, error) {
@@ -156,13 +171,16 @@ func (q *Queries) GetCommentForUpdate(ctx context.Context, id string) (GetCommen
 		&i.Status,
 		&i.ParentCommentID,
 		&i.RootCommentID,
+		&i.CreatedAt,
+		&i.ResolvedAt,
+		&i.Edited,
 	)
 	return i, err
 }
 
 const getMentionServiceAccount = `-- name: GetMentionServiceAccount :one
 SELECT id, name
-FROM service_accounts -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+FROM service_accounts -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE id = $1
 FOR KEY SHARE
 `
@@ -172,7 +190,7 @@ type GetMentionServiceAccountRow struct {
 	Name string
 }
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) GetMentionServiceAccount(ctx context.Context, id string) (GetMentionServiceAccountRow, error) {
 	row := q.db.QueryRow(ctx, getMentionServiceAccount, id)
 	var i GetMentionServiceAccountRow
@@ -206,9 +224,10 @@ func (q *Queries) GetMentionUser(ctx context.Context, id string) (GetMentionUser
 	return i, err
 }
 
-const insertComment = `-- name: InsertComment :exec
+const insertComment = `-- name: InsertComment :one
 INSERT INTO comments(id,document_id,created_on_version_id,author_type,author_id,author_email,author_name,body,selected_text,anchor_json,status,root_comment_id)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'open',$1)
+RETURNING created_at
 `
 
 type InsertCommentParams struct {
@@ -224,8 +243,8 @@ type InsertCommentParams struct {
 	AnchorJson         []byte
 }
 
-func (q *Queries) InsertComment(ctx context.Context, arg InsertCommentParams) error {
-	_, err := q.db.Exec(ctx, insertComment,
+func (q *Queries) InsertComment(ctx context.Context, arg InsertCommentParams) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, insertComment,
 		arg.ID,
 		arg.DocumentID,
 		arg.CreatedOnVersionID,
@@ -237,7 +256,9 @@ func (q *Queries) InsertComment(ctx context.Context, arg InsertCommentParams) er
 		arg.SelectedText,
 		arg.AnchorJson,
 	)
-	return err
+	var created_at pgtype.Timestamptz
+	err := row.Scan(&created_at)
+	return created_at, err
 }
 
 const insertCommentMention = `-- name: InsertCommentMention :exec
@@ -273,9 +294,10 @@ func (q *Queries) InsertCommentMention(ctx context.Context, arg InsertCommentMen
 	return err
 }
 
-const insertCommentReply = `-- name: InsertCommentReply :exec
+const insertCommentReply = `-- name: InsertCommentReply :one
 INSERT INTO comments(id,document_id,created_on_version_id,author_type,author_id,author_email,author_name,body,selected_text,anchor_json,status,parent_comment_id,root_comment_id)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,'','{}'::jsonb,'open',$9,$10)
+RETURNING created_at
 `
 
 type InsertCommentReplyParams struct {
@@ -291,8 +313,8 @@ type InsertCommentReplyParams struct {
 	RootCommentID      string
 }
 
-func (q *Queries) InsertCommentReply(ctx context.Context, arg InsertCommentReplyParams) error {
-	_, err := q.db.Exec(ctx, insertCommentReply,
+func (q *Queries) InsertCommentReply(ctx context.Context, arg InsertCommentReplyParams) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, insertCommentReply,
 		arg.ID,
 		arg.DocumentID,
 		arg.CreatedOnVersionID,
@@ -304,7 +326,9 @@ func (q *Queries) InsertCommentReply(ctx context.Context, arg InsertCommentReply
 		arg.ParentCommentID,
 		arg.RootCommentID,
 	)
-	return err
+	var created_at pgtype.Timestamptz
+	err := row.Scan(&created_at)
+	return created_at, err
 }
 
 const listCommentMentions = `-- name: ListCommentMentions :many
@@ -321,9 +345,9 @@ SELECT
 FROM comment_mentions cm
 LEFT JOIN users u
   ON cm.principal_type = 'user' AND cm.principal_id = u.id
-LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-  -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
-  ON cm.principal_type = 'service_account' AND cm.principal_id = sa.id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON cm.principal_type = 'service_account' AND cm.principal_id = sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE cm.comment_id = ANY($1::text[])
 ORDER BY cm.comment_id, cm.offset_utf16, cm.principal_type, cm.principal_id
 `
@@ -340,7 +364,7 @@ type ListCommentMentionsRow struct {
 	LabelText           string
 }
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) ListCommentMentions(ctx context.Context, commentIds []string) ([]ListCommentMentionsRow, error) {
 	rows, err := q.db.Query(ctx, listCommentMentions, commentIds)
 	if err != nil {
@@ -372,7 +396,7 @@ func (q *Queries) ListCommentMentions(ctx context.Context, commentIds []string) 
 }
 
 const listComments = `-- name: ListComments :many
-SELECT id,document_id,created_on_version_id,author_type,author_id,author_email,author_name,body,selected_text,anchor_json,status,parent_comment_id,root_comment_id
+SELECT id,document_id,created_on_version_id,author_type,author_id,author_email,author_name,body,selected_text,anchor_json,status,parent_comment_id,root_comment_id,created_at,resolved_at,edited
 FROM comments WHERE document_id= $1 AND ($2::text='' OR status= $2) AND ($3::text='' OR created_on_version_id= $3) ORDER BY created_at, id
 `
 
@@ -396,6 +420,9 @@ type ListCommentsRow struct {
 	Status             string
 	ParentCommentID    pgtype.Text
 	RootCommentID      string
+	CreatedAt          pgtype.Timestamptz
+	ResolvedAt         pgtype.Timestamptz
+	Edited             bool
 }
 
 func (q *Queries) ListComments(ctx context.Context, arg ListCommentsParams) ([]ListCommentsRow, error) {
@@ -421,6 +448,9 @@ func (q *Queries) ListComments(ctx context.Context, arg ListCommentsParams) ([]L
 			&i.Status,
 			&i.ParentCommentID,
 			&i.RootCommentID,
+			&i.CreatedAt,
+			&i.ResolvedAt,
+			&i.Edited,
 		); err != nil {
 			return nil, err
 		}
@@ -433,7 +463,7 @@ func (q *Queries) ListComments(ctx context.Context, arg ListCommentsParams) ([]L
 }
 
 const updateCommentBody = `-- name: UpdateCommentBody :exec
-UPDATE comments SET body=$1 WHERE id=$2
+UPDATE comments SET body=$1, edited=true WHERE id=$2
 `
 
 type UpdateCommentBodyParams struct {

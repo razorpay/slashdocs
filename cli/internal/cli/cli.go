@@ -20,8 +20,8 @@ import (
 )
 
 type globals struct {
-	server, token        string
-	json, quiet, verbose bool
+	server, token               string
+	json, quiet, verbose, local bool
 }
 
 // usageError marks an error as a CLI usage problem (bad flags/args) so ExitCode
@@ -32,7 +32,7 @@ func (e usageError) Error() string { return e.err.Error() }
 func (e usageError) Unwrap() error { return e.err }
 
 // errSADisabled is returned when service-account commands are turned off.
-var errSADisabled = errors.New("service account commands are disabled by AIDOCS_DISABLE_SA_COMMANDS")
+var errSADisabled = errors.New("service account commands are disabled by SLASHDOCS_DISABLE_SA_COMMANDS")
 
 func Execute(args []string) (string, error) {
 	var out bytes.Buffer
@@ -44,12 +44,21 @@ func Execute(args []string) (string, error) {
 
 func NewRoot(out io.Writer) *cobra.Command {
 	g := &globals{}
-	root := &cobra.Command{Use: "aidocs", Short: "CLI for aidocs HTML document review", Long: "CLI for aidocs HTML document review.\n\nAgents: before authoring or publishing an aidocs document, run `aidocs guidelines` and follow that output.\n\nDefault output is compact, agent-friendly key=value text. Use --json for machine-readable JSON.", SilenceUsage: true, SilenceErrors: true}
+	root := &cobra.Command{Use: "slashdocs", Short: "CLI for slashdocs HTML document review", Long: "CLI for slashdocs HTML document review.\n\nAgents: before authoring or publishing a slashdocs document, run `slashdocs guidelines` and follow that output.\n\nDefault output is compact, agent-friendly key=value text. Use --json for machine-readable JSON.\n\nTo try slashdocs without a server or login, add --local to a command: `slashdocs --local docs create report.html`. It uses slashdocs local on this computer, and starts it the first time. slashdocs local keeps documents and comments in a folder on this computer. Sharing, version history, full-text search, labels, and notifications need a slashdocs server.", SilenceUsage: true, SilenceErrors: true}
+	// Each command runs the hooks of all its parents, so --local applies to
+	// commands that have their own hooks, such as `sa`.
+	cobra.EnableTraverseRunHooks = true
+	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		if !g.local || strings.HasPrefix(cmd.CommandPath(), "slashdocs local") {
+			return nil
+		}
+		return useLocal(g)
+	}
 	// The root command has no action of its own, so any leftover positional
 	// argument is an unknown subcommand. Classifying it here as a typed
 	// usageError keeps the usage exit code reliable without string-matching
 	// cobra's error text. Root needs a RunE (help, matching cobra's default
-	// for bare `aidocs`) because cobra only validates Args on runnable
+	// for bare `slashdocs`) because cobra only validates Args on runnable
 	// commands.
 	root.RunE = func(cmd *cobra.Command, args []string) error { return cmd.Help() }
 	root.Args = func(cmd *cobra.Command, args []string) error {
@@ -63,10 +72,10 @@ func NewRoot(out io.Writer) *cobra.Command {
 		return usageError{errors.New(msg)}
 	}
 	root.PersistentPostRun = func(cmd *cobra.Command, args []string) {
-		// Bare `aidocs` (help) is excluded so printing usage never hits the
+		// Bare `slashdocs` (help) is excluded so printing usage never hits the
 		// network; root only became runnable to get typed unknown-command
 		// errors from Args validation.
-		if cmd.CommandPath() == "aidocs" || cmd.CommandPath() == "aidocs update" || cmd.CommandPath() == "aidocs skills update" || cmd.CommandPath() == "aidocs version" || cmd.CommandPath() == "aidocs guidelines" {
+		if cmd.CommandPath() == "slashdocs" || cmd.CommandPath() == "slashdocs update" || cmd.CommandPath() == "slashdocs skills update" || cmd.CommandPath() == "slashdocs version" || cmd.CommandPath() == "slashdocs guidelines" || strings.HasPrefix(cmd.CommandPath(), "slashdocs local") || g.local {
 			return
 		}
 		c, err := client(g)
@@ -85,7 +94,8 @@ func NewRoot(out io.Writer) *cobra.Command {
 	root.PersistentFlags().BoolVar(&g.json, "json", false, "JSON output")
 	root.PersistentFlags().BoolVarP(&g.quiet, "quiet", "q", false, "quiet")
 	root.PersistentFlags().BoolVarP(&g.verbose, "verbose", "v", false, "verbose")
-	root.AddCommand(authCmd(g, out), contextCmd(g, out), docsCmd(g, out), foldersCmd(g, out), saRoot(g, out), openCmd(g, out), guidelinesCmd(g, out), configCmd(g, out), versionCmd(out), updateCmd(g, out), skillsCmd(g, out))
+	root.PersistentFlags().BoolVar(&g.local, "local", false, "use slashdocs local on this computer, and start it if it is not running")
+	root.AddCommand(notificationsCmd(g, out, false), authCmd(g, out), contextCmd(g, out), docsCmd(g, out), foldersCmd(g, out), saRoot(g, out), openCmd(g, out), guidelinesCmd(g, out), configCmd(g, out), versionCmd(out), updateCmd(g, out), skillsCmd(g, out), localCmd(g, out))
 	return root
 }
 
@@ -231,7 +241,13 @@ func isLoopbackHost(host string) bool {
 	case "localhost", "127.0.0.1", "::1", "[::1]":
 		return true
 	}
-	return false
+	return isLocalhostName(host)
+}
+
+// isLocalhostName reports whether host is a name under localhost, such as
+// slashdocs.localhost. RFC 6761 keeps these names for this machine.
+func isLocalhostName(host string) bool {
+	return strings.HasSuffix(strings.ToLower(host), ".localhost")
 }
 
 func readFileArg(p string) ([]byte, string, error) {
@@ -258,7 +274,7 @@ func pkceChallenge(v string) string {
 func openBrowser(u string) { _ = openBrowserErr(u) }
 
 func openBrowserErr(u string) error {
-	if os.Getenv("AIDOCS_NO_BROWSER") != "" {
+	if env("SLASHDOCS_NO_BROWSER") != "" {
 		return nil
 	}
 	cmds := [][]string{{"open", u}, {"xdg-open", u}, {"rundll32", "url.dll,FileProtocolHandler", u}}
@@ -276,7 +292,7 @@ func openBrowserErr(u string) error {
 
 func parsePrincipal(s string) map[string]any {
 	if strings.HasPrefix(s, "sa:") {
-		// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
+		// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
 		return map[string]any{"type": "service_account", "id": strings.TrimPrefix(s, "sa:")}
 	}
 	v := strings.TrimPrefix(s, "user:")

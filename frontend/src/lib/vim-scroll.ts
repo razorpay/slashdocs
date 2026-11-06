@@ -1,10 +1,5 @@
 export type VimScrollAction =
-  | "line-down"
-  | "line-up"
-  | "half-page-down"
-  | "half-page-up"
-  | "top"
-  | "bottom";
+  "line-down" | "line-up" | "half-page-down" | "half-page-up" | "top" | "bottom";
 
 export interface VimScrollInput {
   key: string;
@@ -13,9 +8,10 @@ export interface VimScrollInput {
   altKey?: boolean;
 }
 
-export function vimLineScrollDistance(repeat: boolean): number {
-  return repeat ? 180 : 72;
-}
+// A tap of j or k scrolls one line. A held key glides at a steady speed
+// until it comes up, about four times as fast as quick taps.
+export const VIM_LINE_PX = 72;
+export const VIM_GLIDE_PX_PER_MS = 1.5;
 
 export function reduceVimScroll(
   input: VimScrollInput,
