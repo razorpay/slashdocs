@@ -1,0 +1,149 @@
+[
+  {
+    "name": "ours only",
+    "base": "a(12)b",
+    "ours": "a(1X2)b",
+    "theirs": "a(12)b",
+    "merged": "a(1X2)b"
+  },
+  {
+    "name": "theirs only",
+    "base": "a(12)b",
+    "ours": "a(12)b",
+    "theirs": "a(1Y2)b",
+    "merged": "a(1Y2)b"
+  },
+  {
+    "name": "changes far apart",
+    "base": "The quick brown fox",
+    "ours": "The quick red fox",
+    "theirs": "The very quick brown fox",
+    "merged": "The very quick red fox"
+  },
+  {
+    "name": "two words of one paragraph",
+    "base": "<p>Hello world</p>",
+    "ours": "<p>Hello brave world</p>",
+    "theirs": "<p>Hello world, again</p>",
+    "merged": "<p>Hello brave world, again</p>"
+  },
+  {
+    "name": "two ends of one word",
+    "base": "<p>cat</p>",
+    "ours": "<p>cats</p>",
+    "theirs": "<p>scat</p>",
+    "merged": "<p>scats</p>"
+  },
+  {
+    "name": "insertions at the same point: ours first",
+    "base": "ab",
+    "ours": "aXb",
+    "theirs": "aYb",
+    "merged": "aXYb"
+  },
+  {
+    "name": "the same insertion twice stays twice",
+    "base": "ab",
+    "ours": "aXb",
+    "theirs": "aXb",
+    "merged": "aXXb"
+  },
+  {
+    "name": "both type at the end of a paragraph",
+    "base": "<p>Hi</p>",
+    "ours": "<p>Hi there</p>",
+    "theirs": "<p>Hi!</p>",
+    "merged": "<p>Hi there!</p>"
+  },
+  {
+    "name": "ours deletes a range that theirs inserted in",
+    "base": "a(twothree)b",
+    "ours": "a()b",
+    "theirs": "a(twoXYthree)b",
+    "merged": "a(XY)b"
+  },
+  {
+    "name": "both delete ranges that overlap",
+    "base": "a(12345678)b",
+    "ours": "a(1278)b",
+    "theirs": "a(1234)b",
+    "merged": "a(12)b"
+  },
+  {
+    "name": "ours inserts in a range that theirs deleted",
+    "base": "a(12345678)b",
+    "ours": "a(1234X5678)b",
+    "theirs": "a(18)b",
+    "merged": "a(1X8)b"
+  },
+  {
+    "name": "ours inserts in a range that theirs replaced",
+    "base": "a(12345678)b",
+    "ours": "a(1234X5678)b",
+    "theirs": "a(1ZZ8)b",
+    "merged": "a(1ZZX8)b"
+  },
+  {
+    "name": "both replace the same word",
+    "base": "a(cat)b",
+    "ours": "a(dog)b",
+    "theirs": "a(cow)b",
+    "merged": "a(dogow)b"
+  },
+  {
+    "name": "ours deletes next to an insertion of theirs",
+    "base": "a(12)b",
+    "ours": "a(1)b",
+    "theirs": "a(12X)b",
+    "merged": "a(1X)b"
+  },
+  {
+    "name": "characters that share a first byte",
+    "base": "<p>héllo</p>",
+    "ours": "<p>héllo wörld</p>",
+    "theirs": "<p>hèllo</p>",
+    "merged": "<p>hèllo wörld</p>"
+  },
+  {
+    "name": "characters outside the basic plane",
+    "base": "<p>a😀b</p>",
+    "ours": "<p>a😀b😁</p>",
+    "theirs": "<p>🙂a😀b</p>",
+    "merged": "<p>🙂a😀b😁</p>"
+  },
+  {
+    "name": "theirs inserts before a word that ours replaces",
+    "base": "I saw a cat",
+    "ours": "I saw one cat",
+    "theirs": "I saw the a cat",
+    "merged": "I saw the one cat"
+  },
+  {
+    "name": "ours inserts before a word that theirs replaces",
+    "base": "I saw a cat",
+    "ours": "I saw the a cat",
+    "theirs": "I saw one cat",
+    "merged": "I saw the one cat"
+  },
+  {
+    "name": "theirs adds a paragraph before one that ours changes at its start",
+    "base": "<p>alpha</p>\n<p>omega</p>",
+    "ours": "<p>alpha</p>\n<p>the omega</p>",
+    "theirs": "<p>alpha</p>\n<p>new</p>\n<p>omega</p>",
+    "merged": "<p>alpha</p>\n<p>new</p>\n<p>the omega</p>"
+  },
+  {
+    "name": "ours adds a paragraph before one that theirs changes at its start",
+    "base": "<p>alpha</p>\n<p>omega</p>",
+    "ours": "<p>alpha</p>\n<p>new</p>\n<p>omega</p>",
+    "theirs": "<p>alpha</p>\n<p>the omega</p>",
+    "merged": "<p>alpha</p>\n<p>new</p>\n<p>the omega</p>"
+  },
+  {
+    "name": "theirs removes the paragraph before one that ours changes at its start",
+    "base": "<p>alpha</p>\n<p>old</p>\n<p>omega</p>",
+    "ours": "<p>alpha</p>\n<p>old</p>\n<p>the omega</p>",
+    "theirs": "<p>alpha</p>\n<p>omega</p>",
+    "merged": "<p>alpha</p>\n<p>the omega</p>"
+  }
+]
