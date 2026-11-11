@@ -225,7 +225,8 @@ export function DocWorkspace({
     setPlacingPin(false);
   }, [docId]);
 
-  useCommentLink(docId, comments, setActiveComment);
+  const jumpToComment = useCallback((id: string) => setActiveComment(id), []);
+  useCommentLink(docId, comments, jumpToComment);
 
   const handleRenderedDocumentClick = useCallback(() => {
     onDocumentClick?.();
@@ -252,10 +253,13 @@ export function DocWorkspace({
     () => (listOpen ? keepToastsAbove(listRef.current) : undefined),
     [listOpen],
   );
-  const pickComment = useCallback((id: string) => {
-    setListOpen(false);
-    setActiveComment(id);
-  }, []);
+  const pickComment = useCallback(
+    (id: string) => {
+      setListOpen(false);
+      jumpToComment(id);
+    },
+    [jumpToComment],
+  );
   // A reader who is signed out signs in first, and comes back to place it.
   const location = useLocation();
   const placePin = useCallback(() => {
@@ -495,6 +499,7 @@ export function DocWorkspace({
       discardDraft,
       activeComment,
       setActiveComment,
+      jumpToComment,
       readThread,
       unanchoredComments,
       setUnanchoredComments,
@@ -545,6 +550,7 @@ export function DocWorkspace({
       moveDraft,
       discardDraft,
       activeComment,
+      jumpToComment,
       readThread,
       unanchoredComments,
       setUnanchoredComments,

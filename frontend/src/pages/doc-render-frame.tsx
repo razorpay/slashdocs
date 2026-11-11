@@ -31,6 +31,7 @@ import { useFrameMessage } from "./use-frame-message";
 import { useTextAutosave } from "./use-text-autosave";
 import { typingOrInLayer, useCommentPins } from "./use-comment-pins";
 import { CommentPopovers } from "./doc-comment-popover";
+import { useCommentJumps } from "./use-comment-jumps";
 import type { TextEditResult } from "./doc-context";
 import type { Render } from "@/lib/script-literals";
 import type { ProbeResult } from "../../bridge/script-text";
@@ -47,6 +48,8 @@ const FORWARDED_KEYS = new Set<string>([
   "?",
   "e",
   ...CHORD_KEYS.map((item) => item.key),
+  // The keys that go from thread to thread.
+  ..."jknpJ",
 ]);
 const VIM_KEYS = new Set(["j", "k", "g", "G"]);
 
@@ -729,6 +732,7 @@ export function RenderFrame({
   ]);
 
   useCommentPins(ref, frameOrigin, ready, postToFrame);
+  useCommentJumps(ready, postToFrame);
 
   // A signed-in reader chats at their cursor in their cursor color. A
   // signed-out reader sees the chat of others but cannot send.

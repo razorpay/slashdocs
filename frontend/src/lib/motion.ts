@@ -51,6 +51,14 @@ export const rise: MotionProps = {
   },
 };
 
+// The content of a popover gives way to the next thread's, as J and K go to
+// it.
+export const crossFade: MotionProps = {
+  initial: { opacity: 0 },
+  animate: { opacity: 1, transition: { duration: 0.12, ease: "easeOut" } },
+  exit: { opacity: 0, transition: { duration: 0.12, ease: "easeIn" } },
+};
+
 // One label gives way to another in the same place.
 export const swap: MotionProps = {
   initial: { opacity: 0 },

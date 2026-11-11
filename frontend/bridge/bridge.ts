@@ -166,6 +166,10 @@ type Theme = "dark" | "light";
   // goes to the chord before the app's word comes. The app's word, or the
   // chord's time, ends it.
   let chordArmed = false;
+  // The document has open threads, so the app takes the keys that go from
+  // one to the next.
+  let threadKeys = false;
+  const THREAD_KEYS = [..."jknpJ"];
   let chordTimer: ReturnType<typeof setTimeout> | undefined;
   function armChord(armed: boolean): void {
     chordArmed = armed;
@@ -2412,6 +2416,17 @@ type Theme = "dark" | "light";
       if (ev.key === "?" && !modified) {
         parent.postMessage({ type: "slashdocs:keydown", key: "?" }, targetOrigin());
       }
+      // While the document has open threads, J and K go from thread to
+      // thread in the app, with N and P, and Shift+J to the next unread one.
+      if (threadKeys && !modified && THREAD_KEYS.includes(ev.key)) {
+        ev.preventDefault();
+        if (!ev.repeat)
+          parent.postMessage(
+            { type: "slashdocs:keydown", key: ev.key },
+            targetOrigin(),
+          );
+        return;
+      }
 
       const vim = reduceVimScroll(
         {
@@ -2740,6 +2755,8 @@ type Theme = "dark" | "light";
       pins.releaseOutside();
     } else if (e.data.type === "slashdocs:heading-copied") {
       if (typeof e.data.id === "string") showCopied(e.data.id);
+    } else if (e.data.type === "slashdocs:thread-keys") {
+      threadKeys = e.data.on === true;
     } else if (e.data.type === "slashdocs:watch") {
       watchAnchor(typeof e.data.id === "string" ? e.data.id : null);
     } else if (e.data.type === "slashdocs:cover") {
