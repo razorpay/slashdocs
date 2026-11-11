@@ -40,8 +40,6 @@
    Slash, pages sit on Blade's intense gray, and app chrome (the document bar
    and the comments panel) on its moderate gray. */
 @theme {
-  /* Below xs a phone bar moves the approvals and the people into More. */
-  --breakpoint-xs: 25rem;
   --font-sans: "Inter", "Inter Fallback", ui-sans-serif, system-ui, sans-serif;
   --font-heading:
     "TASA Orbiter", "TASA Orbiter Fallback", ui-sans-serif, system-ui, sans-serif;

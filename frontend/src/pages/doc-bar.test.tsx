@@ -184,6 +184,7 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+    mockDocContext.canEdit = false;
   });
 
   it("opens the history from the More menu", async () => {
@@ -197,7 +198,6 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
       name: /^History$/,
     });
     expect(historyMenuItem).toBeInTheDocument();
-    expect(historyMenuItem).toHaveClass("sm:hidden");
 
     await user.click(historyMenuItem);
 
@@ -223,7 +223,6 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
       name: /Document labels/i,
     });
     expect(labelsMenuItem).toBeInTheDocument();
-    expect(labelsMenuItem).toHaveClass("lg:hidden");
 
     await user.click(labelsMenuItem);
 
@@ -238,7 +237,8 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     // An unsaved draft survives closing the dialog, and says so.
     await user.type(input, ", draft");
     await user.keyboard("{Escape}");
-    await user.click(screen.getByRole("button", { name: "Document labels" }));
+    await user.click(screen.getByRole("button", { name: "More" }));
+    await user.click(await screen.findByRole("menuitem", { name: /Document labels/i }));
     expect(
       await screen.findByPlaceholderText("runbook, payments, onboarding"),
     ).toHaveValue("payments, runbook, draft");
@@ -257,7 +257,8 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
       .spyOn(api, "replaceDocumentLabels")
       .mockResolvedValue({} as Awaited<ReturnType<typeof api.replaceDocumentLabels>>);
     const { update } = renderDocBar(true);
-    await user.click(await screen.findByRole("button", { name: "Document labels" }));
+    await user.click(screen.getByRole("button", { name: "More" }));
+    await user.click(await screen.findByRole("menuitem", { name: /Document labels/i }));
     const input = await screen.findByRole("textbox", { name: "Labels" });
     await user.type(input, ", mine");
     update({ labels: ["payments", "theirs"] });
@@ -370,6 +371,49 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     ).toBeVisible();
     await user.click(screen.getByRole("menuitem", { name: /Approvals/ }));
     expect(await screen.findByRole("dialog")).toBeVisible();
+  });
+
+  it("puts every action on the right, in a fixed order, and the rest in More", async () => {
+    const user = userEvent.setup();
+    const viewer: Viewer = {
+      session: "s_1",
+      principal: { type: "user", id: "u_2", name: "Reviewer" },
+      seenAt: 0,
+    };
+    mockDocContext.canEdit = true;
+    renderDocBar(true, [viewer], [], "owner", {
+      accountUser: OWNER,
+      current: "v_2",
+      followedSession: "s_1",
+      approvalStatus: "approved",
+      approvalSummary: { approved: 1, total: 1, rejected: 0, pending: 0 },
+    });
+    const names = () =>
+      screen
+        .getAllByRole("button")
+        .map((b) => b.getAttribute("aria-label"))
+        .filter((name) => !name?.startsWith("Rename"));
+    await screen.findByRole("button", { name: "Approvals: 1 of 1 approved" });
+    // What comes and goes, as the follow, comes first, so that it moves no
+    // action.
+    expect(names()).toEqual([
+      "Stop following Reviewer",
+      "Following Reviewer",
+      "Edit",
+      "Approvals: 1 of 1 approved",
+      "Comments",
+      "Share",
+      "More",
+      "Account menu",
+    ]);
+    // History, full screen, the cursors and the labels are in More.
+    await user.click(screen.getByRole("button", { name: "More" }));
+    for (const name of [/^History$/, /^Full screen/, /cursors/, /Document labels/])
+      expect(await screen.findByRole("menuitem", { name })).toBeVisible();
+    await user.keyboard("{Escape}");
+    // The menu of a viewer shows or hides the cursors too.
+    await user.click(screen.getByRole("button", { name: "Following Reviewer" }));
+    expect(await screen.findByRole("menuitem", { name: /cursors/ })).toBeVisible();
   });
 
   it("counts the requests for access on the Share button", async () => {

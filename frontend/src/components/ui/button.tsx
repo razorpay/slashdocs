@@ -9,7 +9,7 @@ import { Tooltip } from "./tooltip";
 // (12px when large). A disabled primary goes neutral, as Slash retunes it,
 // because a faded blue reads as broken on a dark canvas.
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-sm font-medium transition-[background-color,color,opacity,transform,box-shadow] duration-150 ease-out active:scale-[0.97] disabled:pointer-events-none disabled:scale-100 disabled:opacity-50",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-sm font-medium transition-[background-color,color,opacity,transform,box-shadow] duration-150 ease-out active:scale-[0.96] disabled:pointer-events-none disabled:scale-100 disabled:opacity-50",
   {
     variants: {
       variant: {
@@ -20,6 +20,10 @@ const buttonVariants = cva(
         outline:
           "bg-[var(--color-surface)] text-[var(--color-fg)] shadow-[var(--shadow-button-secondary)] hover:bg-[var(--color-surface-muted)]",
         ghost: "text-[var(--color-fg)] hover:bg-[var(--color-surface-muted)]",
+        // A control on the app chrome, whose gray hides the ghost's fill. An
+        // open menu or panel keeps the fill, as a pressed toggle.
+        chrome:
+          "text-[var(--color-fg)] hover:bg-[var(--color-highlight)] aria-expanded:bg-[var(--color-highlight)]",
         danger:
           "bg-[var(--color-danger)] text-[var(--color-danger-fg)] hover:opacity-90",
         link: "text-[var(--color-accent)] underline-offset-4 hover:underline",
@@ -29,6 +33,7 @@ const buttonVariants = cva(
         md: "h-9 px-4 text-sm",
         lg: "h-12 rounded-md px-5 text-base",
         icon: "h-9 w-9 touch:h-10 touch:w-10",
+        "icon-sm": "size-8 rounded-[6px] touch:size-10",
       },
     },
     defaultVariants: { variant: "primary", size: "md" },
@@ -63,7 +68,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         : tooltip ||
           title ||
           child?.props.title ||
-          (size === "icon"
+          (size?.startsWith("icon")
             ? props["aria-label"] || child?.props["aria-label"]
             : undefined);
     const button = (

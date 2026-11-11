@@ -58,7 +58,7 @@ export function ModeButton() {
             "relative flex shrink-0 items-center justify-center text-sm font-medium transition-[background-color,color,scale] duration-150 ease-out active:scale-[0.96]",
             editing
               ? "h-7 bg-[var(--color-accent)] px-2.5 text-[var(--color-accent-fg)] shadow-[var(--shadow-button-primary)] after:absolute after:inset-x-0 after:-inset-y-1.5 hover:bg-[var(--color-accent-strong)]"
-              : "size-8 text-[var(--color-fg-muted)] hover:bg-[var(--color-highlight)] hover:text-[var(--color-fg)] touch:size-10",
+              : "size-8 text-[var(--color-fg)] hover:bg-[var(--color-highlight)] touch:size-10",
           )}
         >
           <AnimatePresence initial={false} mode="popLayout">

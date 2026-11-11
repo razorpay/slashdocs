@@ -222,23 +222,34 @@ afterEach(() => {
 });
 
 describe("ApprovalsDialog", () => {
-  it("says how many approvers have approved on the chip", async () => {
-    installFetch();
-    renderDialog({ status: "pending", approved: 1, total: 3 });
-    expect(await screen.findByText("1 of 3 approved")).toBeTruthy();
-    // Below the sm breakpoint the chip shows only the count.
-    expect(screen.getByText("1/3")).toHaveClass("sm:hidden");
-    // Spelled out for screen readers, since the visible text is only the count.
-    expect(
-      screen.getByRole("button", {
-        name: "Approval pending: 1 of 3 approved. Open approvals",
-      }),
-    ).toBeTruthy();
-  });
+  it.each([
+    ["pending", "Approvals: pending, 1 of 3 approved", "--color-warning", ""],
+    ["approved", "Approvals: 3 of 3 approved", "--color-success", ""],
+    ["rejected", "Approvals: rejected, 1 of 3 approved", "--color-danger", "!"],
+  ] as const)(
+    "names the state and the count of %s approvals on the icon, which a badge marks",
+    async (status, name, color, glyph) => {
+      installFetch();
+      renderDialog({ status, approved: status === "approved" ? 3 : 1, total: 3 });
+      const icon = await screen.findByRole("button", { name });
+      // The badge shows the state by its color and glyph alone.
+      const badge = icon.querySelector('span[aria-hidden="true"]')!;
+      expect(badge.className).toContain(color);
+      expect(badge.textContent).toBe(glyph);
+      expect(!!badge.querySelector("svg")).toBe(!glyph);
+    },
+  );
 
   it("leads with the blocker when someone rejected", async () => {
-    installFetch();
+    installFetch({
+      approvalsByVersion: { ver_2: { status: "rejected", approved: 1, total: 3 } },
+    });
     renderDialog({ status: "rejected", approved: 1, total: 3 });
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: "Approvals: rejected, 1 of 3 approved",
+      }),
+    );
     expect(await screen.findByText("Rejected · 1 of 3 approved")).toBeTruthy();
   });
 
@@ -265,7 +276,7 @@ describe("ApprovalsDialog", () => {
       });
       renderDialog({ status: "approved", approved: 1, total: 1 }, viewed);
       await userEvent.click(
-        await screen.findByRole("button", { name: /Open approvals/ }),
+        await screen.findByRole("button", { name: /^Approvals: / }),
       );
       // The chip already carries the count, so the header says which content,
       // without version numbers.
@@ -362,9 +373,7 @@ describe("ApprovalsDialog", () => {
       },
     });
     renderDialog({ status: "pending", approved: 0, total: 1, isOwner: true });
-    await userEvent.click(
-      await screen.findByRole("button", { name: /Open approvals/ }),
-    );
+    await userEvent.click(await screen.findByRole("button", { name: /^Approvals: / }));
     expect(await screen.findByText(/Could not load the approvers/)).toBeVisible();
     expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
     expect(
@@ -461,9 +470,7 @@ describe("ApprovalsDialog", () => {
   it("says that the approvals did not load, and offers Retry", async () => {
     installFetch({ approvalsStatus: 503 });
     renderDialog({ status: "pending", approved: 0, total: 1, isOwner: true });
-    await userEvent.click(
-      await screen.findByRole("button", { name: /Open approvals/ }),
-    );
+    await userEvent.click(await screen.findByRole("button", { name: /^Approvals: / }));
     expect(await screen.findByText("Could not load approvals")).toBeVisible();
     expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
     expect(screen.queryByText("No approvers assigned")).toBeNull();
@@ -497,9 +504,7 @@ describe("ApprovalsDialog", () => {
       },
     });
     renderDialog({ status: "pending", approved: 0, total: 1 });
-    await userEvent.click(
-      await screen.findByRole("button", { name: /Open approvals/ }),
-    );
+    await userEvent.click(await screen.findByRole("button", { name: /^Approvals: / }));
 
     expect(await screen.findByText(/approved before the latest edits/)).toBeTruthy();
   });
@@ -514,17 +519,21 @@ describe("ApprovalsDialog", () => {
     // The document's current version (v3) is approved, but v2 is on screen.
     renderDialog({ status: "approved", approved: 1, total: 1 }, "ver_2");
 
-    expect(await screen.findByText("Rejected · 0 of 1 approved")).toBeTruthy();
-    expect(screen.queryByText("1 of 1 approved")).toBeNull();
+    expect(
+      await screen.findByRole("button", {
+        name: "Approvals: rejected, 0 of 1 approved",
+      }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: "Approvals: 1 of 1 approved" }),
+    ).toBeNull();
   });
 
   it("never shows the current counts for an older version whose approvals fail", async () => {
     installFetch({ currentVersionID: "ver_3", approvalsStatus: 503 });
     renderDialog({ status: "pending", approved: 0, total: 1 }, "ver_2");
 
-    const chip = await screen.findByRole("button", {
-      name: "Approvals did not load. Open approvals",
-    });
+    const chip = await screen.findByRole("button", { name: "Approvals did not load" });
     expect(screen.queryByText(/0 of 1 approved/)).toBeNull();
     await userEvent.click(chip);
     expect(await screen.findByText("Could not load approvals")).toBeVisible();
@@ -535,7 +544,9 @@ describe("ApprovalsDialog", () => {
     const calls = installFetch({ currentVersionID: "ver_2" });
     renderDialog({ status: "approved", approved: 2, total: 2 }, "ver_2");
 
-    expect(await screen.findByText("2 of 2 approved")).toBeTruthy();
+    expect(
+      await screen.findByRole("button", { name: "Approvals: 2 of 2 approved" }),
+    ).toBeTruthy();
     // No extra approvals request is needed for the common case.
     expect(calls.some((u) => u.includes("/approvals"))).toBe(false);
   });
@@ -564,9 +575,7 @@ describe("the approver's review actions", () => {
   };
 
   async function openApprovals() {
-    await userEvent.click(
-      await screen.findByRole("button", { name: /Open approvals/ }),
-    );
+    await userEvent.click(await screen.findByRole("button", { name: /^Approvals: / }));
   }
 
   it("lists the reviewer's open comments and rejects without a reason", async () => {
@@ -705,7 +714,7 @@ describe("the reason of a rejection", () => {
   const REASON = "IMPORTANT REJECTION REASON DURING LIVE UPDATE";
 
   async function openReject(user: ReturnType<typeof userEvent.setup>) {
-    await user.click(await screen.findByRole("button", { name: /Open approvals/ }));
+    await user.click(await screen.findByRole("button", { name: /^Approvals: / }));
     await user.click(await screen.findByRole("button", { name: "Reject" }));
     return screen.findByRole("dialog", { name: "Reject" });
   }
@@ -814,7 +823,7 @@ describe("late answers in approvals", () => {
     });
     renderDialog({ status: "pending", approved: 0, total: 1 });
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: /Open approvals/ }));
+    await user.click(await screen.findByRole("button", { name: /^Approvals: / }));
     await user.click(await screen.findByRole("button", { name: "Reject" }));
     const dialog = await screen.findByRole("dialog", { name: "Reject" });
     await user.type(within(dialog).getByRole("textbox", { name: "Reason" }), "No plan");
@@ -932,9 +941,7 @@ describe("late answers in approvals", () => {
       },
     });
     renderDialog({ status: "pending", approved: 0, total: 1, isOwner: true });
-    await userEvent.click(
-      await screen.findByRole("button", { name: /Open approvals/ }),
-    );
+    await userEvent.click(await screen.findByRole("button", { name: /^Approvals: / }));
     const remove = await screen.findByRole("button", {
       name: "Remove Rev as approver",
     });
