@@ -716,7 +716,9 @@ export function createPinLayer(host: PinHost) {
     const byId = new Map(placed.map((p) => [p.pin.id, p]));
     for (const el of Array.from(layer.children) as HTMLElement[]) {
       const at = byId.get(el.dataset.id ?? "");
-      if (at) put(el, at.x, at.y, at.face ?? TURNS[0]);
+      // A dragged pin is under the pointer, which alone moves it: put back at
+      // its spot here, it would show at both until the next pointer move.
+      if (at && at.pin.id !== dragged?.id) put(el, at.x, at.y, at.face ?? TURNS[0]);
     }
   }
 

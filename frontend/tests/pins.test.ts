@@ -753,3 +753,42 @@ test("a pin or highlight opened under a comment sheet comes up above it", () => 
     delete (Element.prototype as Partial<Element>).scrollIntoView;
   }
 });
+
+test("a dragged pin shows once, under the pointer, while the app sends the pins again, and stays where it is let go", () => {
+  document.body.innerHTML = '<main><p id="spot">Drag me</p></main>';
+  layout();
+  const spot = document.querySelector("#spot")!;
+  document.elementFromPoint = (() => spot) as typeof document.elementFromPoint;
+  const posted: Record<string, unknown>[] = [];
+  const layer = createPinLayer({
+    doc: () => document,
+    post: (m) => posted.push(m),
+    laidOut: () => {},
+  });
+  layer.start(document);
+  const pins = [
+    {
+      id: "c1",
+      anchor: { quote: "", point: { target: "spot", x: 0.5, y: 0.5 } },
+      movable: true,
+    },
+  ];
+  layer.setPins(parsePins(pins));
+  const shown = () => document.querySelectorAll<HTMLElement>(".sd-pin");
+  const pointer = (type: string, clientX: number, clientY: number) =>
+    shown()[0].dispatchEvent(
+      new MouseEvent(type, { button: 0, clientX, clientY, bubbles: true }),
+    );
+  // The tip is at 300, 250, and the face above it.
+  assert.strictEqual(shown()[0].style.translate, "300px 222px");
+  pointer("pointerdown", 310, 240);
+  pointer("pointermove", 410, 290);
+  // The app sends the same pins again, as on any repaint of the page.
+  layer.setPins(parsePins(pins));
+  assert.strictEqual(shown().length, 1);
+  assert.strictEqual(shown()[0].style.translate, "400px 272px");
+  pointer("pointerup", 410, 290);
+  assert.strictEqual(posted.filter((m) => m.type === "slashdocs:pin-move").length, 1);
+  assert.strictEqual(shown().length, 1);
+  assert.strictEqual(shown()[0].style.translate, "400px 272px");
+});
