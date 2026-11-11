@@ -2564,11 +2564,6 @@ type Theme = "dark" | "light";
       setTextEditing(e.data.on === true);
       return;
     }
-    // The app's Undo after a save.
-    if (e.data.type === "slashdocs:text-undo") {
-      textEditor?.run("historyUndo");
-      return;
-    }
     if (
       e.data.type === "slashdocs:text-collect" &&
       typeof e.data.requestId === "string"

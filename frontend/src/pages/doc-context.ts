@@ -26,15 +26,16 @@ export type UnanchoredKind = "text" | "pins";
 // region and every script text that changed since it loaded.
 export type TextEditResult = { regions: Region[]; scripts: ScriptChange[] };
 
-// What a save of the editor changed, in the words of the history, and the
-// way to take it back, if it offers one.
-export type SaveNote = { said: string; undo?: () => void };
-
 // Where the editor's typing is: none yet, waiting for a pause, being saved,
 // saved, failed and waiting to try again, paused because the document
 // changed elsewhere, or refused because a change cannot save.
 export type SaveState =
   "idle" | "unsaved" | "saving" | "saved" | "failed" | "paused" | "refused";
+
+// notSaved tells whether the edits on screen did not save. The editor sees
+// only this state of a save.
+export const notSaved = (state: SaveState) =>
+  state === "failed" || state === "paused" || state === "refused";
 
 // A request to go to another viewer: once to their cursor, or continuously
 // to their view. Each request is a new object, so the same viewer can be
@@ -107,10 +108,9 @@ export type DocContextValue = {
   registerTextSettle: (settle: (() => Promise<boolean>) | null) => void;
   saveState: SaveState;
   setSaveState: (state: SaveState) => void;
-  // The note of the last save, for a while after it. The bar shows it, so
-  // that no message covers the words that the editor types.
-  saveNote?: SaveNote;
-  setSaveNote: (note: SaveNote | undefined) => void;
+  // Saves the edits on screen again at once, or says again why they cannot
+  // save, with the choices.
+  retrySave: () => void;
   // The frame shows the text and takes edits. Until then, and when it did
   // not load, the bar does not say that the reader can edit.
   frameReady: boolean;

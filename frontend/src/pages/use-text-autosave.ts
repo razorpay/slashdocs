@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast, type ExternalToast } from "sonner";
 import { api, APIError, type Principal } from "@/api";
-import { changeSummaryLines } from "@/lib/change-summary";
 import { principalLabel, samePrincipal } from "@/lib/principals";
 import { queryKeys } from "@/lib/queryKeys";
 import {
@@ -20,7 +19,7 @@ import {
 import { readTextDraft, removeTextDraft, writeTextDraft } from "@/lib/text-drafts";
 import { randomId } from "@/lib/uuid";
 import type { Piece, Region, ScriptChange } from "../../bridge/source-pieces";
-import type { SaveNote, SaveState, TextEditResult } from "./doc-context";
+import type { SaveState, TextEditResult } from "./doc-context";
 
 // A pause in typing this long saves the edits.
 const AUTOSAVE_DELAY_MS = 1500;
@@ -29,8 +28,6 @@ const AUTOSAVE_MAX_DELAY_MS = 10_000;
 // A save that failed for a reason that can pass, such as the network, tries
 // again after this long.
 const AUTOSAVE_RETRY_MS = 5_000;
-// How long the note of a save shows.
-const NOTE_MS = 8_000;
 
 const FAILED_TOAST = "autosave-failed";
 const PAUSED_TOAST = "autosave-paused";
@@ -89,15 +86,11 @@ export function useTextAutosave(options: {
   loaded: { version: string; load: number };
   take: () => Promise<TextEditResult>;
   setState: (state: SaveState) => void;
-  // Shows the note of a save in the bar, or none.
-  note: (note: SaveNote | undefined) => void;
   // A version saved from the frame. It is clean when it holds exactly what
   // is on screen; otherwise it also holds someone else's edits.
   onSaved: (versionID: string, clean: boolean) => void;
   // Shows a version, or else the latest one, in place of what is on screen.
   reload: (versionID?: string) => void;
-  // Undoes the last edit in the frame.
-  undo: () => void;
   // Renders a source in a probe frame, to make sure that a script change
   // shows.
   probe: Render;
@@ -117,15 +110,12 @@ export function useTextAutosave(options: {
   const draft = useRef<TextEditResult | undefined>(undefined);
   // Set while storage holds the draft of this visit.
   const kept = useRef(false);
-  // Set after the first save of this visit.
-  const savedOnce = useRef(false);
   // Set when the frame went away: saves use the draft, and say nothing.
   const gone = useRef(false);
   // Set when the document changed elsewhere in a way that the edits on
   // screen cannot follow. Only a new load saves again.
   const paused = useRef(false);
   const timer = useRef<number | undefined>(undefined);
-  const noteTimer = useRef<number | undefined>(undefined);
   const burstStart = useRef(0);
   const saving = useRef(false);
   // Called when the save on its way ends.
@@ -135,6 +125,8 @@ export function useTextAutosave(options: {
   const attempts = useRef(0);
   // Why the last save left out a script change, if it did.
   const refusal = useRef<string | undefined>(undefined);
+  // Shows again the message of edits that cannot save, with its choices.
+  const problem = useRef<(() => void) | undefined>(undefined);
   // The outcome of each script change, by its JSON, and the text that the
   // page shows for each script text that the reader typed in.
   const checks = useRef(
@@ -174,6 +166,7 @@ export function useTextAutosave(options: {
     paused.current = false;
     unsaved.current = false;
     refusal.current = undefined;
+    problem.current = undefined;
     checks.current = new Map();
     shown.current = new Map();
     forget();
@@ -363,7 +356,9 @@ export function useTextAutosave(options: {
   // stays until the reader acts on it.
   const pause = useCallback((message: string, actions: ExternalToast) => {
     paused.current = true;
-    toast.error(message, { id: PAUSED_TOAST, duration: Infinity, ...actions });
+    problem.current = () =>
+      toast.error(message, { id: PAUSED_TOAST, duration: Infinity, ...actions });
+    problem.current();
   }, []);
 
   const save = useCallback(async (): Promise<void> => {
@@ -402,12 +397,7 @@ export function useTextAutosave(options: {
         again.current ||= resent;
         state = refusal.current ? "refused" : "saved";
         if (!gone.current)
-          void offerUndo(
-            saved.change_summary,
-            change.scripts,
-            state === "saved",
-            approvalsChange(approved, saved.id),
-          );
+          void afterSave(change.scripts, approvalsChange(approved, saved.id));
       } else if (await shows(change.html)) {
         state = "saved";
         load = { version: saved.id };
@@ -466,65 +456,38 @@ export function useTextAutosave(options: {
         else forget();
       }
       if (state !== "failed") toast.dismiss(FAILED_TOAST);
-      if (state === "refused" && !gone.current)
-        toast.error(refusal.current, {
-          id: REFUSED_TOAST,
-          duration: Infinity,
-          action: copyTyped,
-          // The saved version shows the text before the change.
-          cancel: {
-            label: "Discard my change",
-            onClick: () => latest.current.reload(head.current?.id),
-          },
-        });
-      else toast.dismiss(REFUSED_TOAST);
+      if (state && state !== "paused") problem.current = undefined;
+      if (state === "refused" && !gone.current) {
+        const message = refusal.current;
+        problem.current = () =>
+          toast.error(message, {
+            id: REFUSED_TOAST,
+            duration: Infinity,
+            action: copyTyped,
+            // The saved version shows the text before the change.
+            cancel: {
+              label: "Discard my change",
+              onClick: () => latest.current.reload(head.current?.id),
+            },
+          });
+        problem.current();
+      } else toast.dismiss(REFUSED_TOAST);
       if (gone.current) load = undefined;
       if (load) reload(load.version);
       else if (state === "failed") later(timer, save, AUTOSAVE_RETRY_MS);
       else if (again.current) later(timer, save, 0);
       again.current = false;
     }
-    // offerUndo offers to undo the first save of a visit, so that a key
-    // pressed by accident is easy to take back. A save of script text
-    // changes its other places in place, and always offers to undo it. An
-    // undo puts the text back in every place, which the next save then
-    // saves. The note in the bar says what the save changed, in the words of
-    // the history. A save that resets approvals, or gives them back, always
-    // says so, in a message, as it is about more than the words.
-    async function offerUndo(
-      summary: string | undefined,
-      scripts: ScriptSave[],
-      clean: boolean,
-      approvals: Promise<string>,
-    ) {
-      const first = !savedOnce.current;
-      savedOnce.current = true;
-      let undo: (() => void) | undefined;
-      if (scripts.length) {
-        const set = (from: "from" | "to", to: "from" | "to") => {
-          for (const s of scripts) {
-            latest.current.replaceText(s[from], s[to]);
-            shown.current.set(s.key, { to: s[to], places: s.places });
-          }
-        };
-        set("from", "to");
-        undo = () => set("to", "from");
-      } else if (first && clean) undo = () => latest.current.undo();
+    // afterSave changes the other places of saved script text in place, as
+    // a load of the saved source would. A save that resets approvals, or
+    // gives them back, says so, as it is about more than the words.
+    async function afterSave(scripts: ScriptSave[], approvals: Promise<string>) {
+      for (const s of scripts) {
+        latest.current.replaceText(s.from, s.to);
+        shown.current.set(s.key, { to: s.to, places: s.places });
+      }
       const note = await approvals;
       if (note) toast.info(note, { id: APPROVALS_TOAST });
-      if (!undo) return;
-      const { note: show } = latest.current;
-      const take = undo;
-      window.clearTimeout(noteTimer.current);
-      noteTimer.current = window.setTimeout(() => show(undefined), NOTE_MS);
-      show({
-        said: sentence(changeSummaryLines(summary).join(", ") || "Your edit is saved"),
-        undo: () => {
-          window.clearTimeout(noteTimer.current);
-          show(undefined);
-          take();
-        },
-      });
     }
     // approvalsChange says whose approvals a save reset or gave back.
     async function approvalsChange(before: Promise<Principal[]>, version: string) {
@@ -602,10 +565,11 @@ export function useTextAutosave(options: {
 
   // settle saves the edits on screen at once, after the save on its way, and
   // tells whether all of them are saved. A save that fails says why, as
-  // any save does.
+  // any save does. Edits that cannot save say why again, with the choices.
   const settle = useCallback(async (): Promise<boolean> => {
     if (saving.current) await new Promise<void>((done) => waiting.current.push(done));
     if (timer.current !== undefined) await save();
+    if (unsaved.current) problem.current?.();
     return !unsaved.current;
   }, [save]);
 
@@ -662,10 +626,6 @@ function describe(scripts: ScriptSave[]): string {
     )
     .join(", ");
 }
-
-// sentence ends a text with a period, unless it ends with one already, as a
-// quote of a whole sentence does.
-const sentence = (text: string) => (/[.!?]["”’]?$/.test(text) ? text : `${text}.`);
 
 // names lists the approvers by name.
 function names(people: Principal[]): string {

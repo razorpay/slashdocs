@@ -34,10 +34,10 @@ import { fade, sheetUp, slideIn } from "@/lib/motion";
 import { COMMENT_STATUS } from "@/lib/constants";
 import {
   DocProvider,
+  notSaved,
   type CommentPosition,
   type DocContextValue,
   type PendingSelection,
-  type SaveNote,
   type SaveState,
   type UnanchoredKind,
 } from "./doc-context";
@@ -172,7 +172,6 @@ export function DocWorkspace({
     documentPrinterRef.current?.();
   }, []);
   const [saveState, setSaveState] = useState<SaveState>("idle");
-  const [saveNote, setSaveNote] = useState<SaveNote>();
   const [frameReady, setFrameReady] = useState(false);
   const textSettle = useRef<(() => Promise<boolean>) | null>(null);
   const registerTextSettle = useCallback((settle: (() => Promise<boolean>) | null) => {
@@ -185,10 +184,8 @@ export function DocWorkspace({
     },
     [canEdit, onEditingChange],
   );
-  useEffect(() => {
-    setSaveState("idle");
-    setSaveNote(undefined);
-  }, [docId]);
+  const retrySave = useCallback(() => void textSettle.current?.(), []);
+  useEffect(() => setSaveState("idle"), [docId]);
   const documentScrollerRef = useRef<((top: number) => void) | null>(null);
   const registerDocumentScroller = useCallback(
     (scroller: ((top: number) => void) | null) => {
@@ -518,8 +515,7 @@ export function DocWorkspace({
       registerTextSettle,
       saveState,
       setSaveState,
-      saveNote,
-      setSaveNote,
+      retrySave,
       frameReady,
       setFrameReady,
       stayOnVersion,
@@ -562,7 +558,7 @@ export function DocWorkspace({
       setEditing,
       registerTextSettle,
       saveState,
-      saveNote,
+      retrySave,
       frameReady,
       stayOnVersion,
       showLatest,
@@ -590,13 +586,15 @@ export function DocWorkspace({
       )}
       <CommentMap comments={shownComments} />
       <Keycast state={chord} available={chordKeys} label={chordLabel} />
-      {/* In Edit mode an accent edge runs along the top of the document. It
-          grows from the middle and shrinks back, by its transform alone. */}
+      {/* In Edit mode an accent edge runs along the top of the document, red
+          while the edits do not save. It grows from the left and shrinks
+          back, by its transform alone. */}
       <div
         aria-hidden="true"
         className={cn(
-          "pointer-events-none absolute inset-x-0 top-0 z-10 h-0.5 bg-[var(--color-accent)] transition-transform duration-200 ease-out motion-reduce:transition-none",
-          !editing && "scale-x-0",
+          "pointer-events-none absolute inset-x-0 top-0 z-10 h-0.5 origin-left bg-[var(--color-accent)] transition-[scale,background-color] duration-200 ease-out motion-reduce:transition-none",
+          !editing && "scale-x-0 duration-150",
+          notSaved(saveState) && "bg-[var(--color-danger)]",
         )}
       />
     </>

@@ -64,7 +64,7 @@ import {
   type Document,
   type Principal,
 } from "@/api";
-import { canManageSharing, ROLE_RANK } from "@/lib/constants";
+import { canManageSharing } from "@/lib/constants";
 import { useDocumentRole } from "@/lib/hooks";
 import { useEditDraft } from "@/lib/edit-drafts";
 import { queryKeys } from "@/lib/queryKeys";
@@ -78,8 +78,7 @@ import { PersonAvatar } from "./doc-comment-parts";
 import { useDoc } from "./doc-context";
 import { UploadVersionMenuItem, UploadVersionSheet } from "./doc-upload-version";
 import { useShowSaved } from "./use-show-saved";
-import { EditStatus } from "./doc-edit-status";
-import { ModeSwitch } from "./doc-mode-switch";
+import { ModeButton } from "./doc-mode-button";
 import { HistoryDialog } from "./doc-history";
 import type { Viewer } from "./use-document-stream";
 
@@ -167,14 +166,6 @@ export function DocBar({
   } = useDocumentRole(docId, owner, principal);
   const { printDocument: exportPDF, signIn } = useDoc();
   const canManageAccess = canManageSharing(role);
-  // What a reader who cannot change the words may do. A signed-in reader's
-  // role shows once it loads.
-  const access =
-    (ROLE_RANK[role || ""] || 0) >= ROLE_RANK.commenter
-      ? "commenter"
-      : role || signIn
-        ? "viewer"
-        : undefined;
   const [renaming, setRenaming] = useState(false);
   // Rename in the menu waits until the menu closes, so the menu does not
   // take the focus back from the title field.
@@ -228,18 +219,14 @@ export function DocBar({
         />
       }
       meta={
-        previewing ? null : accessUnknown ? (
+        !previewing && accessUnknown ? (
           <LoadErrorLine query={accessUnknown} className="shrink-0 gap-2">
             <span className="sr-only sm:not-sr-only">Could not check your access</span>
           </LoadErrorLine>
-        ) : (
-          <>
-            <ModeSwitch />
-            <EditStatus access={access} />
-          </>
-        )
+        ) : null
       }
     >
+      <ModeButton />
       <ApprovalsDialog
         status={approvalStatus}
         approved={approvalSummary?.approved}

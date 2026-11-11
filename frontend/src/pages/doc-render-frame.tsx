@@ -96,7 +96,6 @@ export function RenderFrame({
     editing,
     registerTextSettle,
     setSaveState,
-    setSaveNote,
     setFrameReady,
     stayOnVersion,
     showLatest,
@@ -299,7 +298,6 @@ export function RenderFrame({
     loaded,
     take: takeTextEdits,
     setState: setSaveState,
-    note: setSaveNote,
     // A clean save holds what is on screen, so the editor stays on it rather
     // than on the latest, which may hold changes from elsewhere.
     onSaved: (saved, clean) => {
@@ -325,7 +323,6 @@ export function RenderFrame({
       restoreTop.current = frameTop.current;
       setReloads((n) => n + 1);
     },
-    undo: () => postToFrame({ type: "slashdocs:text-undo" }),
     probe,
     replaceText: (from, to) =>
       postToFrame({ type: "slashdocs:script-replace", from, to }),

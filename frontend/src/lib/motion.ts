@@ -32,3 +32,28 @@ export const fade: MotionProps = {
   animate: { opacity: 1, transition: { duration: 0.2, ease: "easeOut" } },
   exit: { opacity: 0, transition: { duration: 0.15, ease: "easeIn" } },
 };
+
+// A control that comes and goes in the bar, as Show changes, rises a little
+// into place, and sinks back faster.
+export const rise: MotionProps = {
+  initial: { opacity: 0, y: 4, scale: 0.96 },
+  animate: {
+    opacity: 1,
+    y: 0,
+    scale: 1,
+    transition: { duration: 0.15, ease: "easeOut" },
+  },
+  exit: {
+    opacity: 0,
+    y: 4,
+    scale: 0.96,
+    transition: { duration: 0.1, ease: "easeIn" },
+  },
+};
+
+// One label gives way to another in the same place.
+export const swap: MotionProps = {
+  initial: { opacity: 0 },
+  animate: { opacity: 1, transition: { duration: 0.2, ease: "easeOut" } },
+  exit: { opacity: 0, transition: { duration: 0.12, ease: "easeIn" } },
+};

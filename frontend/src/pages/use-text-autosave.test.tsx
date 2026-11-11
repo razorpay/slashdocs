@@ -8,7 +8,6 @@ import { findLiterals, type Render } from "@/lib/script-literals";
 import * as sourceEdits from "@/lib/source-edits";
 import { readTextDraft, writeTextDraft } from "@/lib/text-drafts";
 import type { Region, ScriptChange } from "../../bridge/source-pieces";
-import type { SaveNote } from "./doc-context";
 import { useTextAutosave } from "./use-text-autosave";
 
 vi.mock("@/lib/source-edits", { spy: true });
@@ -57,10 +56,8 @@ function setup() {
     loaded,
     take: vi.fn(async () => ({ ...frame })),
     setState: vi.fn(),
-    note: vi.fn<(note?: SaveNote) => void>(),
     onSaved: vi.fn(),
     reload: vi.fn(),
-    undo: vi.fn(),
     probe: vi.fn<Render>(),
     replaceText: vi.fn(),
   };
@@ -322,7 +319,7 @@ it("saves nothing when the edits cannot be written into the source", async () =>
   vi.mocked(sourceEdits.applyRegions).mockReturnValueOnce({
     refused: "A script moved this content.",
   });
-  const { type, reload, setState } = setup();
+  const { type, reload, setState, result } = setup();
 
   await type("Try it now.");
 
@@ -333,6 +330,16 @@ it("saves nothing when the edits cannot be written into the source", async () =>
     expect.anything(),
   );
   expect(setState).toHaveBeenLastCalledWith("refused");
+
+  // Retry, or Done, says why again, with the choices.
+  error.mockClear();
+  expect(await act(() => result.current.settle())).toBe(false);
+  expect(error).toHaveBeenCalledExactlyOnceWith(
+    "This edit does not fit the source of the document, so it cannot save.",
+    expect.objectContaining({
+      action: expect.objectContaining({ label: "Copy my text" }),
+    }),
+  );
 });
 
 // The toast actions that a test clicks.
@@ -389,35 +396,12 @@ it.each([
 
 it("says nothing is saved when the edits went back to the loaded text", async () => {
   const edit = vi.spyOn(api, "editSource");
-  const { pause, setState, note } = setup();
+  const { pause, setState } = setup();
 
   await pause();
 
   expect(edit).not.toHaveBeenCalled();
   expect(setState).toHaveBeenLastCalledWith("idle");
-  expect(note).not.toHaveBeenCalled();
-});
-
-it("offers Undo once, for eight seconds, in the bar after the first save of a visit", async () => {
-  const success = vi.spyOn(toast, "success");
-  vi.spyOn(api, "editSource")
-    .mockResolvedValueOnce(saved("ver_2", false, "Changed “it.” to “it now.”"))
-    .mockResolvedValueOnce(saved("ver_3"));
-  const { type, undo, note } = setup();
-
-  await type("Try it now.");
-  await type("Try it now!");
-
-  // The note says what changed, as the history does, with no message over
-  // the words.
-  expect(note).toHaveBeenCalledOnce();
-  expect(success).not.toHaveBeenCalled();
-  const shown = note.mock.lastCall![0]!;
-  expect(shown.said).toBe("Changed “it.” to “it now.”");
-  await act(() => vi.advanceTimersByTimeAsync(8000));
-  expect(note).toHaveBeenLastCalledWith(undefined);
-  shown.undo!();
-  expect(undo).toHaveBeenCalledOnce();
 });
 
 describe("an approved document", () => {
@@ -564,13 +548,13 @@ describe("script text", () => {
     expect(await result.current.scriptEditable("Run it.")).toBe(false);
   });
 
-  it("saves a change that shows, changes its other places in place, and undoes it", async () => {
+  it("saves a change that shows, and changes its other places in place", async () => {
     const edit = vi
       .spyOn(api, "editSource")
       .mockResolvedValue(
         saved("ver_2", false, "Changed “Try it.” to “Run it.” in 2 places"),
       );
-    const { frame, probe, pause, reload, replaceText, note } = setup();
+    const { frame, probe, pause, reload, replaceText } = setup();
     probe.mockImplementation(render());
 
     frame.scripts = [change];
@@ -587,12 +571,6 @@ describe("script text", () => {
     });
     expect(reload).not.toHaveBeenCalled();
     expect(replaceText).toHaveBeenLastCalledWith("Try it.", "Run it.");
-    const shown = note.mock.lastCall![0]!;
-    expect(shown.said).toBe("Changed “Try it.” to “Run it.” in 2 places.");
-
-    // Undo puts the text back on the page, which the next save saves.
-    shown.undo!();
-    expect(replaceText).toHaveBeenLastCalledWith("Run it.", "Try it.");
   });
 
   it("saves text typed back to its loaded text, and changes its other places back", async () => {
