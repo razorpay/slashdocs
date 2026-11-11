@@ -24,7 +24,7 @@ import { anchorLabel } from "@/lib/comment-pins";
 import { useLostWords } from "@/lib/comment-drafts";
 import { principalLabel } from "@/lib/principals";
 import { useIsMobile } from "@/lib/use-media-query";
-import { crossFade, popIn, resolvedOut, sheetUp } from "@/lib/motion";
+import { fadeIn, popIn, resolvedOut, sheetUp } from "@/lib/motion";
 import { useDoc } from "./doc-context";
 import { CommentComposer, CommentThread, DeletedThread } from "./doc-comments";
 import { PersonAvatar } from "./doc-comment-parts";
@@ -308,8 +308,8 @@ export function CommentPopovers({
   return (
     <AnimatePresence custom={!!leaving}>
       {open ? (
-        // One popover for every thread: it moves to the next one, and its
-        // content cross-fades.
+        // One popover for every thread: it moves to the next one, and the
+        // next thread fades in.
         <Popover
           key="thread"
           anchor={rect}
@@ -320,8 +320,8 @@ export function CommentPopovers({
           onCover={cover}
           onClose={close}
         >
-          <AnimatePresence initial={false} mode="popLayout">
-            <motion.div key={activeComment} {...crossFade(reduced)}>
+          <AnimatePresence initial={false}>
+            <motion.div key={activeComment} {...fadeIn(reduced)}>
               {draft ? (
                 <CommentComposer
                   draft={draft}
