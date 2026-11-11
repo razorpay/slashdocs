@@ -34,6 +34,9 @@ type FetchOptions = {
   users?: Array<{ id: string; email: string; name: string }>;
   // The approvals endpoint fails with this status.
   approvalsStatus?: number;
+  // The role of each address on the document ("anyone" for everyone). Without
+  // it, the access does not load, and the server decides.
+  roles?: Record<string, string>;
   // The approver cannot open the document until it is shared with them.
   noAccess?: boolean;
   // The approvers list, and the user search, fail with these statuses.
@@ -111,9 +114,25 @@ function installFetch(options: FetchOptions = {}, posted: PostedDecision[] = [])
           items: found.items ?? [],
         });
       }
+      if (url === "/v1/documents/doc_1/access") {
+        if (!options.roles)
+          return jsonResponse({ error: { code: "unavailable" } }, 503);
+        return jsonResponse({
+          current_role: "owner",
+          items: Object.entries(options.roles).map(([address, role]) => ({
+            principal:
+              address === "anyone"
+                ? { type: "anyone", id: "anyone" }
+                : { type: "user", id: address, email: address },
+            effective_role: role,
+            sources: [],
+          })),
+        });
+      }
       if (url === "/v1/documents/doc_1/grants" && init?.method === "POST") {
         shared = true;
-        return jsonResponse({ id: "grt_1", role: "viewer" }, 201);
+        const { role } = JSON.parse(String(init.body)) as { role: string };
+        return jsonResponse({ id: "grt_1", role }, 201);
       }
       if (url.startsWith("/v1/documents/doc_1/approvers") && options.approversStatus)
         return jsonResponse(
@@ -292,21 +311,9 @@ describe("ApprovalsDialog", () => {
     // a trigger, since the dialog is the only place to assign the first one.
     const trigger = await screen.findByRole("button", { name: "Request approval" });
     await userEvent.click(trigger);
-    // The dialog opens with the focus in the field, not on its help.
+    // The dialog opens with the focus in the field.
     await waitFor(() =>
       expect(screen.getByRole("combobox", { name: "Approver" })).toHaveFocus(),
-    );
-    // One line says who to add. The full rule waits in a tooltip that the
-    // keyboard reaches, so the owner is not surprised by a 400.
-    expect(
-      screen.getByText("Add someone who did not edit this document."),
-    ).toBeVisible();
-    expect(screen.queryByText(/Anyone who edited it/)).toBeNull();
-    const who = screen.getByRole("button", { name: "Who can approve?" });
-    // The help sits on the line of the field's hint, so an error under the
-    // field does not move it.
-    expect(who.parentElement).toHaveTextContent(
-      "Add someone who did not edit this document.",
     );
     // With no approvers there is no empty list between the status and the
     // field.
@@ -314,37 +321,6 @@ describe("ApprovalsDialog", () => {
       screen.getByText("No approvers assigned").parentElement?.nextElementSibling
         ?.tagName,
     ).toBe("FORM");
-    await userEvent.tab({ shift: true });
-    expect(who).toHaveFocus();
-    expect(await screen.findByRole("tooltip", { hidden: true })).toHaveTextContent(
-      /Anyone who edited it, in the browser/,
-    );
-  });
-
-  it("shows who can approve on a click or a tap, and Esc closes only the help", async () => {
-    installFetch();
-    renderDialog({ isOwner: true, defaultOpen: true });
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: "Who can approve?" }));
-    expect(await screen.findByRole("tooltip", { hidden: true })).toHaveTextContent(
-      /Anyone who edited it, in the browser/,
-    );
-    await user.keyboard("{Escape}");
-    await waitFor(() =>
-      expect(screen.queryByRole("tooltip", { hidden: true })).toBeNull(),
-    );
-    expect(screen.getByRole("dialog")).toBeVisible();
-  });
-
-  it("opens who can approve beside its link, and a press on it closes it", async () => {
-    installFetch();
-    renderDialog({ isOwner: true, defaultOpen: true });
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: "Who can approve?" }));
-    const help = document.querySelector<HTMLElement>(".icon-tooltip");
-    expect(help?.dataset.side).toBe("right");
-    await user.click(help!);
-    await waitFor(() => expect(document.querySelector(".icon-tooltip")).toBeNull());
   });
 
   it("says that the people search failed, with Retry, and keeps a full address", async () => {
@@ -384,6 +360,7 @@ describe("ApprovalsDialog", () => {
   it("picks an approver from the suggestions with the keyboard", async () => {
     const calls = installFetch({
       users: [{ id: "usr_rev", email: "reviewer@example.com", name: "Reviewer" }],
+      roles: { "reviewer@example.com": "editor" },
     });
     renderDialog({ isOwner: true });
     const user = userEvent.setup();
@@ -404,54 +381,103 @@ describe("ApprovalsDialog", () => {
       "aria-selected",
       "true",
     );
-    await user.keyboard("{Enter}");
-    expect(input).toHaveValue("reviewer@example.com");
-    expect(add).toBeEnabled();
+    // A pick adds the person, who can edit the document.
     await user.keyboard("{Enter}");
     await waitFor(() =>
       expect(calls).toContain(
         '/v1/documents/doc_1/approvers {"address":"reviewer@example.com"}',
       ),
     );
+    expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 
-  it("shares as a viewer and adds a person who cannot open the document", async () => {
-    const calls = installFetch({ noAccess: true });
-    renderDialog({ isOwner: true });
+  it.each([
+    [{}, "No access", "can't open"],
+    [{ "reviewer@example.com": "viewer" }, "Viewer", "can only view"],
+    [{ anyone: "commenter" }, "Commenter", "can only comment on"],
+  ])(
+    "asks to give editor access to a person who cannot edit, then adds them (%j)",
+    async (roles, note, can) => {
+      const calls = installFetch({
+        users: [{ id: "usr_rev", email: "reviewer@example.com", name: "Reviewer" }],
+        roles,
+      });
+      renderDialog({ isOwner: true, defaultOpen: true });
+      const user = userEvent.setup();
+      const input = await screen.findByRole("combobox", { name: "Approver" });
+      await user.type(input, "rev");
+      // The row says what the person can do now, and they can be picked.
+      const option = await screen.findByRole("option", { name: /Reviewer/ });
+      await waitFor(() => expect(option).toHaveTextContent(note));
+      await user.keyboard("{Enter}");
+
+      const confirm = await screen.findByRole("alertdialog", {
+        name: "Give Reviewer editor access?",
+      });
+      expect(confirm).toHaveTextContent(
+        `Reviewer ${can} this document. Give them editor access and add them as an approver?`,
+      );
+      const success = vi.spyOn(toast, "success");
+      await user.click(
+        within(confirm).getByRole("button", { name: "Give access and add" }),
+      );
+
+      await waitFor(() =>
+        expect(success).toHaveBeenCalledWith(
+          "Gave Reviewer editor access and added them as approver.",
+        ),
+      );
+      expect(calls.filter((c) => c.includes("reviewer@example.com"))).toEqual([
+        '/v1/documents/doc_1/grants {"address":"reviewer@example.com","role":"editor"}',
+        '/v1/documents/doc_1/approvers {"address":"reviewer@example.com"}',
+      ]);
+      expect(input).toHaveFocus();
+    },
+  );
+
+  it("gives no access and adds nobody on Cancel, and the focus goes back to the search", async () => {
+    const calls = installFetch({ roles: {} });
+    renderDialog({ isOwner: true, defaultOpen: true });
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: "Request approval" }));
     const input = await screen.findByRole("combobox", { name: "Approver" });
     await user.type(input, "reviewer@example.com");
     await user.click(screen.getByRole("button", { name: "Add" }));
 
-    // The reason shows in the dialog, under the field, with the fix beside it.
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "That person can't open this document. Share it with them first.",
-    );
-    expect(input).toHaveAttribute("aria-invalid", "true");
-    // Add cannot work now, so the fix is the primary action.
-    const shareAndAdd = screen.getByRole("button", { name: "Share as viewer and add" });
-    expect(shareAndAdd.className).toContain("bg-[var(--color-accent)]");
-    expect(screen.getByRole("button", { name: "Add" }).className).not.toContain(
-      "bg-[var(--color-accent)]",
-    );
-    const success = vi.spyOn(toast, "success");
-    await user.click(shareAndAdd);
+    const confirm = await screen.findByRole("alertdialog", {
+      name: "Give reviewer@example.com editor access?",
+    });
+    await user.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(input).toHaveFocus();
+    expect(input).toHaveValue("reviewer@example.com");
+    expect(calls.filter((c) => c.includes("reviewer@example.com"))).toEqual([]);
+    // The approvals dialog stays open.
+    expect(screen.getByRole("dialog", { name: "Approvals" })).toBeVisible();
+  });
 
+  it("asks when the access did not load and the server says the person cannot open it", async () => {
+    const calls = installFetch({ noAccess: true });
+    renderDialog({ isOwner: true, defaultOpen: true });
+    const user = userEvent.setup();
+    const input = await screen.findByRole("combobox", { name: "Approver" });
+    await user.type(input, "reviewer@example.com{Enter}");
+
+    const confirm = await screen.findByRole("alertdialog");
+    expect(confirm).toHaveTextContent("reviewer@example.com can't open this document.");
+    await user.click(
+      within(confirm).getByRole("button", { name: "Give access and add" }),
+    );
     await waitFor(() => expect(input).toHaveValue(""));
     expect(calls.filter((c) => c.includes("reviewer@example.com"))).toEqual([
       '/v1/documents/doc_1/approvers {"address":"reviewer@example.com"}',
-      '/v1/documents/doc_1/grants {"address":"reviewer@example.com","role":"viewer"}',
+      '/v1/documents/doc_1/grants {"address":"reviewer@example.com","role":"editor"}',
       '/v1/documents/doc_1/approvers {"address":"reviewer@example.com"}',
     ]);
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(success).toHaveBeenCalledWith(
-      "Shared with Reviewer as viewer and added as approver.",
-    );
   });
 
   it("picks the only match with one Enter", async () => {
-    installFetch({
+    const calls = installFetch({
       users: [{ id: "usr_rev", email: "reviewer@example.com", name: "Reviewer" }],
     });
     renderDialog({ isOwner: true });
@@ -464,7 +490,11 @@ describe("ApprovalsDialog", () => {
       "true",
     );
     await user.keyboard("{Enter}");
-    expect(input).toHaveValue("reviewer@example.com");
+    await waitFor(() =>
+      expect(calls).toContain(
+        '/v1/documents/doc_1/approvers {"address":"reviewer@example.com"}',
+      ),
+    );
   });
 
   it("says that the approvals did not load, and offers Retry", async () => {
@@ -887,8 +917,8 @@ describe("late answers in approvals", () => {
     expect(screen.getByRole("combobox", { name: "Approver" })).toHaveValue("");
   });
 
-  it("says that the share worked when the add after it failed", async () => {
-    installFetch({ noAccess: true, addStatus: 503 });
+  it("says that the access was given when the add after it failed", async () => {
+    installFetch({ roles: {}, addStatus: 503 });
     renderDialog({ isOwner: true, defaultOpen: true });
     const user = userEvent.setup();
     await user.type(
@@ -897,10 +927,10 @@ describe("late answers in approvals", () => {
     );
     await user.click(screen.getByRole("button", { name: "Add" }));
     await user.click(
-      await screen.findByRole("button", { name: "Share as viewer and add" }),
+      await screen.findByRole("button", { name: "Give access and add" }),
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Shared with reviewer@example.com as viewer, but could not add them as approver. Approvers are unavailable.",
+      "Gave reviewer@example.com editor access, but could not add them as approver. Approvers are unavailable.",
     );
     expect(screen.getByRole("combobox", { name: "Approver" })).toHaveValue(
       "reviewer@example.com",

@@ -15,7 +15,7 @@ async function addReviewer(page: Page) {
   await page.getByRole("button", { name: "Request approval" }).click();
   await page.getByRole("combobox", { name: "Approver" }).fill("reviewer@example.com");
   await page.getByRole("button", { name: "Add", exact: true }).click();
-  await page.getByRole("button", { name: "Share as viewer and add" }).click();
+  await page.getByRole("button", { name: "Give access and add" }).click();
   await expect(
     page.getByRole("dialog").getByText("Pending", { exact: true }),
   ).toBeVisible();
@@ -87,44 +87,6 @@ test("a reason survives a new version and a reload, and rejects the new version 
     version_number: 2,
   });
   await reviewer.context().close();
-});
-
-test("the open help of who can approve covers no control of the dialog, and Add takes the first click", async ({
-  page,
-  slashdocs,
-}) => {
-  const document = await slashdocs.createDocument(
-    uniqueName("Forms R10 help"),
-    html("One."),
-  );
-  await page.goto(`/app/d/${document.id}`);
-  await page.getByRole("button", { name: "Request approval" }).click();
-  const dialog = page.getByRole("dialog");
-  await dialog.getByRole("combobox", { name: "Approver" }).fill("reviewer@example.com");
-  await dialog.getByRole("button", { name: "Who can approve?" }).click();
-  const help = page.getByRole("tooltip");
-  await expect(help).toContainText("Anyone who edited it");
-
-  const box = (await page.locator(".icon-tooltip").boundingBox())!;
-  const add = dialog.getByRole("button", { name: "Add", exact: true });
-  for (const control of [
-    add,
-    dialog.getByRole("combobox", { name: "Approver" }),
-    dialog.getByRole("button", { name: "Close dialog" }),
-  ]) {
-    const other = (await control.boundingBox())!;
-    const overlaps =
-      box.x < other.x + other.width &&
-      other.x < box.x + box.width &&
-      box.y < other.y + other.height &&
-      other.y < box.y + box.height;
-    expect(overlaps).toBe(false);
-  }
-  await add.click();
-  await expect(dialog.getByRole("alert")).toHaveText(
-    "That person can't open this document. Share it with them first.",
-  );
-  await expect(help).toBeHidden();
 });
 
 test("a new folder name survives a reload, and Cancel discards it", async ({

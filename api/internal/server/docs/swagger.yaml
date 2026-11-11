@@ -1460,9 +1460,8 @@ paths:
         decision vouches for that content, so every version with the same content
         shows it. Submitting again replaces the previous decision on that content.
         A rejection needs a note unless the caller has open comment threads on the
-        document (the comments say what to change). Returns 403 when the caller created
-        a version of the document (nobody approves their own work) and 409 when the
-        document's content changed since that version.
+        document (the comments say what to change). Returns 409 when the document's
+        content changed since that version.
       parameters:
       - description: Document ID
         in: path
@@ -1529,9 +1528,8 @@ paths:
       - approvals
     post:
       description: Assigns a user or service account as an approver. The approver
-        must already have at least viewer access on the document, and must not have
-        created a version of it. A service account counts as its owner. An approver
-        who loses viewer access when a grant is revoked stops being an approver.
+        must already have at least viewer access on the document. An approver who
+        loses viewer access when a grant is revoked stops being an approver.
       parameters:
       - description: Document ID
         in: path

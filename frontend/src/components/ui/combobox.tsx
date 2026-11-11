@@ -2,7 +2,7 @@ import {
   useEffect,
   useId,
   useState,
-  type InputHTMLAttributes,
+  type ComponentPropsWithRef,
   type ReactNode,
 } from "react";
 import { LoaderCircle } from "lucide-react";
@@ -41,7 +41,7 @@ export function Combobox<T extends ComboboxOption>({
   onPick: (option: T) => void;
   listAbove?: boolean;
   busy?: boolean;
-} & Omit<InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "role">) {
+} & Omit<ComponentPropsWithRef<"input">, "value" | "onChange" | "role">) {
   const listId = useId();
   const [open, setOpen] = useState(false);
   const [activeKey, setActiveKey] = useState<string>();

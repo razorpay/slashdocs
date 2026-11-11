@@ -164,23 +164,7 @@ export function DocumentPage() {
   // An earlier version from the history is a preview: it does not change.
   const previewing = !!queryVersion && queryVersion !== latest;
   const role = useDocumentRole(id, doc.data?.owner, me.data?.principal);
-  // An assigned approver reviews the document. Typing in it would make them
-  // an author, which removes them as an approver, so it stays read-only.
-  const approvals = useQuery({
-    queryKey: queryKeys.approvals(id),
-    queryFn: () => api.listApprovals(id),
-    enabled: role.canEdit && !!doc.data?.approval_status,
-  });
-  const approver = !!approvals.data?.items.some((item) =>
-    samePrincipal(item.approver, me.data?.principal),
-  );
-  // Until the approvals load, the reader may be an approver.
-  const approverKnown = !doc.data?.approval_status || approvals.isSuccess;
-  const canChangeContent = role.canEdit && approverKnown && !approver;
-  // What the reader may do did not load: the bar says so, with Retry.
-  const accessUnknown =
-    role.failed ?? (approvals.isError && !approvals.data ? approvals : undefined);
-  const canEdit = canChangeContent && !previewing;
+  const canEdit = role.canEdit && !previewing;
   // Each document opens in Comment mode, and so does each version that the
   // reader goes to. An editor turns on Edit mode to type in the document.
   const [editingIn, setEditingIn] = useState<string>();
@@ -301,8 +285,8 @@ export function DocumentPage() {
           current={current}
           latest={latest}
           previewing={previewing}
-          canChangeContent={canChangeContent}
-          accessUnknown={accessUnknown}
+          canChangeContent={role.canEdit}
+          accessUnknown={role.failed}
           labels={doc.data.labels || []}
           onSelectVersion={showVersion}
           onShowLatest={showLatest}
@@ -322,7 +306,7 @@ export function DocumentPage() {
           <PreviewBanner
             docId={id}
             version={versionItems.find((v) => v.id === current)}
-            canRestore={canChangeContent}
+            canRestore={role.canEdit}
             floating={floating}
           />
         ) : null

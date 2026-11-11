@@ -117,37 +117,20 @@ test("a failed approver search says so, with Retry, and a full address still add
   await expect(dialog.getByRole("option", { name: /reviewer/i })).toBeVisible();
 });
 
-test("Who can approve? opens on a click, Esc closes only it, and errors do not move it", async ({
+test("with no approvers, no empty list sits between the status and the field", async ({
   page,
   slashdocs,
 }) => {
-  const document = await slashdocs.createDocument(uniqueName("Who"), HTML);
+  const document = await slashdocs.createDocument(uniqueName("Empty"), HTML);
   await page.goto(`/app/d/${document.id}`);
   await page.getByRole("button", { name: "Request approval" }).click();
   const dialog = page.getByRole("dialog");
-  const who = dialog.getByRole("button", { name: "Who can approve?" });
-
-  await who.click();
-  await expect(page.getByRole("tooltip")).toContainText("Anyone who edited it");
-  await page.keyboard.press("Escape");
-  await expect(page.getByRole("tooltip")).toBeHidden();
-  await expect(dialog).toBeVisible();
-
-  // With no approvers, no empty list sits between the status and the field.
   const status = dialog.getByText("No approvers assigned");
-  const hint = dialog.getByText("Add someone who did not edit this document.");
+  const field = dialog.getByRole("combobox", { name: "Approver" });
   const gap =
-    (await hint.boundingBox())!.y -
+    (await field.boundingBox())!.y -
     ((await status.boundingBox())!.y + (await status.boundingBox())!.height);
   expect(gap).toBeLessThan(40);
-
-  const before = (await who.boundingBox())!.y;
-  await dialog.getByRole("combobox", { name: "Approver" }).fill("reviewer@example.com");
-  await dialog.getByRole("button", { name: "Add", exact: true }).click();
-  await expect(
-    dialog.getByRole("button", { name: "Share as viewer and add" }),
-  ).toBeVisible();
-  expect((await who.boundingBox())!.y).toBe(before);
 });
 
 test("Check access during an outage says that the check failed, not that access is missing", async ({

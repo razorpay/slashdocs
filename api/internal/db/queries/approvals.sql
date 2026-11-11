@@ -8,30 +8,6 @@
 -- waited.
 SELECT current_version_id FROM documents WHERE id = @document_id FOR NO KEY UPDATE;
 
--- name: CreatedVersionOf :one
--- Anyone who created a version of a document wrote what is under review. A
--- service account works for its owner, so a bot and its owner are one author,
--- as in the GitHub author mapping. A run of one author's versions, with no
--- version by anyone else between them, that ends on the content it started
--- from changed nothing: an edit and its undo do not make an author.
-WITH authored AS (
-  SELECT number, sha256, lag(sha256) OVER (ORDER BY number) AS before,
-    CASE created_by_type WHEN 'user' THEN created_by_id
-      ELSE (SELECT owner_user_id FROM service_accounts WHERE id = created_by_id) END AS author -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
-  FROM versions
-  WHERE document_id = @document_id
-), runs AS (
-  SELECT *, row_number() OVER (ORDER BY number) - row_number() OVER (PARTITION BY author ORDER BY number) AS run
-  FROM authored
-)
-SELECT EXISTS(
-  SELECT 1 FROM runs
-  WHERE author = CASE @principal_type::text WHEN 'user' THEN @principal_id::text
-      ELSE (SELECT owner_user_id FROM service_accounts WHERE id = @principal_id::text) END -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
-  GROUP BY run
-  HAVING (array_agg(before ORDER BY number))[1] IS DISTINCT FROM (array_agg(sha256 ORDER BY number DESC))[1]
-);
-
 -- name: InsertApprovalRequest :exec
 INSERT INTO approval_requests(id, document_id, approver_type, approver_id, requested_by_type, requested_by_id)
 VALUES(@id, @document_id, @approver_type, @approver_id, @requested_by_type, @requested_by_id);
@@ -78,48 +54,6 @@ SELECT EXISTS(
 UPDATE approval_requests SET revoked_at = now()
 WHERE id = @request_id AND document_id = @document_id AND revoked_at IS NULL
 RETURNING approver_type, approver_id;
-
--- name: RevokeAuthorApprovers :many
--- Removes the approvers who are the same author as the creator of a new
--- version, by the bot owner rule of CreatedVersionOf, and names the version
--- that removed them. The caller first makes sure that the creator is an
--- author.
-UPDATE approval_requests r SET revoked_at = now(), revoked_by_version_id = @version_id
-WHERE r.document_id = @document_id
-  AND r.revoked_at IS NULL
-  AND CASE r.approver_type WHEN 'user' THEN r.approver_id
-        ELSE (SELECT owner_user_id FROM service_accounts WHERE id = r.approver_id) END -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
-    = CASE @author_type::text WHEN 'user' THEN @author_id::text
-        ELSE (SELECT owner_user_id FROM service_accounts WHERE id = @author_id::text) END -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
-RETURNING r.approver_type, r.approver_id;
-
--- name: RestoreAuthorApprovers :many
--- Gives back the approvers that the versions of an author removed, with the
--- decisions that each removal revoked, once a new version undoes that
--- author's edits. While the author's edits stay, nobody can assign them
--- again, so no newer assignment of theirs exists. The caller first makes sure
--- that the creator is no longer an author.
-WITH undone AS (
-  SELECT r.id, r.approver_type, r.approver_id, r.revoked_by_version_id
-  FROM approval_requests r
-  WHERE r.document_id = @document_id
-    AND r.revoked_by_version_id IS NOT NULL
-    AND CASE r.approver_type WHEN 'user' THEN r.approver_id
-          ELSE (SELECT owner_user_id FROM service_accounts WHERE id = r.approver_id) END -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
-      = CASE @author_type::text WHEN 'user' THEN @author_id::text
-          ELSE (SELECT owner_user_id FROM service_accounts WHERE id = @author_id::text) END -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
-), decisions AS (
-  UPDATE approvals a SET revoked_at = NULL, revoked_by_version_id = NULL
-  FROM undone u
-  WHERE a.document_id = @document_id
-    AND a.approver_type = u.approver_type
-    AND a.approver_id = u.approver_id
-    AND a.revoked_by_version_id = u.revoked_by_version_id
-)
-UPDATE approval_requests r SET revoked_at = NULL, revoked_by_version_id = NULL
-FROM undone u
-WHERE r.id = u.id
-RETURNING r.approver_type, r.approver_id;
 
 -- name: LockApproversWithoutAccess :many
 -- The approvers of the documents at or under a resource who can no longer
@@ -179,9 +113,8 @@ WHERE document_id = @document_id
   AND revoked_at IS NULL;
 
 -- name: RevokeApprovalsForApprover :exec
--- Revokes the decisions of a removed approver. A removal by a version names
--- that version, as RevokeAuthorApprovers does.
-UPDATE approvals SET revoked_at = now(), revoked_by_version_id = sqlc.narg(version_id)
+-- Revokes the decisions of a removed approver.
+UPDATE approvals SET revoked_at = now()
 WHERE document_id = @document_id
   AND approver_type = @approver_type
   AND approver_id = @approver_id

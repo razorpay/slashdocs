@@ -125,8 +125,7 @@ export function DocBar({
   latest: string;
   // An earlier version from the history is on screen.
   previewing: boolean;
-  // The reader may change the content: an editor who is not an assigned
-  // approver.
+  // The reader may change the content: an editor.
   canChangeContent: boolean;
   // The query to retry when what the reader may do did not load.
   accessUnknown?: RetryQuery;
