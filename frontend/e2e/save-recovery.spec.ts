@@ -116,54 +116,56 @@ test("a save that the server refuses keeps the text until the editor chooses", a
   await expect(tail).toContainText("IMPORTANT UNSAVED TEXT");
   expect(await latestSource(page, document.id)).toBe(HTML);
 
-  await copied(page, "giving up. IMPORTANT UNSAVED TEXT");
+  // The copy holds the words that came after the refusal too.
+  await typeOver(page, "#tail", "twice", "four times");
+  await copied(page, "four times before giving up. IMPORTANT UNSAVED TEXT");
   await page.getByRole("button", { name: "Discard my change" }).click();
   await expect(tail).toHaveText("Clients retry twice before giving up.");
   await expect(notSaved(page)).toBeHidden();
 });
 
-test("text that a conflict stopped is offered again after Back and a new visit", async ({
+test("text that a refused save stopped is offered again after Back and a new visit", async ({
   page,
   slashdocs,
 }) => {
-  const title = uniqueName("Conflict draft");
+  const title = uniqueName("Refused draft");
   const document = await slashdocs.createDocument(title, HTML);
   // The document opens from the list, so that Back is a move in the app.
   await page.goto("/app/documents");
   await page.getByRole("link", { name: title }).first().click();
   await startEditing(page);
-  const other = await page.context().newPage();
-  await openEditable(other, document.id);
+  await page.route(SOURCE_EDITS, (route) =>
+    route.fulfill({
+      status: 403,
+      json: { error: { code: "forbidden", message: "forbidden" } },
+    }),
+  );
 
-  const first = nextSave(other);
-  await typeOver(other, "#tail", "twice", "three times");
-  expect((await first).status()).toBe(201);
-  const second = nextSave(page);
+  const refused = nextSave(page);
   await typeOver(page, "#tail", "twice", "four times");
-  expect((await second).status()).toBe(409);
+  expect((await refused).status()).toBe(403);
   await expect(notSaved(page)).toBeVisible();
   await typeOver(page, "#tail", "giving up.", "giving up. KEEP MY LOCAL DRAFT");
   await page.waitForTimeout(300);
 
   await page.goBack();
-  await expect(page.getByRole("button", { name: "Show their version" })).toBeHidden();
+  await expect(page.getByRole("button", { name: "Discard my change" })).toBeHidden();
   await page.getByRole("link", { name: title }).first().click();
   await startEditing(page);
-  await expect(
-    page.getByText("You have text in this document that was not saved."),
-  ).toBeVisible();
+  const earlier = page.getByText("You have text in this document that was not saved.");
+  await expect(earlier).toBeVisible();
   await copied(page, "four times before giving up. KEEP MY LOCAL DRAFT");
   await page.getByRole("button", { name: "Discard my change" }).click();
-  await expect(
-    page.getByText("You have text in this document that was not saved."),
-  ).toBeHidden();
+  await expect(earlier).toBeHidden();
 
+  await page.unroute(SOURCE_EDITS);
   await page.reload();
   await startEditing(page);
-  await expect(renderedDocument(page).locator("#tail")).toContainText("three times");
-  await expect(
-    page.getByText("You have text in this document that was not saved."),
-  ).toBeHidden();
+  await expect(renderedDocument(page).locator("#tail")).toHaveText(
+    "Clients retry twice before giving up.",
+  );
+  await expect(earlier).toBeHidden();
+  expect(await latestSource(page, document.id)).toBe(HTML);
 });
 
 test("a save that fails twice counts the attempts and offers a copy", async ({

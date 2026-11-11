@@ -170,7 +170,7 @@ test("at 1440px, a save says nothing, and covers no heading at the top", async (
   await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
 });
 
-test("the offer of changes made elsewhere waits in the bar, and the placement hint shows", async ({
+test("the offer of a large change made elsewhere says nothing in a toast, and the placement hint shows", async ({
   page,
   slashdocs,
 }) => {
@@ -184,11 +184,12 @@ test("the offer of changes made elsewhere waits in the bar, and the placement hi
   );
   await page.goto(`/app/d/${document.id}`);
   await expect(renderedDocument(page).locator("#p0")).toBeVisible();
+  // A change in each paragraph is too large to go into the page in place.
   await slashdocs.pushVersion(
     document.id,
-    html.replace("Paragraph 1.", "Paragraph one."),
+    html.replace(/Paragraph (\d)\./g, "Part $1."),
   );
-  const offer = page.getByRole("button", { name: "Show changes" });
+  const offer = page.getByRole("button", { name: "Show the latest", exact: true });
   await expect(offer).toBeVisible();
   await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
 
@@ -198,10 +199,14 @@ test("the offer of changes made elsewhere waits in the bar, and the placement hi
     .locator(".sd-place-hint");
   await expect(hint).toBeVisible();
   expect(await toastsOver(page, (await hint.boundingBox())!)).toBe(false);
+  const banner = page.getByRole("status").filter({ has: offer });
+  expect(overlaps((await banner.boundingBox())!, (await hint.boundingBox())!)).toBe(
+    false,
+  );
   await page.keyboard.press("Escape");
 
   await offer.click();
-  await expect(renderedDocument(page).locator("#p1")).toContainText("Paragraph one.");
+  await expect(renderedDocument(page).locator("#p1")).toContainText("Part 1.");
   await expect(offer).toBeHidden();
 });
 

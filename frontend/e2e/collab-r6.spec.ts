@@ -102,18 +102,18 @@ test("a reader's other tab shows where they edit", async ({ page, slashdocs }) =
   await other.close();
 });
 
-test("Show changes flashes the blocks that changed elsewhere", async ({
+test("a small change made elsewhere flashes the block that changed", async ({
   page,
   slashdocs,
 }) => {
-  const title = uniqueName("Show changes");
+  const title = uniqueName("Change flash");
   const document = await slashdocs.createDocument(title, documentHTML(title));
   await page.goto(`/app/d/${document.id}`);
   const doc = renderedDocument(page);
   await expect(doc.locator("#p12")).toBeVisible();
 
+  // The change goes into the page in place: the reader asks for nothing.
   await slashdocs.pushVersion(document.id, documentHTML(title, " changed"));
-  await page.getByRole("button", { name: "Show changes", exact: true }).click();
   await expect(doc.locator("#p12")).toContainText("Paragraph 12 changed");
   const flash = doc.locator(".slashdocs-text-flash");
   await expect(flash).toHaveCount(1);

@@ -175,28 +175,34 @@ test("two tabs that edit different text both save", async ({ page, slashdocs }) 
 
   await openEditable(page, document.id);
   await openEditable(other, document.id);
+  // A load of a frame removes this mark.
+  const body = (tab: Page) => renderedDocument(tab).locator("body");
+  for (const tab of [page, other])
+    await body(tab).evaluate((el) => void (el.dataset.e2eKept = "yes"));
 
   const first = nextSave(page, document.id);
   await placeCaret(page, "#tail", "twice");
   await page.keyboard.type("three times");
   expect((await first).status()).toBe(201);
 
-  // The second tab still shows the first version: the server moves its edit
-  // onto the newer one.
   const second = nextSave(other, document.id);
   await placeCaret(other, "#intro", "keep it");
   await other.keyboard.type("share it");
-  const response = await second;
-  expect(response.status()).toBe(201);
-  expect((await response.json()).rebased).toBe(true);
+  expect((await second).status()).toBe(201);
 
   expect(await latestSource(page, document.id)).toBe(
     html.replace("retry twice", "retry three times").replace("keep it", "share it"),
   );
-  // The second tab shows both edits once it loads the merged version.
-  await expect(renderedDocument(other).locator("#tail")).toHaveText(
-    "Clients retry three times before giving up.",
-  );
+  // Each tab gets the text of the other in place, with no load of its frame.
+  for (const tab of [page, other]) {
+    await expect(renderedDocument(tab).locator("#tail")).toHaveText(
+      "Clients retry three times before giving up.",
+    );
+    await expect(renderedDocument(tab).locator("#intro")).toHaveText(
+      "Café owners read this guide & share it.",
+    );
+    await expect(body(tab)).toHaveAttribute("data-e2e-kept", "yes");
+  }
 });
 
 test("text from a script offers to ask an agent", async ({ page, slashdocs }) => {
@@ -629,40 +635,6 @@ test.describe("saving", () => {
           .replace("twice", "thrice")
           .replace(/Try it\.(?=<\/strong> Open the second)/, "Read it."),
       );
-  });
-
-  test("after a conflict, Copy my text copies the latest words, and Show their version clears the state", async ({
-    page,
-    slashdocs,
-  }) => {
-    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
-    const html = documentHTML();
-    const document = await slashdocs.createDocument(uniqueName("Conflict"), html);
-    const other = await page.context().newPage();
-    await openEditable(page, document.id);
-    await openEditable(other, document.id);
-
-    const first = nextSave(other, document.id);
-    await placeCaret(other, "#tail", "twice");
-    await other.keyboard.type("thrice");
-    expect((await first).status()).toBe(201);
-
-    const second = nextSave(page, document.id);
-    await placeCaret(page, "#tail", "twice");
-    await page.keyboard.type("four times");
-    expect((await second).status()).toBe(409);
-    await expect(notSaved(page)).toBeVisible();
-    await placeCaret(page, "#tail", "giving up.", { collapse: true });
-    await page.keyboard.type(" Later words.");
-    await page.getByRole("button", { name: "Copy my text" }).click();
-    await expect(page.getByText("Your text is copied.")).toBeVisible();
-    expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(
-      "four times before giving up. Later words.",
-    );
-
-    await page.getByRole("button", { name: "Show their version" }).click();
-    await expect(renderedDocument(page).locator("#tail")).toContainText("thrice");
-    await expect(notSaved(page)).toBeHidden();
   });
 
   test("a script string in several places warns first, and its save keeps the place", async ({

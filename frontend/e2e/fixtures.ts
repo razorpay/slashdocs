@@ -225,13 +225,25 @@ export class SlashdocsAPI {
     return result.items;
   }
 
-  async shareWithAnyone(id: string, role: "viewer" | "commenter" | "editor") {
-    await responseJSON(
+  async shareWithAnyone(
+    id: string,
+    role: "viewer" | "commenter" | "editor",
+  ): Promise<{ id: string }> {
+    return responseJSON(
       await this.request.post(`/v1/documents/${id}/grants`, {
         headers: this.writeHeaders(),
         data: { principal: { type: "anyone" }, role },
       }),
       `share ${id} with anyone`,
+    );
+  }
+
+  async removeGrant(id: string, grantID: string) {
+    await expectCleanupResponse(
+      await this.request.delete(`/v1/documents/${id}/grants/${grantID}`, {
+        headers: this.writeHeaders(),
+      }),
+      `remove grant ${grantID} of ${id}`,
     );
   }
 
