@@ -1,5 +1,5 @@
 import { type FrameLocator, type Locator, type Page } from "@playwright/test";
-import { expect, test, uniqueName } from "./fixtures";
+import { expect, openEditable, test, uniqueName } from "./fixtures";
 
 // The controls in a document (the selection actions, the link field and the
 // script note) cover no text where they find room, with room to spare around
@@ -36,15 +36,6 @@ function rowsHTML(tail = "") {
     </script>
   </body>
 </html>`;
-}
-
-async function openEditable(page: Page, id: string) {
-  await page.goto(`/app/d/${id}`);
-  await expect(renderedDocument(page).locator("h1")).toBeVisible();
-  await expect(renderedDocument(page).locator("body")).toHaveAttribute(
-    "contenteditable",
-    "true",
-  );
 }
 
 // selectText selects target in the text of the first element at selector.

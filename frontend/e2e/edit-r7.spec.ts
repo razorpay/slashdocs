@@ -1,5 +1,5 @@
 import { type FrameLocator, type Locator, type Page } from "@playwright/test";
-import { expect, test, uniqueName } from "./fixtures";
+import { expect, openEditable, test, uniqueName } from "./fixtures";
 
 // The controls at the text that the reader edits: the selection actions, the
 // link field and the note of a script string in several places.
@@ -34,15 +34,6 @@ function chipsHTML(tail = "") {
     </script>
   </body>
 </html>`;
-}
-
-async function openEditable(page: Page, id: string) {
-  await page.goto(`/app/d/${id}`);
-  await expect(renderedDocument(page).locator("h1")).toBeVisible();
-  await expect(renderedDocument(page).locator("body")).toHaveAttribute(
-    "contenteditable",
-    "true",
-  );
 }
 
 // selectText selects target in the text of the element at selector.

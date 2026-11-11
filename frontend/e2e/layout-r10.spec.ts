@@ -1,5 +1,5 @@
 import { type FrameLocator, type Locator, type Page } from "@playwright/test";
-import { APP_ORIGIN, expect, test, uniqueName } from "./fixtures";
+import { APP_ORIGIN, expect, openEditable, test, uniqueName } from "./fixtures";
 
 // Anchors stay still under remote changes, and transient UI covers no words
 // or control under use: the room under a comment sheet that shrinks, the
@@ -159,15 +159,13 @@ test("at 1440px, the edit hint and the save message cover no heading at the top"
   await page.setViewportSize({ width: 1440, height: 900 });
   const title = uniqueName("Hint r10");
   const document = await slashdocs.createDocument(title, documentHTML(title, 4, 12));
-  await page.goto(`/app/d/${document.id}`);
+  await openEditable(page, document.id);
   const heading = renderedDocument(page).locator("h1");
-  await expect(heading).toBeVisible();
-
-  await heading.click();
-  // The bar says how to leave the text.
+  // The bar says how Edit mode works, the first time.
   await expect(
-    page.getByRole("status").getByText("Type to edit. Press Esc to leave."),
+    page.getByRole("status").getByText("Editing. Changes save as you type."),
   ).toBeVisible();
+  await heading.click();
   await page.keyboard.type(" now");
   // The save says what it changed in the bar, with Undo, and no toast.
   const undo = page.getByRole("button", { name: "Undo", exact: true });

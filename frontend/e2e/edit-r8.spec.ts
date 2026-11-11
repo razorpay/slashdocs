@@ -1,5 +1,5 @@
 import { type FrameLocator, type Page } from "@playwright/test";
-import { expect, test, uniqueName } from "./fixtures";
+import { expect, openEditable, test, uniqueName } from "./fixtures";
 
 function renderedDocument(page: Page): FrameLocator {
   return page
@@ -26,9 +26,8 @@ test("the link field keeps its place and its width while the reader types", asyn
 }) => {
   const title = uniqueName("Link");
   const document = await slashdocs.createDocument(title, documentHTML(title));
-  await page.goto(`/app/d/${document.id}`);
+  await openEditable(page, document.id);
   const doc = renderedDocument(page);
-  await expect(doc.locator("body")).toHaveAttribute("contenteditable", "true");
   await doc.locator("#intro").evaluate((element) => {
     const d = element.ownerDocument;
     const text = element.firstChild as Text;

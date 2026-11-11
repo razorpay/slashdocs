@@ -1,5 +1,5 @@
 import { type FrameLocator, type Locator, type Page } from "@playwright/test";
-import { expect, reviewerOn, test, uniqueName } from "./fixtures";
+import { expect, reviewerOn, startEditing, test, uniqueName } from "./fixtures";
 
 // Two people edit one document: the admin and a reviewer (dev/dex-config.yaml).
 
@@ -70,10 +70,7 @@ test("an editor sees who edits a block, beside it, until they leave the text", a
   await expect(page.getByRole("button", { name: /^reviewer/ })).toBeVisible();
 
   const block = renderedDocument(reviewer).locator("#p12");
-  await expect(renderedDocument(reviewer).locator("body")).toHaveAttribute(
-    "contenteditable",
-    "true",
-  );
+  await startEditing(reviewer);
   await block.click();
   await reviewer.keyboard.press("End");
   await reviewer.keyboard.type(" Two");
@@ -98,10 +95,7 @@ test("a reader's other tab shows where they edit", async ({ page, slashdocs }) =
   await page.goto(path);
   const other = await page.context().newPage();
   await other.goto(path);
-  await expect(renderedDocument(other).locator("body")).toHaveAttribute(
-    "contenteditable",
-    "true",
-  );
+  await startEditing(other);
   await renderedDocument(other).locator("#p3").click();
   await other.keyboard.type("x");
   await expect(bridge(page).getByText("You are editing in another tab")).toBeVisible();

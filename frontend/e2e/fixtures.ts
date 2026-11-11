@@ -40,6 +40,29 @@ export async function installAppStorage(page: Page) {
   );
 }
 
+// startEditing turns on Edit mode with the switch in the document bar, or
+// with Edit on a narrow bar, as each document opens in Comment mode, and
+// waits until its text takes edits.
+export async function startEditing(page: Page) {
+  await page
+    .getByRole("radio", { name: "Edit" })
+    .or(page.getByRole("button", { name: "Edit", exact: true }))
+    .filter({ visible: true })
+    .click();
+  await expect(
+    page
+      .frameLocator('iframe[title="Rendered document"]')
+      .frameLocator("iframe#slashdocs-doc")
+      .locator("body"),
+  ).toHaveAttribute("contenteditable", "true");
+}
+
+// openEditable opens a document as an editor, in Edit mode.
+export async function openEditable(page: Page, id: string) {
+  await page.goto(`/app/d/${id}`);
+  await startEditing(page);
+}
+
 // signedOutPage opens a page in a new browser context without a session.
 export async function signedOutPage(browser: Browser): Promise<Page> {
   const context = await browser.newContext({

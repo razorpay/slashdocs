@@ -1,5 +1,5 @@
 import { type FrameLocator, type Page } from "@playwright/test";
-import { expect, test, uniqueName } from "./fixtures";
+import { expect, openEditable, startEditing, test, uniqueName } from "./fixtures";
 
 // What happens to an editor's words when a save cannot go: they stay on
 // screen and in storage until the editor copies or discards them.
@@ -49,18 +49,6 @@ async function typeOver(page: Page, selector: string, target: string, text: stri
       throw new Error(`no text ${target}`);
     }, target);
   await page.keyboard.type(text);
-}
-
-async function waitEditable(page: Page) {
-  await expect(renderedDocument(page).locator("body")).toHaveAttribute(
-    "contenteditable",
-    "true",
-  );
-}
-
-async function openEditable(page: Page, id: string) {
-  await page.goto(`/app/d/${id}`);
-  await waitEditable(page);
 }
 
 const SOURCE_EDITS = "**/v1/documents/*/source-edits";
@@ -136,7 +124,7 @@ test("text that a conflict stopped is offered again after Back and a new visit",
   // The document opens from the list, so that Back is a move in the app.
   await page.goto("/app/documents");
   await page.getByRole("link", { name: title }).first().click();
-  await waitEditable(page);
+  await startEditing(page);
   const other = await page.context().newPage();
   await openEditable(other, document.id);
 
@@ -153,7 +141,7 @@ test("text that a conflict stopped is offered again after Back and a new visit",
   await page.goBack();
   await expect(page.getByRole("button", { name: "Show their version" })).toBeHidden();
   await page.getByRole("link", { name: title }).first().click();
-  await waitEditable(page);
+  await startEditing(page);
   await expect(
     page.getByText("You have text in this document that was not saved."),
   ).toBeVisible();
@@ -164,7 +152,7 @@ test("text that a conflict stopped is offered again after Back and a new visit",
   ).toBeHidden();
 
   await page.reload();
-  await waitEditable(page);
+  await startEditing(page);
   await expect(renderedDocument(page).locator("#tail")).toContainText("three times");
   await expect(
     page.getByText("You have text in this document that was not saved."),

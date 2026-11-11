@@ -1,5 +1,5 @@
 import { type FrameLocator, type Page } from "@playwright/test";
-import { expect, reviewerOn, test, uniqueName } from "./fixtures";
+import { expect, reviewerOn, startEditing, test, uniqueName } from "./fixtures";
 
 // The bridge window draws the pins over the document frame.
 function bridge(page: Page): FrameLocator {
@@ -39,8 +39,7 @@ test("pins a comment to any spot, and keeps it there", async ({ page, slashdocs 
   const doc = renderedDocument(page);
   await expect(doc.locator("#chart")).toBeVisible();
 
-  // The owner edits this document, so in its text C types. The comments
-  // list starts placing a pin instead.
+  // The comments list starts placing a pin too.
   await page.getByRole("button", { name: "Comments", exact: true }).click();
   await page.getByRole("button", { name: "Comment on a spot" }).click();
   await doc.locator("#chart").click({ position: { x: 100, y: 75 } });
@@ -66,6 +65,7 @@ test("pins a comment to any spot, and keeps it there", async ({ page, slashdocs 
 
   // Placing the pin left in-place editing alone.
   await thread.press("Escape");
+  await startEditing(page);
   await doc.locator("p").click();
   await page.keyboard.press("End");
   await page.keyboard.type(" Still editable.");
