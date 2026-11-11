@@ -92,6 +92,9 @@ const muted = "text-[var(--color-fg-muted)]";
 // touch screen.
 const onHover =
   "-my-1 h-7 w-7 opacity-0 focus-visible:opacity-100 group-hover/msg:opacity-100 data-[state=open]:opacity-100 touch:opacity-100";
+// Add reaction always shows, muted until the pointer is on it, so that the
+// first reaction is in sight and one click away.
+const quiet = "-my-1 h-7 w-7 hover:text-[var(--color-fg)]";
 
 function copyLink(commentId: string) {
   const url = new URL(window.location.pathname, window.location.origin);
@@ -247,7 +250,7 @@ export function Message({
             actions, with Close last, or a reply's menu on hover. */}
         <span className="-my-1 ml-auto flex shrink-0 items-center">
           {c.reactions?.length ? null : (
-            <ReactionBar c={c} docId={docId} triggerClassName={onHover} />
+            <ReactionBar c={c} docId={docId} triggerClassName={quiet} />
           )}
           {actions}
           {!thread ? (

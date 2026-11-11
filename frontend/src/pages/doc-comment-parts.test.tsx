@@ -491,7 +491,7 @@ it("offers the first reaction on a message that has none, in its header", async 
   expect(react).toHaveBeenCalledWith("doc-1", mine.id, expect.any(String), true);
 });
 
-it("keeps the thread's last action at the end of its header, after the first reaction", () => {
+it("shows Add reaction at rest, before the thread's actions, with Close last", () => {
   const ctx = { principal: { type: "user", id: "u1" } } as DocContextValue;
   render(
     <QueryClientProvider client={new QueryClient()}>
@@ -509,5 +509,8 @@ it("keeps the thread's last action at the end of its header, after the first rea
     .getAllByRole("button")
     .map((b) => b.getAttribute("aria-label") ?? b.textContent);
   expect(names.at(-1)).toBe("Close comment");
-  expect(names).toContain("Add reaction");
+  expect(names.indexOf("Add reaction")).toBe(names.length - 2);
+  expect(screen.getByRole("button", { name: "Add reaction" })).not.toHaveClass(
+    "opacity-0",
+  );
 });
