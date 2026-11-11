@@ -37,6 +37,7 @@ function Thread(more: Partial<DocContextValue>) {
     drafts: [],
     activeComment: "c1",
     setActiveComment: () => {},
+    readThread: () => {},
     unanchoredComments: new Set(["c1"]),
     movedPins: new Set(),
     signIn: () => {},

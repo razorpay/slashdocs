@@ -33,6 +33,7 @@ import { AccountItems, AccountMenu } from "@/components/layout/topbar";
 import {
   BarGroup,
   CommentsToggle,
+  type ThreadCount,
   DocBarFrame,
 } from "@/components/layout/doc-bar-frame";
 import { Button } from "@/components/ui/button";
@@ -105,6 +106,7 @@ export function DocBar({
   followedSession,
   onUnfollowViewer = () => {},
   commentsOpen,
+  threads,
   onToggleComments,
   onShowShortcuts,
   approvalStatus,
@@ -138,6 +140,7 @@ export function DocBar({
   followedSession?: string;
   onUnfollowViewer?: () => void;
   commentsOpen: boolean;
+  threads: ThreadCount;
   onToggleComments: () => void;
   onShowShortcuts: () => void;
   approvalStatus?: ApprovalStatus;
@@ -285,7 +288,11 @@ export function DocBar({
             open={approvalsDialogOpen}
             onOpenChange={setApprovalsDialogOpen}
           />
-          <CommentsToggle open={commentsOpen} onToggle={onToggleComments} />
+          <CommentsToggle
+            open={commentsOpen}
+            onToggle={onToggleComments}
+            threads={threads}
+          />
           {!signIn && (
             <Sheet modal={false} open={shareOpen} onOpenChange={onShareOpenChange}>
               <SheetTrigger asChild>

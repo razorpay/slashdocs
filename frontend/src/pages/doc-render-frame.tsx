@@ -178,6 +178,7 @@ export function RenderFrame({
           id: c.id,
           quote: c.selected_text || c.anchor?.quote,
           anchor: c.anchor,
+          unread: c.unread,
         })),
       ...drafts
         .filter((d) => !d.anchor?.point)

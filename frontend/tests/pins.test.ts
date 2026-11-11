@@ -803,3 +803,34 @@ test("a dragged pin shows once, under the pointer, while the app sends the pins 
     restore();
   }
 });
+
+test("an unread pin wears a dot, and bumps when a reply makes it unread", () => {
+  document.body.innerHTML = '<main><p id="spot">Pin here</p></main>';
+  layout();
+  const layer = createPinLayer({
+    doc: () => document,
+    post: () => {},
+    laidOut: () => {},
+  });
+  layer.start(document);
+  const pins = (unread: boolean) =>
+    parsePins([
+      {
+        id: "c1",
+        anchor: { quote: "", point: { target: "spot", x: 0.5, y: 0.5 } },
+        unread,
+      },
+    ]);
+  const pin = () => document.querySelector<HTMLElement>('.sd-pin[data-id="c1"]')!;
+  layer.setPins(pins(true));
+  assert.ok(pin().hasAttribute("data-unread"));
+  assert.notOk(
+    pin().hasAttribute("data-bump"),
+    "a pin that loads unread does not bump",
+  );
+  layer.setPins(pins(false));
+  assert.notOk(pin().hasAttribute("data-unread"));
+  layer.setPins(pins(true));
+  assert.ok(pin().hasAttribute("data-unread"));
+  assert.ok(pin().hasAttribute("data-bump"));
+});
