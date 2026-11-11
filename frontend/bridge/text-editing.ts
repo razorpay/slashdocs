@@ -12,8 +12,9 @@
 // it again. The records of each user operation also make the undo journal.
 
 import { blockOf } from "./dom.ts";
+import { morph } from "./patch.ts";
 import { createSourceMap, type SourceMap } from "./source-map.ts";
-import { SOURCE_ATTR, type Region } from "./source-pieces.ts";
+import { SOURCE_ATTR, type Patch, type Region } from "./source-pieces.ts";
 import {
   createStructure,
   editable,
@@ -31,6 +32,13 @@ export interface TextEditor {
   // The same regions, for a draft: the editor keeps the highlights that it
   // took off.
   peek(): { regions: Region[] };
+  // The count of user operations since editing started. A change that a
+  // patch makes is not one.
+  edits(): number;
+  // patch shows the text of other people in place. The regions hold its
+  // changes, as they hold those of a user operation. edits is the count of
+  // user operations that the patches were made for.
+  patch(patches: Patch[], edits: number): Patched;
   // The source map of the document, which script text uses too.
   map: SourceMap;
   // run does an input on the selection as its shortcut does, for example
@@ -42,6 +50,11 @@ export interface TextEditor {
   setEditable(on: boolean): void;
   stop(): void;
 }
+
+// What a patch did. It changes nothing when it is not ok: it is stale after
+// one more user operation, and else it does not fit the document. ranges
+// are those of the new content.
+export type Patched = { ok: boolean; stale?: true; ranges?: Range[] };
 
 type TextEditingCallbacks = {
   // The editor is about to change a block: anything that splits its text
@@ -88,6 +101,9 @@ export function startTextEditing(
   d: Document,
   taggedSource: string,
   callbacks: TextEditingCallbacks,
+  // A reader who does not edit gets the editor too, so that its regions hold
+  // the patches. It then starts not editable.
+  startEditable = true,
 ): TextEditor | null {
   const body = d.body;
   if (!body) return null;
@@ -101,10 +117,12 @@ export function startTextEditing(
   see(body);
   const made = new WeakSet<Node>();
   const touched = new Set<Element>();
+  const beside = new Set<Element>();
   // The original elements that the editor took out. Undo can put them back.
   const removed = new Set<Element>();
   const map = createSourceMap(d, taggedSource, {
     touched,
+    beside,
     made,
     removed: {
       *[Symbol.iterator]() {
@@ -119,6 +137,7 @@ export function startTextEditing(
   const held = new Set<Element>();
   const undos: Entry[] = [];
   const redos: Entry[] = [];
+  let edits = 0;
 
   // The input that the browser does itself, between its beforeinput and
   // input events.
@@ -205,6 +224,7 @@ export function startTextEditing(
   // commit journals a user operation, unless it changed nothing.
   function commit(records: MutationRecord[], before: Caret, typing?: string) {
     if (!records.length) return;
+    edits++;
     redos.length = 0;
     const last = undos.at(-1);
     const now = Date.now();
@@ -227,6 +247,59 @@ export function startTextEditing(
     const records = observer.takeRecords();
     fromEditor(records, false);
     commit(records, before);
+  }
+
+  // patch shows the text of other people. It is not a user operation: it is
+  // not in the journal, it is not an edit, and the document is not dirty
+  // after it.
+  function patch(patches: Patch[], at: number): Patched {
+    closeNative();
+    flush();
+    if (at !== edits) return { ok: false, stale: true };
+    const places = patches.flatMap((patch) => map.find(patch) ?? []);
+    if (places.length < patches.length) return { ok: false };
+    places.forEach((place) => unhighlight(place.in));
+    const ranges = places.flatMap((place, i) => morph(place, patches[i].html));
+    const records = observer.takeRecords();
+    fromEditor(records, false);
+    for (const record of records) {
+      if (changesText(record) && record.target.isConnected) markText(record);
+    }
+    // To revert an operation on the nodes that the patch changed writes old
+    // text over the text of the other person, so such operations go from
+    // the journal.
+    for (const journal of [undos, redos]) {
+      const kept = journal.filter(
+        (entry) => !entry.records.some((a) => records.some((b) => meet(a, b))),
+      );
+      journal.splice(0, journal.length, ...kept);
+    }
+    return { ok: true, ranges };
+  }
+
+  // markText puts the text that a record of a patch changed in the regions.
+  // A new or removed element is in them by itself. Text between two original
+  // elements goes with those two, so that the region is the source from one
+  // to the other, and not all of their parent. Other text goes with its
+  // block. The body is not a block here: a region of the body does not apply
+  // when text follows the body in the source.
+  function markText(record: MutationRecord) {
+    const original = (from: Node | null, next: "previousSibling" | "nextSibling") => {
+      for (let node = from; node; node = node[next]) {
+        if (
+          node.nodeType === Node.ELEMENT_NODE &&
+          map.offsetOf(node as Element) !== null
+        )
+          return node as Element;
+      }
+      return null;
+    };
+    const { previousSibling, nextSibling } =
+      record.type === "characterData" ? record.target : record;
+    const before = original(previousSibling, "previousSibling");
+    const after = original(nextSibling, "nextSibling");
+    if (before && after) beside.add(before).add(after);
+    else if (blockOf(record.target) !== body) mark(blockOf(record.target));
   }
 
   function openNative(type: string, nodes: Node[]) {
@@ -257,6 +330,7 @@ export function startTextEditing(
     closeNative();
     const entry = from.pop();
     if (!entry) return;
+    edits++;
     // The blocks of the entry were touched when it was journaled.
     for (const record of entry.records) {
       const block = record.target.isConnected ? blockOf(record.target) : null;
@@ -326,8 +400,11 @@ export function startTextEditing(
     return true;
   }
 
+  // The editor takes no input while it is not editable: an input then
+  // belongs to a field of the document.
+  let editing = false;
   const onBeforeInput = (event: InputEvent) => {
-    if (!event.isTrusted || !body.contains(event.target as Node)) return;
+    if (!editing || !event.isTrusted || !body.contains(event.target as Node)) return;
     // Composition stays with the browser and the input method.
     if (event.isComposing) return openNative("insertCompositionText", []);
     const handled = handle({
@@ -342,10 +419,9 @@ export function startTextEditing(
   // A composition starts before it changes text: the highlights come off
   // then, so that the editor does not change the text under it.
   const onCompositionStart = () => {
-    const r = selection(d);
+    const r = editing && selection(d);
     if (r) hold(blockOf(r.startContainer));
   };
-  let editing = false;
   const onKeyDown = (event: KeyboardEvent) => {
     if (
       !editing ||
@@ -363,6 +439,7 @@ export function startTextEditing(
     handle({ type });
   };
   const onDrop = (event: DragEvent) => {
+    if (!editing) return;
     event.preventDefault();
     callbacks.onRefused(REFUSED.drop);
   };
@@ -388,7 +465,7 @@ export function startTextEditing(
     if (previousSpellcheck === null) body.removeAttribute("spellcheck");
     else body.setAttribute("spellcheck", previousSpellcheck);
   };
-  setEditable(true);
+  setEditable(startEditable);
   if (!d.getElementById(STYLE_ID)) {
     const style = d.createElement("style");
     style.id = STYLE_ID;
@@ -406,6 +483,11 @@ export function startTextEditing(
 
   return {
     map,
+    edits() {
+      closeNative();
+      return edits;
+    },
+    patch,
     run(type) {
       handle({ type });
     },
@@ -451,6 +533,25 @@ function shortcut(event: KeyboardEvent): string | null {
   if (key === "i") return "formatItalic";
   if (key === "k") return "insertLink";
   return null;
+}
+
+// changesText tells whether a record changed text or a comment, not only
+// elements.
+function changesText(record: MutationRecord): boolean {
+  return (
+    record.type === "characterData" ||
+    [...record.addedNodes, ...record.removedNodes].some(
+      (node) => node.nodeType !== Node.ELEMENT_NODE,
+    )
+  );
+}
+
+// meet tells whether two records changed the same node, or one changed a
+// node that the other added or removed.
+function meet(a: MutationRecord, b: MutationRecord): boolean {
+  const moved = (record: MutationRecord, node: Node) =>
+    [...record.addedNodes, ...record.removedNodes].some((n) => n.contains(node));
+  return a.target === b.target || moved(a, b.target) || moved(b, a.target);
 }
 
 // undoRecord reverts one mutation record.

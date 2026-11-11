@@ -24,8 +24,9 @@ const page = (body: string) =>
 
 // open renders source as the server does, loads it as the frame's document,
 // and starts the editor on it. script changes the document first, as the
-// document's own scripts do.
-async function open(body: string, script?: (d: Document) => void) {
+// document's own scripts do. A reader who does not edit starts the editor
+// not editable.
+async function open(body: string, script?: (d: Document) => void, editable = true) {
   const source = page(body);
   const tree = await parseSource(source);
   const tagged = tagSource(tree);
@@ -36,11 +37,17 @@ async function open(body: string, script?: (d: Document) => void) {
   );
   script?.(document);
   const refused: string[] = [];
-  const editor = startTextEditing(document, tagged, {
-    beforeTouch() {},
-    onDirty() {},
-    onRefused: (reason) => refused.push(reason),
-  })!;
+  const dirty: number[] = [];
+  const editor = startTextEditing(
+    document,
+    tagged,
+    {
+      beforeTouch() {},
+      onDirty: (count) => dirty.push(count),
+      onRefused: (reason) => refused.push(reason),
+    },
+    editable,
+  )!;
   stop = editor.stop;
   // saved is the source with the editor's changes written into it.
   const saved = () => {
@@ -54,7 +61,28 @@ async function open(body: string, script?: (d: Document) => void) {
       saved(),
       changes.reduce((html, [from, to]) => html.replace(from, to), source),
     );
-  return { source, saved, expect, refused, run: editor.run, editor };
+  // patch shows the text of other people as the frame does, for the count
+  // of user operations now. A place is the text of a start tag, or null.
+  const patch = (
+    ...patches: [
+      in_: string,
+      after: string | null,
+      before: string | null,
+      html: string,
+    ][]
+  ) => {
+    const offset = (tag: string | null) => (tag === null ? null : source.indexOf(tag));
+    return editor.patch(
+      patches.map(([parent, after, before, html]) => ({
+        in: offset(parent),
+        after: offset(after),
+        before: offset(before),
+        html,
+      })),
+      editor.edits(),
+    );
+  };
+  return { source, saved, expect, refused, dirty, patch, run: editor.run, editor };
 }
 
 // at finds a place in the text of the document. "|" marks it in the text of
@@ -647,5 +675,219 @@ describe("formatting at a caret, links and numbered lists", () => {
       "<ol><li>One</li><li>Two</li></ol>",
       '<ol><li>One</li></ol><p></p><ol start="2"><li>Two</li></ol>',
     ]);
+  });
+});
+
+describe("a patch", () => {
+  const caret = () => {
+    const { focusNode, focusOffset } = document.getSelection()!;
+    return [(focusNode as Text).data, focusOffset];
+  };
+
+  test("keeps the caret at its character when text comes before, after and at it", async () => {
+    const doc = await open("<p>Hello world</p>");
+    place("Hello| world");
+    const [text] = at("Hello");
+    assert.isTrue(doc.patch(["<p>", null, null, "Hello world, and more"]).ok);
+    assert.deepEqual(caret(), ["Hello world, and more", 5]);
+    doc.patch(["<p>", null, null, "Oh. Hello world, and more"]);
+    assert.deepEqual(caret(), ["Oh. Hello world, and more", 9]);
+    doc.patch(["<p>", null, null, "Oh. Hello there world, and more"]);
+    assert.deepEqual(caret(), ["Oh. Hello there world, and more", 9]);
+    assert.strictEqual(document.getSelection()!.focusNode, text, "the node stays");
+    assert.strictEqual(document.activeElement, document.body, "the focus stays");
+    doc.expect(["Hello world", "Oh. Hello there world, and more"]);
+  });
+
+  test("keeps a selection around text that changes inside it", async () => {
+    await open("<p>One two three</p>").then((doc) => {
+      place("One |two three", "One two| three");
+      doc.patch(["<p>", null, null, "One tw-o three"]);
+    });
+    assert.equal(document.getSelection()!.toString(), "tw-o");
+  });
+
+  test("gives text typed in an original paragraph", async () => {
+    const doc = await open("<p>One</p>\n<p>Two</p>");
+    doc.patch(["<p>Two", null, null, "Two &amp; more"]);
+    doc.expect(["<p>Two</p>", "<p>Two &amp; more</p>"]);
+  });
+
+  test("gives a new paragraph after an original one", async () => {
+    const doc = await open('<p class="a">One</p>\n<p>Two</p>');
+    doc.patch(["<body>", '<p class="a">', "<p>Two", '<p class="a">New</p>\n']);
+    doc.expect(["</p>\n<p>Two", '</p><p class="a">New</p>\n<p>Two']);
+  });
+
+  test("gives a new paragraph on its own line, as an agent writes it", async () => {
+    const doc = await open("<p>One</p>\n<p>Two</p>");
+    doc.patch(["<body>", "<p>One", "<p>Two", "\n<p>New</p>\n"]);
+    doc.expect(["</p>\n<p>Two", "</p>\n<p>New</p>\n<p>Two"]);
+  });
+
+  test("gives bold in the middle of a text", async () => {
+    const doc = await open("<p>Hello big world</p>");
+    place("Hello big wor|ld");
+    doc.patch(["<p>", null, null, "Hello <strong>big</strong> world"]);
+    doc.expect(["Hello big world", "Hello <strong>big</strong> world"]);
+    assert.equal(document.querySelector("strong")!.textContent, "big");
+  });
+
+  test("gives a removed original paragraph", async () => {
+    const doc = await open("<p>One</p>\n<p>Two</p>\n<p>Three</p>");
+    doc.patch(["<body>", "<p>One", "<p>Three", "\n"]);
+    doc.expect(["<p>Two</p>\n", ""]);
+    assert.equal(document.querySelectorAll("p").length, 2);
+  });
+
+  test("gives text between two elements with them, and not with all of their parent", async () => {
+    const doc = await open("<div><p>One</p> and <p>Two</p> and <p>Three</p></div>");
+    doc.patch(["<div>", "<p>One", "<p>Two", " or "]);
+    const { regions } = doc.editor.take();
+    assert.deepEqual(
+      regions.map(({ from, to }) => [from, to]),
+      [[doc.source.indexOf("<p>One"), doc.source.indexOf("<p>Two")]],
+    );
+    // A script changes the parent. Its text is still not the text of a script.
+    document.querySelector("div")!.append(document.createElement("hr"));
+    doc.expect(["</p> and <p>Two", "</p> or <p>Two"]);
+    assert.isFalse(document.querySelector("div")!.hasAttribute("contenteditable"));
+  });
+
+  test("gives two patches of one request", async () => {
+    const doc = await open("<ul><li>One</li><li>Two</li></ul>\n<p>Three</p>");
+    doc.patch(
+      ["<ul>", "<li>One", "<li>Two", "<li>New</li>"],
+      ["<p>", null, null, "Three, <em>four</em>"],
+    );
+    doc.expect(
+      ["</li><li>Two", "</li><li>New</li><li>Two"],
+      ["Three", "Three, <em>four</em>"],
+    );
+  });
+
+  test("gives a later patch on the content of an earlier one", async () => {
+    const doc = await open("<p>One</p>\n<p>Two</p>");
+    doc.patch(["<body>", "<p>One", "<p>Two", "<p>New</p>\n"]);
+    const made = document.querySelectorAll("p")[1];
+    doc.patch(["<body>", "<p>One", "<p>Two", "<p>New text</p>\n"]);
+    assert.strictEqual(document.querySelectorAll("p")[1], made, "the paragraph stays");
+    doc.expect(["</p>\n<p>Two", "</p><p>New text</p>\n<p>Two"]);
+    doc.patch(["<body>", "<p>One", "<p>Two", "\n"]);
+    assert.equal(doc.saved(), doc.source);
+  });
+
+  test("keeps the text that the reader typed in the same block", async () => {
+    const doc = await open("<p>Hello world</p>");
+    place("Hello| world");
+    input("insertText", { text: " big" });
+    // The target is the text of both people.
+    assert.isTrue(doc.patch(["<p>", null, null, "Hello big world, for all"]).ok);
+    assert.equal(document.querySelector("p")!.textContent, "Hello big world, for all");
+    doc.expect(["Hello world", "Hello big world, for all"]);
+  });
+
+  test("leaves the space that the browser typed as a no-break space", async () => {
+    const doc = await open("<p>Hello</p>\n<p>Two</p>");
+    place("Hello|");
+    input("insertText", { text: "\u00a0" });
+    doc.patch(["<p>Hello", null, null, "Hello "], ["<p>Two", null, null, "Two!"]);
+    assert.equal(document.querySelector("p")!.textContent, "Hello\u00a0");
+    doc.expect(["Hello", "Hello "], ["Two", "Two!"]);
+  });
+
+  test("leaves the nodes of the bridge and of scripts, and an emptied block open", async () => {
+    const doc = await open("<h2>Title</h2>\n<p>One</p>", (d) => {
+      d.querySelector("h2")!.insertAdjacentHTML(
+        "beforeend",
+        '<button class="slashdocs-heading-link"></button>',
+      );
+      d.querySelector("p")!.insertAdjacentHTML(
+        "afterend",
+        "<aside>By a script</aside>",
+      );
+    });
+    doc.patch(["<h2>", null, null, "A title"], ["<body>", "<p>One", null, "<p></p>\n"]);
+    assert.ok(document.querySelector("h2 > .slashdocs-heading-link"));
+    assert.ok(document.querySelector("aside"));
+    doc.expect(["Title", "A title"], ["<p>One</p>", "<p>One</p><p></p>"]);
+    // The reader puts the caret in the empty paragraph, which a <br> keeps open.
+    const empty = document.querySelectorAll("p")[1];
+    empty.append(document.createElement("br"));
+    doc.patch(
+      ["<h2>", null, null, "The title"],
+      ["<body>", "<p>One", null, "<p></p>\n"],
+    );
+    assert.ok(empty.querySelector("br"));
+  });
+
+  test("changes nothing when it is stale, or when an element is not there", async () => {
+    const doc = await open("<p>One</p>\n<p>Two</p>");
+    const edits = doc.editor.edits();
+    place("One|");
+    input("insertText", { text: "!" });
+    assert.equal(doc.editor.edits(), edits + 1);
+    const patches = [
+      { in: doc.source.indexOf("<p>Two"), after: null, before: null, html: "2" },
+    ];
+    assert.deepEqual(doc.editor.patch(patches, edits), { ok: false, stale: true });
+    assert.deepEqual(
+      doc.editor.patch([...patches, { ...patches[0], after: 5 }], edits + 1),
+      { ok: false },
+    );
+    assert.isFalse(doc.patch(["<body>", "<p>Two", "<p>One", ""]).ok, "not in order");
+    assert.isFalse(doc.patch(["<p>One", "<p>Two", null, ""]).ok, "not a child");
+    // A script takes an element out.
+    document.querySelectorAll("p")[1].remove();
+    const before = document.body.innerHTML;
+    assert.isFalse(doc.patch(["<body>", "<p>Two", null, "<p>New</p>"]).ok);
+    assert.equal(document.body.innerHTML, before);
+    doc.expect(["One", "One!"]);
+  });
+
+  test("is not a user operation: not dirty, and not in the journal", async () => {
+    const doc = await open("<p>One</p>\n<p>Two</p>");
+    const edits = doc.editor.edits();
+    doc.patch(["<p>One", null, null, "One more"]);
+    assert.equal(doc.editor.edits(), edits);
+    assert.deepEqual(doc.dirty, []);
+    input("historyUndo");
+    assert.equal(document.querySelector("p")!.textContent, "One more");
+  });
+
+  test("ends the undo of the same text, but not of another block", async () => {
+    const doc = await open("<p>One</p>\n<p>Two</p>");
+    place("One|");
+    input("insertText", { text: " mine" });
+    place("Tw|o");
+    input("deleteContentBackward");
+    doc.patch(["<p>One", null, null, "One mine, theirs"]);
+    const texts = () =>
+      Array.from(document.querySelectorAll("p"), (p) => p.textContent);
+    assert.deepEqual(texts(), ["One mine, theirs", "To"]);
+    input("historyUndo");
+    assert.deepEqual(texts(), ["One mine, theirs", "Two"]);
+    input("historyUndo");
+    assert.deepEqual(texts(), ["One mine, theirs", "Two"]);
+    input("historyRedo");
+    assert.deepEqual(texts(), ["One mine, theirs", "To"]);
+    doc.expect(["One", "One mine, theirs"], ["Two", "To"]);
+  });
+
+  test("shows nothing of the editor to a reader who does not edit", async () => {
+    const doc = await open("<p>One</p>", undefined, false);
+    const before = document.documentElement.outerHTML;
+    assert.isFalse(document.body.hasAttribute("contenteditable"));
+    assert.isFalse(
+      document.documentElement.hasAttribute("data-slashdocs-text-editing"),
+    );
+    doc.patch(["<p>", null, null, "One more"]);
+    assert.equal(document.documentElement.outerHTML, before.replace("One", "One more"));
+    assert.deepEqual(doc.dirty, []);
+    doc.expect(["One", "One more"]);
+    // An input then belongs to a field of the document: the browser does it.
+    place("One| more");
+    assert.isTrue(input("insertText", { text: "!" }));
+    assert.equal(doc.editor.edits(), 0);
   });
 });

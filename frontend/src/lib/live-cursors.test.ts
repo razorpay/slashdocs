@@ -99,6 +99,27 @@ describe("parseCursorSpot of a pointer that left", () => {
       e: "0.3",
     });
   });
+
+  it("keeps the caret offset in that block, when it is one", () => {
+    const left = { path: "", x: 0, y: 0, hidden: true };
+    expect(parseCursorSpot({ hidden: true, e: "0.3", c: 0 })).toEqual({
+      ...left,
+      e: "0.3",
+      c: 0,
+    });
+    expect(parseCursorSpot({ ...spot(1), e: "2", c: 1_000_000 })).toEqual({
+      ...spot(1),
+      e: "2",
+      c: 1_000_000,
+    });
+    for (const c of [-1, 1.5, 1_000_001, "3", null])
+      expect(parseCursorSpot({ hidden: true, e: "0.3", c })).toEqual({
+        ...left,
+        e: "0.3",
+      });
+    // A caret is in a block.
+    expect(parseCursorSpot({ ...spot(1), c: 4 })).toEqual(spot(1));
+  });
 });
 
 describe("createCursorBatch views", () => {

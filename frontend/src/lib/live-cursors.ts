@@ -24,6 +24,8 @@ const MAX_VIEW_FRACTION = 1000;
 const MAX_MESSAGE = 100;
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
+// The server takes a caret offset up to this.
+const MAX_CARET = 1_000_000;
 
 function parsePlace(value: unknown, limit = { min: 0, max: 1 }): CursorPlace | null {
   const { path, x, y, z } = (value ?? {}) as Record<string, unknown>;
@@ -37,16 +39,23 @@ function parsePlace(value: unknown, limit = { min: 0, max: 1 }): CursorPlace | n
 
 // parseCursorSpot accepts a spot from the render frame, which also runs the
 // document's own scripts. Anything else means that the pointer left. An
-// invalid view, message or edited block is dropped. A spot for a pointer that
-// left keeps only its view and edited block, and is null without both.
+// invalid view, message, edited block or caret is dropped. A caret goes with
+// its block. A spot for a pointer that left keeps only its view, edited block
+// and caret, and is null without a view and a block.
 export function parseCursorSpot(value: unknown): CursorSpot | null {
-  const { m, e, v, hidden } = (value ?? {}) as Record<string, unknown>;
+  const { m, e, c, v, hidden } = (value ?? {}) as Record<string, unknown>;
   const view = parsePlace(v, {
     min: -MAX_VIEW_FRACTION,
     max: MAX_VIEW_FRACTION,
   });
   const edit = typeof e === "string" && e && SPOT_PATH.test(e) ? e : undefined;
-  const extras = { ...(view && { v: view }), ...(edit && { e: edit }) };
+  const caret =
+    edit && Number.isInteger(c) && (c as number) >= 0 && (c as number) <= MAX_CARET;
+  const extras = {
+    ...(view && { v: view }),
+    ...(edit && { e: edit }),
+    ...(caret && { c: c as number }),
+  };
   if (hidden === true) return view || edit ? { ...HIDDEN, ...extras } : null;
   const spot = parsePlace(value);
   const message =
