@@ -16,6 +16,11 @@ import type { RemoteCursor } from "../../bridge/cursors";
 import { randomId } from "@/lib/uuid";
 import { useInvalidateApprovals } from "./use-invalidate-approvals";
 
+// The version of the cursor of a viewer who follows the newest version.
+// Such viewers are a version apart for a moment at each change, and their
+// cursors must not hide then.
+export const LIVE = "live";
+
 // The server lists a viewer for 45 seconds after their last report.
 const PRESENCE_TTL = 45_000;
 const HEARTBEAT_INTERVAL = 20_000;
@@ -101,22 +106,28 @@ export function useDocumentEvents(
 }
 
 // useDocumentStream is the document page's view of the event stream. It
-// passes KV changes to subscribers, refreshes comments, approvals and the
-// document when they change, and reports and tracks who is viewing and where they point.
+// passes KV changes to subscribers, refreshes comments and approvals when
+// they change, tells the page of each change to the document, and reports
+// and tracks who is viewing and where they point.
 export function useDocumentStream({
   docId,
   enabled,
   version,
+  following,
   principal,
   onDocumentChange,
 }: {
   docId: string;
   enabled: boolean;
   version: string;
+  // The page follows the newest version: it is not a preview, and no change
+  // waits for the reader.
+  following: boolean;
   principal?: Principal;
-  // Called on each change to the document, before it refreshes, with whoever
-  // made the change.
-  onDocumentChange: (by?: Principal) => void;
+  // Called on each change to the document, with the version that the change
+  // made, if it made one. It is also called when the stream opens, because
+  // the changes before that sent no event here.
+  onDocumentChange: (versionID?: string) => void;
 }) {
   const q = useQueryClient();
   const invalidateApprovals = useInvalidateApprovals(docId);
@@ -127,6 +138,8 @@ export function useDocumentStream({
 
   // The newest point of each remote cursor, so that a frame that loads later
   // can draw it. A cursor on another version than this one is hidden here.
+  const cursorOn = useRef(version);
+  cursorOn.current = following ? LIVE : version;
   const cursors = useRef(new Map<string, { cursor: RemoteCursor; version: string }>());
   const cursorListeners = useRef(new Set<CursorListener>());
   // The sessions seen so far, to tell when someone arrives, and how to send
@@ -135,7 +148,7 @@ export function useDocumentStream({
   const resendCursor = useRef<() => void>(() => {});
   const shownCursor = useCallback(
     (cursor: RemoteCursor, on: string) =>
-      on === place.current.version ? cursor : hiddenCursor(cursor),
+      on === cursorOn.current ? cursor : hiddenCursor(cursor),
     [],
   );
   const emitCursor = useCallback((cursor: RemoteCursor) => {
@@ -148,16 +161,15 @@ export function useDocumentStream({
       open: () => {
         knownSessions.current.clear();
         setSessions(new Map());
+        onDocumentChange();
       },
       kv: (event) => kvListeners.current.forEach((listener) => listener(event)),
       comments: () => q.invalidateQueries({ queryKey: queryKeys.comments(docId) }),
       approvals: invalidateApprovals,
-      // A new version can reset the approvals, so it refreshes them too.
-      document: (event) => {
-        onDocumentChange(event.updated_by);
-        invalidateApprovals();
-        q.invalidateQueries({ queryKey: queryKeys.versions(docId) });
-      },
+      document: (event) =>
+        onDocumentChange(
+          (event.data as { version_id?: string } | undefined)?.version_id,
+        ),
       presence: (event) => {
         const presence = event.data as DocumentPresence | undefined;
         const viewer = event.updated_by;
@@ -275,7 +287,7 @@ export function useDocumentStream({
       createCursorBatch((points) =>
         api.postDocumentCursor(docId, {
           session,
-          version: place.current.version,
+          version: cursorOn.current,
           points,
         }),
       ),

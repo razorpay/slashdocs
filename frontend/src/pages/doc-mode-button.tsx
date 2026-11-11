@@ -9,7 +9,6 @@ import { notSaved, useDoc, type SaveState } from "./doc-context";
 // Why the edits on screen did not save.
 const NOT_SAVED: Partial<Record<SaveState, string>> = {
   failed: "Your edits are not saved yet. Trying again.",
-  paused: "The document changed elsewhere, so your latest edits are not saved.",
   refused: "A change cannot save. The message says why.",
 };
 

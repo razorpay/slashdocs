@@ -2,6 +2,7 @@ import { createContext, useContext, type Dispatch, type SetStateAction } from "r
 import type { Anchor, AnchorPoint, Comment, CursorSpot, Principal } from "@/api";
 import type { CommentDraft, DraftText } from "@/lib/comment-drafts";
 import type { Region, ScriptChange } from "../../bridge/source-pieces";
+import type { DocUpdate } from "./doc-update-banner";
 import type { CursorListener, DocumentKVListener } from "./use-document-stream";
 
 // What a new comment anchors to, from the render bridge: a text selection, or
@@ -23,19 +24,27 @@ export type CommentPosition = {
 export type UnanchoredKind = "text" | "pins";
 
 // What the rendered document reports when asked for its text edits: every
-// region and every script text that changed since it loaded.
-export type TextEditResult = { regions: Region[]; scripts: ScriptChange[] };
+// region and every script text that changed since it loaded, and the count
+// of the reader's operations that made them.
+export type TextEditResult = {
+  regions: Region[];
+  scripts: ScriptChange[];
+  edits: number;
+};
+
+// What the rendered document reports after a patch: its text edits, and
+// whether the patch applied. A patch is stale, and changes nothing, when the
+// reader made an operation after the count that the patch was made for.
+export type TextPatchResult = TextEditResult & { ok: boolean; stale: boolean };
 
 // Where the editor's typing is: none yet, waiting for a pause, being saved,
-// saved, failed and waiting to try again, paused because the document
-// changed elsewhere, or refused because a change cannot save.
-export type SaveState =
-  "idle" | "unsaved" | "saving" | "saved" | "failed" | "paused" | "refused";
+// saved, failed and waiting to try again, or refused because a change
+// cannot save.
+export type SaveState = "idle" | "unsaved" | "saving" | "saved" | "failed" | "refused";
 
 // notSaved tells whether the edits on screen did not save. The editor sees
 // only this state of a save.
-export const notSaved = (state: SaveState) =>
-  state === "failed" || state === "paused" || state === "refused";
+export const notSaved = (state: SaveState) => state === "failed" || state === "refused";
 
 // A request to go to another viewer: once to their cursor, or continuously
 // to their view. Each request is a new object, so the same viewer can be
@@ -131,6 +140,14 @@ export type DocContextValue = {
   stayOnVersion: (version?: string) => void;
   // Shows the latest version again.
   showLatest: () => void;
+  // The newest version of the document, when the page knows it. The frame
+  // follows it in place while live is set: a preview stays as it is.
+  latest?: string;
+  live: boolean;
+  // Other people have the document open.
+  others: boolean;
+  // Shows the banner for a change that waits for the reader, or removes it.
+  holdUpdate: (update?: DocUpdate) => void;
 };
 
 const DocContext = createContext<DocContextValue | null>(null);

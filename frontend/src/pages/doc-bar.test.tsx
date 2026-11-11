@@ -58,6 +58,9 @@ const mockDocContext: DocContextValue = {
   setFrameReady: vi.fn(),
   stayOnVersion: vi.fn(),
   showLatest: vi.fn(),
+  live: true,
+  others: false,
+  holdUpdate: vi.fn(),
 };
 
 const OWNER = { type: "user" as const, id: "usr_owner" };
@@ -157,7 +160,6 @@ function renderDocBar(
             canChangeContent
             labels={["payments", "runbook"]}
             onSelectVersion={onSelectVersion}
-            onShowLatest={vi.fn()}
             viewers={viewers}
             onFollowViewer={onFollowViewer}
             commentsOpen={false}
@@ -547,7 +549,7 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     };
     for (const saveState of ["idle", "unsaved", "saving", "saved"] as const)
       expect(status(saveState)).toBe("");
-    for (const saveState of ["failed", "paused", "refused"] as const)
+    for (const saveState of ["failed", "refused"] as const)
       expect(status(saveState)).toBe("Not saved · Retry");
     await userEvent.click(screen.getByRole("button", { name: "Not saved · Retry" }));
     expect(retrySave).toHaveBeenCalledOnce();

@@ -4,11 +4,13 @@ import type { ReactNode } from "react";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, APIError, type ApprovalsList, type Document } from "@/api";
+import { queryKeys } from "@/lib/queryKeys";
 import { findLiterals, type Render } from "@/lib/script-literals";
 import * as sourceEdits from "@/lib/source-edits";
 import { readTextDraft, writeTextDraft } from "@/lib/text-drafts";
-import type { Region, ScriptChange } from "../../bridge/source-pieces";
-import { useTextAutosave } from "./use-text-autosave";
+import type { Patch, Region, ScriptChange } from "../../bridge/source-pieces";
+import type { TextPatchResult } from "./doc-context";
+import { useLiveText } from "./use-live-text";
 
 vi.mock("@/lib/source-edits", { spy: true });
 
@@ -32,61 +34,100 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// The second paragraph, with new text.
-const second = (text: string): Region => ({
-  from: 14,
-  to: 14,
-  pieces: [{ element: 14, children: [{ text }] }],
+// A paragraph of the source, with new text.
+const paragraph = (at: number, text: string): Region => ({
+  from: at,
+  to: at,
+  pieces: [{ element: at, children: [{ text }] }],
   removed: [],
 });
+const first = (text: string) => paragraph(0, text);
+const second = (text: string) => paragraph(14, text);
 
-const saved = (id: string, rebased = false, change_summary?: string) => ({
+// The answer of the server for a save. others is the source of the new
+// version when the server merged the save: then the answer names what turns
+// the source that the save made into it.
+const saved = (
+  id: string,
+  others?: { from: string; to: string },
+  change_summary?: string,
+) => ({
   id,
   number: Number(id.slice(4)),
   base_version_id: "ver_1",
-  rebased,
+  rebased: !!others,
+  others: others && sourceEdits.replacementsBetween(others.from, others.to),
   change_summary,
 });
 
-function setup() {
-  // What the frame shows: every region that changed since it loaded.
-  const frame = { regions: [] as Region[], scripts: [] as ScriptChange[] };
+const asha = { type: "user" as const, id: "usr_a", name: "Asha" };
+
+// The answer of the server for the changes from one source to the source of
+// its current version.
+const changes = (version_id: string, from: string, to: string, live = true) => ({
+  version_id,
+  from_version_id: "ver_from",
+  replacements: sourceEdits.replacementsBetween(from, to),
+  live,
+  authors: [asha],
+});
+
+function setup(props: { latest?: string; others?: boolean } = {}) {
+  // What the frame shows: every region that changed since it loaded, and
+  // the count of the reader's operations.
+  const frame = { regions: [] as Region[], scripts: [] as ScriptChange[], edits: 0 };
   const options = {
     docId: "doc_1",
     loaded,
+    latest: undefined as string | undefined,
+    live: true,
+    others: false,
     take: vi.fn(async () => ({ ...frame })),
+    patch:
+      vi.fn<
+        (patches: Patch[], edits: number, flash: boolean) => Promise<TextPatchResult>
+      >(),
     setState: vi.fn(),
-    onSaved: vi.fn(),
+    move: vi.fn(),
     reload: vi.fn(),
+    holdUpdate: vi.fn(),
     probe: vi.fn<Render>(),
     replaceText: vi.fn(),
+    ...props,
   };
   const client = new QueryClient();
-  const hook = renderHook(
-    (props: { loaded: typeof loaded }) => useTextAutosave({ ...options, ...props }),
-    {
-      initialProps: { loaded },
-      wrapper: ({ children }: { children: ReactNode }) => (
-        <QueryClientProvider client={client}>{children}</QueryClientProvider>
-      ),
-    },
-  );
+  const hook = renderHook(() => useLiveText({ ...options }), {
+    wrapper: ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    ),
+  });
   const { result } = hook;
+  // The page gives new options to the hook.
+  const rerender = (next: Partial<typeof options>) => {
+    Object.assign(options, next);
+    hook.rerender();
+  };
   const pause = async () => {
     act(() => result.current.changed(1));
     await act(() => vi.advanceTimersByTimeAsync(1500));
   };
   // The reader types text in the second paragraph, then pauses.
   const type = async (text: string) => {
-    frame.regions = [second(text)];
+    frame.regions = [...frame.regions.filter((r) => r.from !== 14), second(text)];
     await pause();
   };
-  return { ...options, frame, type, pause, result, hook };
+  // The frame applies each patch, and shows the regions after it.
+  const patched = (regions: Region[]) =>
+    options.patch.mockImplementationOnce(async () => {
+      frame.regions = regions;
+      return { ...frame, ok: true, stale: false };
+    });
+  return { ...options, client, frame, type, pause, patched, result, hook, rerender };
 }
 
 it("saves the edits as replacements on the loaded version", async () => {
   const edit = vi.spyOn(api, "editSource").mockResolvedValue(saved("ver_2"));
-  const { type, onSaved, setState } = setup();
+  const { type, move, setState } = setup();
 
   await type("Try it now.");
 
@@ -95,7 +136,7 @@ it("saves the edits as replacements on the loaded version", async () => {
     client_change_id: expect.stringMatching(/^[0-9a-f-]{36}$/),
     replacements: [{ start: 21, end: 24, old_html: "it.", new_html: "it now." }],
   });
-  expect(onSaved).toHaveBeenCalledWith("ver_2", true);
+  expect(move).toHaveBeenCalledExactlyOnceWith("ver_2", "ver_1");
   expect(setState).toHaveBeenLastCalledWith("saved");
 });
 
@@ -168,77 +209,372 @@ it("sends a failed save again with the same change id and body", async () => {
   expect(reload).not.toHaveBeenCalled();
 });
 
-it("shows the merged version after a rebased save when nothing more was typed", async () => {
-  vi.spyOn(api, "editSource").mockResolvedValue(saved("ver_3", true));
-  const { type, onSaved, reload } = setup();
+const THEIRS = "<p>Try this.</p><p>Try it.</p>";
+const MERGED = "<p>Try this.</p><p>Try it now.</p>";
+
+const MINE = "<p>Try it.</p><p>Try it now.</p>";
+const merged = { from: MINE, to: MERGED };
+
+it("shows the text of other people that a merged save answers with, in place", async () => {
+  const edit = vi
+    .spyOn(api, "editSource")
+    .mockResolvedValueOnce(saved("ver_3", merged));
+  const get = vi.spyOn(api, "documentChanges");
+  const { type, patch, patched, move, reload, holdUpdate } = setup();
+  patched([first("Try this."), second("Try it now.")]);
 
   await type("Try it now.");
 
-  expect(onSaved).toHaveBeenCalledWith("ver_3", false);
-  // The load shows the version that the save made, not the one before it.
-  expect(reload).toHaveBeenCalledExactlyOnceWith("ver_3");
+  // The answer of the save names the changes: no request asks for them.
+  expect(get).not.toHaveBeenCalled();
+  // The frame already shows the text of the reader: only the text of the
+  // other person goes to it, and it does not flash.
+  expect(patch).toHaveBeenCalledExactlyOnceWith(
+    [{ in: 0, after: null, before: null, html: "Try this." }],
+    0,
+    false,
+  );
+  expect(move).toHaveBeenCalledExactlyOnceWith("ver_3", "ver_1");
+  expect(holdUpdate).toHaveBeenLastCalledWith(undefined);
+  expect(reload).not.toHaveBeenCalled();
+
+  // The next save is on top of the merged version.
+  edit.mockResolvedValueOnce(saved("ver_4"));
+  await type("Try it now!");
+  expect(edit.mock.lastCall![1]).toMatchObject({
+    base_version_id: "ver_3",
+    replacements: [{ start: 26, end: 30, old_html: "now.", new_html: "now!" }],
+  });
+  expect(move).toHaveBeenLastCalledWith("ver_4", "ver_1");
 });
 
-it("keeps the frame after a rebased save when the reader typed during it", async () => {
-  const error = vi.spyOn(toast, "error");
-  const { type, frame, reload, setState } = setup();
-  vi.spyOn(api, "editSource").mockImplementation(async () => {
+it("saves the text typed during a merged save on the version that holds that save", async () => {
+  const { type, frame, patch, move } = setup();
+  const edit = vi.spyOn(api, "editSource").mockImplementationOnce(async () => {
     frame.regions = [second("Try it now, please.")];
-    return saved("ver_3", true);
+    frame.edits = 1;
+    return saved("ver_3", merged);
   });
+  edit.mockResolvedValueOnce(saved("ver_4"));
+  // The frame does not answer for the patch in time: the words typed
+  // meanwhile still save on the merged version, at their place in it.
+  patch.mockRejectedValue(new Error("The document did not answer."));
+
+  await type("Try it now.");
+  await act(() => vi.advanceTimersByTimeAsync(1500));
+
+  expect(edit).toHaveBeenCalledTimes(2);
+  expect(edit.mock.lastCall![1]).toMatchObject({
+    base_version_id: "ver_3",
+    replacements: [{ start: 26, end: 30, old_html: "now.", new_html: "now, please." }],
+  });
+  expect(move).not.toHaveBeenCalledWith("ver_3", expect.anything());
+});
+
+it("reads the merged version when the answer of the save does not fit", async () => {
+  vi.spyOn(api, "editSource").mockResolvedValueOnce({
+    ...saved("ver_3", merged),
+    others: [{ start: 0, end: 3, old_html: "<h1", new_html: "<h2" }],
+  });
+  const { type, patched, move } = setup();
+  vi.mocked(api.getVersionHTML).mockImplementation(async (_doc, version) =>
+    version === "ver_3" ? MERGED : SOURCE,
+  );
+  patched([first("Try this."), second("Try it now.")]);
 
   await type("Try it now.");
 
-  expect(reload).not.toHaveBeenCalled();
-  expect(setState).toHaveBeenLastCalledWith("paused");
-  expect(error).toHaveBeenCalledWith(
-    expect.stringContaining("not saved"),
+  expect(api.getVersionHTML).toHaveBeenLastCalledWith("doc_1", "ver_3");
+  expect(move).toHaveBeenCalledExactlyOnceWith("ver_3", "ver_1");
+});
+
+it("patches again when a key came between the take and the patch", async () => {
+  vi.spyOn(api, "documentChanges").mockResolvedValue(changes("ver_2", SOURCE, THEIRS));
+  const edit = vi.spyOn(api, "editSource").mockResolvedValue(saved("ver_3"));
+  const { frame, patch, patched, move } = setup({ latest: "ver_2" });
+  patch.mockImplementationOnce(async () => {
+    frame.regions = [second("Try it now.")];
+    frame.edits = 1;
+    return { ...frame, ok: false, stale: true };
+  });
+  patched([first("Try this."), second("Try it now.")]);
+
+  await act(() => vi.advanceTimersByTimeAsync(0));
+
+  expect(patch).toHaveBeenCalledTimes(2);
+  expect(patch.mock.lastCall!.slice(1)).toEqual([1, false]);
+  expect(move).toHaveBeenCalledExactlyOnceWith("ver_2", "ver_1");
+  // The frame holds the key: it saves as a change does.
+  await act(() => vi.advanceTimersByTimeAsync(1500));
+  expect(edit).toHaveBeenCalledExactlyOnceWith(
+    "doc_1",
     expect.objectContaining({
-      action: expect.objectContaining({ label: "Show the latest version" }),
+      base_version_id: "ver_2",
+      replacements: [{ start: 23, end: 26, old_html: "it.", new_html: "it now." }],
     }),
   );
 });
 
-it("keeps the draft and stops saving when someone else changed the same text", async () => {
-  const error = vi.spyOn(toast, "error");
-  const write = vi.fn().mockResolvedValue(undefined);
-  vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText: write } });
-  const edit = vi
-    .spyOn(api, "editSource")
-    .mockRejectedValue(new APIError(409, "edit_conflict", "the text changed"));
-  const { type, reload, setState } = setup();
+it("tries the patch again at the next pause when the keys do not stop", async () => {
+  vi.spyOn(api, "documentChanges").mockResolvedValue(changes("ver_2", SOURCE, THEIRS));
+  const { frame, patch, patched, move, reload } = setup({ latest: "ver_2" });
+  patch.mockImplementation(async () => ({ ...frame, ok: false, stale: true }));
+
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(patch).toHaveBeenCalledTimes(4);
+
+  patch.mockReset();
+  patched([first("Try this.")]);
+  await act(() => vi.advanceTimersByTimeAsync(1500));
+  expect(move).toHaveBeenCalledExactlyOnceWith("ver_2", "ver_1");
+  // The frame did not load again: a stale patch is not a failed patch.
+  expect(reload).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["refuses the patch", { ok: false }],
+  ["does not show the target after the patch", { ok: true }],
+])("loads the head in the frame when the frame %s", async (_name, { ok }) => {
+  vi.spyOn(api, "documentChanges").mockResolvedValue(changes("ver_2", SOURCE, THEIRS));
+  const { frame, patch, move, reload } = setup({ latest: "ver_2" });
+  patch.mockImplementation(async () => ({ ...frame, ok, stale: false }));
+
+  await act(() => vi.advanceTimersByTimeAsync(0));
+
+  expect(move).not.toHaveBeenCalled();
+  expect(reload).toHaveBeenCalledExactlyOnceWith("ver_2");
+});
+
+it("never saves the text of a patch that did not make its target", async () => {
+  const edit = vi.spyOn(api, "editSource").mockResolvedValue(saved("ver_3", merged));
+  const { frame, type, patch, reload } = setup();
+  // The patch leaves other text in the frame.
+  patch.mockImplementation(async () => {
+    frame.regions = [first("Try what?"), second("Try it now.")];
+    return { ...frame, ok: true, stale: false };
+  });
 
   await type("Try it now.");
-  await type("Try it now!");
+  await act(() => vi.advanceTimersByTimeAsync(1));
 
-  expect(edit).toHaveBeenCalledTimes(1);
-  expect(reload).not.toHaveBeenCalled();
-  expect(setState).toHaveBeenLastCalledWith("paused");
-  const [message, actions] = error.mock.lastCall!;
-  expect(message).toBe(
-    "Someone else changed the same text. Your text stays on screen and is not saved.",
+  expect(edit).toHaveBeenCalledOnce();
+  expect(reload).toHaveBeenCalledExactlyOnceWith("ver_3");
+});
+
+it("saves the text on screen before it loads a head that the frame cannot show", async () => {
+  const order: string[] = [];
+  vi.spyOn(api, "editSource").mockImplementation(async () => {
+    order.push("save");
+    return saved("ver_3", merged);
+  });
+  const { frame, type, patch, reload } = setup();
+  patch.mockImplementation(async () => ({ ...frame, ok: false, stale: false }));
+  reload.mockImplementation(() => order.push("load"));
+
+  await type("Try it now.");
+  // The save after the follow starts on the next tick.
+  await act(() => vi.advanceTimersByTimeAsync(1));
+
+  expect(order).toEqual(["save", "load"]);
+  expect(reload).toHaveBeenCalledExactlyOnceWith("ver_3");
+});
+
+it("shows live typing of another person to a reader in place, with no banner", async () => {
+  const get = vi
+    .spyOn(api, "documentChanges")
+    .mockResolvedValue(changes("ver_2", SOURCE, THEIRS));
+  const { patch, patched, move, holdUpdate, rerender } = setup();
+  patched([first("Try this.")]);
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(get).not.toHaveBeenCalled();
+
+  rerender({ latest: "ver_2" });
+  await act(() => vi.advanceTimersByTimeAsync(0));
+
+  expect(patch).toHaveBeenCalledExactlyOnceWith(
+    [{ in: 0, after: null, before: null, html: "Try this." }],
+    0,
+    false,
   );
-  const { action, cancel } = actions as {
-    action: { label: string; onClick: (e: { preventDefault(): void }) => void };
-    cancel: { label: string; onClick: () => void };
+  expect(move).toHaveBeenCalledExactlyOnceWith("ver_2", "ver_1");
+  expect(holdUpdate).not.toHaveBeenCalledWith(expect.anything());
+
+  // The next change comes from the new head.
+  get.mockResolvedValue(changes("ver_3", THEIRS, MERGED));
+  patched([first("Try this."), second("Try it now.")]);
+  rerender({ latest: "ver_3" });
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(get).toHaveBeenLastCalledWith("doc_1", "ver_2");
+  expect(move).toHaveBeenLastCalledWith("ver_3", "ver_2");
+});
+
+it("does not follow a preview, or a frame that is not ready", async () => {
+  const get = vi.spyOn(api, "documentChanges");
+  setup({ latest: "ver_2", live: false } as never);
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(get).not.toHaveBeenCalled();
+});
+
+it("flashes a small change that is not live typing", async () => {
+  vi.spyOn(api, "documentChanges").mockResolvedValue(
+    changes("ver_2", SOURCE, THEIRS, false),
+  );
+  const { patch, patched, holdUpdate } = setup({ latest: "ver_2" });
+  patched([first("Try this.")]);
+
+  await act(() => vi.advanceTimersByTimeAsync(0));
+
+  expect(patch).toHaveBeenCalledExactlyOnceWith(expect.anything(), 0, true);
+  expect(holdUpdate).not.toHaveBeenCalledWith(expect.anything());
+});
+
+describe("a large change that is not live typing", () => {
+  const words = Array.from({ length: 50 }, (_, i) => `word${i}`).join(" ");
+  const LARGE = `<p>${words}</p><p>Try it.</p>`;
+
+  it("waits behind the banner, and the head stays", async () => {
+    const get = vi
+      .spyOn(api, "documentChanges")
+      .mockResolvedValue(changes("ver_2", SOURCE, LARGE, false));
+    const { patch, move, holdUpdate, rerender } = setup({ latest: "ver_2" });
+
+    await act(() => vi.advanceTimersByTimeAsync(0));
+
+    expect(holdUpdate).toHaveBeenLastCalledWith({ authors: [asha] });
+    expect(patch).not.toHaveBeenCalled();
+    expect(move).not.toHaveBeenCalled();
+
+    // The next change asks for the whole difference again.
+    rerender({ latest: "ver_3" });
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(get).toHaveBeenLastCalledWith("doc_1", "ver_1");
+  });
+
+  it("applies when the frame holds text that was not saved", async () => {
+    vi.spyOn(api, "editSource").mockResolvedValue(saved("ver_3"));
+    vi.spyOn(api, "documentChanges").mockResolvedValue(
+      changes("ver_2", SOURCE, `<p>${words}</p><p>Try it.</p>`, false),
+    );
+    const { frame, patched, move, holdUpdate, rerender } = setup();
+    patched([first(words), second("Try it now.")]);
+
+    // The reader typed, and the change came before the pause ended.
+    frame.regions = [second("Try it now.")];
+    rerender({ latest: "ver_2" });
+    await act(() => vi.advanceTimersByTimeAsync(0));
+
+    // The change goes in around the text of the reader, which then saves.
+    expect(holdUpdate).not.toHaveBeenCalledWith(expect.anything());
+    expect(move).toHaveBeenCalledExactlyOnceWith("ver_2", "ver_1");
+    await act(() => vi.advanceTimersByTimeAsync(1500));
+    expect(api.editSource).toHaveBeenCalledOnce();
+    expect(vi.mocked(api.editSource).mock.lastCall![1].base_version_id).toBe("ver_2");
+  });
+});
+
+describe("a head that the server does not have", () => {
+  const unfit = {
+    ...changes("ver_2", SOURCE, THEIRS),
+    replacements: [{ start: 0, end: 3, old_html: "<h1", new_html: "<h2" }],
   };
-  expect([action.label, cancel.label]).toEqual(["Copy my text", "Show their version"]);
-  // The copy holds what the reader typed after the conflict too.
-  await act(async () => action.onClick({ preventDefault: vi.fn() }));
-  expect(write).toHaveBeenCalledWith("Try it now!");
-  cancel.onClick();
-  expect(reload).toHaveBeenCalledTimes(1);
+
+  it("loads the newest version when no text is unsaved", async () => {
+    vi.spyOn(api, "documentChanges").mockResolvedValue(unfit);
+    const { reload, patch } = setup({ latest: "ver_2" });
+
+    await act(() => vi.advanceTimersByTimeAsync(0));
+
+    expect(patch).not.toHaveBeenCalled();
+    expect(reload).toHaveBeenCalledExactlyOnceWith("ver_2");
+  });
+
+  it("keeps text that the reader typed meanwhile, and says that it cannot save", async () => {
+    const error = vi.spyOn(toast, "error");
+    const { reload, result, setState } = setup({ latest: "ver_2" });
+    vi.spyOn(api, "documentChanges").mockImplementation(async () => {
+      result.current.changed(1);
+      return unfit;
+    });
+
+    await act(() => vi.advanceTimersByTimeAsync(0));
+
+    expect(reload).not.toHaveBeenCalled();
+    expect(setState).toHaveBeenLastCalledWith("refused");
+    expect(error).toHaveBeenLastCalledWith(
+      "This edit does not fit the latest version of the document, so it cannot save.",
+      expect.objectContaining({
+        cancel: expect.objectContaining({ label: "Discard my change" }),
+      }),
+    );
+  });
+});
+
+it.each([403, 404])(
+  "asks for the document again when the changes answer %i",
+  async (status) => {
+    vi.spyOn(api, "documentChanges").mockRejectedValue(
+      new APIError(status, "forbidden", "no"),
+    );
+    const { client } = setup({ latest: "ver_2" });
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+
+    expect(invalidate).toHaveBeenCalledExactlyOnceWith({
+      queryKey: queryKeys.document("doc_1"),
+    });
+    expect(api.documentChanges).toHaveBeenCalledOnce();
+  },
+);
+
+it("asks for the changes again after a failure that can pass", async () => {
+  const get = vi
+    .spyOn(api, "documentChanges")
+    .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+    .mockResolvedValue(changes("ver_2", SOURCE, THEIRS));
+  const { patched, move } = setup({ latest: "ver_2" });
+  patched([first("Try this.")]);
+
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(move).not.toHaveBeenCalled();
+  await act(() => vi.advanceTimersByTimeAsync(5000));
+
+  expect(get).toHaveBeenCalledTimes(2);
+  expect(move).toHaveBeenCalledExactlyOnceWith("ver_2", "ver_1");
+});
+
+it("saves fast while other people have the document open", async () => {
+  const edit = vi.spyOn(api, "editSource").mockResolvedValue(saved("ver_2"));
+  const { frame, result } = setup({ others: true });
+  const key = (text: string) => {
+    frame.regions = [second(text)];
+    act(() => result.current.changed(1));
+  };
+
+  // A pause of 300 ms saves.
+  key("Try it now.");
+  await act(() => vi.advanceTimersByTimeAsync(299));
+  expect(edit).not.toHaveBeenCalled();
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(edit).toHaveBeenCalledTimes(1);
+
+  // Keys without a pause save 700 ms after the first one.
+  for (const text of ["a", "ab", "abc"]) {
+    key(text);
+    await act(() => vi.advanceTimersByTimeAsync(250));
+  }
+  expect(edit).toHaveBeenCalledTimes(2);
 });
 
 it("clears the unsaved state when a new load drops the draft", async () => {
   vi.spyOn(api, "editSource").mockRejectedValue(
-    new APIError(409, "edit_conflict", "the text changed"),
+    new APIError(422, "edit_failed", "the edit does not fit"),
   );
-  const { type, setState, hook } = setup();
+  const { type, setState, rerender } = setup();
 
   await type("Try it now.");
-  expect(setState).toHaveBeenLastCalledWith("paused");
-  hook.rerender({ loaded: { version: "ver_2", load: 1 } });
+  expect(setState).toHaveBeenLastCalledWith("refused");
+  rerender({ loaded: { version: "ver_2", load: 1 } });
 
   expect(setState).toHaveBeenLastCalledWith("idle");
 });
@@ -248,7 +584,7 @@ it("saves the last draft when the frame goes before the pause", async () => {
   const { result, hook, take } = setup();
 
   act(() => {
-    result.current.drafted({ regions: [second("Try it now.")], scripts: [] });
+    result.current.drafted({ regions: [second("Try it now.")], scripts: [], edits: 1 });
     result.current.changed(1);
   });
   hook.unmount();
@@ -368,15 +704,19 @@ it.each([
     const error = vi.spyOn(toast, "error");
     const write = stubClipboard();
     vi.spyOn(api, "editSource").mockRejectedValue(new APIError(status, code, "no"));
-    const { type, reload, onSaved, setState, result } = setup();
+    const { type, reload, move, setState, result } = setup();
 
     act(() =>
-      result.current.drafted({ regions: [second("Try it now.")], scripts: [] }),
+      result.current.drafted({
+        regions: [second("Try it now.")],
+        scripts: [],
+        edits: 1,
+      }),
     );
     await type("Try it now.");
     await act(() => vi.advanceTimersByTimeAsync(10_000));
 
-    expect(onSaved).not.toHaveBeenCalled();
+    expect(move).not.toHaveBeenCalled();
     expect(reload).not.toHaveBeenCalled();
     expect(setState).toHaveBeenLastCalledWith("refused");
     const [shown, options] = error.mock.lastCall!;
@@ -388,9 +728,9 @@ it.each([
     expect(readTextDraft("doc_1")).toMatchObject({ version: "ver_1" });
     await act(async () => action.onClick({ preventDefault: vi.fn() }));
     expect(write).toHaveBeenCalledWith("Try it now.");
-    // Discard shows the saved version, which drops the draft.
+    // Discard loads the saved version, which drops the draft.
     cancel.onClick();
-    expect(reload).toHaveBeenCalledExactlyOnceWith(undefined);
+    expect(reload).toHaveBeenCalledExactlyOnceWith("ver_1");
   },
 );
 
@@ -441,8 +781,8 @@ describe("an approved document", () => {
     const info = vi.spyOn(toast, "info");
     approvedOn({ ver_1: true, ver_3: true });
     vi.spyOn(api, "editSource")
-      .mockResolvedValueOnce(saved("ver_2", false, "Changed “it.” to “it now.”"))
-      .mockResolvedValueOnce(saved("ver_3", false, "Changed “it now.” to “it.”"));
+      .mockResolvedValueOnce(saved("ver_2", undefined, "Changed “it.” to “it now.”"))
+      .mockResolvedValueOnce(saved("ver_3", undefined, "Changed “it now.” to “it.”"));
     const { type, result } = setup();
     await act(() => vi.advanceTimersByTimeAsync(0));
 
@@ -458,25 +798,28 @@ describe("an approved document", () => {
 });
 
 describe("text that cannot save", () => {
-  const conflict = () =>
+  const refuse = () =>
     vi
       .spyOn(api, "editSource")
-      .mockRejectedValue(new APIError(409, "edit_conflict", "the text changed"));
+      .mockRejectedValue(new APIError(422, "edit_failed", "the edit does not fit"));
 
   it("waits in storage after the page goes, and is offered on the next visit", async () => {
-    conflict();
+    refuse();
     const first = setup();
     act(() =>
-      first.result.current.drafted({ regions: [second("Try it now.")], scripts: [] }),
+      first.result.current.drafted({
+        ...first.frame,
+        regions: [second("Try it now.")],
+      }),
     );
     await first.type("Try it now.");
-    // The words typed after the conflict wait too.
+    // The words typed after the refusal wait too.
     act(() =>
-      first.result.current.drafted({ regions: [second("Keep it.")], scripts: [] }),
+      first.result.current.drafted({ ...first.frame, regions: [second("Keep it.")] }),
     );
     const dismiss = vi.spyOn(toast, "dismiss");
     first.hook.unmount();
-    expect(dismiss).toHaveBeenCalledWith("autosave-paused");
+    expect(dismiss).toHaveBeenCalledWith("autosave-refused");
 
     const error = vi.spyOn(toast, "error");
     const write = stubClipboard();
@@ -494,14 +837,18 @@ describe("text that cannot save", () => {
   });
 
   it("leaves storage when the text saves, or when the reader shows the saved version", async () => {
-    const edit = conflict();
-    const { type, result, hook } = setup();
+    const edit = refuse();
+    const { type, result, rerender } = setup();
     act(() =>
-      result.current.drafted({ regions: [second("Try it now.")], scripts: [] }),
+      result.current.drafted({
+        regions: [second("Try it now.")],
+        scripts: [],
+        edits: 1,
+      }),
     );
     await type("Try it now.");
     expect(readTextDraft("doc_1")).toBeDefined();
-    hook.rerender({ loaded: { version: "ver_2", load: 1 } });
+    rerender({ loaded: { version: "ver_2", load: 1 } });
     expect(readTextDraft("doc_1")).toBeUndefined();
 
     edit.mockRejectedValueOnce(new TypeError("Failed to fetch"));
@@ -552,7 +899,7 @@ describe("script text", () => {
     const edit = vi
       .spyOn(api, "editSource")
       .mockResolvedValue(
-        saved("ver_2", false, "Changed “Try it.” to “Run it.” in 2 places"),
+        saved("ver_2", undefined, "Changed “Try it.” to “Run it.” in 2 places"),
       );
     const { frame, probe, pause, reload, replaceText } = setup();
     probe.mockImplementation(render());
