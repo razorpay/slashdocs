@@ -9,8 +9,8 @@ const TRACK =
   "flex flex-wrap gap-0.5 rounded-sm bg-[var(--color-surface-muted)] p-0.5 ring-1 ring-[var(--color-border)] dark:ring-transparent";
 const CHOICE =
   "relative flex h-8 flex-1 items-center justify-center whitespace-nowrap rounded-[6px] px-3 text-sm font-medium text-[var(--color-fg-muted)] transition-[color,transform] duration-150 ease-out active:scale-[0.97] aria-selected:text-[var(--color-fg)] aria-[current=page]:text-[var(--color-fg)]";
-// The choice that each key moves to, from choice i of n. The arrows wrap.
-export const STEPS: Record<string, (i: number, n: number) => number> = {
+// The tab that each key moves to, from tab i of n. The arrows wrap.
+const STEPS: Record<string, (i: number, n: number) => number> = {
   ArrowRight: (i, n) => (i + 1) % n,
   ArrowLeft: (i, n) => (i + n - 1) % n,
   Home: () => 0,
