@@ -85,12 +85,34 @@ test.each([
   }
 });
 
-// The actions at a selection dock at an edge of the viewport instead.
+// The actions at a selection, with a mouse, sit at the first place that
+// covers none of its words, over other text.
+test("over text, a control goes to the first place that covers none of its words", () => {
+  const el = textEverywhere(1000, 800);
+  try {
+    const words = [new DOMRect(200, 100, 60, 20)];
+    const places = [
+      [200, 90],
+      [200, 130],
+    ];
+    assert.isNull(placeClear(document, el, words, places, { overText: true }));
+    assert.deepEqual(place(el), ["200px", "130px"]);
+  } finally {
+    delete (document as Partial<Document>).caretRangeFromPoint;
+    delete (Range.prototype as Partial<Range>).getClientRects;
+  }
+});
+
+// With a finger, the actions at a selection dock at an edge of the viewport
+// instead.
 test("with no clear room, a control that docks goes to the bottom of the viewport", () => {
   const el = textEverywhere(1000, 800);
   try {
     const words = [new DOMRect(200, 100, 60, 20)];
-    assert.equal(placeClear(document, el, words, [[200, 300]], true), "bottom");
+    assert.equal(
+      placeClear(document, el, words, [[200, 300]], { dock: true }),
+      "bottom",
+    );
     assert.deepEqual(place(el), ["450px", "752px"]);
   } finally {
     delete (document as Partial<Document>).caretRangeFromPoint;

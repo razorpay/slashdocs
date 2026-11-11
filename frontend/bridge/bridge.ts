@@ -1804,12 +1804,14 @@ type Theme = "dark" | "light";
       "data-compact",
       comment.scrollWidth > comment.clientWidth,
     );
-    // The actions sit where they cover no text: centered above the
-    // selection, else below it, else after its last line, else beside its
-    // block, else where placeClear finds room. When no place is clear, as
-    // in a narrow column of text, they dock at an edge of the viewport as a
-    // bar, and the document gets room to scroll out from under a bar at the
-    // bottom.
+    // The actions sit next to the selection, as in other editors: centered
+    // above it, else below it. They cover the text around the selection
+    // while they show, but never the selection. With a finger, the system's
+    // own menu takes that place, so the actions sit where they cover no text:
+    // also after its last line, or beside its block. When no place is clear,
+    // as in a narrow column of text, they dock at an edge of the viewport as
+    // a bar, and the document gets room to scroll out from under a bar at
+    // the bottom.
     const rect = range.getBoundingClientRect();
     const lines = Array.from(range.getClientRects()).filter((r) => r.width);
     const [first, last] = [lines[0] ?? rect, lines.at(-1) ?? rect];
@@ -1818,14 +1820,22 @@ type Theme = "dark" | "light";
     const gap = SELECTION_ACTION_GAP;
     const center = rect.left + (rect.width - width) / 2;
     const beside = (line: DOMRect) => line.top + (line.height - height) / 2;
+    const touch = hostPointer === "coarse";
     const places = [
       [center, first.top - gap - height],
       [center, last.bottom + gap],
-      [last.right + gap, beside(last)],
-      [block.right + gap, beside(first)],
-      [block.left - gap - width, beside(first)],
+      ...(touch
+        ? [
+            [last.right + gap, beside(last)],
+            [block.right + gap, beside(first)],
+            [block.left - gap - width, beside(first)],
+          ]
+        : []),
     ];
-    const edge = placeClear(d, selectionAction, lines, places, true);
+    const edge = placeClear(d, selectionAction, lines, places, {
+      dock: touch,
+      overText: !touch,
+    });
     if (!edge) return;
     selectionAction.style.removeProperty("left");
     selectionAction.style.removeProperty("top");
