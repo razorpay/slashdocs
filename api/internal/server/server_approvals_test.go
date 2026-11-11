@@ -824,129 +824,54 @@ func TestSearchResultsIncludeApprovalSummary(t *testing.T) {
 // Who may approve, and what a new version does to approvals
 // ---------------------------------------------------------------------------
 
-func TestCreatorOfTheFirstVersionCannotBeAssignedAsApprover(t *testing.T) {
+// Writing a document does not stop anyone from approving it: the owner who
+// published it can approve it too.
+func TestOwnerWhoPublishedCanApprove(t *testing.T) {
 	e := newTestEnv(t)
-	// The owner uploaded version 1, so they wrote what is under review.
-	rr := assignApprover(t, e, e.doc.ID, `{"principal": {"type": "user", "email": "owner@example.com"}}`, fixtureOwner)
-	assertStatus(t, rr, http.StatusBadRequest)
-	if !strings.Contains(rr.Body.String(), "That person edited this document") {
-		t.Fatalf("body = %s, want the edited-this-document message", rr.Body.String())
+	mustAssignApprover(t, e, e.doc.ID, "owner@example.com", fixtureOwner)
+	assertStatus(t, submitApproval(t, e, e.doc.ID, e.ver.ID, "approved", fixtureOwner), http.StatusCreated)
+	if list := listApprovals(t, e, e.doc.ID, "", fixtureOwner); list.Status != "approved" {
+		t.Fatalf("status = %q, want approved", list.Status)
 	}
 }
 
-func TestEditorWhoPushedAVersionCannotBeAssignedAsApprover(t *testing.T) {
-	e := newTestEnv(t)
-	pushApprovalTestVersion(t, e, e.doc.ID, e.ver.ID, fixtureEditor)
-
-	rr := assignApprover(t, e, e.doc.ID, `{"principal": {"type": "user", "email": "editor@example.com"}}`, fixtureOwner)
-	assertStatus(t, rr, http.StatusBadRequest)
-	if list := listApprovals(t, e, e.doc.ID, "", fixtureOwner); len(list.Items) != 0 {
-		t.Fatalf("items = %+v, want no approver assigned", list.Items)
-	}
-}
-
-// An approver who pushes a version wrote part of what is under review, so the
-// push removes them as an approver, with their decisions.
-func TestApproverWhoCreatesAVersionIsRemoved(t *testing.T) {
+// An approver who edits stays an approver. Their edit makes their decision
+// stale, as any edit does, and they decide on the new content.
+func TestApproverWhoCreatesAVersionStays(t *testing.T) {
 	e := newTestEnv(t)
 	mustAssignApprover(t, e, e.doc.ID, "editor@example.com", fixtureOwner)
-	mustAssignApprover(t, e, e.doc.ID, "viewer@example.com", fixtureOwner)
-	// The editor has not created a version yet, so they may approve version 1.
 	assertStatus(t, submitApproval(t, e, e.doc.ID, e.ver.ID, "approved", fixtureEditor), http.StatusCreated)
 
 	second := pushApprovalTestVersion(t, e, e.doc.ID, e.ver.ID, fixtureEditor)
 
 	list := listApprovals(t, e, e.doc.ID, "", fixtureOwner)
-	if len(list.Items) != 1 || list.Items[0].Approver.Email != "viewer@example.com" || list.Status != "pending" {
-		t.Fatalf("list = %+v, want only the viewer, pending", list)
+	if len(list.Items) != 1 || list.Items[0].Approver.Email != "editor@example.com" || list.Status != "pending" {
+		t.Fatalf("list = %+v, want the editor, pending", list)
 	}
-	for _, decision := range []string{"approved", "rejected"} {
-		rr := submitApproval(t, e, e.doc.ID, second, decision, fixtureEditor)
-		assertStatus(t, rr, http.StatusForbidden)
-		if !strings.Contains(rr.Body.String(), "You edited this document") {
-			t.Fatalf("body = %s, want the edited-this-document message", rr.Body.String())
+	assertStatus(t, submitApproval(t, e, e.doc.ID, second, "approved", fixtureEditor), http.StatusCreated)
+	if list := listApprovals(t, e, e.doc.ID, "", fixtureOwner); list.Status != "approved" {
+		t.Fatalf("status = %q, want approved", list.Status)
+	}
+}
+
+// A person without access cannot be an approver. The share sheet's grant gives
+// them access first, and then the add works. A grant of editor also raises a
+// viewer's role.
+func TestApproverGivenAccessFirstCanBeAdded(t *testing.T) {
+	e := newTestEnv(t)
+	owner := principalHeader(fixtureOwner)
+	for _, email := range []string{"stranger@example.com", "viewer@example.com"} {
+		rr := do(t, e.h, http.MethodPost, "/v1/documents/"+e.doc.ID+"/grants",
+			`{"address":"`+email+`","role":"editor"}`,
+			map[string]string{"X-Test-Principal": owner, "Content-Type": "application/json"})
+		assertStatus(t, rr, http.StatusCreated)
+		mustAssignApprover(t, e, e.doc.ID, email, fixtureOwner)
+	}
+	for _, p := range []auth.Principal{fixtureStranger, fixtureViewer} {
+		role, err := e.store.RoleForDocument(context.Background(), p, e.doc.ID)
+		if err != nil || role != "editor" {
+			t.Fatalf("role of %s = %q, %v; want editor", p.Email, role, err)
 		}
-	}
-}
-
-// An edit that its author undoes, back to the content before it, changes
-// nothing under review. So a stray key does not stop an editor from
-// approving, but an edit that stays does.
-func TestEditThatItsAuthorUndoesDoesNotMakeAnAuthor(t *testing.T) {
-	e := newTestEnv(t)
-	html, err := e.store.GetVersionHTML(context.Background(), e.ver.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	typed := pushApprovalTestVersion(t, e, e.doc.ID, e.ver.ID, fixtureEditor)
-	undone := pushApprovalTestVersionHTML(t, e, e.doc.ID, typed, string(html), fixtureEditor)
-	mustAssignApprover(t, e, e.doc.ID, "editor@example.com", fixtureOwner)
-	assertStatus(t, submitApproval(t, e, e.doc.ID, undone, "approved", fixtureEditor), http.StatusCreated)
-
-	// An undo after another person's edit does not undo that edit.
-	theirs := pushApprovalTestVersionHTML(t, e, e.doc.ID, undone, "<html><body>theirs</body></html>", fixtureOwner)
-	pushApprovalTestVersionHTML(t, e, e.doc.ID, theirs, string(html), fixtureEditor)
-	if list := listApprovals(t, e, e.doc.ID, "", fixtureOwner); len(list.Items) != 0 {
-		t.Fatalf("items = %+v, want the editor removed", list.Items)
-	}
-}
-
-// An approver's stray edit removes them, with their decisions. Its undo
-// gives both back, so that the stray edit costs no approval.
-func TestUndoOfAnApproversEditRestoresTheirApproval(t *testing.T) {
-	e := newTestEnv(t)
-	html, err := e.store.GetVersionHTML(context.Background(), e.ver.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mustAssignApprover(t, e, e.doc.ID, "editor@example.com", fixtureOwner)
-	assertStatus(t, submitApproval(t, e, e.doc.ID, e.ver.ID, "approved", fixtureEditor), http.StatusCreated)
-
-	typed := pushApprovalTestVersion(t, e, e.doc.ID, e.ver.ID, fixtureEditor)
-	if list := listApprovals(t, e, e.doc.ID, "", fixtureOwner); len(list.Items) != 0 {
-		t.Fatalf("items = %+v, want the editor removed by their edit", list.Items)
-	}
-	undone := pushApprovalTestVersionHTML(t, e, e.doc.ID, typed, string(html), fixtureEditor)
-
-	list := listApprovals(t, e, e.doc.ID, "", fixtureOwner)
-	if list.VersionID != undone || list.Status != "approved" || len(list.Items) != 1 || list.Items[0].VersionID != e.ver.ID {
-		t.Fatalf("list = %+v, want the editor's version 1 approval back on %s", list, undone)
-	}
-}
-
-// A service account works for its owner, so a version that a person's bot
-// pushes is that person's work too.
-func TestApproverWhoseBotCreatesAVersionIsRemoved(t *testing.T) {
-	e := newTestEnv(t)
-	ctx := context.Background()
-	sa, err := e.store.CreateServiceAccount(ctx, fixtureEditor, "editor-bot")
-	if err != nil {
-		t.Fatal(err)
-	}
-	bot := auth.Principal{Type: auth.PrincipalServiceAccount, ID: sa.ID}
-	if _, err := e.store.CreateGrant(ctx, "document", e.doc.ID, bot, "editor", fixtureOwner); err != nil {
-		t.Fatal(err)
-	}
-	mustAssignApprover(t, e, e.doc.ID, "editor@example.com", fixtureOwner)
-
-	second := pushApprovalTestVersion(t, e, e.doc.ID, e.ver.ID, bot)
-
-	if list := listApprovals(t, e, e.doc.ID, "", fixtureOwner); len(list.Items) != 0 {
-		t.Fatalf("items = %+v, want the bot's owner removed", list.Items)
-	}
-	assertStatus(t, submitApproval(t, e, e.doc.ID, second, "approved", fixtureEditor), http.StatusForbidden)
-	rr := assignApprover(t, e, e.doc.ID, `{"principal": {"type": "user", "email": "editor@example.com"}}`, fixtureOwner)
-	assertStatus(t, rr, http.StatusBadRequest)
-}
-
-func TestBotOfTheCreatorCannotBeAssignedAsApprover(t *testing.T) {
-	e := newTestEnv(t)
-	// The fixture service account belongs to the owner, who uploaded version 1.
-	grantServiceAccountViewer(t, e, e.sa.ID)
-	rr := assignApprover(t, e, e.doc.ID, fmt.Sprintf(`{"principal": {"type": "service_account", "id": %q}}`, e.sa.ID), fixtureOwner)
-	assertStatus(t, rr, http.StatusBadRequest)
-	if !strings.Contains(rr.Body.String(), "That person edited this document") {
-		t.Fatalf("body = %s, want the edited-this-document message", rr.Body.String())
 	}
 }
 

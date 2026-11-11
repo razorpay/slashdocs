@@ -30,7 +30,6 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/input";
-import { Tooltip } from "@/components/ui/tooltip";
 import { DraftNotice } from "@/components/draft-notice";
 import { RetryButton, revealOnHover, Skeleton } from "@/components/ui/misc";
 import { ErrorState, LoadErrorLine } from "@/components/error-state";
@@ -749,9 +748,6 @@ function ApproverRow({
   );
 }
 
-const WHO_CAN_APPROVE =
-  "Approvers need access to this document. Anyone who edited it, in the browser, by upload, or by an agent, can't approve it. This includes you. An edit that its author undid does not count.";
-
 // The share as a viewer worked, but the add did not. The person can now open
 // the document, and is not an approver yet.
 class SharedNotAdded extends Error {}
@@ -833,25 +829,9 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
         if (ADDRESS_PATTERN.test(trimmed)) send(trimmed);
       }}
     >
-      {/* The help sits on the line of the hint, so the messages under the
-          field do not move it. */}
-      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-xs">
-        <p className="text-[var(--color-fg-muted)]">
-          Add someone who did not edit this document.
-        </p>
-        <Tooltip label={WHO_CAN_APPROVE} help>
-          <button
-            type="button"
-            className="shrink-0 rounded-sm text-[var(--color-fg-muted)] underline decoration-dotted underline-offset-2 hover:text-[var(--color-fg)]"
-          >
-            Who can approve?
-          </button>
-        </Tooltip>
-      </div>
       <div className="flex gap-2">
         <div className="flex-1">
           <Combobox
-            // The dialog opens with the focus in the field, not on its help.
             autoFocus
             aria-label="Approver"
             placeholder="Email or bot address"

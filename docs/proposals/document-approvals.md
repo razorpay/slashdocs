@@ -1,6 +1,6 @@
 # Document Approvals
 
-**Date:** 2026-07-13 (updated 2026-11-01)
+**Date:** 2026-07-13 (updated 2026-11-11)
 **Status:** Draft
 **Author:** Manas Kinkar
 
@@ -13,27 +13,27 @@
 | 2026-07-16 | Notifications fully out of scope                                      | **Superseded 2026-11-01.** Maintainer: notifications will start with comment mentions only                                                                                                                 |
 | 2026-07-16 | Approved decisions carry forward across versions (replaces reset-all) | **Superseded 2026-10-26.** Concern as noted by the author from a Slack discussion: every small edit is a new version, and resetting all approvals on each push means people won't chase re-approvals       |
 | 2026-10-26 | A change of content resets every approval; keeping them is opt-in     | **Superseded 2026-11-01** (the opt-in `keep_approvals` is removed; see below)                                                                                                                              |
-| 2026-10-26 | Anyone who created a version of the document cannot approve it        | As an author cannot approve their own pull request; here it covers every contributor, not only the last. Enforced when assigning and when deciding                                                         |
+| 2026-10-26 | Anyone who created a version of the document cannot approve it        | **Superseded 2026-11-11.** As an author cannot approve their own pull request; here it covers every contributor, not only the last. Enforced when assigning and when deciding                              |
 | 2026-10-26 | A decision on replaced content is refused (409)                       | Otherwise an approval lands on replaced content, counts for nothing, and the approver is not told                                                                                                          |
 | 2026-11-01 | A decision vouches for content (sha256), not for a version row        | Versions become an automatic edit history, so they are frequent. A version with the same content shows the decision; other content does not. A revert restores approvals. No rows are copied               |
 | 2026-11-01 | `keep_approvals` is removed                                           | It let a publisher keep approvals over content the approvers did not see, which breaks the tie between an approval and its content                                                                         |
-| 2026-11-01 | An approver who pushes a version stops being an approver              | The push removes them and their decisions in its transaction, so the "creators cannot approve" rule always holds. Before, they stayed assigned but could never decide, so the document waited forever      |
-| 2026-11-01 | A bot and its owner are one author                                    | The creator rule compares the human behind each principal (a service account's owner), as the GitHub author mapping does. Otherwise a user pushes through their bot and approves the result                |
+| 2026-11-01 | An approver who pushes a version stops being an approver              | **Superseded 2026-11-11.** The push removes them and their decisions in its transaction, so the "creators cannot approve" rule always holds                                                                |
+| 2026-11-01 | A bot and its owner are one author                                    | **Superseded 2026-11-11.** The creator rule compares the human behind each principal (a service account's owner), as the GitHub author mapping does                                                        |
 | 2026-11-01 | An approver who loses read access stops being an approver             | Revoking the grant removes them and their decisions in its transaction. They could not open or decide, so the document waited forever                                                                      |
 | 2026-11-01 | A repeated decision tells nobody                                      | The same decision and note on the same content sends no notification and no event                                                                                                                          |
 | 2026-11-01 | One name: reject                                                      | The decision value, the CLI verb (`docs reject`), the UI and the events all say "rejected". The value was `changes_requested` while the UI said Reject                                                     |
 | 2026-11-01 | Approvers and owners get Slack notifications                          | An approver hears when they are asked. The owner hears each approval or rejection. Revoking does not notify                                                                                                |
 | 2026-11-01 | Approval events go to a webhook through an outbox                     | Replaces the insert-only event log proposal (#245). Off by default. See "Events"                                                                                                                           |
+| 2026-11-11 | A person who edited the document can approve it                       | Maintainer: the creator rule blocked the people who know the document best, and needed a help tooltip to explain. An edit still makes every decision on the old content stale                              |
 
 ## Summary
 
-Document owners assign approvers. Approvers approve or reject the content of the document. The document's approval status is derived from the decisions on its current content. A version with changed content resets every decision, so approvers review what changed. A version with the same content as an earlier one, for example a revert, shows the decisions on that content. Anyone who created a version of the document cannot approve it.
+Document owners assign approvers. Approvers approve or reject the content of the document. The document's approval status is derived from the decisions on its current content. A version with changed content resets every decision, so approvers review what changed. A version with the same content as an earlier one, for example a revert, shows the decisions on that content. A person who edited the document can approve it.
 
 ## Requirements
 
 - Only the document owner can assign or remove approvers.
 - Approvers must already have viewer+ access on the document.
-- Anyone who created a version of the document cannot be assigned as an approver or decide. A service account and its owner are one author. An approver who pushes a version (or whose bot pushes one) stops being an approver.
 - An approver who loses read access when a grant is revoked stops being an approver.
 - Approvers approve or reject what the document says now. A decision names the version it was made on and vouches for that version's content (`sha256`).
 - All assigned approvers must approve for the document status to be "approved."
@@ -114,7 +114,7 @@ POST /v1/documents/:id/approvals
 Body: { "version_id": "ver_7", "decision": "approved" | "rejected", "note": "…" }
 → 201 (new) / 200 (replaced) { "id": "apv_1", "version_id": "ver_7", "version_number": 7, "version_sha256": "…", "decision": "approved", … }
 → 400 invalid decision, or a rejection with neither a note nor open comments by the caller
-→ 403 not an assigned approver, or the caller created a version
+→ 403 not an assigned approver
 → 404 version not found | 409 version_superseded
 ```
 
@@ -177,9 +177,8 @@ The earlier proposal (#245) wrote a retained, insert-only log of bare signals wi
 | --------------------------------------- | --------------------------------------------------- | ---- |
 | Assign user without doc access          | Refused                                             | 400  |
 | Assign same user twice                  | Refused                                             | 409  |
-| Assign someone who created a version    | Refused, including the owner who published it       | 400  |
-| Approver pushes a version               | Push succeeds; approver and their decisions removed | —    |
-| Approver's bot pushes a version         | Same as the approver pushing                        | —    |
+| Assign someone who created a version    | Assigned, including the owner who published it      | 201  |
+| Approver pushes a version               | Push succeeds; approver stays, decisions go stale   | —    |
 | Grant revoked, approver loses access    | Approver and their decisions removed                | 204  |
 | Approver repeats the same decision      | Kept; no notification and no event                  | 200  |
 | Decision on replaced content            | Refused; nothing recorded                           | 409  |
@@ -197,7 +196,7 @@ KV satisfies ~60% of requirements (storing decisions, upsert, optional, additive
 - **Per-action authorization**: any editor can patch any KV key; approvals need owner-assigns / approver-decides / viewer-reads.
 - **Content-scoping**: KV has no version or content dimension.
 - **Server-derived status**: the server must be the arbiter of "is this approved?"
-- **Atomic cleanup**: removing an approver, or an approver's push, must change several records in one transaction.
+- **Atomic cleanup**: removing an approver, or a revoked grant, must change several records in one transaction.
 
 Key insight: **KV is document-controlled state; approvals are a server-enforced contract between multiple parties.**
 

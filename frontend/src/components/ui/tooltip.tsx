@@ -30,39 +30,21 @@ function openOnTabFocus(event: React.FocusEvent<HTMLElement>) {
   if (!tabbed) event.preventDefault();
 }
 
-// A help trigger, such as "Who can approve?", also toggles its tooltip on a
-// click or a tap, because a touch screen has no hover. Radix closes a tooltip
-// on a press of its trigger, so the trigger keeps the press for itself. Help
-// is longer than a label, and it sits at the end of a line of hint text, with
-// controls below it and a dialog header above. Thus it opens beside its
-// trigger, where a dialog leaves room, and a press on it closes it, as a
-// press outside does.
 export function Tooltip({
   label,
   children,
   delayDuration,
-  help = false,
 }: {
   label: React.ReactNode;
   children: React.ReactElement<{ title?: string; disabled?: boolean }>;
   delayDuration?: number;
-  help?: boolean;
 }) {
   const hasProvider = React.useContext(HasTooltipProvider);
-  const [open, setOpen] = React.useState(false);
-  const trigger = React.useRef<HTMLButtonElement>(null);
-  const toggle = help && {
-    onPointerDown: (e: React.PointerEvent) => e.preventDefault(),
-    onClick: (e: React.MouseEvent) => {
-      e.preventDefault();
-      setOpen((o) => !o);
-    },
-  };
   // Native titles otherwise appear on top of the custom tooltip after a delay.
   const child = React.cloneElement(children, { title: undefined });
   const content = (
-    <Primitive.Root open={open} onOpenChange={setOpen} delayDuration={delayDuration}>
-      <Primitive.Trigger ref={trigger} asChild onFocus={openOnTabFocus} {...toggle}>
+    <Primitive.Root delayDuration={delayDuration}>
+      <Primitive.Trigger asChild onFocus={openOnTabFocus}>
         {children.props.disabled ? (
           <span className="inline-flex shrink-0">{child}</span>
         ) : (
@@ -71,14 +53,9 @@ export function Tooltip({
       </Primitive.Trigger>
       <Primitive.Portal>
         <Primitive.Content
-          side={help ? "right" : "bottom"}
+          side="bottom"
           sideOffset={6}
           collisionPadding={8}
-          // A press of the trigger is the trigger's own, not a press outside.
-          onPointerDownOutside={(e) => {
-            if (trigger.current?.contains(e.target as Node)) e.preventDefault();
-          }}
-          onPointerDown={help ? () => setOpen(false) : undefined}
           className="icon-tooltip z-[200] max-w-64 rounded-md bg-[#16191d] px-2.5 py-1.5 text-xs font-medium leading-snug text-white shadow-[var(--shadow-pop)] dark:bg-[#2b2e33]"
         >
           {label}

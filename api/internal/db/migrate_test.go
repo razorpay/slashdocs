@@ -96,8 +96,8 @@ func TestCommentMentionMigrationsSplitTriggerFromLegacyCleanup(t *testing.T) {
 	}
 	assertMentionMigrationObjects(t, database)
 	version, err := goose.GetDBVersion(database)
-	if err != nil || version != 41 {
-		t.Fatalf("migration version = %d, %v; want 41", version, err)
+	if err != nil || version != 42 {
+		t.Fatalf("migration version = %d, %v; want 42", version, err)
 	}
 
 	// The cleanup cannot reconstruct markers, so migration 19's Down is a

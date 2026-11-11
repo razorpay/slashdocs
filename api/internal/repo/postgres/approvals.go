@@ -6,7 +6,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/razorpay/slashdocs/api/internal/auth"
 	dbsqlc "github.com/razorpay/slashdocs/api/internal/db/sqlc"
@@ -25,27 +24,14 @@ func lockDocument(ctx context.Context, q *dbsqlc.Queries, documentID string) (st
 	return currentID.String, err
 }
 
-// lockForApproval locks the document against a concurrent version push and
-// returns its current version. It refuses principals who created a version:
-// they wrote what is under review. Neither check can go stale before the
-// write commits.
-func lockForApproval(ctx context.Context, q *dbsqlc.Queries, documentID string, approver auth.Principal) (dbsqlc.GetVersionRow, error) {
+// lockCurrentVersion locks the document against a concurrent version push and
+// returns its current version, which cannot change before the write commits.
+func lockCurrentVersion(ctx context.Context, q *dbsqlc.Queries, documentID string) (dbsqlc.GetVersionRow, error) {
 	currentID, err := lockDocument(ctx, q, documentID)
 	if err != nil {
 		return dbsqlc.GetVersionRow{}, err
 	}
-	current, err := q.GetVersion(ctx, currentID)
-	if err != nil {
-		return current, err
-	}
-	author, err := q.CreatedVersionOf(ctx, dbsqlc.CreatedVersionOfParams{DocumentID: documentID, PrincipalType: string(approver.Type), PrincipalID: approver.ID})
-	if err != nil {
-		return current, err
-	}
-	if author {
-		return current, repo.ErrApproverIsAuthor
-	}
-	return current, nil
+	return q.GetVersion(ctx, currentID)
 }
 
 func (s *Store) CreateApprovalRequest(ctx context.Context, documentID string, approver, requestedBy auth.Principal) (repo.ApprovalRequest, error) {
@@ -55,7 +41,7 @@ func (s *Store) CreateApprovalRequest(ctx context.Context, documentID string, ap
 	}
 	defer rollback(ctx, tx)
 	q := s.q.WithTx(tx)
-	if _, err := lockForApproval(ctx, q, documentID, approver); err != nil {
+	if _, err := lockDocument(ctx, q, documentID); err != nil {
 		return repo.ApprovalRequest{}, err
 	}
 	id := newID("apr")
@@ -121,7 +107,7 @@ func (s *Store) DeleteApprovalRequest(ctx context.Context, documentID, requestID
 		return err
 	}
 	removed := auth.Principal{Type: auth.PrincipalType(approver.ApproverType), ID: approver.ApproverID}
-	if err := s.dropApproverDecisions(ctx, q, documentID, removed, removedBy, ""); err != nil {
+	if err := s.dropApproverDecisions(ctx, q, documentID, removed, removedBy); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -129,10 +115,8 @@ func (s *Store) DeleteApprovalRequest(ctx context.Context, documentID, requestID
 
 // dropApproverDecisions revokes the decisions of an approver who was just
 // removed, which no longer count toward any content, and records the removal.
-// A removal by a new version names it in byVersion, else byVersion is empty.
-func (s *Store) dropApproverDecisions(ctx context.Context, q *dbsqlc.Queries, documentID string, approver, removedBy auth.Principal, byVersion string) error {
+func (s *Store) dropApproverDecisions(ctx context.Context, q *dbsqlc.Queries, documentID string, approver, removedBy auth.Principal) error {
 	if err := q.RevokeApprovalsForApprover(ctx, dbsqlc.RevokeApprovalsForApproverParams{
-		VersionID:    pgtype.Text{String: byVersion, Valid: byVersion != ""},
 		DocumentID:   documentID,
 		ApproverType: string(approver.Type),
 		ApproverID:   approver.ID,
@@ -140,52 +124,6 @@ func (s *Store) dropApproverDecisions(ctx context.Context, q *dbsqlc.Queries, do
 		return err
 	}
 	return s.recordApprovalEvent(ctx, q, approvalEvent{documentID: documentID, kind: repo.ApprovalEventRemoved, approver: approver, actor: removedBy})
-}
-
-// syncAuthorApprovers makes the approvers follow the authorship after a new
-// version. The approvers who are the same author as its creator (the creator,
-// or the owner of the creator's bot) now wrote part of what is under review,
-// so they go, with their decisions. A version that undoes the creator's own
-// edits instead gives back the approvers and decisions that those edits
-// removed, so that a stray edit and its undo cost no approval. Runs inside the
-// CreateVersion transaction.
-func (s *Store) syncAuthorApprovers(ctx context.Context, q *dbsqlc.Queries, documentID, versionID string, author auth.Principal) error {
-	authored, err := q.CreatedVersionOf(ctx, dbsqlc.CreatedVersionOfParams{DocumentID: documentID, PrincipalType: string(author.Type), PrincipalID: author.ID})
-	if err != nil {
-		return err
-	}
-	if !authored {
-		return s.restoreAuthorApprovers(ctx, q, documentID, author)
-	}
-	removed, err := q.RevokeAuthorApprovers(ctx, dbsqlc.RevokeAuthorApproversParams{VersionID: pgtype.Text{String: versionID, Valid: true}, DocumentID: documentID, AuthorType: string(author.Type), AuthorID: author.ID})
-	if err != nil {
-		return err
-	}
-	for _, r := range removed {
-		approver := auth.Principal{Type: auth.PrincipalType(r.ApproverType), ID: r.ApproverID}
-		if err := s.dropApproverDecisions(ctx, q, documentID, approver, author, versionID); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// restoreAuthorApprovers gives back the approvers that the undone edits of an
-// author removed, and records each as requested again. An approver who lost
-// access to the document since then goes again, as a revoked grant removes
-// them.
-func (s *Store) restoreAuthorApprovers(ctx context.Context, q *dbsqlc.Queries, documentID string, author auth.Principal) error {
-	restored, err := q.RestoreAuthorApprovers(ctx, dbsqlc.RestoreAuthorApproversParams{DocumentID: documentID, AuthorType: string(author.Type), AuthorID: author.ID})
-	if err != nil || len(restored) == 0 {
-		return err
-	}
-	for _, r := range restored {
-		approver := auth.Principal{Type: auth.PrincipalType(r.ApproverType), ID: r.ApproverID}
-		if err := s.recordApprovalEvent(ctx, q, approvalEvent{documentID: documentID, kind: repo.ApprovalEventRequested, approver: approver, actor: author}); err != nil {
-			return err
-		}
-	}
-	return s.removeApproversWithoutAccess(ctx, q, documentID, author)
 }
 
 // removeApproversWithoutAccess removes, with their decisions, the approvers of
@@ -202,7 +140,7 @@ func (s *Store) removeApproversWithoutAccess(ctx context.Context, q *dbsqlc.Quer
 		if err := q.RevokeApproverRequest(ctx, dbsqlc.RevokeApproverRequestParams(r)); err != nil {
 			return err
 		}
-		if err := s.dropApproverDecisions(ctx, q, r.DocumentID, approver, revokedBy, ""); err != nil {
+		if err := s.dropApproverDecisions(ctx, q, r.DocumentID, approver, revokedBy); err != nil {
 			return err
 		}
 	}
@@ -228,7 +166,7 @@ func (s *Store) CreateOrUpdateApproval(ctx context.Context, documentID, versionI
 	if err != nil {
 		return repo.Approval{}, false, err
 	}
-	current, err := lockForApproval(ctx, q, documentID, approver)
+	current, err := lockCurrentVersion(ctx, q, documentID)
 	if err != nil {
 		return repo.Approval{}, false, err
 	}

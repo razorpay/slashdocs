@@ -1,8 +1,7 @@
 import { expect, test, uniqueName } from "./fixtures";
 
 // In the Approvals dialog, the fix for a person without access is the
-// primary action and says what it did. One line says who to add, and the
-// full rule waits in "Who can approve?".
+// primary action and says what it did.
 
 const HTML = `<!doctype html>
 <html><head><meta charset="utf-8"><title>Review</title></head>
@@ -18,17 +17,6 @@ test("Share as viewer and add is the primary action, and confirms the share", as
   const dialog = page.getByRole("dialog");
   const field = dialog.getByRole("combobox", { name: "Approver" });
   await expect(field).toBeFocused();
-  await expect(
-    dialog.getByText("Add someone who did not edit this document."),
-  ).toBeVisible();
-  await expect(dialog.getByText(/Anyone who edited it/)).toBeHidden();
-
-  // The rule is one Tab away, in a tooltip on the line of the hint.
-  await page.keyboard.press("Shift+Tab");
-  await expect(dialog.getByRole("button", { name: "Who can approve?" })).toBeFocused();
-  await expect(page.getByRole("tooltip")).toContainText(
-    "Anyone who edited it, in the browser, by upload, or by an agent",
-  );
 
   await field.fill("reviewer@example.com");
   const add = dialog.getByRole("button", { name: "Add", exact: true });

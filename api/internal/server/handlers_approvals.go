@@ -111,14 +111,9 @@ func validApprovalDecision(d string) bool {
 	return d == repo.DecisionApproved || d == repo.DecisionRejected
 }
 
-// Someone who created a version of a document wrote what is under review, so
-// they cannot be the one who approves it (as an author cannot approve their own
-// pull request).
 const (
-	errCreatedVersionApprover = "That person edited this document, so they can't approve it. Ask someone who hasn't worked on it."
-	errCreatedVersionDecider  = "You edited this document, so you can't approve it. Ask someone who hasn't worked on it."
-	errVersionSuperseded      = "This document changed. Review the current document before deciding."
-	errRejectionNeedsWords    = "Add a comment on the document or a reason saying what needs to change."
+	errVersionSuperseded   = "This document changed. Review the current document before deciding."
+	errRejectionNeedsWords = "Add a comment on the document or a reason saying what needs to change."
 )
 
 // commentCounts is how many comment threads one person started on a document.
@@ -227,7 +222,7 @@ func (h handlers) approverHasAccess(c *gin.Context, approver auth.Principal) boo
 
 // CreateApprover godoc
 // @Summary Assign an approver
-// @Description Assigns a user or service account as an approver. The approver must already have at least viewer access on the document, and must not have created a version of it. A service account counts as its owner. An approver who loses viewer access when a grant is revoked stops being an approver.
+// @Description Assigns a user or service account as an approver. The approver must already have at least viewer access on the document. An approver who loses viewer access when a grant is revoked stops being an approver.
 // @Tags approvals
 // @Security bearerAuth
 // @Security cookieAuth
@@ -249,9 +244,6 @@ func (h handlers) createApprover(c *gin.Context) {
 	switch {
 	case errors.Is(err, repo.ErrConflict):
 		c.JSON(http.StatusConflict, errorResponse("conflict", "already an approver on this document", nil))
-		return
-	case errors.Is(err, repo.ErrApproverIsAuthor):
-		badRequest(c, errCreatedVersionApprover)
 		return
 	case err != nil:
 		internalErr(c, err)
@@ -369,7 +361,7 @@ func (h handlers) rejectionSaysWhy(c *gin.Context, p auth.Principal) bool {
 
 // CreateApproval godoc
 // @Summary Submit or update a decision
-// @Description Records the caller's decision on the content of a version. The decision vouches for that content, so every version with the same content shows it. Submitting again replaces the previous decision on that content. A rejection needs a note unless the caller has open comment threads on the document (the comments say what to change). Returns 403 when the caller created a version of the document (nobody approves their own work) and 409 when the document's content changed since that version.
+// @Description Records the caller's decision on the content of a version. The decision vouches for that content, so every version with the same content shows it. Submitting again replaces the previous decision on that content. A rejection needs a note unless the caller has open comment threads on the document (the comments say what to change). Returns 409 when the document's content changed since that version.
 // @Tags approvals
 // @Security bearerAuth
 // @Security cookieAuth
@@ -397,9 +389,6 @@ func (h handlers) createApproval(c *gin.Context) {
 		return
 	case errors.As(err, &conflict):
 		c.JSON(http.StatusConflict, errorResponse("version_superseded", errVersionSuperseded, versionConflictDetails{CurrentVersionID: conflict.LatestVersionID}))
-		return
-	case errors.Is(err, repo.ErrApproverIsAuthor):
-		forbidden(c, errCreatedVersionDecider)
 		return
 	case errors.Is(err, repo.ErrForbidden):
 		forbidden(c, "not an assigned approver on this document")

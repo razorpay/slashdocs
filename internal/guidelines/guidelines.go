@@ -492,19 +492,14 @@ reader UI and document listings.
 
 Model:
   - The document owner assigns approvers. Approvers need viewer access first.
-  - Anyone who created a version of the document (including the owner who
-    published it) cannot be an approver or decide: they wrote what is reviewed.
-    A service account counts as its owner. An approver who pushes a version,
-    or whose bot does, stops being an approver. So does an approver who loses
-    read access.
+    Anyone with access can be an approver, also a person who edited the
+    document. An approver who loses read access stops being an approver.
   - Approvers approve or reject what the document says now. A decision vouches
     for the content (its sha256), not for a version number.
   - The document is "approved" only when every assigned approver approved.
   - A new version with changed content resets every decision: the approvers
     review it again. A version with the same content as an approved one, such
     as a restore, shows that approval.
-  - An assigned approver cannot type in the document in the UI: that would
-    make them an author.
   - Approvers can revoke their decision at any time.
   - With Slack notifications on, an approver hears when they are asked, and the
     owner hears each approval or rejection.

@@ -292,21 +292,9 @@ describe("ApprovalsDialog", () => {
     // a trigger, since the dialog is the only place to assign the first one.
     const trigger = await screen.findByRole("button", { name: "Request approval" });
     await userEvent.click(trigger);
-    // The dialog opens with the focus in the field, not on its help.
+    // The dialog opens with the focus in the field.
     await waitFor(() =>
       expect(screen.getByRole("combobox", { name: "Approver" })).toHaveFocus(),
-    );
-    // One line says who to add. The full rule waits in a tooltip that the
-    // keyboard reaches, so the owner is not surprised by a 400.
-    expect(
-      screen.getByText("Add someone who did not edit this document."),
-    ).toBeVisible();
-    expect(screen.queryByText(/Anyone who edited it/)).toBeNull();
-    const who = screen.getByRole("button", { name: "Who can approve?" });
-    // The help sits on the line of the field's hint, so an error under the
-    // field does not move it.
-    expect(who.parentElement).toHaveTextContent(
-      "Add someone who did not edit this document.",
     );
     // With no approvers there is no empty list between the status and the
     // field.
@@ -314,37 +302,6 @@ describe("ApprovalsDialog", () => {
       screen.getByText("No approvers assigned").parentElement?.nextElementSibling
         ?.tagName,
     ).toBe("FORM");
-    await userEvent.tab({ shift: true });
-    expect(who).toHaveFocus();
-    expect(await screen.findByRole("tooltip", { hidden: true })).toHaveTextContent(
-      /Anyone who edited it, in the browser/,
-    );
-  });
-
-  it("shows who can approve on a click or a tap, and Esc closes only the help", async () => {
-    installFetch();
-    renderDialog({ isOwner: true, defaultOpen: true });
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: "Who can approve?" }));
-    expect(await screen.findByRole("tooltip", { hidden: true })).toHaveTextContent(
-      /Anyone who edited it, in the browser/,
-    );
-    await user.keyboard("{Escape}");
-    await waitFor(() =>
-      expect(screen.queryByRole("tooltip", { hidden: true })).toBeNull(),
-    );
-    expect(screen.getByRole("dialog")).toBeVisible();
-  });
-
-  it("opens who can approve beside its link, and a press on it closes it", async () => {
-    installFetch();
-    renderDialog({ isOwner: true, defaultOpen: true });
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: "Who can approve?" }));
-    const help = document.querySelector<HTMLElement>(".icon-tooltip");
-    expect(help?.dataset.side).toBe("right");
-    await user.click(help!);
-    await waitFor(() => expect(document.querySelector(".icon-tooltip")).toBeNull());
   });
 
   it("says that the people search failed, with Retry, and keeps a full address", async () => {

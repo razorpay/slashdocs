@@ -118,10 +118,6 @@ type ApprovalEvent struct {
 	Attempts int
 }
 
-// ErrApproverIsAuthor reports that a principal created a version of the
-// document: they wrote what is under review, so they cannot approve it.
-var ErrApproverIsAuthor = errors.New("approver created a version")
-
 type Document struct {
 	ID               string            `json:"id"`
 	Title            string            `json:"title"`
@@ -638,7 +634,7 @@ type Repository interface {
 	ListHiddenFeaturedItems(ctx context.Context, principal auth.Principal) ([]string, error)
 	HideFeaturedItem(ctx context.Context, principal auth.Principal, resourceID string) error
 	// CreateApprovalRequest assigns an approver; ErrConflict when already
-	// assigned, ErrApproverIsAuthor when they created a version.
+	// assigned.
 	// DeleteApprovalRequest removes the assignment and revokes all of that
 	// approver's decisions on the document.
 	CreateApprovalRequest(ctx context.Context, documentID string, approver, requestedBy auth.Principal) (ApprovalRequest, error)
@@ -648,8 +644,7 @@ type Repository interface {
 	// a version. The bool reports whether a new decision row was created
 	// (false = replaced). ErrNotFound when the version is not part of the
 	// document; a *VersionConflictError when the document's content changed
-	// since that version; ErrApproverIsAuthor when the approver created a
-	// version; ErrForbidden when they are not an assigned approver.
+	// since that version; ErrForbidden when they are not an assigned approver.
 	CreateOrUpdateApproval(ctx context.Context, documentID, versionID, decision, note string, approver auth.Principal) (Approval, bool, error)
 	// DeleteApproval revokes the approver's own decision; ErrForbidden when the
 	// decision belongs to someone else.
