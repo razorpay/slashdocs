@@ -149,8 +149,10 @@ test.describe("at 1440x900", () => {
   });
 });
 
-test.describe("at 390x844", () => {
-  test.use({ viewport: { width: 390, height: 844 } });
+// With a finger, the system menu sits by the selection, so the actions keep
+// clear of text and dock when no place is clear.
+test.describe("at 390x844 with touch", () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
 
   test("with no clear place near the selection, the actions dock as a bar that covers no text", async ({
     page,

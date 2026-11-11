@@ -104,21 +104,41 @@ for (const [width, height] of [
       expect(await coveredText(hint)).not.toContain("3 open");
     });
 
-    test("the selection actions cover no text, in one row", async ({
+    test("the selection actions sit next to the selection, cover none of it, and keep one row", async ({
       page,
       slashdocs,
     }) => {
-      const document = await slashdocs.createDocument(uniqueName("Rows"), rowsHTML());
+      const row = "Each row of the board shows the state of one review. ";
+      const prose = `<p id="prose">${row.repeat(6)}This is the middle word. ${row.repeat(6)}</p>`;
+      const document = await slashdocs.createDocument(
+        uniqueName("Rows"),
+        rowsHTML() + prose,
+      );
 
       await openEditable(page, document.id);
       for (const [selector, word] of [
         ["#tail", "twice"],
         [".row", "Payments"],
+        // A word in the middle of a paragraph has text above, below and
+        // after it, and the actions still sit next to it.
+        ["#prose", "middle"],
       ]) {
         await selectText(page, selector, word);
         const actions = renderedDocument(page).locator(".slashdocs-selection-action");
         await expect(actions.getByRole("button", { name: "Bold" })).toBeVisible();
-        expect(await coveredText(actions)).toEqual([]);
+        // The space between the actions and the selection. The actions move
+        // after the selection changes.
+        const apart = () =>
+          actions.evaluate((el) => {
+            const box = el.getBoundingClientRect();
+            const selected = el.ownerDocument
+              .getSelection()!
+              .getRangeAt(0)
+              .getBoundingClientRect();
+            return Math.max(selected.top - box.bottom, box.top - selected.bottom);
+          });
+        await expect.poll(apart).toBeLessThanOrEqual(12);
+        expect(await apart()).toBeGreaterThanOrEqual(0);
         const comment = actions.getByRole("button", {
           name: "Comment on selected text",
         });

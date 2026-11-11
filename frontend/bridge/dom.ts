@@ -95,15 +95,16 @@ const CLEAR_STEP = 10;
 // covers none of lines and no text of d, with a margin of CLEAR_MARGIN around
 // it. It tries places, as [left, top], then the sides of lines. When each
 // place covers text, el stays near lines: at the first place that covers
-// none of them, over other text. With dock, el also tries the bottom and the
-// top of the viewport, and docks there when each place covers text. When el
-// sits at an edge of the viewport, placeClear gives that edge.
+// none of them, over other text. With overText, a place only has to keep
+// clear of lines. With dock, el also tries the bottom and the top of the
+// viewport, and docks there when each place covers text. When el sits at an
+// edge of the viewport, placeClear gives that edge.
 export function placeClear(
   d: Document,
   el: HTMLElement,
   lines: DOMRect[],
   places: number[][],
-  dock = false,
+  { dock = false, overText = false } = {},
 ): "bottom" | "top" | null {
   const { width: viewWidth, height: viewHeight } = viewOf(d, true);
   const { offsetWidth: width, offsetHeight: height } = el;
@@ -132,7 +133,7 @@ export function placeClear(
   const place =
     [...near, ...edges].find((box) => {
       const room = grow(box, CLEAR_MARGIN);
-      return !coversLines(room) && !coversText(d, room);
+      return !coversLines(room) && (overText || !coversText(d, room));
     }) ??
     fallbacks.find((box) => !coversLines(box)) ??
     fallbacks[0];
