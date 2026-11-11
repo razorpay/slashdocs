@@ -61,12 +61,32 @@ func (h handlers) needDocMove(c *gin.Context, docID, to string) bool {
 		internalErr(c, err)
 		return false
 	}
-	if !atLeast(role, repo.RoleEditor) {
-		forbidden(c, "editor role on the document is required")
-		return false
+	if doc.ParentFolderID == to && atLeast(role, repo.RoleEditor) {
+		return true
 	}
-	from := doc.ParentFolderID
-	return role == repo.RoleOwner || from == "" || from == to || h.needFolderRole(c, from, repo.RoleEditor)
+	canMove, err := h.canMoveDoc(c, doc, role)
+	switch {
+	case err != nil:
+		internalErr(c, err)
+	case !canMove && groupMembershipUnavailable(current(c)):
+		groupMembershipUnavailableResponse(c)
+	case !canMove:
+		forbidden(c, "editor role on the document and on its folder is required")
+	}
+	return err == nil && canMove
+}
+
+// canMoveDoc reports whether the caller, with role on doc, may take doc out
+// of its folder: see needDocMove.
+func (h handlers) canMoveDoc(c *gin.Context, doc repo.Document, role repo.Role) (bool, error) {
+	switch {
+	case !atLeast(role, repo.RoleEditor):
+		return false, nil
+	case role == repo.RoleOwner || doc.ParentFolderID == "":
+		return true, nil
+	}
+	folderRole, err := h.deps.repository.RoleForFolder(c.Request.Context(), *current(c), doc.ParentFolderID)
+	return atLeast(folderRole, repo.RoleEditor), err
 }
 
 // folderListResponse is the payload of GET /v1/folders.
@@ -155,18 +175,10 @@ func (h handlers) listFolders(c *gin.Context) {
 	if !requireResolvedGroupsForAggregate(c) {
 		return
 	}
-	if q := c.Query("q"); q != "" {
-		includeOrgWide := h.deps.deployment == DeploymentOrg
-		folders, err := h.deps.repository.SearchFoldersByTitle(c.Request.Context(), *current(c), q, includeOrgWide, 25)
-		if err != nil {
-			internalErr(c, err)
-			return
-		}
-		items := make([]repo.FolderEntry, 0, len(folders))
-		for i := range folders {
-			items = append(items, repo.FolderEntry{Type: "folder", Folder: &folders[i]})
-		}
-		c.JSON(http.StatusOK, folderListResponse{Items: items, HasMore: len(folders) >= 25})
+	// A search with min_role and no q lists every folder with that role, for
+	// a picker such as the move dialog.
+	if q, minRole := c.Query("q"), repo.Role(c.Query("min_role")); q != "" || minRole != "" {
+		h.searchFolders(c, q, minRole)
 		return
 	}
 	folderID := c.Query("folder_id")
@@ -202,6 +214,23 @@ func (h handlers) listFolders(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, folderListResponse{Folder: folder, Items: items, HasMore: has})
 }
+func (h handlers) searchFolders(c *gin.Context, q string, minRole repo.Role) {
+	if _, known := roleRank[minRole]; minRole != "" && !known {
+		badRequest(c, "invalid min_role")
+		return
+	}
+	includeOrgWide := h.deps.deployment == DeploymentOrg
+	folders, err := h.deps.repository.SearchFoldersByTitle(c.Request.Context(), *current(c), q, includeOrgWide, minRole, 25)
+	if err != nil {
+		internalErr(c, err)
+		return
+	}
+	items := make([]repo.FolderEntry, 0, len(folders))
+	for i := range folders {
+		items = append(items, repo.FolderEntry{Type: "folder", Folder: &folders[i]})
+	}
+	c.JSON(http.StatusOK, folderListResponse{Items: items, HasMore: len(folders) >= 25})
+}
 func (h handlers) getFolder(c *gin.Context) {
 	p := current(c)
 	// One query resolves the caller's role on the folder and on every
@@ -222,22 +251,7 @@ func (h handlers) getFolder(c *gin.Context) {
 	if p.Type != f.Owner.Type || p.ID != f.Owner.ID {
 		_ = h.deps.repository.RecordFolderOpened(c.Request.Context(), f.ID, *p)
 	}
-	// Filter ancestors to only those the viewer can access (bottom-up).
-	if len(f.Ancestors) > 0 {
-		roles := make(map[string]repo.Role, len(chain))
-		for _, a := range chain {
-			roles[a.ID] = a.Role
-		}
-		visibleFrom := len(f.Ancestors)
-		for i := len(f.Ancestors) - 1; i >= 0; i-- {
-			if atLeast(roles[f.Ancestors[i].ID], repo.RoleViewer) {
-				visibleFrom = i
-			} else {
-				break
-			}
-		}
-		f.Ancestors = f.Ancestors[visibleFrom:]
-	}
+	f.Ancestors = repo.VisibleAncestors(chain)
 	c.JSON(http.StatusOK, f)
 }
 func (h handlers) patchFolder(c *gin.Context) {

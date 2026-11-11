@@ -24,6 +24,8 @@ export type Document = {
   current_version_id?: string;
   parent_folder_id?: string;
   parent_folder?: { id: string; title: string };
+  // Set on a single document: the reader may move it.
+  can_move?: boolean;
   approval_status?: ApprovalStatus;
   approval_summary?: ApprovalSummary;
   updated_at?: string;
@@ -733,11 +735,14 @@ export const api = {
       method: "DELETE",
     }),
   // Folders
-  listFolders: (folderId?: string, path?: string, q?: string) => {
+  // A q or a minRole searches every folder, and minRole keeps only the
+  // folders where the reader has at least that role.
+  listFolders: (folderId?: string, path?: string, q?: string, minRole?: string) => {
     const params = new URLSearchParams();
     if (folderId) params.set("folder_id", folderId);
     if (path) params.set("path", path);
     if (q) params.set("q", q);
+    if (minRole) params.set("min_role", minRole);
     const qs = params.toString();
     return request<{ folder?: Folder; items: FolderEntry[]; has_more: boolean }>(
       `/v1/folders${qs ? `?${qs}` : ""}`,

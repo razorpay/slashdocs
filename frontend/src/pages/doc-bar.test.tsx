@@ -478,6 +478,32 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     expect(screen.queryByRole("button", { name: /^Rename / })).toBeNull();
   });
 
+  it("lets an editor move the document out of a folder that the editor cannot see", async () => {
+    const user = userEvent.setup();
+    renderDocBar(true, [], [], "editor", {
+      parentFolderId: "fld_hidden",
+      canMove: true,
+    });
+    await user.click(screen.getByRole("button", { name: "More" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Move to folder" }));
+    await user.click(await screen.findByRole("button", { name: "Documents" }));
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        "/v1/folders/fld_hidden/documents/doc_1",
+        expect.objectContaining({ method: "DELETE" }),
+      ),
+    );
+  });
+
+  it("tells an editor who cannot move the document why", async () => {
+    const user = userEvent.setup();
+    renderDocBar(true, [], [], "editor", { parentFolderId: "fld_other" });
+    await user.click(screen.getByRole("button", { name: "More" }));
+    const move = await screen.findByRole("menuitem", { name: /^Move to folder/ });
+    expect(move).toHaveAttribute("aria-disabled", "true");
+    expect(move).toHaveTextContent("Only an editor of its folder can move it");
+  });
+
   it("says when it could not check the reader's access, with Retry", async () => {
     const accessUnknown = { isFetching: false, refetch: vi.fn() };
     renderDocBar(true, [], [], "owner", { accessUnknown });

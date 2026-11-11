@@ -737,38 +737,43 @@ func (q *Queries) RootFolderTitleTaken(ctx context.Context, arg RootFolderTitleT
 }
 
 const searchFoldersByTitle = `-- name: SearchFoldersByTitle :many
-WITH RECURSIVE accessible(id, depth) AS (
-  SELECT f.id, 1 FROM folders f WHERE f.owner_type= $3 AND f.owner_id= $4
+WITH RECURSIVE ranks(role, rank) AS (
+  VALUES ('viewer', 1), ('commenter', 2), ('editor', 3), ('owner', 4)
+), accessible(id, rank, listed, depth) AS (
+  SELECT f.id, 4, true, 1 FROM folders f WHERE f.owner_type= $4 AND f.owner_id= $5
   UNION
-  SELECT g.resource_id, 1 FROM resource_grants g
+  SELECT g.resource_id, r.rank, g.principal_type <> 'anyone' OR $6::boolean, 1
+  FROM resource_grants g JOIN ranks r ON r.role=g.role
   WHERE g.resource_type='folder' AND g.revoked_at IS NULL
-    AND ((g.principal_type= $3 AND g.principal_id= $4)
-      OR (g.principal_type='google_group' AND g.principal_id=ANY($5::text[]))
-      OR ($6::boolean AND g.principal_type='anyone'))
+    AND ((g.principal_type= $4 AND g.principal_id= $5)
+      OR (g.principal_type='google_group' AND g.principal_id=ANY($7::text[]))
+      OR g.principal_type='anyone')
   UNION ALL
-  SELECT c.id, a.depth+1 FROM folders c JOIN accessible a ON c.parent_folder_id = a.id WHERE a.depth < 20
+  SELECT c.id, LEAST(a.rank, 3), a.listed, a.depth+1 FROM folders c JOIN accessible a ON c.parent_folder_id = a.id WHERE a.depth < 20
 )
-SELECT DISTINCT f.id, f.title, f.owner_type, f.owner_id,
+SELECT f.id, f.title, f.owner_type, f.owner_id,
        COALESCE(f.parent_folder_id,'') AS parent_folder_id,
        COALESCE(u.name,sa.name,'') AS owner_name, COALESCE(u.email,'') AS owner_email
 FROM folders f
-JOIN accessible a ON f.id = a.id
+JOIN (SELECT id, max(rank) AS rank FROM accessible GROUP BY id HAVING bool_or(listed)) a ON f.id = a.id
 LEFT JOIN users u ON f.owner_type='user' AND f.owner_id=u.id
 LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
   -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
   ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE f.title ILIKE '%' || $1::text || '%'
-ORDER BY f.title
-LIMIT $2
+  AND a.rank >= COALESCE((SELECT rank FROM ranks WHERE role= $2::text), 0)
+ORDER BY f.title, f.id
+LIMIT $3
 `
 
 type SearchFoldersByTitleParams struct {
 	Query          string
+	MinRole        string
 	RowLimit       int32
 	PrincipalType  string
 	PrincipalID    string
-	GoogleGroupIds []string
 	IncludeOrgWide bool
+	GoogleGroupIds []string
 }
 
 type SearchFoldersByTitleRow struct {
@@ -781,15 +786,21 @@ type SearchFoldersByTitleRow struct {
 	OwnerEmail     string
 }
 
+// The folders whose title matches, where the principal has at least min_role
+// (” is any role). The role is the one of ListFolderAccessChain: a role on a
+// folder cascades to its subfolders, ownership cascades as editor, and a grant
+// to anyone counts. But a folder that only anyone can open is listed in an org
+// deployment only, as it is not shared with the principal.
 // nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) SearchFoldersByTitle(ctx context.Context, arg SearchFoldersByTitleParams) ([]SearchFoldersByTitleRow, error) {
 	rows, err := q.db.Query(ctx, searchFoldersByTitle,
 		arg.Query,
+		arg.MinRole,
 		arg.RowLimit,
 		arg.PrincipalType,
 		arg.PrincipalID,
-		arg.GoogleGroupIds,
 		arg.IncludeOrgWide,
+		arg.GoogleGroupIds,
 	)
 	if err != nil {
 		return nil, err

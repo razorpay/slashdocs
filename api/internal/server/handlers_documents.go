@@ -256,6 +256,9 @@ func (h handlers) getDocument(c *gin.Context) {
 	if p.Type != auth.PrincipalAnonymous && (p.Type != d.Owner.Type || p.ID != d.Owner.ID) {
 		_ = h.deps.repository.RecordDocumentOpened(c.Request.Context(), d.ID, *p)
 	}
+	// The document view offers Move only to those who can move the document.
+	// A failed lookup offers no Move, and the move itself checks again.
+	d.CanMove, _ = h.canMoveDoc(c, d, role)
 	// Show parent folder in breadcrumb only if viewer has access to it. The
 	// breadcrumb is decorative, so a failed role lookup omits it rather than
 	// failing the whole request.

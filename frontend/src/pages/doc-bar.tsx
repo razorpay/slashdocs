@@ -92,6 +92,8 @@ export function DocBar({
   principal,
   accountUser,
   parentFolder,
+  parentFolderId,
+  canMove = false,
   current,
   latest,
   previewing,
@@ -119,6 +121,10 @@ export function DocBar({
   principal?: Principal;
   accountUser?: Principal;
   parentFolder?: { id: string; title: string };
+  // The folder of the document, also when the reader cannot see it.
+  parentFolderId?: string;
+  // The reader may move the document out of its folder.
+  canMove?: boolean;
   current: string;
   latest: string;
   // An earlier version from the history is on screen.
@@ -414,16 +420,6 @@ export function DocBar({
               {canChangeContent ? (
                 <UploadVersionMenuItem onSelect={() => setUploadOpen(true)} />
               ) : null}
-              <DropdownItem onSelect={() => setMoveOpen(true)}>
-                <FolderInput className="size-4" /> Move to folder
-              </DropdownItem>
-              <DropdownSeparator />
-              <DropdownItem
-                onSelect={() => setDeleteOpen(true)}
-                className="text-[var(--color-danger)] data-[highlighted]:bg-red-50 dark:data-[highlighted]:bg-red-950/40"
-              >
-                <Trash2 className="size-4" /> Delete document
-              </DropdownItem>
             </>
           ) : canEdit ? (
             // An editor sees why they cannot rename, instead of no Rename.
@@ -434,6 +430,32 @@ export function DocBar({
                 <span className="text-xs">Only the owner can rename</span>
               </span>
             </DropdownItem>
+          ) : null}
+          {canMove ? (
+            <DropdownItem onSelect={() => setMoveOpen(true)}>
+              <FolderInput className="size-4" /> Move to folder
+            </DropdownItem>
+          ) : canEdit ? (
+            <DropdownItem disabled>
+              <FolderInput className="size-4" />
+              <span className="flex flex-col">
+                Move to folder
+                <span className="text-xs">
+                  Only an editor of its folder can move it
+                </span>
+              </span>
+            </DropdownItem>
+          ) : null}
+          {canManage ? (
+            <>
+              <DropdownSeparator />
+              <DropdownItem
+                onSelect={() => setDeleteOpen(true)}
+                className="text-[var(--color-danger)] data-[highlighted]:bg-red-50 dark:data-[highlighted]:bg-red-950/40"
+              >
+                <Trash2 className="size-4" /> Delete document
+              </DropdownItem>
+            </>
           ) : null}
           {/* A phone bar has no room for the account's own button. */}
           {accountUser ? (
@@ -462,6 +484,16 @@ export function DocBar({
           canEdit={canEdit}
         />
       ) : null}
+      {canMove ? (
+        <MoveDialog
+          open={moveOpen}
+          onOpenChange={setMoveOpen}
+          type="document"
+          id={docId}
+          title={title}
+          parentId={parentFolderId}
+        />
+      ) : null}
       {canManage ? (
         <>
           <UploadVersionSheet
@@ -470,14 +502,6 @@ export function DocBar({
             showSaved={showSaved}
             open={uploadOpen}
             onOpenChange={setUploadOpen}
-          />
-          <MoveDialog
-            open={moveOpen}
-            onOpenChange={setMoveOpen}
-            type="document"
-            id={docId}
-            title={title}
-            parentId={parentFolder?.id}
           />
           <DeleteDocumentDialog
             title={title}
