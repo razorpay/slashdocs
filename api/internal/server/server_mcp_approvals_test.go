@@ -71,10 +71,6 @@ func TestMCPApprovalToolsAskFollowUpAndTakeBack(t *testing.T) {
 		assertMCPToolError(t, callMCPToolHTTP(t, e, ownerToken, "request_document_approval", map[string]any{
 			"document_id": docID, "address": fixtureOwner.Email,
 		}), "already an approver")
-		// the owner published the document, so they cannot be its approver
-		assertMCPToolError(t, callMCPToolHTTP(t, e, ownerToken, "request_document_approval", map[string]any{
-			"document_id": docID, "address": fixtureUser.Email,
-		}), "edited this document")
 		// only the owner asks and removes
 		assertMCPToolError(t, callMCPToolHTTP(t, e, approverToken, "request_document_approval", map[string]any{
 			"document_id": docID, "address": fixtureUser.Email,

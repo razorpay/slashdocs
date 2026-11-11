@@ -35,15 +35,12 @@ test("an edit warns that it resets an approval, and its undo gives it back", asy
   const path = `/app/d/${document.id}`;
   await page.goto(path);
 
-  // The reviewer cannot open the document: the dialog says so and shares it.
+  // The reviewer cannot open the document: the dialog asks to give them
+  // access.
   await page.getByRole("button", { name: "Request approval" }).click();
   await page.getByRole("combobox", { name: "Approver" }).fill("reviewer@example.com");
   await page.getByRole("button", { name: "Add", exact: true }).click();
-  await expect(page.getByRole("alert")).toHaveText(
-    "That person can't open this document. Share it with them first.",
-  );
-  await page.getByRole("button", { name: "Share as viewer and add" }).click();
-  await expect(page.getByRole("alert")).toBeHidden();
+  await page.getByRole("button", { name: "Give access and add" }).click();
   await expect(
     page.getByRole("dialog").getByText("Pending", { exact: true }),
   ).toBeVisible();
