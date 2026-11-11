@@ -20,6 +20,7 @@ import {
   type DraftText,
 } from "@/lib/comment-drafts";
 import { Button } from "@/components/ui/button";
+import type { ThreadCount } from "@/components/layout/doc-bar-frame";
 import { Center } from "@/components/ui/misc";
 import { SheetHandle } from "@/components/ui/sheet";
 import { keepToastsAbove } from "@/components/ui/toaster";
@@ -47,6 +48,7 @@ import { CommentMap } from "./comment-map";
 import { Keycast } from "./doc-keycast";
 import { ShortcutsDialog } from "./doc-shortcuts";
 import { useCommentLink } from "./use-comment-link";
+import { useCommentReads } from "./use-comment-reads";
 import { plainKey } from "./use-comment-pins";
 
 const THEME_LABELS = { light: "Light", dark: "Dark", system: "System" } as const;
@@ -78,6 +80,7 @@ const COMMENT_INTENT = "comment";
 export type DocBarControls = {
   // The comments list is open.
   commentsOpen: boolean;
+  threads: ThreadCount;
   onToggleComments: () => void;
   onShowShortcuts: () => void;
 };
@@ -146,6 +149,11 @@ export function DocWorkspace({
     meta: { suppressGlobalError: true },
   });
   const [activeComment, setActiveComment] = useState<string>();
+  const { comments: readComments, readThread } = useCommentReads(
+    docId,
+    comments,
+    activeComment,
+  );
   const [placingPin, setPlacingPin] = useState<boolean | string>(false);
   const [unanchored, setUnanchored] = useState<
     Record<UnanchoredKind, ReadonlySet<string>>
@@ -474,7 +482,7 @@ export function DocWorkspace({
     () => ({
       docId,
       version,
-      comments: comments.data?.items || [],
+      comments: readComments,
       commentsLoading: comments.isLoading,
       commentsError: !!comments.error,
       notifications,
@@ -487,6 +495,7 @@ export function DocWorkspace({
       discardDraft,
       activeComment,
       setActiveComment,
+      readThread,
       unanchoredComments,
       setUnanchoredComments,
       movedPins,
@@ -524,7 +533,7 @@ export function DocWorkspace({
     [
       docId,
       version,
-      comments.data,
+      readComments,
       comments.isLoading,
       comments.error,
       notifications,
@@ -536,6 +545,7 @@ export function DocWorkspace({
       moveDraft,
       discardDraft,
       activeComment,
+      readThread,
       unanchoredComments,
       setUnanchoredComments,
       movedPins,
@@ -565,6 +575,10 @@ export function DocWorkspace({
     ],
   );
 
+  const threads = useMemo(() => {
+    const open = ctx.comments.filter((c) => c.status === COMMENT_STATUS.open);
+    return { open: open.length, unread: open.some((c) => c.unread) };
+  }, [ctx.comments]);
   // The tick strip marks the threads that the document highlights or pins.
   const shownComments = useMemo(
     () =>
@@ -626,6 +640,7 @@ export function DocWorkspace({
         <div className="flex h-full flex-col">
           {bar({
             commentsOpen: listOpen,
+            threads,
             onToggleComments: toggleComments,
             onShowShortcuts: () => setShortcutsOpen(true),
           })}

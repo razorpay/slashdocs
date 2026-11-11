@@ -45,6 +45,8 @@ export type Pin = {
   movable: boolean;
   // The author's color, as their cursor has it.
   color: string;
+  // The reader did not read the thread.
+  unread: boolean;
 };
 export type PinRect = { left: number; top: number; width: number; height: number };
 
@@ -185,6 +187,7 @@ export function parsePins(value: unknown): Pin[] {
       replies: typeof p.replies === "number" ? Math.max(0, Math.floor(p.replies)) : 0,
       draft: p.draft === true,
       movable: p.movable === true,
+      unread: p.unread === true,
       color:
         typeof p.color === "string" && /^#[0-9a-f]{3,8}$/i.test(p.color) ? p.color : "",
     });
@@ -425,11 +428,17 @@ const CSS = `
 .sd-pin[data-draft]>b{background:#fff;color:var(--c,#2563eb);box-shadow:inset 0 0 0 1.5px currentColor}
 .sd-pin>i{position:absolute;right:-5px;top:-4px;display:grid;place-items:center;min-width:14px;height:14px;padding:0 3px;box-sizing:border-box;border-radius:7px;background:#ef4444;color:#fff;font:600 9px/1 system-ui,-apple-system,sans-serif;font-style:normal;font-variant-numeric:tabular-nums;text-box:trim-both cap alphabetic;box-shadow:0 0 0 1.5px #fff}
 .sd-pin[data-pressed],.sd-cluster:active{scale:.96}
+:is(.sd-pin,.sd-cluster)[data-unread]::after{content:"";position:absolute;right:-2px;top:-2px;width:8px;height:8px;border-radius:50%;background:#2563eb;box-shadow:0 0 0 1.5px #fff}
+.sd-pin[data-unread]>i{background:#2563eb}
+.sd-pin[data-unread]:has(>i)::after{display:none}
 .sd-pin[data-dragging]{cursor:grabbing;scale:1.1;transition:none;box-shadow:0 0 0 2px #fff,0 0 0 3.5px #2563eb,0 10px 22px rgba(0,0,0,.22)}
 @media (hover:hover) and (pointer:fine){.sd-pin:not([data-pressed]):not([data-dragging]):hover,.sd-cluster:hover{scale:1.06}}
 @media (prefers-reduced-motion:no-preference){.sd-pin[data-new],.sd-cluster[data-new]{animation:sd-pin-in 180ms cubic-bezier(.23,1,.32,1)}}
-@media (prefers-reduced-motion:reduce){.sd-pin,.sd-cluster{transition:none}}
+@media (prefers-reduced-motion:no-preference){.sd-pin[data-bump]{animation:sd-pin-bump 250ms cubic-bezier(.23,1,.32,1)}.sd-pin[data-bump]::after,.sd-pin[data-bump]>i{animation:sd-dot-in 100ms 250ms both}}
+@media (prefers-reduced-motion:reduce){.sd-pin,.sd-cluster{transition:none}.sd-pin[data-bump]::after,.sd-pin[data-bump]>i{animation:sd-dot-in 100ms both}}
 @keyframes sd-pin-in{from{opacity:0;scale:.9}}
+@keyframes sd-pin-bump{50%{scale:1.12}}
+@keyframes sd-dot-in{from{opacity:0}}
 .sd-place-hint{position:fixed;left:50%;top:12px;z-index:2147483646;translate:-50% 0;padding:6px 12px;border-radius:999px;background:#18181b;color:#fff;font:500 12px/1.4 system-ui,-apple-system,sans-serif;white-space:nowrap;box-shadow:${SHADOW};pointer-events:none}
 @media (prefers-reduced-motion:no-preference){.sd-place-hint{animation:sd-place-hint-in 180ms cubic-bezier(.23,1,.32,1)}}
 @keyframes sd-place-hint-in{from{opacity:0;translate:-50% -4px}}
@@ -463,7 +472,7 @@ function pinLabel(pin: Pin, moved: boolean): string {
       ? ` on ${on}`
       : "";
   const replies = pin.replies === 1 ? "1 reply" : `${pin.replies} replies`;
-  return `Comment${label}${moved ? ", moved" : ""}${pin.replies ? `, ${replies}` : ""}`;
+  return `Comment${label}${moved ? ", moved" : ""}${pin.replies ? `, ${replies}` : ""}${pin.unread ? ", unread" : ""}`;
 }
 
 // A pin on screen: its element and the ancestors that clip it, or no element
@@ -636,6 +645,8 @@ export function createPinLayer(host: PinHost) {
   const droppedFaces = new Map<string, Face>();
   // The pin pressed last, which is already in view when the app opens it.
   let pressed: string | undefined;
+  // The pins that became unread, which bump when they draw next.
+  const bumps = new Set<string>();
   let placing = false;
   // The pin that placing moves, or none to place a new one.
   let moving: string | undefined;
@@ -747,9 +758,15 @@ export function createPinLayer(host: PinHost) {
         [
           seed.id,
           ...members.map(({ pin, el }) =>
-            [pin.id, pin.initials, pin.replies, pin.draft, pin.id === active, !el].join(
-              ":",
-            ),
+            [
+              pin.id,
+              pin.initials,
+              pin.replies,
+              pin.draft,
+              pin.unread,
+              pin.id === active,
+              !el,
+            ].join(":"),
           ),
         ].join("+"),
       )
@@ -801,6 +818,9 @@ export function createPinLayer(host: PinHost) {
     if (pin.draft) b.dataset.draft = "";
     if (moved) b.dataset.moved = "";
     if (fresh) b.dataset.new = "";
+    if (pin.unread) b.dataset.unread = "";
+    // A reply came to a closed thread since the last pins.
+    if (bumps.delete(pin.id)) b.dataset.bump = "";
     if (pin.color) b.style.setProperty("--c", pin.color);
     const face = document.createElement("b");
     if (pin.draft) face.appendChild(plusIcon());
@@ -822,6 +842,7 @@ export function createPinLayer(host: PinHost) {
     b.className = "sd-cluster";
     b.dataset.id = id;
     if (members.some(({ pin }) => pin.id === active)) b.dataset.active = "";
+    if (members.some(({ pin }) => pin.unread)) b.dataset.unread = "";
     if (fresh) b.dataset.new = "";
     if (members[0].pin.color) b.style.setProperty("--c", members[0].pin.color);
     const count = document.createElement("b");
@@ -1133,6 +1154,8 @@ export function createPinLayer(host: PinHost) {
     // is where it was just placed.
     setPins(next: Pin[], nextActive?: string) {
       const opened = nextActive !== active && nextActive !== pressed;
+      const read = new Set(pins.flatMap((p) => (p.unread ? [] : [p.id])));
+      for (const p of next) if (p.unread && read.has(p.id)) bumps.add(p.id);
       pins = next;
       active = nextActive;
       pressed = undefined;

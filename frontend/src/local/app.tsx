@@ -222,7 +222,7 @@ function DocumentPage({ doc }: { doc: Doc }) {
       principal={me.data?.principal}
       home="/"
       notifications={false}
-      bar={({ commentsOpen, onToggleComments }) => (
+      bar={({ commentsOpen, onToggleComments, threads }) => (
         <DocBarFrame
           home="/"
           folder={folder ? { to: href(folder), title: base(folder) } : undefined}
@@ -245,7 +245,11 @@ function DocumentPage({ doc }: { doc: Doc }) {
                 <ExternalLink className="size-4" />
               </a>
             </Button>
-            <CommentsToggle open={commentsOpen} onToggle={onToggleComments} />
+            <CommentsToggle
+              open={commentsOpen}
+              onToggle={onToggleComments}
+              threads={threads}
+            />
           </BarGroup>
         </DocBarFrame>
       )}

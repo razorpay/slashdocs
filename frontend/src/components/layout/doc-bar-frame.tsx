@@ -4,6 +4,10 @@ import { ArrowLeft, MessageSquareText } from "lucide-react";
 import { Logo } from "./logo";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
+import { cn } from "@/lib/cn";
+
+// The open threads of a document, and whether the reader did not read one.
+export type ThreadCount = { open: number; unread: boolean };
 
 // The bar above a document: back, home and the title on the left, and every
 // action on the right. The title is the bar's to fill, so that it can be a
@@ -48,12 +52,16 @@ export function BarGroup({ children }: { children: ReactNode }) {
   return <div className="flex shrink-0 items-center gap-0.5">{children}</div>;
 }
 
+// CommentsToggle opens the comments list. It counts the open threads, in an
+// accent pill while the reader did not read one of them.
 export function CommentsToggle({
   open,
   onToggle,
+  threads,
 }: {
   open: boolean;
   onToggle: () => void;
+  threads: ThreadCount;
 }) {
   return (
     <Button
@@ -61,13 +69,31 @@ export function CommentsToggle({
       size="icon-sm"
       onClick={onToggle}
       aria-label="Comments"
+      aria-description={
+        threads.open
+          ? `${threads.open} open${threads.unread ? ", some unread" : ""}`
+          : undefined
+      }
       // One tooltip in both states keeps the same button, which the list
       // gives the focus back to.
       tooltip="Comments (Esc C)"
       aria-expanded={open}
-      className="shrink-0"
+      className="relative shrink-0"
     >
       <MessageSquareText className="size-4" />
+      {threads.open ? (
+        <span
+          data-state="open"
+          className={cn(
+            "pop absolute -right-1 -top-1 min-w-4 rounded-full px-1 text-[10px] font-medium leading-4 tabular-nums ring-2 ring-[var(--color-chrome)]",
+            threads.unread
+              ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]"
+              : "bg-[var(--color-surface-muted)] text-[var(--color-fg-muted)]",
+          )}
+        >
+          {threads.open}
+        </span>
+      ) : null}
     </Button>
   );
 }

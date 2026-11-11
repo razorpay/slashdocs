@@ -24,6 +24,7 @@ const mockDocContext: DocContextValue = {
   moveDraft: vi.fn(),
   discardDraft: vi.fn(),
   setActiveComment: vi.fn(),
+  readThread: vi.fn(),
   unanchoredComments: new Set(),
   setUnanchoredComments: vi.fn(),
   movedPins: new Set(),
@@ -158,6 +159,7 @@ function renderDocBar(
             viewers={viewers}
             onFollowViewer={onFollowViewer}
             commentsOpen={false}
+            threads={{ open: 0, unread: false }}
             onToggleComments={vi.fn()}
             onShowShortcuts={vi.fn()}
             shareOpen={false}

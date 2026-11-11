@@ -133,6 +133,9 @@ export type Comment = {
   created_at?: string;
   resolved_at?: string;
   edited?: boolean;
+  // A thread with a message by someone else that the signed-in reader did
+  // not read.
+  unread?: boolean;
 };
 export type CommentPatch = {
   body?: string;
@@ -572,6 +575,8 @@ export const api = {
       `/v1/documents/${doc}/comments/${comment}/reactions/${encodeURIComponent(emoji)}`,
       { method: reacted ? "PUT" : "DELETE" },
     ),
+  markCommentRead: (doc: string, thread: string) =>
+    request<void>(`/v1/documents/${doc}/comments/${thread}/read`, { method: "PUT" }),
   listComments: (doc: string, version?: string) =>
     request<{ items: Comment[] }>(
       `/v1/documents/${doc}/comments${version ? `?version_id=${encodeURIComponent(version)}` : ""}`,

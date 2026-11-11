@@ -62,6 +62,8 @@ export type DocContextValue = {
   // The thread or draft whose popover is open.
   activeComment?: string;
   setActiveComment: Dispatch<SetStateAction<string | undefined>>;
+  // The popover showed the open thread long enough for the reader to read it.
+  readThread: (id: string) => void;
   // Ids of comments and drafts that the bridge could not place in the version
   // on screen; replaced wholesale on every repaint.
   unanchoredComments: ReadonlySet<string>;

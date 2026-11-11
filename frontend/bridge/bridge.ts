@@ -132,6 +132,8 @@ interface PaintItem {
   anchor?: CommentAnchor;
   quote?: string;
   selected_text?: string;
+  // The reader did not read the thread.
+  unread?: boolean;
 }
 
 type Theme = "dark" | "light";
@@ -788,7 +790,7 @@ type Theme = "dark" | "light";
     // underline, apart from the comments that are sent.
     s.textContent =
       `:root :is(${BRIDGE_UI}),:root :is(${BRIDGE_UI}) :not(input){-webkit-user-select:none!important;user-select:none!important}` +
-      ".slashdocs-mark{background:#fef3c7!important;color:#111827!important;-webkit-text-fill-color:#111827!important;box-decoration-break:clone;-webkit-box-decoration-break:clone;border-radius:2px 2px 0 0;box-shadow:inset 0 -2px 0 #fbbf24;cursor:pointer;transition:background-color .15s,box-shadow .15s}.slashdocs-mark-active{background:#fde68a!important;box-shadow:inset 0 -2px 0 #f59e0b}.slashdocs-svg-mark-text{fill:#111827!important;-webkit-text-fill-color:#111827!important;cursor:pointer}.slashdocs-svg-mark-rect{fill:#fef3c7;stroke:#fbbf24;stroke-width:1;rx:3;ry:3;pointer-events:auto;opacity:.8}.slashdocs-svg-mark-rect.slashdocs-mark-active{fill:#fde68a;stroke:#f59e0b;stroke-width:2;opacity:.9}@media screen{.slashdocs-mark[data-cid^='draft:']{background:#fffbeb!important;box-shadow:none;text-decoration:underline dashed #f59e0b 1.5px!important;text-underline-offset:3px!important}.slashdocs-mark-active[data-cid^='draft:']{background:#fde68a!important}.slashdocs-svg-mark-rect[data-cid^='draft:']{stroke-dasharray:3 2}}@media print{.slashdocs-mark{background:transparent!important;box-shadow:none!important;-webkit-text-fill-color:inherit!important;color:inherit!important}.slashdocs-svg-mark-rect{display:none!important}.slashdocs-svg-mark-text{fill:inherit!important;-webkit-text-fill-color:inherit!important}}";
+      ".slashdocs-mark{background:#fef3c7!important;color:#111827!important;-webkit-text-fill-color:#111827!important;box-decoration-break:clone;-webkit-box-decoration-break:clone;border-radius:2px 2px 0 0;box-shadow:inset 0 -2px 0 #fbbf24;cursor:pointer;transition:background-color .15s,box-shadow .15s}.slashdocs-mark-active{background:#fde68a!important;box-shadow:inset 0 -2px 0 #f59e0b}.slashdocs-mark[data-unread]{box-shadow:inset 2px 0 0 #2563eb,inset 0 -2px 0 #fbbf24}.slashdocs-mark-active[data-unread]{box-shadow:inset 2px 0 0 #2563eb,inset 0 -2px 0 #f59e0b}.slashdocs-svg-mark-text{fill:#111827!important;-webkit-text-fill-color:#111827!important;cursor:pointer}.slashdocs-svg-mark-rect{fill:#fef3c7;stroke:#fbbf24;stroke-width:1;rx:3;ry:3;pointer-events:auto;opacity:.8}.slashdocs-svg-mark-rect.slashdocs-mark-active{fill:#fde68a;stroke:#f59e0b;stroke-width:2;opacity:.9}.slashdocs-svg-mark-rect[data-unread]{stroke:#2563eb}@media screen{.slashdocs-mark[data-cid^='draft:']{background:#fffbeb!important;box-shadow:none;text-decoration:underline dashed #f59e0b 1.5px!important;text-underline-offset:3px!important}.slashdocs-mark-active[data-cid^='draft:']{background:#fde68a!important}.slashdocs-svg-mark-rect[data-cid^='draft:']{stroke-dasharray:3 2}}@media print{.slashdocs-mark{background:transparent!important;box-shadow:none!important;-webkit-text-fill-color:inherit!important;color:inherit!important}.slashdocs-svg-mark-rect{display:none!important}.slashdocs-svg-mark-text{fill:inherit!important;-webkit-text-fill-color:inherit!important}}";
     (d.head || d.documentElement).appendChild(s);
   }
 
@@ -930,6 +932,22 @@ type Theme = "dark" | "light";
       if (isActive && !scrollTarget) scrollTarget = el;
     });
     if (scroll && scrollTarget) reveal(scrollTarget as Element);
+  }
+
+  // markUnread puts a bar at the start of the highlight of each thread that
+  // the reader did not read: on its first mark only.
+  function markUnread(d: Document): void {
+    const unread = new Set(
+      lastPaint?.items.flatMap((x) => (x?.unread && x.id ? [x.id] : [])),
+    );
+    const seen = new Set<string>();
+    d.querySelectorAll<HTMLElement | SVGElement>(
+      "mark.slashdocs-mark,.slashdocs-svg-mark-rect",
+    ).forEach((el) => {
+      const id = el.dataset.cid ?? "";
+      el.toggleAttribute("data-unread", unread.has(id) && !seen.has(id));
+      seen.add(id);
+    });
   }
 
   // Whitespace-insensitive text key: mark text omits synthesized <br> spaces
@@ -1144,6 +1162,7 @@ type Theme = "dark" | "light";
       // Only put the selection back when this repair actually touched the
       // DOM; a fruitless retry must not churn the user's selection.
       if (savedSelection && mutatedDOM) restoreSelection(d, body, savedSelection);
+      markUnread(d);
     } catch {
       // Never let one exotic document abort the repair loop.
     } finally {
@@ -1206,6 +1225,7 @@ type Theme = "dark" | "light";
     if (d && body && lastPaintResults && key === lastPaintKey) {
       revealedActive = activeID;
       applyActiveOnly(d, activeID, reveal);
+      markUnread(d);
       parent.postMessage(
         { type: "slashdocs:paint-result", results: lastPaintResults },
         targetOrigin(),
@@ -1256,6 +1276,7 @@ type Theme = "dark" | "light";
       }
       lastPaintKey = key;
       lastPaintResults = results;
+      markUnread(d);
     }
     // Post even when the inner document is unavailable so the parent never
     // keeps stale "highlight not found" state.

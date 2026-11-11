@@ -51,6 +51,7 @@ import {
   SendingMessage,
 } from "./doc-comment-parts";
 import { CommentBody } from "./doc-comment-text";
+import { READ_DELAY_MS } from "./use-comment-reads";
 
 const QUOTE_PREVIEW = 160;
 
@@ -243,8 +244,13 @@ export function CommentThread({
     canEdit,
     principal,
     setPlacingPin,
+    readThread,
   } = useDoc();
   const ref = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const timer = window.setTimeout(() => readThread(c.id), READ_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [c.id, readThread]);
   const [params] = useSearchParams();
   const linked = params.get("comment");
   // A link to a reply shows that reply.
@@ -630,11 +636,20 @@ export function CommentsList({
                       </span>
                     ) : null}
                     <AgentRequestBadge c={c} />
-                    {c.status === COMMENT_STATUS.resolved ? (
-                      <span className="ml-auto shrink-0 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-                        Resolved
-                      </span>
-                    ) : null}
+                    <span className="ml-auto flex shrink-0 items-center gap-2 empty:hidden">
+                      {c.status === COMMENT_STATUS.resolved ? (
+                        <span className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                          Resolved
+                        </span>
+                      ) : null}
+                      {c.unread ? (
+                        <span
+                          role="img"
+                          aria-label="Unread"
+                          className="size-2 rounded-full bg-[var(--color-accent)]"
+                        />
+                      ) : null}
+                    </span>
                   </span>
                   <span className="ml-7 block">
                     <Quote text={anchorLabel(c)} />

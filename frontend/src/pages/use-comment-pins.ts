@@ -79,6 +79,7 @@ export function useCommentPins(
                 anchor: c.anchor,
                 initials: initialsOf(principalLabel(c.author)),
                 replies: c.replies?.length ?? 0,
+                unread: !!c.unread,
                 movable: canMovePin(c, canEdit, principal),
                 color: principalColor(c.author),
               },
