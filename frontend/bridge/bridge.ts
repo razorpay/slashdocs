@@ -2355,16 +2355,14 @@ type Theme = "dark" | "light";
         }
       }
       // In Edit mode every key types while the text has the caret, as in
-      // Google Docs. Esc leaves the text, so the keys after it work as
-      // shortcuts. That Esc also closes the open thread in the app, but it
-      // arms no chord, so Esc, then C comments.
-      if (ev.key === "Escape" && ev.target === d.body && isEditableTarget(d, d.body)) {
-        d.body.blur();
-        if (watched)
-          parent.postMessage(
-            { type: "slashdocs:keydown", key: "Escape" },
-            targetOrigin(),
-          );
+      // Google Docs. Esc leaves the text, and in the app it closes the open
+      // thread, or else leaves Edit mode. It arms no chord.
+      if (ev.key === "Escape" && textEditing && isEditableTarget(d, ev.target)) {
+        (d.activeElement as HTMLElement | null)?.blur();
+        parent.postMessage(
+          { type: "slashdocs:keydown", key: "Escape" },
+          targetOrigin(),
+        );
         return;
       }
       if (ev.defaultPrevented || isEditableTarget(d, ev.target)) {

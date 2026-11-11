@@ -73,14 +73,14 @@ export function useEscChord({
       return;
     }
     const onKeyDown = (event: KeyboardEvent) => {
-      // Only an Esc that nothing else uses arms the chord.
-      if (
-        isChordBlocked(event.target) ||
-        (event.key === "Escape" &&
-          (event.defaultPrevented ||
-            isInLayer(event.target) ||
-            takeEscapeRef.current()))
-      ) {
+      // Only an Esc that nothing else uses arms the chord. What takes the Esc
+      // keeps it, so that the Esc does nothing more, as stop a follow.
+      const blocked = isChordBlocked(event.target);
+      const escape = event.key === "Escape";
+      const used = () => event.defaultPrevented || isInLayer(event.target);
+      if (escape && !blocked && !used() && takeEscapeRef.current())
+        event.preventDefault();
+      if (blocked || (escape && used())) {
         dispatch({ type: "cancel" });
         return;
       }

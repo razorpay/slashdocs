@@ -148,7 +148,7 @@ function ModePage({ canEdit }: { canEdit: boolean }) {
   );
 }
 
-it("opens in Comment mode, E starts Edit mode, and C, Done or a second Esc leaves it", async () => {
+it("opens in Comment mode, E starts Edit mode, and C, Done or one Esc leaves it", async () => {
   render(<ModePage canEdit />);
   expect(screen.getByText("Commenting")).toBeInTheDocument();
   for (const leave of ["c", "{Escape}", "done"]) {

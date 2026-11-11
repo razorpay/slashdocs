@@ -26,7 +26,7 @@ const EDITING: Section = {
   rows: [
     [["E"], "Edit the text"],
     [["C"], "Stop editing, and comment"],
-    [["Esc", "Esc"], "Leave the text, then stop editing"],
+    [["Esc"], "Stop editing"],
     [[chord("Mod", "B")], "Bold"],
     [[chord("Mod", "I")], "Italic"],
     [[chord("Mod", "K")], "Link"],
@@ -89,8 +89,7 @@ export function ShortcutsDialog({
         <DialogHeader>
           <DialogTitle>Keyboard shortcuts</DialogTitle>
           <DialogDescription>
-            While the text has the caret in Edit mode, the keys type. Press Esc to leave
-            the text, then use these keys.
+            In Edit mode, the keys type. Press Esc to stop editing, then use these keys.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-5">
