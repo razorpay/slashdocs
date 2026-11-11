@@ -226,7 +226,7 @@ export function Message({
   actions?: React.ReactNode;
 }) {
   return (
-    <div data-comment-id={c.id} className="group/msg">
+    <div data-comment-id={c.id} className="group/msg linked-tint">
       <div className="flex min-h-6 items-center gap-2">
         <PersonAvatar who={c.author} size={thread ? 20 : 18} />
         <span className="min-w-0 truncate text-xs font-semibold">

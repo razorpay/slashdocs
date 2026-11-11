@@ -55,6 +55,8 @@ import { CommentBody } from "./doc-comment-text";
 import { READ_DELAY_MS } from "./use-comment-reads";
 
 const QUOTE_PREVIEW = 160;
+// How long a reply that a link names stays tinted.
+const LINKED_TINT_MS = 2000;
 
 function Quote({ text }: { text: string }) {
   if (!text) return null;
@@ -254,13 +256,23 @@ export function CommentThread({
   }, [c.id, readThread]);
   const [params] = useSearchParams();
   const linked = params.get("comment");
-  // A link to a reply shows that reply.
+  // A link to a reply shows that reply, tinted for a while.
   useLayoutEffect(() => {
     const target = Array.from(
       ref.current?.querySelectorAll<HTMLElement>("[data-comment-id]") ?? [],
     ).find((el) => el.dataset.commentId === linked);
     target?.scrollIntoView({ block: "nearest" });
-  }, [linked]);
+    if (!target || linked === c.id) return;
+    target.toggleAttribute("data-linked", true);
+    const timer = window.setTimeout(
+      () => target.removeAttribute("data-linked"),
+      LINKED_TINT_MS,
+    );
+    return () => {
+      window.clearTimeout(timer);
+      target.removeAttribute("data-linked");
+    };
+  }, [linked, c.id]);
   return (
     <article ref={ref} data-comment-id={c.id} className="px-3 py-3">
       <div className="mb-2 flex items-center gap-2 empty:hidden">

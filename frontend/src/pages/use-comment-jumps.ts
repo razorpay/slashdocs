@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import { COMMENT_STATUS } from "@/lib/constants";
 import { inDocumentOrder, nextThread } from "@/lib/comment-order";
@@ -11,12 +11,20 @@ const STEPS: Record<string, 1 | -1> = { j: 1, n: 1, J: 1, k: -1, p: -1 };
 
 // useCommentJumps goes from thread to thread with J and K, or N and P, in
 // document order, in the app and in the document, which forwards the keys.
-// In a document with no open threads, J and K scroll it as before.
+// In a document with no open threads, J and K scroll it as before. After
+// each jump, from here, a link or the list, the document pulses the thread
+// once it shows it.
 export function useCommentJumps(
   ready: boolean,
   postToFrame: (message: Record<string, unknown>) => void,
 ) {
-  const { comments, commentPositions, activeComment, jumpToComment } = useDoc();
+  const { comments, commentPositions, activeComment, jumpToComment, jump } = useDoc();
+  const pulsed = useRef<{ id: string }>(undefined);
+  useEffect(() => {
+    if (!ready || !jump || pulsed.current === jump) return;
+    pulsed.current = jump;
+    postToFrame({ type: "slashdocs:pulse", id: jump.id });
+  }, [ready, jump, postToFrame]);
   const order = useMemo(
     () =>
       inDocumentOrder(
