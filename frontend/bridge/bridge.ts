@@ -1369,6 +1369,39 @@ type Theme = "dark" | "light";
     return { left: box.left, top: box.top, width: box.width, height: box.height };
   }
 
+  // pulse shows where a thread is that the reader went to, once its pin or
+  // highlight stops moving, as when the scroll to it ends: its pin sends out
+  // a ring, or its highlight's tint doubles. It gives up after two seconds.
+  let pulseFrame = 0;
+  function pulse(id: string): void {
+    cancelAnimationFrame(pulseFrame);
+    let last = "";
+    let still = 0;
+    let frames = 0;
+    const step = () => {
+      const rect = pins.rect(id) ?? marksRect(id);
+      const key = JSON.stringify(rect);
+      still = rect && key === last ? still + 1 : 0;
+      last = key;
+      if (still < 4) {
+        if (++frames < 120) pulseFrame = requestAnimationFrame(step);
+        return;
+      }
+      const d = doc();
+      if (!d || pins.pulse(id)) return;
+      const cid = CSS.escape(id);
+      const marks = d.querySelectorAll(
+        `mark.slashdocs-mark[data-cid="${cid}"],.slashdocs-svg-mark-rect[data-cid="${cid}"]`,
+      );
+      flashRects(
+        d,
+        Array.from(marks).flatMap((m) => Array.from(m.getClientRects())),
+        PULSE,
+      );
+    };
+    pulseFrame = requestAnimationFrame(step);
+  }
+
   // A click on a highlight opens its thread. For an editor, the click also
   // puts the caret in the text, as in Google Docs: the thread opens beside
   // the words and leaves the focus in them.
@@ -2078,7 +2111,14 @@ type Theme = "dark" | "light";
 
   // A flash blinks twice on text that a link goes to, and fades once on text
   // that changed. Reduced motion holds it, then takes it away.
-  type Flash = { keyframes: Keyframe[]; duration: number };
+  // A flash paints a sky tint unless it gives its own paint. With reduced
+  // motion, it holds its keyframes, or else shows its still paint as long.
+  type Flash = {
+    keyframes: Keyframe[];
+    duration: number;
+    paint?: string;
+    still?: { paint: string; duration: number };
+  };
   const TEXT_FLASH: Flash = {
     keyframes: [
       { opacity: 0.2 },
@@ -2095,32 +2135,42 @@ type Theme = "dark" | "light";
     duration: 1200,
   };
 
+  // The paint of a flash that gives none.
+  const SKY =
+    "background:rgba(56,189,248,.32)!important;box-shadow:0 0 0 1px rgba(14,165,233,.65)!important";
+  // A thread that the reader went to: the tint of its highlight doubles and
+  // comes back, once. Reduced motion outlines it for 1.5 s.
+  const PULSE: Flash = {
+    keyframes: [{ opacity: 0 }, { opacity: 1, offset: 0.4 }, { opacity: 0 }],
+    duration: 600,
+    paint:
+      "background:rgba(251,191,36,.55)!important;mix-blend-mode:multiply!important",
+    still: { paint: "box-shadow:0 0 0 2px #f59e0b!important", duration: 1500 },
+  };
+
   // flashRects puts a flash over each rectangle. Overlays that take no
   // pointer events do not split text nodes or disturb comments. They sit on
   // the page, not the window, so that they stay on their text through any
   // scroll: the load, a scroll restore, an open pin, or the reader's own.
-  function flashRects(
-    d: Document,
-    rects: DOMRect[],
-    { keyframes, duration }: Flash,
-  ): void {
+  function flashRects(d: Document, rects: DOMRect[], flash: Flash): void {
     const reduced = reducedMotion(d);
+    const { paint = SKY, duration } = (reduced && flash.still) || flash;
     const { scrollX, scrollY } = d.defaultView!;
     rects.slice(0, 200).forEach((r) => {
       if (!r.width || !r.height) return;
-      const flash = d.createElement("span");
-      flash.className = "slashdocs-text-flash";
-      flash.setAttribute("aria-hidden", "true");
+      const overlay = d.createElement("span");
+      overlay.className = "slashdocs-text-flash";
+      overlay.setAttribute("aria-hidden", "true");
       // Keep opacity animatable: an important `all` reset overrides animation values.
-      flash.style.cssText = `all:initial;position:absolute!important;pointer-events:none!important;z-index:2147483646!important;left:${r.left + scrollX}px!important;top:${r.top + scrollY}px!important;width:${r.width}px!important;height:${r.height}px!important;background:rgba(56,189,248,.32)!important;box-shadow:0 0 0 1px rgba(14,165,233,.65)!important;border-radius:3px!important`;
-      d.documentElement.appendChild(flash);
-      const animation = flash.animate(
+      overlay.style.cssText = `all:initial;position:absolute!important;pointer-events:none!important;z-index:2147483646!important;left:${r.left + scrollX}px!important;top:${r.top + scrollY}px!important;width:${r.width}px!important;height:${r.height}px!important;${paint};border-radius:3px!important`;
+      d.documentElement.appendChild(overlay);
+      const animation = overlay.animate(
         reduced
           ? [{ opacity: 1 }, { opacity: 1, offset: 0.85 }, { opacity: 0 }]
-          : keyframes,
+          : flash.keyframes,
         { duration, easing: reduced ? "steps(1, end)" : "ease-in-out" },
       );
-      animation.onfinish = () => flash.remove();
+      animation.onfinish = () => overlay.remove();
     });
   }
 
@@ -2755,6 +2805,8 @@ type Theme = "dark" | "light";
       pins.releaseOutside();
     } else if (e.data.type === "slashdocs:heading-copied") {
       if (typeof e.data.id === "string") showCopied(e.data.id);
+    } else if (e.data.type === "slashdocs:pulse" && typeof e.data.id === "string") {
+      pulse(e.data.id);
     } else if (e.data.type === "slashdocs:thread-keys") {
       threadKeys = e.data.on === true;
     } else if (e.data.type === "slashdocs:watch") {

@@ -834,3 +834,26 @@ test("an unread pin wears a dot, and bumps when a reply makes it unread", () => 
   assert.ok(pin().hasAttribute("data-unread"));
   assert.ok(pin().hasAttribute("data-bump"));
 });
+
+test("a pin that the reader went to sends out one ring", () => {
+  document.body.innerHTML = '<main><p id="spot">Pin here</p></main>';
+  layout();
+  const animation = { onfinish: null as (() => void) | null };
+  Element.prototype.animate = (() => animation) as unknown as Element["animate"];
+  const layer = createPinLayer({
+    doc: () => document,
+    post: () => {},
+    laidOut: () => {},
+  });
+  layer.start(document);
+  layer.setPins(
+    parsePins([
+      { id: "c1", anchor: { quote: "", point: { target: "spot", x: 0.5, y: 0.5 } } },
+    ]),
+  );
+  assert.notOk(layer.pulse("c2"), "a pin that does not show sends no ring");
+  assert.ok(layer.pulse("c1"));
+  assert.ok(document.querySelector('.sd-pin[data-id="c1"] > u'));
+  animation.onfinish?.();
+  assert.notOk(document.querySelector('.sd-pin[data-id="c1"] > u'));
+});

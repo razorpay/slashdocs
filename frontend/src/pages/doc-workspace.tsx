@@ -225,7 +225,11 @@ export function DocWorkspace({
     setPlacingPin(false);
   }, [docId]);
 
-  const jumpToComment = useCallback((id: string) => setActiveComment(id), []);
+  const [jump, setJump] = useState<{ id: string }>();
+  const jumpToComment = useCallback((id: string) => {
+    setActiveComment(id);
+    setJump({ id });
+  }, []);
   useCommentLink(docId, comments, jumpToComment);
 
   const handleRenderedDocumentClick = useCallback(() => {
@@ -500,6 +504,7 @@ export function DocWorkspace({
       activeComment,
       setActiveComment,
       jumpToComment,
+      jump,
       readThread,
       unanchoredComments,
       setUnanchoredComments,
@@ -551,6 +556,7 @@ export function DocWorkspace({
       discardDraft,
       activeComment,
       jumpToComment,
+      jump,
       readThread,
       unanchoredComments,
       setUnanchoredComments,

@@ -11,7 +11,14 @@ import {
   scrollerOf,
   sharedElement,
 } from "./cursors.ts";
-import { covered, holds, scrollBehavior, textLines, viewOf } from "./dom.ts";
+import {
+  covered,
+  holds,
+  reducedMotion,
+  scrollBehavior,
+  textLines,
+  viewOf,
+} from "./dom.ts";
 
 // Comment pins: point comments drawn over the document, in the bridge window,
 // as live cursors are. A pin names an element and a spot in its box. On each
@@ -439,12 +446,25 @@ const CSS = `
 @keyframes sd-pin-in{from{opacity:0;scale:.9}}
 @keyframes sd-pin-bump{50%{scale:1.12}}
 @keyframes sd-dot-in{from{opacity:0}}
+.sd-pins u{position:absolute;inset:0;border-radius:inherit;box-shadow:0 0 0 2px #2563eb;pointer-events:none}
 .sd-place-hint{position:fixed;left:50%;top:12px;z-index:2147483646;translate:-50% 0;padding:6px 12px;border-radius:999px;background:#18181b;color:#fff;font:500 12px/1.4 system-ui,-apple-system,sans-serif;white-space:nowrap;box-shadow:${SHADOW};pointer-events:none}
 @media (prefers-reduced-motion:no-preference){.sd-place-hint{animation:sd-place-hint-in 180ms cubic-bezier(.23,1,.32,1)}}
 @keyframes sd-place-hint-in{from{opacity:0;translate:-50% -4px}}
 .sd-place-ring{position:fixed;left:0;top:0;z-index:2147483644;box-sizing:border-box;border-radius:4px;${FOCUS_RING};pointer-events:none}
 @media print{.sd-pins,.sd-place-hint,.sd-place-ring{display:none}}
 `;
+
+// The ring that a pin sends out once, after the reader went to its thread.
+// Reduced motion holds it still, then takes it away.
+const RING: Keyframe[] = [
+  { scale: 1, opacity: 0.9 },
+  { scale: 1.8, opacity: 0 },
+];
+const STILL_RING: Keyframe[] = [
+  { opacity: 1 },
+  { opacity: 1, offset: 0.94 },
+  { opacity: 0 },
+];
 
 // plusIcon draws the "+" that an unsent pin shows.
 function plusIcon(): SVGSVGElement {
@@ -1163,6 +1183,22 @@ export function createPinLayer(host: PinHost) {
       if (opened && !pins.find((p) => p.id === nextActive)?.draft) reveal(nextActive);
     },
     reveal,
+    // pulse sends one ring out from the button of a pin, or of its cluster.
+    // It is false when no button shows the pin.
+    pulse(id: string): boolean {
+      const seed = drawnIn.get(id)?.split("+")[0];
+      const b = Array.from(layer.children).find(
+        (el) => (el as HTMLElement).dataset.id === seed,
+      );
+      if (!b) return false;
+      const ring = b.appendChild(document.createElement("u"));
+      const still = reducedMotion(d);
+      ring.animate(still ? STILL_RING : RING, {
+        duration: still ? 1500 : 600,
+        easing: still ? "linear" : "cubic-bezier(.23,1,.32,1)",
+      }).onfinish = () => ring.remove();
+      return true;
+    },
     // tops gives where the spot of each placed pin is, from the top of the
     // document, for the strip of comment ticks.
     tops(): { id: string; top: number }[] {

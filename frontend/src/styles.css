@@ -740,6 +740,27 @@
   transition: none !important;
 }
 
+/* A reply that a link names shows tinted, and the tint fades as it goes. */
+.linked-tint {
+  position: relative;
+  isolation: isolate;
+}
+.linked-tint::before {
+  content: "";
+  position: absolute;
+  inset: -4px -6px;
+  z-index: -1;
+  border-radius: 8px;
+  background: var(--color-accent-muted);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 400ms ease-out;
+}
+.linked-tint[data-linked]::before {
+  opacity: 1;
+  transition-duration: 150ms;
+}
+
 /* Respect reduced-motion preferences everywhere */
 @media (prefers-reduced-motion: reduce) {
   *,
