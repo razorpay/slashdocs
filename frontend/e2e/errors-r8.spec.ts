@@ -129,7 +129,7 @@ test("an editor whose access did not load is told so, not that they may only vie
   await expect(reviewer.getByText("Can view", { exact: true })).toBeHidden();
   await reviewer.unroute(`**/v1/documents/${document.id}/access`);
   await reviewer.getByRole("button", { name: "Retry" }).click();
-  await expect(reviewer.getByText("Can edit", { exact: true })).toBeVisible();
+  await expect(reviewer.getByRole("radio", { name: "Edit" })).toBeVisible();
   await reviewer.context().close();
 });
 

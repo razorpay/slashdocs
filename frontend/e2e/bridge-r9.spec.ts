@@ -1,5 +1,5 @@
 import { type FrameLocator, type Page } from "@playwright/test";
-import { expect, test, uniqueName } from "./fixtures";
+import { expect, startEditing, test, uniqueName } from "./fixtures";
 
 function bridge(page: Page): FrameLocator {
   return page.frameLocator('iframe[title="Rendered document"]');
@@ -46,7 +46,7 @@ test.describe("at 1440x900", () => {
     const document = await slashdocs.createDocument(title, denseHTML(title));
     await page.goto(`/app/d/${document.id}`);
     const doc = renderedDocument(page);
-    await expect(doc.locator("body")).toHaveAttribute("contenteditable", "true");
+    await startEditing(page);
     const card = doc.locator(".slashdocs-link-input > div");
     const field = doc.getByRole("textbox", { name: "Link address" });
     // The card holds its top, or its bottom when it grows up.
@@ -129,26 +129,25 @@ test.describe("at 1440x900", () => {
 const keycast = (page: Page) => page.locator('[aria-label="Time to press a letter"]');
 const placeHint = (page: Page) => bridge(page).locator(".sd-place-hint");
 
-// An Esc that leaves the text is the text's: Esc, then C, as the empty
-// Comments list says, places a pin at any speed. A second Esc arms the chord.
+// An Esc that leaves the text is the text's: it arms no chord, so C after it
+// goes back to Comment mode at any speed. In Comment mode, Esc arms the chord.
 test("Esc that leaves the text arms no chord", async ({ page, slashdocs }) => {
   const title = uniqueName("Esc text");
   const document = await slashdocs.createDocument(title, denseHTML(title));
   await page.goto(`/app/d/${document.id}`);
   const doc = renderedDocument(page);
-  await expect(doc.locator("body")).toHaveAttribute("contenteditable", "true");
+  await startEditing(page);
   await doc.locator("#p0").click();
 
   await page.keyboard.press("Escape");
   await expect(keycast(page)).toHaveCount(0);
   await page.waitForTimeout(300);
   await page.keyboard.press("c");
-  await expect(placeHint(page)).toBeVisible();
-  await expect(page.getByRole("dialog", { name: "Comments" })).toBeHidden();
-  await page.keyboard.press("Escape");
+  await expect(page.getByRole("radio", { name: "Comment" })).toBeChecked();
   await expect(placeHint(page)).toBeHidden();
+  await expect(page.getByRole("dialog", { name: "Comments" })).toBeHidden();
 
-  // With no caret in the text, Esc, then C opens the comments.
+  // In Comment mode, Esc, then C opens the comments.
   await page.waitForTimeout(1200);
   await page.keyboard.press("Escape");
   await expect(keycast(page)).toBeVisible();
@@ -164,7 +163,7 @@ test("select all leaves the selection actions out", async ({ page, slashdocs }) 
   const document = await slashdocs.createDocument(title, denseHTML(title));
   await page.goto(`/app/d/${document.id}`);
   const doc = renderedDocument(page);
-  await expect(doc.locator("body")).toHaveAttribute("contenteditable", "true");
+  await startEditing(page);
   await doc.locator("#p0").click();
   await page.keyboard.press("ControlOrMeta+a");
   const actions = doc.locator(".slashdocs-selection-action");

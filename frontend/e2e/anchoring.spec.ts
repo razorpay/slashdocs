@@ -1,5 +1,5 @@
 import { type FrameLocator, type Page } from "@playwright/test";
-import { expect, test, uniqueName } from "./fixtures";
+import { expect, startEditing, test, uniqueName } from "./fixtures";
 
 function renderedDocument(page: Page): FrameLocator {
   return page
@@ -271,10 +271,10 @@ test("comments on a selection with C and lists every shortcut with ?", async ({
   await expect(composer).toHaveValue("");
   await page.getByRole("button", { name: "Discard comment" }).click();
 
-  // The owner edits the current document, so in its text C types and Ctrl
-  // or Cmd with Alt and M comments.
+  // The owner edits the current document in Edit mode, so in its text C
+  // types and Ctrl or Cmd with Alt and M comments.
   await page.goto(`/app/d/${document.id}`);
-  await expect(doc.locator("body")).toHaveAttribute("contenteditable", "true");
+  await startEditing(page);
   await doc.locator("p").click();
   await doc.locator("p").selectText();
   await page.keyboard.press("ControlOrMeta+Alt+m");

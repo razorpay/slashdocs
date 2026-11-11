@@ -1,5 +1,12 @@
 import { type FrameLocator, type Page } from "@playwright/test";
-import { APP_ORIGIN, expect, reviewerOn, test, uniqueName } from "./fixtures";
+import {
+  APP_ORIGIN,
+  expect,
+  reviewerOn,
+  startEditing,
+  test,
+  uniqueName,
+} from "./fixtures";
 
 // The owner asks a person who cannot open the document to approve it, and an
 // editor learns before and after an edit that it resets the approval.
@@ -57,6 +64,7 @@ test("an edit warns that it resets an approval, and its undo gives it back", asy
   await expect(chip).toHaveAccessibleName(/1 of 1 approved/);
 
   // Before the first key, the editor learns what an edit does.
+  await startEditing(page);
   await renderedDocument(page).getByText("green").click();
   await expect(
     page.getByText(/^Your change asks .+ to approve again\.$/),

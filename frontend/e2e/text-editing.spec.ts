@@ -1,5 +1,5 @@
 import { type FrameLocator, type Page } from "@playwright/test";
-import { expect, test, uniqueName } from "./fixtures";
+import { expect, openEditable, startEditing, test, uniqueName } from "./fixtures";
 
 function renderedDocument(page: Page): FrameLocator {
   return page
@@ -63,16 +63,6 @@ async function placeCaret(
       },
       { target, collapse: options.collapse ?? false },
     );
-}
-
-// openEditable opens a document as its owner, who edits it by typing.
-async function openEditable(page: Page, id: string) {
-  await page.goto(`/app/d/${id}`);
-  await expect(renderedDocument(page).locator("h1")).toBeVisible();
-  await expect(renderedDocument(page).locator("body")).toHaveAttribute(
-    "contenteditable",
-    "true",
-  );
 }
 
 function nextSave(page: Page, id: string) {
@@ -574,10 +564,7 @@ test.describe("saving", () => {
     // The document opens from the list, so that Back is a move in the app.
     await page.goto("/app/documents");
     await page.getByRole("link", { name: title }).first().click();
-    await expect(renderedDocument(page).locator("body")).toHaveAttribute(
-      "contenteditable",
-      "true",
-    );
+    await startEditing(page);
     const saved = nextSave(page, document.id);
     await placeCaret(page, "#tail", "twice");
     await page.keyboard.type("thrice");
