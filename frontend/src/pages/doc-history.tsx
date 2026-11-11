@@ -19,13 +19,14 @@ import { changeSummaryLines } from "@/lib/change-summary";
 import { errorMessage } from "@/lib/errors";
 import { formatTimestamp } from "@/lib/format-date";
 import { historySessions, withoutUndone, type HistorySession } from "@/lib/history";
-import { principalLabel } from "@/lib/principals";
+import { principalLabel, principalNames } from "@/lib/principals";
 import { queryKeys } from "@/lib/queryKeys";
 import { useShowSaved } from "./use-show-saved";
 import { useVersions } from "./use-versions";
 
 // HistoryDialog lists the saved states of the document, in sessions of one
-// person's edits, without the edits that their author undid. Opening an
+// person's edits or of the edits that people typed together, without the
+// edits that their author undid. Opening an
 // entry previews the document as it was then.
 export function HistoryDialog({
   open,
@@ -137,7 +138,7 @@ function HistorySessionRow({
           <EntryBadges version={newest} current={current} latest={latest} />
         </div>
         <span className="text-xs text-[var(--color-fg-muted)]">
-          {principalLabel(session.author)}
+          {session.authors.length ? principalNames(session.authors) : principalLabel()}
           {earlier.length ? ` · since ${formatTimestamp(oldest.created_at)}` : ""}
         </span>
         <ChangeSummary version={newest} />

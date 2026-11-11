@@ -1,16 +1,18 @@
 import type { Principal, Version } from "@/api";
 import { samePrincipal } from "@/lib/principals";
 
-// Edits by one person less than this far apart read as one session.
+// Edits less than this far apart read as one session.
 export const HISTORY_SESSION_GAP_MS = 5 * 60_000;
 
-// A session of the history: entries by one person, newest first.
-export type HistorySession = { author?: Principal; entries: Version[] };
+// A session of the history: its entries, newest first, and the people who
+// made them, the one with the newest entry first.
+export type HistorySession = { authors: Principal[]; entries: Version[] };
 
 // historySessions groups a document's history, newest first, into sessions
-// of one person's entries with no long pause between them. Edits save as
-// people type, so each pause makes an entry; a session is what a person did
-// in one sitting.
+// of entries with no long pause between them. Edits save as people type, so
+// each pause makes an entry. A session is what one person did in one
+// sitting, or what people typed together: live entries are one session,
+// whoever made them.
 export function historySessions(
   versions: Version[],
   gapMs = HISTORY_SESSION_GAP_MS,
@@ -19,14 +21,17 @@ export function historySessions(
   for (const v of [...versions].sort((a, b) => b.number - a.number)) {
     const session = sessions.at(-1);
     const later = session?.entries.at(-1);
-    if (
-      session &&
+    const together =
       later &&
-      samePrincipal(later.created_by, v.created_by) &&
-      createdAt(later) - createdAt(v) <= gapMs
-    ) {
-      session.entries.push(v);
-    } else sessions.push({ author: v.created_by, entries: [v] });
+      ((later.live && v.live) || samePrincipal(later.created_by, v.created_by)) &&
+      createdAt(later) - createdAt(v) <= gapMs;
+    if (!session || !together) {
+      sessions.push({ authors: v.created_by ? [v.created_by] : [], entries: [v] });
+      continue;
+    }
+    session.entries.push(v);
+    if (v.created_by && !session.authors.some((a) => samePrincipal(a, v.created_by)))
+      session.authors.push(v.created_by);
   }
   return sessions;
 }

@@ -12,6 +12,11 @@ export function principalLabel(p?: Principal) {
   return p.id || "Unknown owner";
 }
 
+// principalNames lists people by name, as in "Asha, Ravi, and Ana".
+export function principalNames(people: Principal[]) {
+  return new Intl.ListFormat("en").format(people.map(principalLabel));
+}
+
 // Twelve hues, each at least 4.5:1 with white text, so initials stay
 // readable in light and dark.
 const PRINCIPAL_COLORS = [
