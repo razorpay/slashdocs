@@ -60,7 +60,7 @@ test("an edit warns that it resets an approval, and its undo gives it back", asy
   expect(approved.ok()).toBeTruthy();
   await reviewer.context().close();
 
-  const chip = page.getByRole("button", { name: /^Approval .*Open approvals$/ });
+  const chip = page.getByRole("button", { name: /^Approvals: / });
   await expect(chip).toHaveAccessibleName(/1 of 1 approved/);
 
   // Before the first key, the editor learns what an edit does.
@@ -75,7 +75,8 @@ test("an edit warns that it resets an approval, and its undo gives it back", asy
   });
   await expect(chip).toHaveAccessibleName(/0 of 1 approved/);
 
-  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  // Undo in the text saves the words of before, which restores it.
+  await page.keyboard.press("ControlOrMeta+z");
   await expect(page.getByText(/The approval of .+ is restored\.$/)).toBeVisible({
     timeout: 10_000,
   });

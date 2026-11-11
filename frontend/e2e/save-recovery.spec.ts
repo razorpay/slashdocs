@@ -1,5 +1,12 @@
 import { type FrameLocator, type Page } from "@playwright/test";
-import { expect, openEditable, startEditing, test, uniqueName } from "./fixtures";
+import {
+  expect,
+  notSaved,
+  openEditable,
+  startEditing,
+  test,
+  uniqueName,
+} from "./fixtures";
 
 // What happens to an editor's words when a save cannot go: they stay on
 // screen and in storage until the editor copies or discards them.
@@ -101,7 +108,7 @@ test("a save that the server refuses keeps the text until the editor chooses", a
     "You can no longer edit this document, so your text cannot save.",
   );
   await expect(message).toBeVisible();
-  await expect(page.getByText("Not saved", { exact: true })).toBeVisible();
+  await expect(notSaved(page)).toBeVisible();
   // No load takes the text away, and the message stays.
   await page.waitForTimeout(2000);
   await expect(message).toBeVisible();
@@ -112,7 +119,7 @@ test("a save that the server refuses keeps the text until the editor chooses", a
   await copied(page, "giving up. IMPORTANT UNSAVED TEXT");
   await page.getByRole("button", { name: "Discard my change" }).click();
   await expect(tail).toHaveText("Clients retry twice before giving up.");
-  await expect(page.getByText("Not saved", { exact: true })).toBeHidden();
+  await expect(notSaved(page)).toBeHidden();
 });
 
 test("text that a conflict stopped is offered again after Back and a new visit", async ({
@@ -134,7 +141,7 @@ test("text that a conflict stopped is offered again after Back and a new visit",
   const second = nextSave(page);
   await typeOver(page, "#tail", "twice", "four times");
   expect((await second).status()).toBe(409);
-  await expect(page.getByText("Not saved", { exact: true })).toBeVisible();
+  await expect(notSaved(page)).toBeVisible();
   await typeOver(page, "#tail", "giving up.", "giving up. KEEP MY LOCAL DRAFT");
   await page.waitForTimeout(300);
 
@@ -174,33 +181,12 @@ test("a save that fails twice counts the attempts and offers a copy", async ({
     // The count goes on while the server fails.
     page.getByText(/^Your edits are not saved yet\. Trying again \(attempt [2-9]\)…$/),
   ).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText("Not saved", { exact: true })).toBeVisible();
+  await expect(notSaved(page)).toBeVisible();
   await copied(page, "giving up. Twice failed.");
 
   await page.unroute(SOURCE_EDITS);
-  await expect(page.getByText("Saved", { exact: true })).toBeVisible({
-    timeout: 10_000,
-  });
+  await expect(notSaved(page)).toBeHidden({ timeout: 10_000 });
   expect(await latestSource(page, document.id)).toContain("giving up. Twice failed.");
-});
-
-test("the first save offers one Undo, in its message", async ({ page, slashdocs }) => {
-  const document = await slashdocs.createDocument(uniqueName("One undo"), HTML);
-  await openEditable(page, document.id);
-
-  const saved = nextSave(page);
-  await typeOver(page, "#tail", "giving up.", "giving up. Oops");
-  expect((await saved).status()).toBe(201);
-  // The message says what changed, in the words of the history.
-  await expect(page.getByText("Added “Oops”.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Undo", exact: true })).toHaveCount(1);
-
-  const undone = nextSave(page);
-  await page.getByRole("button", { name: "Undo", exact: true }).click();
-  expect((await undone).status()).toBe(201);
-  await expect(renderedDocument(page).locator("#tail")).toHaveText(
-    "Clients retry twice before giving up.",
-  );
 });
 
 test("script text that cannot be checked offers to try again", async ({

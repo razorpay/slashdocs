@@ -35,7 +35,7 @@ test("Esc in the doc bar shows the chord, and C opens the comments", async ({
   slashdocs,
 }) => {
   await openEarlier(page, slashdocs);
-  await page.getByRole("button", { name: "History" }).focus();
+  await page.getByRole("button", { name: "Share" }).focus();
   await page.keyboard.press("Escape");
   await expect(keycast(page)).toBeVisible();
   await page.keyboard.press("c");
@@ -75,7 +75,7 @@ for (const from of ["the doc bar", "the document"] as const) {
     }) => {
       await openEarlier(page, slashdocs);
       if (from === "the doc bar")
-        await page.getByRole("button", { name: "History" }).focus();
+        await page.getByRole("button", { name: "Share" }).focus();
       else await renderedDocument(page).locator("h1").click();
       await page.keyboard.press("Escape");
       await page.keyboard.press(key);

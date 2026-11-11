@@ -149,28 +149,23 @@ async function toastsOver(page: Page, box: Box): Promise<boolean> {
   return false;
 }
 
-test("at 1440px, the edit hint and the save message cover no heading at the top", async ({
+test("at 1440px, a save says nothing, and covers no heading at the top", async ({
   page,
   slashdocs,
 }) => {
-  await page.addInitScript(() =>
-    window.localStorage.setItem("slashdocs:edit-hint-seen", "false"),
-  );
   await page.setViewportSize({ width: 1440, height: 900 });
   const title = uniqueName("Hint r10");
   const document = await slashdocs.createDocument(title, documentHTML(title, 4, 12));
   await openEditable(page, document.id);
   const heading = renderedDocument(page).locator("h1");
-  // The bar says how Edit mode works, the first time.
-  await expect(
-    page.getByRole("status").getByText("Editing. Changes save as you type."),
-  ).toBeVisible();
   await heading.click();
+  const saved = page.waitForResponse(
+    (r) => r.request().method() === "POST" && r.url().endsWith("/source-edits"),
+  );
   await page.keyboard.type(" now");
-  // The save says what it changed in the bar, with Undo, and no toast.
-  const undo = page.getByRole("button", { name: "Undo", exact: true });
-  await expect(undo).toBeVisible({ timeout: 15_000 });
+  expect((await saved).status()).toBe(201);
   await page.waitForTimeout(400);
+  await expect(page.locator("header").getByText(/Saved|Editing|Undo/)).toHaveCount(0);
   expect(await toastsOver(page, (await heading.boundingBox())!)).toBe(false);
   await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
 });

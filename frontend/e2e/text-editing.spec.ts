@@ -1,5 +1,13 @@
 import { type FrameLocator, type Page } from "@playwright/test";
-import { expect, openEditable, startEditing, test, uniqueName } from "./fixtures";
+import {
+  expect,
+  notSaved,
+  openEditable,
+  openHistory,
+  startEditing,
+  test,
+  uniqueName,
+} from "./fixtures";
 
 function renderedDocument(page: Page): FrameLocator {
   return page
@@ -283,7 +291,7 @@ test("saves only the editor's words while a script changes other text", async ({
   await placeCaret(page, "#tail", "twice");
   await page.keyboard.type("once");
   expect((await saved).status()).toBe(201);
-  await expect(page.getByText("Saved", { exact: true })).toBeVisible();
+  await expect(notSaved(page)).toBeHidden();
   expect(await latestSource(page, document.id)).toBe(html.replace("twice", "once"));
 });
 
@@ -330,7 +338,7 @@ test("restores an earlier version from the history", async ({ page, slashdocs })
   await savedAgain;
 
   // The summary names the changed words, not the markup around them.
-  await page.getByRole("button", { name: "History", exact: true }).click();
+  await openHistory(page);
   const history = page.getByRole("dialog");
   await history.getByRole("button", { name: "Show 2 earlier edits" }).click();
   await history
@@ -339,7 +347,7 @@ test("restores an earlier version from the history", async ({ page, slashdocs })
   await expect(renderedDocument(page).locator("#tail")).toHaveText(
     "Clients retry three times before giving up.",
   );
-  await page.getByRole("button", { name: "History", exact: true }).click();
+  await openHistory(page);
   await history.getByRole("button", { name: "Show 2 earlier edits" }).click();
   await history.getByRole("button", { name: /Created/ }).click();
   await expect(page.getByText("This is the document as it was")).toBeVisible();
@@ -550,7 +558,7 @@ test.describe("saving", () => {
     await expect(state).toHaveAttribute("contenteditable", "true");
     await placeCaret(page, "#state", "Ready");
     await page.keyboard.type("Done");
-    await expect(page.getByText("Not saved", { exact: true })).toBeVisible();
+    await expect(notSaved(page)).toBeVisible();
     await expect(page.getByRole("button", { name: "Discard my change" })).toBeVisible();
     const unchanged = await slashdocs.getDocument(document.id);
     expect(unchanged.current_version_id).toBe(document.current_version_id);
@@ -646,7 +654,7 @@ test.describe("saving", () => {
     await placeCaret(page, "#tail", "twice");
     await page.keyboard.type("four times");
     expect((await second).status()).toBe(409);
-    await expect(page.getByText("Not saved", { exact: true })).toBeVisible();
+    await expect(notSaved(page)).toBeVisible();
     await placeCaret(page, "#tail", "giving up.", { collapse: true });
     await page.keyboard.type(" Later words.");
     await page.getByRole("button", { name: "Copy my text" }).click();
@@ -657,7 +665,7 @@ test.describe("saving", () => {
 
     await page.getByRole("button", { name: "Show their version" }).click();
     await expect(renderedDocument(page).locator("#tail")).toContainText("thrice");
-    await expect(page.getByText("Not saved", { exact: true })).toBeHidden();
+    await expect(notSaved(page)).toBeHidden();
   });
 
   test("a script string in several places warns first, and its save keeps the place", async ({
@@ -729,17 +737,20 @@ test.describe("saving", () => {
     await expect(chips).toHaveText(["Needs a looks", "Needs a looks", "Needs a looks"]);
   });
 
-  test("Esc twice in the text leaves it and keeps the page", async ({
+  test("Esc in the text leaves Edit mode and keeps the page", async ({
     page,
     slashdocs,
   }) => {
     const document = await slashdocs.createDocument(uniqueName("Esc"), documentHTML());
 
-    await openEditable(page, document.id);
+    await page.goto(`/app/d/${document.id}`);
     for (let i = 0; i < 3; i++) {
+      await startEditing(page);
       await renderedDocument(page).locator("#tail").click();
       await page.keyboard.press("Escape");
-      await page.keyboard.press("Escape");
+      await expect(
+        page.getByRole("button", { name: "Edit", exact: true }),
+      ).toBeVisible();
     }
     await expect(page).toHaveURL(new RegExp(`/app/d/${document.id}`));
     await expect(renderedDocument(page).locator("#tail")).toBeVisible();

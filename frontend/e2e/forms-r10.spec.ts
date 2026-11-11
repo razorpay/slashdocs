@@ -23,7 +23,7 @@ async function addReviewer(page: Page) {
 }
 
 async function openReject(page: Page) {
-  await page.getByRole("button", { name: /Open approvals$/ }).click();
+  await page.getByRole("button", { name: /^Approvals: / }).click();
   await page.getByRole("button", { name: "Reject", exact: true }).click();
   return page.getByRole("dialog", { name: "Reject" });
 }
