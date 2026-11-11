@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
-	"github.com/razorpay/aidocs/api/internal/repo"
-	"github.com/razorpay/aidocs/api/internal/server"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/server"
 )
 
 func TestMoveDocumentExpectedSourceAndLegacyCompatibility(t *testing.T) {
@@ -238,6 +238,85 @@ func TestMoveDocumentFolderSourceRequiresSourceEditor(t *testing.T) {
 	}
 	if !moved.Moved || moved.PermissionWarning == nil || moved.PermissionWarning.Kind != "may_broaden_access" {
 		t.Fatalf("move result=%+v, want moved with warning", moved)
+	}
+}
+
+func TestDocumentOwnerCanRescueFromHiddenSource(t *testing.T) {
+	e := newTestEnv(t)
+	source := createFolder(t, e, `{"title":"Hidden source"}`, principalHeader(fixtureStranger))
+	destination := createFolder(t, e, `{"title":"Owner destination"}`, principalHeader(fixtureOwner))
+	docID, _ := e.createDocument("Owner rescue", "<p>doc</p>", fixtureOwner)
+
+	// The owner first has editor access so the document can enter the source.
+	rr := do(t, e.h, http.MethodPost, "/v1/folders/"+source+"/grants", `{"address":"`+fixtureOwner.Email+`","role":"editor"}`, map[string]string{
+		"X-Test-Principal": principalHeader(fixtureStranger), "Content-Type": "application/json",
+	})
+	assertStatus(t, rr, http.StatusCreated)
+	sourceGrant := jsonField(t, rr.Body.Bytes(), "id")
+	rr = do(t, e.h, http.MethodPost, "/v1/folders/"+source+"/documents", `{"document_id":"`+docID+`","expected_source":{"kind":"root"}}`, map[string]string{
+		"X-Test-Principal": principalHeader(fixtureOwner), "Content-Type": "application/json",
+	})
+	assertStatus(t, rr, http.StatusOK)
+
+	// Once that grant is removed, the source is hidden. Canonical ownership of
+	// the document still lets the owner rescue it into an editable destination.
+	rr = do(t, e.h, http.MethodDelete, "/v1/folders/"+source+"/grants/"+sourceGrant, "", map[string]string{
+		"X-Test-Principal": principalHeader(fixtureStranger),
+	})
+	assertStatus(t, rr, http.StatusNoContent)
+	rr = do(t, e.h, http.MethodPost, "/v1/folders/"+destination+"/documents", `{"document_id":"`+docID+`","expected_source":{"kind":"folder","folder_id":"`+source+`"}}`, map[string]string{
+		"X-Test-Principal": principalHeader(fixtureOwner), "Content-Type": "application/json",
+	})
+	assertStatus(t, rr, http.StatusOK)
+
+	got, err := e.store.GetDocument(context.Background(), docID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ParentFolderID != destination {
+		t.Fatalf("rescued document parent=%q, want %q", got.ParentFolderID, destination)
+	}
+}
+
+func TestDocumentOwnerCanRescueToRootFromHiddenSource(t *testing.T) {
+	e := newTestEnv(t)
+	source := createFolder(t, e, `{"title":"Hidden root source"}`, principalHeader(fixtureStranger))
+	docID, _ := e.createDocument("Root rescue", "<p>doc</p>", fixtureOwner)
+
+	rr := do(t, e.h, http.MethodPost, "/v1/folders/"+source+"/grants", `{"address":"`+fixtureOwner.Email+`","role":"editor"}`, map[string]string{
+		"X-Test-Principal": principalHeader(fixtureStranger), "Content-Type": "application/json",
+	})
+	assertStatus(t, rr, http.StatusCreated)
+	sourceGrant := jsonField(t, rr.Body.Bytes(), "id")
+	rr = do(t, e.h, http.MethodPost, "/v1/folders/"+source+"/documents", `{"document_id":"`+docID+`","expected_source":{"kind":"root"}}`, map[string]string{
+		"X-Test-Principal": principalHeader(fixtureOwner), "Content-Type": "application/json",
+	})
+	assertStatus(t, rr, http.StatusOK)
+	rr = do(t, e.h, http.MethodDelete, "/v1/folders/"+source+"/grants/"+sourceGrant, "", map[string]string{
+		"X-Test-Principal": principalHeader(fixtureStranger),
+	})
+	assertStatus(t, rr, http.StatusNoContent)
+
+	// A document editor cannot remove inherited access from a source folder
+	// they cannot edit; the canonical owner can always rescue the document.
+	if _, err := e.store.CreateGrant(context.Background(), "document", docID, fixtureEditor, repo.RoleEditor, fixtureOwner); err != nil {
+		t.Fatal(err)
+	}
+	rr = do(t, e.h, http.MethodDelete, "/v1/folders/"+source+"/documents/"+docID, "", map[string]string{
+		"X-Test-Principal": principalHeader(fixtureEditor),
+	})
+	assertStatus(t, rr, http.StatusForbidden)
+	rr = do(t, e.h, http.MethodDelete, "/v1/folders/"+source+"/documents/"+docID, "", map[string]string{
+		"X-Test-Principal": principalHeader(fixtureOwner),
+	})
+	assertStatus(t, rr, http.StatusNoContent)
+
+	got, err := e.store.GetDocument(context.Background(), docID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ParentFolderID != "" {
+		t.Fatalf("rescued document parent=%q, want root", got.ParentFolderID)
 	}
 }
 

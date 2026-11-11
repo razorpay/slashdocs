@@ -554,6 +554,18 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     expect(move).toHaveTextContent("Only an editor of its folder can move it");
   });
 
+  it("uses a hidden parent's id when the owner moves the document to root", async () => {
+    const user = userEvent.setup();
+    const move = vi.spyOn(api, "moveDocumentToRoot").mockResolvedValue();
+    renderDocBar(true, [], [], "owner", { parentFolderId: "fld_hidden" });
+
+    await user.click(screen.getByRole("button", { name: "More" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Move to folder" }));
+    await user.click(await screen.findByRole("button", { name: "Documents" }));
+
+    await waitFor(() => expect(move).toHaveBeenCalledWith("fld_hidden", "doc_1"));
+  });
+
   it("says when it could not check the reader's access, with Retry", async () => {
     const accessUnknown = { isFetching: false, refetch: vi.fn() };
     renderDocBar(true, [], [], "owner", { accessUnknown });

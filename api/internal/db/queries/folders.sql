@@ -250,28 +250,25 @@ ORDER BY f.title
 LIMIT 51;
 
 -- name: SearchFoldersByTitle :many
--- Compute the effective role for every folder before applying the result cap.
--- A grant on a folder is inherited by all descendants, so each candidate's
--- ancestor chain is folded into one maximum role. This is deliberately
--- set-wise: filtering after LIMIT would allow low-role rows to hide eligible
--- destinations from the move picker.
-WITH RECURSIVE ancestors(folder_id, ancestor_id, depth) AS (
+-- Filter title candidates before walking their ancestors. Effective access is
+-- then computed for every candidate before the result cap. A second batch
+-- query loads safe breadcrumbs for the returned ids.
+WITH RECURSIVE ancestors(candidate_id, ancestor_id, depth) AS (
   SELECT f.id, f.id, 0
   FROM folders f
+  WHERE f.title ILIKE '%' || @query::text || '%'
   UNION ALL
-  SELECT a.folder_id, p.parent_folder_id, a.depth+1
+  SELECT a.candidate_id, f.parent_folder_id, a.depth+1
   FROM ancestors a
-  JOIN folders p ON p.id=a.ancestor_id
-  WHERE p.parent_folder_id IS NOT NULL AND a.depth < 64
+  JOIN folders f ON f.id=a.ancestor_id
+  WHERE f.parent_folder_id IS NOT NULL AND a.depth < 64
 ), effective_roles AS (
-  SELECT f.id,
+  SELECT a.candidate_id,
          GREATEST(
-           CASE WHEN f.owner_type= @principal_type AND f.owner_id= @principal_id THEN 4 ELSE 0 END,
            COALESCE(MAX(CASE
-             WHEN a.depth > 0
-               AND ancestor_folder.owner_type= @principal_type
+             WHEN ancestor_folder.owner_type= @principal_type
                AND ancestor_folder.owner_id= @principal_id
-             THEN 3
+             THEN CASE WHEN a.depth=0 THEN 4 ELSE 3 END
              ELSE 0
            END), 0),
            COALESCE(MAX(CASE
@@ -288,47 +285,84 @@ WITH RECURSIVE ancestors(folder_id, ancestor_id, depth) AS (
              ELSE 0
            END), 0)
          )::int AS role_rank,
-         (f.owner_type= @principal_type AND f.owner_id= @principal_id)
-           OR COALESCE(BOOL_OR(
-             a.depth > 0
-             AND ancestor_folder.owner_type= @principal_type
-             AND ancestor_folder.owner_id= @principal_id
-           ), false)
-           OR COALESCE(BOOL_OR(
+         COALESCE(BOOL_OR(
+           (ancestor_folder.owner_type= @principal_type AND ancestor_folder.owner_id= @principal_id)
+           OR (
              (g.principal_type= @principal_type AND g.principal_id= @principal_id)
              OR (g.principal_type='google_group' AND g.principal_id=ANY(@google_group_ids::text[]))
-           ), false) AS has_private_access,
-         COALESCE(BOOL_OR(g.principal_type='anyone'), false) AS has_anyone_access
-  FROM folders f
-  JOIN ancestors a ON a.folder_id=f.id
+           )), false)::bool AS has_private_access,
+         COALESCE(BOOL_OR(g.principal_type='anyone'), false)::bool AS has_anyone_access
+  FROM ancestors a
   JOIN folders ancestor_folder ON ancestor_folder.id=a.ancestor_id
   LEFT JOIN resource_grants g
     ON g.resource_type='folder'
    AND g.resource_id=a.ancestor_id
    AND g.revoked_at IS NULL
-  GROUP BY f.id, f.owner_type, f.owner_id
+  GROUP BY a.candidate_id
 )
 SELECT f.id, f.title, f.owner_type, f.owner_id,
        COALESCE(f.parent_folder_id,'') AS parent_folder_id,
        COALESCE(u.name,sa.name,'') AS owner_name, COALESCE(u.email,'') AS owner_email
 FROM folders f
-JOIN effective_roles er ON er.id = f.id
+JOIN effective_roles access ON access.candidate_id=f.id
 LEFT JOIN users u ON f.owner_type='user' AND f.owner_id=u.id
 -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
   -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
   ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
-WHERE f.title ILIKE '%' || @query::text || '%'
-  AND er.role_rank > 0
-  AND er.role_rank >= @min_role_rank::int
+WHERE access.role_rank > 0
+  AND access.role_rank >= @min_role_rank::int
   -- Anyone-only folders are link-addressable but must not appear in the
   -- public search index. In org deployment, anyone grants are workspace-wide
   -- discovery grants. Private access and effective role are intentionally
   -- separate: a direct viewer plus an inherited anyone editor is discoverable
   -- and qualifies for min_role=editor.
-  AND (er.has_private_access OR (@include_org_wide::boolean AND er.has_anyone_access))
+  AND (access.has_private_access OR (@include_org_wide::boolean AND access.has_anyone_access))
 ORDER BY f.title, f.id
 LIMIT @row_limit;
+
+-- name: ListFolderAccessChains :many
+-- Batch form used by folder search. It returns direct access facts for every
+-- node in each requested root-first chain; the repository folds those facts
+-- into inherited roles and safe breadcrumb suffixes without N+1 queries.
+WITH RECURSIVE chain(candidate_id, id, title, parent_folder_id, owner_type, owner_id, depth) AS (
+  SELECT f.id, f.id, f.title, f.parent_folder_id, f.owner_type, f.owner_id, 0
+  FROM folders f
+  WHERE f.id=ANY(@folder_ids::text[])
+  UNION ALL
+  SELECT c.candidate_id, f.id, f.title, f.parent_folder_id, f.owner_type, f.owner_id, c.depth+1
+  FROM folders f
+  JOIN chain c ON f.id=c.parent_folder_id
+  WHERE c.depth < 64
+)
+SELECT c.candidate_id, c.id, c.title, c.depth,
+       (c.owner_type= @principal_type::text AND c.owner_id= @principal_id::text)::bool AS is_owner,
+       COALESCE(MAX(CASE
+         WHEN (g.principal_type= @principal_type::text AND g.principal_id= @principal_id::text)
+           OR (g.principal_type='google_group' AND g.principal_id=ANY(@google_group_ids::text[]))
+           OR g.principal_type='anyone'
+         THEN CASE g.role
+           WHEN 'owner' THEN 4
+           WHEN 'editor' THEN 3
+           WHEN 'commenter' THEN 2
+           WHEN 'viewer' THEN 1
+           ELSE 0
+         END
+         ELSE 0
+       END), 0)::int AS grant_rank,
+       ((c.owner_type= @principal_type::text AND c.owner_id= @principal_id::text)
+         OR COALESCE(BOOL_OR(
+           (g.principal_type= @principal_type::text AND g.principal_id= @principal_id::text)
+           OR (g.principal_type='google_group' AND g.principal_id=ANY(@google_group_ids::text[]))
+         ), false))::bool AS has_private_access,
+       COALESCE(BOOL_OR(g.principal_type='anyone'), false)::bool AS has_anyone_access
+FROM chain c
+LEFT JOIN resource_grants g
+  ON g.resource_type='folder'
+ AND g.resource_id=c.id
+ AND g.revoked_at IS NULL
+GROUP BY c.candidate_id, c.id, c.title, c.depth, c.owner_type, c.owner_id
+ORDER BY c.candidate_id, c.depth DESC;
 
 -- name: FolderMayBroadenAccess :one
 -- Whether placing content of the given owner inside the folder may broaden

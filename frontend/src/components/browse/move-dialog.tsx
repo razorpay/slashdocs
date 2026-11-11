@@ -39,19 +39,24 @@ export function MoveDialog({
   const [query, setQuery] = useState("");
   const search = useDebounced(query.trim(), 250);
   const folders = useQuery({
-    queryKey: [...queryKeys.folders(), "editor", search],
+    queryKey: [...queryKeys.foldersAll(), "move-destinations", search],
     queryFn: () => api.listFolders(undefined, undefined, search, "editor"),
-    enabled: open,
-    placeholderData: (prev) => prev,
+    enabled: open && !!search,
   });
   const { move, warning, clearWarning } = useMoveResource();
   const destinations = [
     ...(search ? [] : [{ id: null, title: "Documents", ancestors: [] }]),
-    ...(folders.data?.items || []).flatMap(({ folder }) =>
-      folder && folder.id !== id && !folder.ancestors?.some((a) => a.id === id)
-        ? [folder]
-        : [],
-    ),
+    ...(search ? folders.data?.items || [] : []).flatMap((e) => {
+      if (
+        e.type !== "folder" ||
+        !e.folder ||
+        e.folder.id === id ||
+        e.folder.ancestors?.some((ancestor) => ancestor.id === id)
+      ) {
+        return [];
+      }
+      return [e.folder];
+    }),
   ];
   const close = (next: boolean) => {
     onOpenChange(next);
@@ -75,13 +80,13 @@ export function MoveDialog({
             autoFocus
           />
           <ul aria-label="Folders" className="-mx-1 mt-3 max-h-72 overflow-y-auto p-1">
-            {folders.isLoading ? (
+            {search && folders.isLoading ? (
               <li className="space-y-1">
                 <Skeleton className="h-10 w-full" />
                 <Skeleton className="h-10 w-full" />
                 <Skeleton className="h-10 w-full" />
               </li>
-            ) : folders.error ? (
+            ) : search && folders.error ? (
               <li className="flex items-center gap-3 px-3 py-2 text-sm">
                 <span className="flex-1">Could not load folders.</span>
                 <RetryButton query={folders} variant="outline" size="sm" />
@@ -127,9 +132,9 @@ export function MoveDialog({
                 );
               })
             )}
-            {folders.data?.has_more ? (
+            {!search ? (
               <li className="px-3 py-2 text-sm text-[var(--color-fg-muted)]">
-                Search to find more folders.
+                Search for a folder you can edit.
               </li>
             ) : null}
             {search && folders.isSuccess && destinations.length === 0 ? (

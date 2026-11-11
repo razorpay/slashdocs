@@ -206,24 +206,32 @@ func (h handlers) listFolders(c *gin.Context) {
 	q, hasQuery := c.GetQuery("q")
 	minRoleRaw := c.Query("min_role")
 	if hasQuery || minRoleRaw != "" {
-		includeOrgWide := h.deps.deployment == DeploymentOrg
-		minRole, ok := parseFolderSearchRole(minRoleRaw)
-		if !ok {
-			badRequest(c, "invalid min_role")
-			return
-		}
-		folders, err := h.deps.repository.SearchFoldersByTitle(c.Request.Context(), *current(c), q, includeOrgWide, minRole, 25)
-		if err != nil {
-			internalErr(c, err)
-			return
-		}
-		items := make([]repo.FolderEntry, 0, len(folders))
-		for i := range folders {
-			items = append(items, repo.FolderEntry{Type: "folder", Folder: &folders[i]})
-		}
-		c.JSON(http.StatusOK, folderListResponse{Items: items, HasMore: len(folders) >= 25})
+		h.searchFolders(c, q)
 		return
 	}
+	h.browseFolders(c)
+}
+
+func (h handlers) searchFolders(c *gin.Context, q string) {
+	includeOrgWide := h.deps.deployment == DeploymentOrg
+	minRole, ok := parseFolderSearchRole(c.Query("min_role"))
+	if !ok {
+		badRequest(c, "invalid min_role")
+		return
+	}
+	folders, err := h.deps.repository.SearchFoldersByTitle(c.Request.Context(), *current(c), q, includeOrgWide, minRole, 25)
+	if err != nil {
+		internalErr(c, err)
+		return
+	}
+	items := make([]repo.FolderEntry, 0, len(folders))
+	for i := range folders {
+		items = append(items, repo.FolderEntry{Type: "folder", Folder: &folders[i]})
+	}
+	c.JSON(http.StatusOK, folderListResponse{Items: items, HasMore: len(folders) >= 25})
+}
+
+func (h handlers) browseFolders(c *gin.Context) {
 	folderID := c.Query("folder_id")
 	if folderID != "" {
 		if !h.needFolderRole(c, folderID, repo.RoleViewer) {
@@ -415,7 +423,7 @@ func folderParentUpdate(raw json.RawMessage) (*string, error) {
 func respondFolderUpdateError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, repo.ErrConflict):
-		c.JSON(http.StatusConflict, errorResponse("conflict", "A folder with that name already exists in the destination.", nil))
+		c.JSON(http.StatusConflict, errorResponse("conflict", "The folder cannot be moved there. The destination may already contain that name, or the move may create an invalid folder hierarchy.", nil))
 	case errors.Is(err, repo.ErrNotFound):
 		notFound(c)
 	default:
@@ -464,17 +472,12 @@ func (h handlers) folderAccess(c *gin.Context) {
 	c.JSON(http.StatusOK, accessResponse{Items: items, CurrentRole: chain[len(chain)-1].Role, CanonicalOwner: samePrincipal(*current(c), folder.Owner)})
 }
 func (h handlers) documentAccess(c *gin.Context) {
+	if !h.needDocRole(c, c.Param("id"), repo.RoleViewer) {
+		return
+	}
 	role, err := h.deps.repository.RoleForDocument(c.Request.Context(), *current(c), c.Param("id"))
 	if err != nil {
 		internalErr(c, err)
-		return
-	}
-	if !atLeast(role, repo.RoleViewer) {
-		if groupMembershipUnavailable(current(c)) {
-			groupMembershipUnavailableResponse(c)
-			return
-		}
-		forbidden(c, "viewer role required")
 		return
 	}
 	document, err := h.deps.repository.GetDocument(c.Request.Context(), c.Param("id"))

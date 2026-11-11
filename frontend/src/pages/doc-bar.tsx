@@ -531,6 +531,16 @@ export function DocBar({
           />
         </>
       ) : null}
+      {canEdit ? (
+        <MoveDialog
+          open={moveOpen}
+          onOpenChange={setMoveOpen}
+          type="document"
+          id={docId}
+          title={title}
+          parentId={parentFolderId}
+        />
+      ) : null}
       {accountUser && (
         <div className="hidden shrink-0 items-center gap-3 sm:flex">
           <span aria-hidden="true" className="h-4 w-px bg-[var(--color-border)]" />

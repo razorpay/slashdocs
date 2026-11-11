@@ -91,7 +91,13 @@ export function useMoveResource() {
         return (await api.updateFolder(id, undefined, to)).permission_warning?.message;
       }
       if (to)
-        return (await api.moveDocumentToFolder(to, id)).permission_warning?.message;
+        return (
+          await api.moveDocumentToFolder(
+            to,
+            id,
+            from ? { kind: "folder", folder_id: from } : { kind: "root" },
+          )
+        ).permission_warning?.message;
       await api.moveDocumentToRoot(from!, id);
     },
     onSuccess: (warning, { type, id, from, to, toTitle }) => {
@@ -113,12 +119,17 @@ export function useMoveResource() {
           },
         });
     },
-    onError: (e) =>
+    onError: (e, { type, id }) => {
+      if (type === "document" && e instanceof APIError && e.code === "source_changed") {
+        qc.invalidateQueries({ queryKey: queryKeys.document(id) });
+        qc.invalidateQueries({ queryKey: queryKeys.foldersAll() });
+      }
       toast.error(
         e instanceof APIError && e.status === 403
           ? "You cannot move it there. Ask for edit access to the folder."
           : errorMessage(e, "Move failed"),
-      ),
+      );
+    },
   });
   return { move, warning, clearWarning: () => setWarning(null) };
 }

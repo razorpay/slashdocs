@@ -389,8 +389,26 @@ func TestFolderOwnerIsEditorOfContentsOthersOwn(t *testing.T) {
 	}
 	rr = do(t, e.h, http.MethodPatch, "/v1/documents/"+docID, `{"title":"Edited"}`, owner)
 	assertStatus(t, rr, http.StatusForbidden)
+	rr = do(t, e.h, http.MethodPatch, "/v1/folders/"+subID, `{"title":"Renamed by ancestor owner"}`, owner)
+	assertStatus(t, rr, http.StatusForbidden)
+	otherRootID := createFolder(t, e, `{"title":"Other root"}`, owner["X-Test-Principal"])
+	rr = do(t, e.h, http.MethodPatch, "/v1/folders/"+subID, `{"parent_folder_id":"`+otherRootID+`"}`, owner)
+	assertStatus(t, rr, http.StatusForbidden)
 	rr = do(t, e.h, http.MethodDelete, "/v1/folders/"+subID, "", owner)
 	assertStatus(t, rr, http.StatusForbidden)
+
+	// Search uses the same single-owner rule as mutation authorization: the
+	// owner of an ancestor sees this folder as an editor, never as its owner.
+	rr = do(t, e.h, http.MethodGet, "/v1/folders?q=Sub&min_role=editor", "", owner)
+	assertStatus(t, rr, http.StatusOK)
+	if !strings.Contains(rr.Body.String(), subID) {
+		t.Fatalf("editor search omitted descendant: %s", rr.Body.String())
+	}
+	rr = do(t, e.h, http.MethodGet, "/v1/folders?q=Sub&min_role=owner", "", owner)
+	assertStatus(t, rr, http.StatusOK)
+	if strings.Contains(rr.Body.String(), subID) {
+		t.Fatalf("owner search promoted ancestor ownership: %s", rr.Body.String())
+	}
 	rr = do(t, e.h, http.MethodGet, "/v1/documents?q=note", "", owner)
 	assertStatus(t, rr, http.StatusOK)
 	if !strings.Contains(rr.Body.String(), docID) {
