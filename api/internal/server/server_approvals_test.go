@@ -938,6 +938,10 @@ func TestFolderOwnerApproverStaysWhenAGrantIsRevoked(t *testing.T) {
 	e := newTestEnv(t)
 	ctx := context.Background()
 	folderID := createFolder(t, e, `{"title":"Theirs"}`, principalHeader(fixtureStranger))
+	rr := do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/grants",
+		`{"address":"`+fixtureOwner.Email+`","role":"editor"}`,
+		map[string]string{"X-Test-Principal": principalHeader(fixtureStranger), "Content-Type": "application/json"})
+	assertStatus(t, rr, http.StatusCreated)
 	if _, err := e.store.MoveDocumentToFolder(ctx, fixtureOwner, folderID, e.doc.ID); err != nil {
 		t.Fatal(err)
 	}
