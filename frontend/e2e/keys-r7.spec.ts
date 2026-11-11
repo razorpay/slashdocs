@@ -18,7 +18,10 @@ function documentHTML(title: string, step = "Write the notes.") {
 </html>`;
 }
 
-test("Show changes flashes the list item that changed", async ({ page, slashdocs }) => {
+test("a small change made elsewhere flashes the list item that changed", async ({
+  page,
+  slashdocs,
+}) => {
   const title = uniqueName("Change flash");
   const document = await slashdocs.createDocument(title, documentHTML(title));
   await page.goto(`/app/d/${document.id}`);
@@ -29,34 +32,34 @@ test("Show changes flashes the list item that changed", async ({ page, slashdocs
     document.id,
     documentHTML(title, "Write the notes again."),
   );
-  await page.getByRole("button", { name: "Show changes" }).click();
   await expect(doc.locator("#step")).toHaveText("Write the notes again.");
   await expect(doc.locator(".slashdocs-text-flash")).toHaveCount(1);
 });
 
-test("the offer of changes made elsewhere waits for the reader", async ({
+test("the offer of a large change made elsewhere waits for the reader", async ({
   page,
   slashdocs,
 }) => {
   const title = uniqueName("Changed elsewhere");
   const document = await slashdocs.createDocument(title, documentHTML(title));
   await page.goto(`/app/d/${document.id}`);
-  await expect(renderedDocument(page).locator("#step")).toBeVisible();
+  const step = renderedDocument(page).locator("#step");
+  await expect(step).toBeVisible();
 
-  await slashdocs.pushVersion(
-    document.id,
-    documentHTML(title, "Write the notes again."),
-  );
-  // The offer waits in the doc bar, and does not go by itself.
-  const offer = page.getByRole("button", { name: "Show changes" });
+  const long = "Write the notes again, with each decision of the team. ".repeat(6);
+  await slashdocs.pushVersion(document.id, documentHTML(title, long));
+  // The offer waits at the top of the document, and does not go by itself.
+  const offer = page.getByRole("button", { name: "Show the latest", exact: true });
   await expect(offer).toBeVisible();
-  await expect(
-    page.getByRole("status").getByText("This document changed elsewhere."),
-  ).toBeAttached();
+  await expect(page.getByRole("status").filter({ has: offer }).locator("p")).toHaveText(
+    / updated this document\.$/,
+  );
   await page.waitForTimeout(5000);
   await expect(offer).toBeVisible();
+  await expect(step).toHaveText("Write the notes.");
 
   await offer.click();
+  await expect(step).toHaveText(long.trim());
   await expect(offer).toBeHidden();
 });
 

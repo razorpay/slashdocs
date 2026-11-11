@@ -22,7 +22,7 @@ function documentHTML(title: string, step: string) {
 </html>`;
 }
 
-test("Show changes flashes the changed item while an open pin scrolls the page", async ({
+test("a change made elsewhere flashes the changed item while a pin is open", async ({
   page,
   slashdocs,
 }) => {
@@ -31,26 +31,27 @@ test("Show changes flashes the changed item while an open pin scrolls the page",
   const pin = await slashdocs.createComment(document.id, "Look here", {
     point: { target: "chart", x: 0.5, y: 0.5 },
   });
-  // The open pin centers itself on each load, with a scroll that comes after
-  // the flash.
+  // The open pin centers itself on a load. Each change goes into the page in
+  // place, with no load, so the page stays where the reader scrolled it.
   await page.goto(`/app/d/${document.id}?comment=${pin.id}`);
   const doc = renderedDocument(page);
   await expect(doc.locator("#step")).toHaveText("Write the notes once.");
+  const scrollY = () => doc.locator("body").evaluate(() => window.scrollY);
+  await doc.locator("body").evaluate(() => window.scrollTo(0, 37));
 
   for (const step of ["once more", "a 4th time", "a 5th time"]) {
     await slashdocs.pushVersion(document.id, documentHTML(title, step));
-    await page.getByRole("button", { name: "Show changes" }).click();
     await expect(doc.locator("#step")).toHaveText(`Write the notes ${step}.`);
     const flash = doc.locator(".slashdocs-text-flash");
-    await expect(flash).toHaveCount(1);
-    // After the scroll of the pin, the flash is still on the changed words.
-    await page.waitForTimeout(400);
     await expect(flash).toHaveCount(1);
     const [box, words] = await Promise.all([
       flash.boundingBox(),
       doc.locator("#step").boundingBox(),
     ]);
     expect(Math.abs(box!.y - words!.y)).toBeLessThan(words!.height);
+    expect(await scrollY()).toBe(37);
+    // The flash goes before the next change comes.
+    await expect(flash).toHaveCount(0);
   }
 });
 
