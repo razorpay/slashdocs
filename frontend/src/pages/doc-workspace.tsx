@@ -49,6 +49,7 @@ import { Keycast } from "./doc-keycast";
 import { ShortcutsDialog } from "./doc-shortcuts";
 import { useCommentLink } from "./use-comment-link";
 import { useCommentReads } from "./use-comment-reads";
+import { useResolveThread } from "./use-resolve-thread";
 import { plainKey } from "./use-comment-pins";
 
 const THEME_LABELS = { light: "Light", dark: "Dark", system: "System" } as const;
@@ -225,6 +226,7 @@ export function DocWorkspace({
     setPlacingPin(false);
   }, [docId]);
 
+  const { leaving, resolveThread } = useResolveThread(docId, setActiveComment);
   const [jump, setJump] = useState<{ id: string }>();
   const jumpToComment = useCallback((id: string) => {
     setActiveComment(id);
@@ -505,6 +507,8 @@ export function DocWorkspace({
       setActiveComment,
       jumpToComment,
       jump,
+      resolveThread,
+      leaving,
       readThread,
       unanchoredComments,
       setUnanchoredComments,
@@ -557,6 +561,8 @@ export function DocWorkspace({
       activeComment,
       jumpToComment,
       jump,
+      resolveThread,
+      leaving,
       readThread,
       unanchoredComments,
       setUnanchoredComments,

@@ -1,4 +1,4 @@
-import type { MotionProps } from "framer-motion";
+import type { MotionProps, TargetAndTransition } from "framer-motion";
 
 // The motion of the floating panels that React mounts and unmounts. They
 // match the CSS of the Radix dialogs, sheets and menus in styles.css: a
@@ -51,13 +51,41 @@ export const rise: MotionProps = {
   },
 };
 
+// A reader who asks for less motion gets no scale or travel, which
+// MotionConfig takes away, and fades of at most 100 ms, which this gives.
+const fadeFor = (seconds: number, reduced: boolean | null) =>
+  reduced ? Math.min(seconds, 0.1) : seconds;
+
 // The content of a popover gives way to the next thread's, as J and K go to
 // it.
-export const crossFade: MotionProps = {
+export const crossFade = (reduced: boolean | null): MotionProps => ({
   initial: { opacity: 0 },
-  animate: { opacity: 1, transition: { duration: 0.12, ease: "easeOut" } },
-  exit: { opacity: 0, transition: { duration: 0.12, ease: "easeIn" } },
-};
+  animate: {
+    opacity: 1,
+    transition: { duration: fadeFor(0.12, reduced), ease: "easeOut" },
+  },
+  exit: {
+    opacity: 0,
+    transition: { duration: fadeFor(0.12, reduced), ease: "easeIn" },
+  },
+});
+
+// The popover of a thread that the reader resolved shrinks a little as it
+// fades.
+export const resolvedOut = (reduced: boolean | null): TargetAndTransition => ({
+  opacity: 0,
+  scale: 0.96,
+  transition: { duration: fadeFor(0.15, reduced), ease: "easeIn" },
+});
+
+// A row that leaves a list fades, and the rows under it close up.
+export const rowOut = (reduced: boolean | null): MotionProps => ({
+  exit: {
+    opacity: 0,
+    transition: { duration: fadeFor(0.18, reduced), ease: "easeIn" },
+  },
+  transition: { layout: { duration: 0.18, ease: [0.23, 1, 0.32, 1] } },
+});
 
 // One label gives way to another in the same place.
 export const swap: MotionProps = {

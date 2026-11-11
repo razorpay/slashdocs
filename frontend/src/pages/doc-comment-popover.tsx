@@ -9,7 +9,13 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { AnimatePresence, motion, useIsPresent } from "framer-motion";
+import {
+  AnimatePresence,
+  motion,
+  useIsPresent,
+  useReducedMotion,
+  type TargetAndTransition,
+} from "framer-motion";
 import { SheetHandle } from "@/components/ui/sheet";
 import { keepToastsAbove } from "@/components/ui/toaster";
 import { cn } from "@/lib/cn";
@@ -18,7 +24,7 @@ import { anchorLabel } from "@/lib/comment-pins";
 import { useLostWords } from "@/lib/comment-drafts";
 import { principalLabel } from "@/lib/principals";
 import { useIsMobile } from "@/lib/use-media-query";
-import { crossFade, popIn, sheetUp } from "@/lib/motion";
+import { crossFade, popIn, resolvedOut, sheetUp } from "@/lib/motion";
 import { useDoc } from "./doc-context";
 import { CommentComposer, CommentThread, DeletedThread } from "./doc-comments";
 import { PersonAvatar } from "./doc-comment-parts";
@@ -135,6 +141,13 @@ function Popover({
     onClose();
   };
   const enter = mobile ? sheetUp : popIn;
+  const reduced = useReducedMotion();
+  // A popover whose thread the reader resolved leaves its own way; a sheet
+  // goes down as it always does.
+  const exits = {
+    exit: (resolved: boolean) =>
+      resolved && !mobile ? resolvedOut(reduced) : (enter.exit as TargetAndTransition),
+  };
   // It grows from the side of its anchor.
   const origin =
     at && anchor
@@ -144,6 +157,8 @@ function Popover({
     <motion.div
       ref={ref}
       {...enter}
+      variants={exits}
+      exit="exit"
       // It waits, hidden, until it knows where it goes.
       animate={mobile || at ? enter.animate : enter.initial}
       role="dialog"
@@ -199,6 +214,7 @@ export function CommentPopovers({
     docId,
     activeComment,
     setActiveComment,
+    leaving,
     comments,
     commentsLoading,
     commentsError,
@@ -288,8 +304,9 @@ export function CommentPopovers({
   useEffect(() => {
     shown.current = !!open;
   });
+  const reduced = useReducedMotion();
   return (
-    <AnimatePresence>
+    <AnimatePresence custom={!!leaving}>
       {open ? (
         // One popover for every thread: it moves to the next one, and its
         // content cross-fades.
@@ -304,7 +321,7 @@ export function CommentPopovers({
           onClose={close}
         >
           <AnimatePresence initial={false} mode="popLayout">
-            <motion.div key={activeComment} {...crossFade}>
+            <motion.div key={activeComment} {...crossFade(reduced)}>
               {draft ? (
                 <CommentComposer
                   draft={draft}

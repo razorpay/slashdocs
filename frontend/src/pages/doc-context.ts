@@ -66,6 +66,10 @@ export type DocContextValue = {
   jumpToComment: (id: string) => void;
   // The last jump, a new object each time, so the same thread pulses again.
   jump?: { id: string };
+  // Resolves a thread: its check draws, it leaves, and a toast offers Undo.
+  resolveThread: (id: string) => void;
+  // The thread that the reader resolved, on its way out.
+  leaving?: string;
   // The popover showed the open thread long enough for the reader to read it.
   readThread: (id: string) => void;
   // Ids of comments and drafts that the bridge could not place in the version

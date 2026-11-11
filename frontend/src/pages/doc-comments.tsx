@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { CloudOff, MapPin, MessageSquareText, X } from "lucide-react";
 import { api, type Comment, type Principal } from "@/api";
 import { Badge } from "@/components/ui/badge";
@@ -37,6 +38,7 @@ import {
 } from "@/lib/comment-drafts";
 import { emptyMentionDraft, type MentionDraft } from "@/lib/comment-mentions";
 import { COMMENT_FILTERS, COMMENT_STATUS, matchesCommentFilter } from "@/lib/constants";
+import { rowOut } from "@/lib/motion";
 import { useSelf } from "@/lib/hooks";
 import { useDoc } from "./doc-context";
 import {
@@ -467,8 +469,10 @@ export function CommentsList({
     movedPins,
     activeComment,
     commentPositions,
+    leaving,
   } = useDoc();
   const self = useSelf(principal);
+  const row = rowOut(useReducedMotion());
   const [filter, setFilter] = useState<ListFilter>("all");
   // The open thread is marked in the list, and scrolls into view.
   const activeRow = useRef<HTMLButtonElement>(null);
@@ -488,7 +492,11 @@ export function CommentsList({
     comments.filter((c) =>
       filter === "for you"
         ? mentions(c, principal)
-        : matchesCommentFilter(c.status, filter),
+        : // A thread that the reader resolves leaves the open ones at once.
+          matchesCommentFilter(
+            c.id === leaving ? COMMENT_STATUS.resolved : c.status,
+            filter,
+          ),
     ),
     commentPositions,
   );
@@ -633,58 +641,66 @@ export function CommentsList({
             <CommentsEmptyState filter={filter} signedOut={!!signIn} />
           )
         ) : (
-          <ul className="space-y-1">
-            {items.map((c) => (
-              <li key={c.id}>
-                <button
-                  ref={c.id === activeComment ? activeRow : undefined}
-                  type="button"
-                  onClick={() => onPick(c.id)}
-                  aria-current={c.id === activeComment ? "true" : undefined}
-                  className={LIST_ROW}
-                >
-                  <span className="flex items-center gap-2">
-                    <PersonAvatar who={c.author} />
-                    <span className="min-w-0 truncate text-xs font-semibold">
-                      {principalLabel(c.author)}
-                    </span>
-                    {c.created_at ? (
-                      <span className="shrink-0 text-[11px] text-[var(--color-fg-muted)]">
-                        <RelativeTime iso={c.created_at} />
+          // A new filter shows its rows at once: only a row that leaves them,
+          // as a thread that the reader resolves, goes out.
+          <ul key={filter} className="space-y-1">
+            <AnimatePresence initial={false} mode="popLayout">
+              {items.map((c) => (
+                <motion.li key={c.id} layout="position" {...row}>
+                  <button
+                    ref={c.id === activeComment ? activeRow : undefined}
+                    type="button"
+                    onClick={() => onPick(c.id)}
+                    aria-current={c.id === activeComment ? "true" : undefined}
+                    className={LIST_ROW}
+                  >
+                    <span className="flex items-center gap-2">
+                      <PersonAvatar who={c.author} />
+                      <span className="min-w-0 truncate text-xs font-semibold">
+                        {principalLabel(c.author)}
                       </span>
-                    ) : null}
-                    <AgentRequestBadge c={c} />
-                    <span className="ml-auto flex shrink-0 items-center gap-2 empty:hidden">
-                      {c.status === COMMENT_STATUS.resolved ? (
-                        <span className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-                          Resolved
+                      {c.created_at ? (
+                        <span className="shrink-0 text-[11px] text-[var(--color-fg-muted)]">
+                          <RelativeTime iso={c.created_at} />
                         </span>
                       ) : null}
-                      {c.unread ? (
-                        <span
-                          role="img"
-                          aria-label="Unread"
-                          className="size-2 rounded-full bg-[var(--color-accent)]"
-                        />
+                      <AgentRequestBadge c={c} />
+                      <span className="ml-auto flex shrink-0 items-center gap-2 empty:hidden">
+                        {c.status === COMMENT_STATUS.resolved ? (
+                          <span className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                            Resolved
+                          </span>
+                        ) : null}
+                        {c.unread ? (
+                          <span
+                            role="img"
+                            aria-label="Unread"
+                            className="size-2 rounded-full bg-[var(--color-accent)]"
+                          />
+                        ) : null}
+                      </span>
+                    </span>
+                    <span className="ml-7 block">
+                      <Quote text={anchorLabel(c)} />
+                      <span className="mt-1 block">
+                        <CommentBody text={c.body} mentions={c.mentions} preview />
+                      </span>
+                      <PlacementBadge
+                        lost={lost(c)}
+                        moved={moved(c)}
+                        className="mt-1"
+                      />
+                      {c.replies?.length ? (
+                        <span className="mt-0.5 block text-xs text-[var(--color-fg-muted)]">
+                          {c.replies.length}{" "}
+                          {c.replies.length === 1 ? "reply" : "replies"}
+                        </span>
                       ) : null}
                     </span>
-                  </span>
-                  <span className="ml-7 block">
-                    <Quote text={anchorLabel(c)} />
-                    <span className="mt-1 block">
-                      <CommentBody text={c.body} mentions={c.mentions} preview />
-                    </span>
-                    <PlacementBadge lost={lost(c)} moved={moved(c)} className="mt-1" />
-                    {c.replies?.length ? (
-                      <span className="mt-0.5 block text-xs text-[var(--color-fg-muted)]">
-                        {c.replies.length}{" "}
-                        {c.replies.length === 1 ? "reply" : "replies"}
-                      </span>
-                    ) : null}
-                  </span>
-                </button>
-              </li>
-            ))}
+                  </button>
+                </motion.li>
+              ))}
+            </AnimatePresence>
           </ul>
         )}
       </div>
