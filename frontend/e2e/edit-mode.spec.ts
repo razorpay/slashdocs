@@ -273,7 +273,11 @@ test("a dragged pin shows once, under the pointer, while the page changes, and l
   await page.mouse.up();
   await page.waitForTimeout(300);
   // The pin was larger while held, around its tip. Its face does not move.
-  const landed = (await pins.boundingBox())!;
-  expect(Math.abs(landed.x - held.x)).toBeLessThan(4);
-  expect(Math.abs(landed.y - held.y)).toBeLessThan(4);
+  // The drop and the save draw the pin again as a new button, in one frame,
+  // so a measure that meets the swap tries again.
+  const off = async () => {
+    const landed = await pins.boundingBox();
+    return landed && Math.max(Math.abs(landed.x - held.x), Math.abs(landed.y - held.y));
+  };
+  await expect.poll(off).toBeLessThan(4);
 });
