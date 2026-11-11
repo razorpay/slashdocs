@@ -126,6 +126,27 @@ describe("HistoryDialog", () => {
     expect(onSelectVersion).not.toHaveBeenCalled();
   });
 
+  it("names everyone who typed in a live session, the newest author first", async () => {
+    const ravi: Principal = { type: "user", id: "ravi", name: "Ravi" };
+    const live: Version[] = [
+      { ...versions[0], live: true },
+      { ...versions[1], created_by: ravi, live: true },
+    ];
+    const dialog = renderHistory(
+      "ver_2",
+      vi.fn(async () => json({ items: live })),
+    );
+    expect(await within(dialog).findByText(/^Ravi and Ana · since /)).toBeVisible();
+    expect(
+      within(dialog).getByRole("button", { name: "Show 1 earlier edit" }),
+    ).toBeVisible();
+  });
+
+  it("names the one author of a session", async () => {
+    const dialog = renderHistory("ver_2");
+    expect(await within(dialog).findByText(/^Ana · since /)).toBeVisible();
+  });
+
   it("gives each earlier edit its own time, small and muted", async () => {
     const dialog = renderHistory("ver_2");
     fireEvent.click(

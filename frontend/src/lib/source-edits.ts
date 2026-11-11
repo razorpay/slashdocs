@@ -20,18 +20,28 @@ export type Replacement = {
   new_html: string;
 };
 
+// A change replaces the text from start to end of a source with text. The
+// offsets count UTF-16 code units, as JavaScript strings and parse5 count.
+export type Change = { start: number; end: number; text: string };
+
 // A source and its parse5 tree. Elements are found by the offset of their
-// start tag. Treat it as opaque: only this module reads it.
+// start tag. Treat it as opaque: only this module and source-patch.ts read
+// it.
 export type SourceTree = {
   readonly source: string;
   readonly document: P.Document;
   readonly elements: Map<number, P.Element>;
+  // The offsets of the start tags that the parser made more than one element
+  // for, such as a <b> that closes too late.
+  readonly copied: Set<number>;
   // The attribute names that each tag name has somewhere in the source.
   readonly attributes: Map<string, Set<string>>;
   readonly decode: (reference: string) => string;
+  // Parses another source with the parser that this tree loaded.
+  readonly parse: (source: string) => SourceTree;
 };
 
-type Child =
+export type Child =
   | { element: P.Element }
   | { kind: "text" | "comment" | "other"; start: number; end: number };
 
@@ -50,15 +60,22 @@ const TEXT_UNIT = /&(?:#\d+;?|#x[\da-f]+;?|[a-z][a-z\d]*;?)|\r\n?|[\s\S]/giu;
 // parseSource parses a version source. It loads parse5 only when it is first
 // needed, because only editors need it.
 export async function parseSource(source: string): Promise<SourceTree> {
-  const { parse, parseFragment } = await import("parse5");
-  const document = parse(source, { sourceCodeLocationInfo: true });
+  return treeOf(await import("parse5"), source);
+}
+
+function treeOf(parser: typeof import("parse5"), source: string): SourceTree {
+  const document = parser.parse(source, { sourceCodeLocationInfo: true });
   const elements = new Map<number, P.Element>();
+  const copied = new Set<number>();
   const attributes = new Map<string, Set<string>>();
   const visit = (node: P.ParentNode) => {
     for (const child of node.childNodes) {
       if (!("tagName" in child)) continue;
       const start = child.sourceCodeLocation?.startTag?.startOffset;
-      if (start !== undefined) elements.set(start, child);
+      if (start !== undefined) {
+        if (elements.has(start)) copied.add(start);
+        elements.set(start, child);
+      }
       const names = attributes.get(child.tagName) ?? new Set();
       child.attrs.forEach((attr) => names.add(attr.name));
       attributes.set(child.tagName, names);
@@ -70,13 +87,14 @@ export async function parseSource(source: string): Promise<SourceTree> {
   const decode = (reference: string) => {
     let text = decoded.get(reference);
     if (text === undefined) {
-      const node = parseFragment(reference).childNodes[0];
+      const node = parser.parseFragment(reference).childNodes[0];
       text = node && "value" in node ? node.value : "";
       decoded.set(reference, text);
     }
     return text;
   };
-  return { source, document, elements, attributes, decode };
+  const parse = (other: string) => treeOf(parser, other);
+  return { source, document, elements, copied, attributes, decode, parse };
 }
 
 // The reason that a region cannot apply.
@@ -316,7 +334,7 @@ function logicalParent(element: P.Element): P.ParentNode {
 // childrenOf gives the children of parent as the bridge counts them: implied
 // elements are flattened, and adjacent text is one child.
 const children = new WeakMap<P.ParentNode, Child[]>();
-function childrenOf(parent: P.ParentNode): Child[] {
+export function childrenOf(parent: P.ParentNode): Child[] {
   let list = children.get(parent);
   if (list) return list;
   list = [];
@@ -357,35 +375,42 @@ const describe = (element: P.Element) =>
 const refName = (ref: ChildRef) => `child ${ref.index} of ${ref.parent}`;
 
 // replacementsBetween gives the replacements that turn prev into next, at
-// UTF-8 byte offsets of prev: one for each run of words that differs.
-// Separate replacements let the server move each one onto a newer version,
-// so that edits far apart never conflict. Whole words read better in the
-// version history than parts of them, and they never split a surrogate
-// pair.
+// UTF-8 byte offsets of prev: one for each change of wordChanges. Separate
+// replacements let the server move each one onto a newer version.
 export function replacementsBetween(prev: string, next: string): Replacement[] {
+  // The UTF-8 length of prev before at.
+  let at = 0;
+  let byte = 0;
+  return wordChanges(prev, next).map(({ start, end, text }) => {
+    const old_html = prev.slice(start, end);
+    byte += utf8Length(prev.slice(at, start));
+    at = start;
+    return { start: byte, end: byte + utf8Length(old_html), old_html, new_html: text };
+  });
+}
+
+// wordChanges gives the changes that turn prev into next: one for each run
+// of words that differs. Whole words read better in the version history
+// than parts of them, and they never split a surrogate pair.
+export function wordChanges(prev: string, next: string): Change[] {
   if (prev === next) return [];
   const a = prev.match(TOKEN) ?? [];
   const b = next.match(TOKEN) ?? [];
-  const replacements: Replacement[] = [];
+  const changes: Change[] = [];
   // The tokens of prev and next before the end of the last common run, and
-  // the UTF-8 length of those of prev.
+  // the length of those of prev.
   let i = 0;
   let j = 0;
-  let byte = 0;
+  let at = 0;
   for (const [ai, bj, length] of [...commonRuns(a, b), [a.length, b.length, 0]]) {
-    const old_html = a.slice(i, ai).join("");
+    const end = at + a.slice(i, ai).join("").length;
     if (ai > i || bj > j)
-      replacements.push({
-        start: byte,
-        end: byte + utf8Length(old_html),
-        old_html,
-        new_html: b.slice(j, bj).join(""),
-      });
-    byte += utf8Length(a.slice(i, ai + length).join(""));
+      changes.push({ start: at, end, text: b.slice(j, bj).join("") });
+    at = end + a.slice(ai, ai + length).join("").length;
     i = ai + length;
     j = bj + length;
   }
-  return replacements;
+  return changes;
 }
 
 const encoder = new TextEncoder();

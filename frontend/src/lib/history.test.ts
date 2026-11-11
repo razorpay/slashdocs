@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { Principal, Version } from "@/api";
-import { historySessions, withoutUndone } from "./history";
+import { historySessions, withoutUndone, type HistorySession } from "./history";
 
 const ana: Principal = { type: "user", id: "ana" };
+const ravi: Principal = { type: "user", id: "ravi" };
 const bot: Principal = { type: "service_account", id: "bot" };
 
 function entry(
@@ -21,6 +22,7 @@ function entry(
 }
 
 const ids = (versions: Version[]) => versions.map((v) => v.id);
+const authors = (session: HistorySession) => session.authors.map((a) => a.id);
 
 describe("historySessions", () => {
   it("groups one person's entries until someone else edits or they pause", () => {
@@ -35,12 +37,44 @@ describe("historySessions", () => {
       ],
       5 * 60_000,
     );
-    expect(sessions.map((s) => [s.author?.id, ids(s.entries)])).toEqual([
-      ["ana", ["ver_6"]],
-      ["bot", ["ver_5"]],
-      ["ana", ["ver_4"]],
-      ["ana", ["ver_3", "ver_2"]],
-      ["bot", ["ver_1"]],
+    expect(sessions.map((s) => [authors(s), ids(s.entries)])).toEqual([
+      [["ana"], ["ver_6"]],
+      [["bot"], ["ver_5"]],
+      [["ana"], ["ver_4"]],
+      [["ana"], ["ver_3", "ver_2"]],
+      [["bot"], ["ver_1"]],
+    ]);
+  });
+
+  it("groups live entries of several people, and names the newest author first", () => {
+    const live = (number: number, by: Principal, minute: number) => ({
+      ...entry(number, by, minute),
+      live: true,
+    });
+    const sessions = historySessions([
+      entry(1, bot, 0),
+      live(2, ana, 1),
+      live(3, ravi, 2),
+      live(4, ana, 3),
+      live(5, ravi, 4),
+      // A push is not live: it starts a session, also less than the gap after.
+      entry(6, bot, 5),
+      // A live entry of the same person joins their entry that is not live.
+      entry(7, ana, 6),
+      live(8, ana, 7),
+      // A long pause ends a live session.
+      live(9, ravi, 30),
+      { ...entry(10, ravi, 31), created_by: undefined, live: true },
+    ]);
+    expect(sessions.map((s) => [authors(s), ids(s.entries)])).toEqual([
+      [["ravi"], ["ver_10", "ver_9"]],
+      [["ana"], ["ver_8", "ver_7"]],
+      [["bot"], ["ver_6"]],
+      [
+        ["ravi", "ana"],
+        ["ver_5", "ver_4", "ver_3", "ver_2"],
+      ],
+      [["bot"], ["ver_1"]],
     ]);
   });
 
@@ -99,6 +133,17 @@ describe("withoutUndone", () => {
       entry(2, ana, 1, "b"),
       entry(3, bot, 2, "c"),
       entry(4, ana, 3, "a"),
+    ];
+    expect(ids(withoutUndone(versions, new Set()))).toEqual(ids(versions));
+  });
+
+  it("keeps the edits of two people who type in turns", () => {
+    // Ana types x and Ravi takes it out: no one undid their own edit.
+    const versions = [
+      entry(1, ana, 0, "a"),
+      { ...entry(2, ana, 1, "b"), live: true },
+      { ...entry(3, ravi, 2, "a"), live: true },
+      { ...entry(4, ana, 3, "c"), live: true },
     ];
     expect(ids(withoutUndone(versions, new Set()))).toEqual(ids(versions));
   });

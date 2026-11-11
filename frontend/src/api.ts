@@ -48,6 +48,19 @@ export type Version = {
   change_summary?: string;
   sha256?: string;
   created_at?: string;
+  // Whether the browser editor made the version, as live typing does.
+  live?: boolean;
+};
+// The changes from one version of a document to its current version. The
+// replacements are at UTF-8 byte offsets of the source of from_version_id.
+// live says that the browser editor made every version after it, and
+// authors are the people who made those versions, the newest first.
+export type DocumentChanges = {
+  version_id: string;
+  from_version_id: string;
+  replacements: Replacement[];
+  live: boolean;
+  authors: Principal[];
 };
 export type GitHubStatus = {
   connected: boolean;
@@ -261,8 +274,9 @@ export type DocumentKVEvent = {
   changes: DocumentKVChange[];
   updated_at?: string;
   updated_by?: Principal;
-  // Stream events other than KV changes set kind; presence and cursor events
-  // carry data.
+  // Stream events other than KV changes set kind. Presence and cursor events
+  // carry data, and a document event carries data: { version_id }, the
+  // current version.
   kind?: "kv" | "document" | "comments" | "approvals" | "presence" | "cursor";
   data?: unknown;
 };
@@ -280,14 +294,16 @@ export type DocumentPresence = {
 // zooms itself. It is absent when the element is not zoomed.
 export type CursorPlace = { path: string; x: number; y: number; z?: number };
 // Where a viewer's pointer is, in v the place at the center of their view,
-// which those who follow them show, in m their cursor chat message, and in e
-// the path of the block that holds their caret while they edit. A hidden spot
-// means that the pointer left the document; it may still carry the view and
-// the block.
+// which those who follow them show, in m their cursor chat message, in e the
+// path of the block that holds their caret while they edit, and in c the
+// offset of the caret in the text of that block, in UTF-16 code units. A
+// hidden spot means that the pointer left the document; it may still carry
+// the view, the block and the caret.
 export type CursorSpot = CursorPlace & {
   v?: CursorPlace;
   m?: string;
   e?: string;
+  c?: number;
   hidden?: boolean;
 };
 // A pointer position at time t, in milliseconds on the sender's clock.
@@ -484,9 +500,22 @@ export const api = {
       replacements: Replacement[];
     },
   ) =>
-    request<Version & { base_version_id: string; rebased: boolean }>(
-      `/v1/documents/${doc}/source-edits`,
-      { method: "POST", body: JSON.stringify(input) },
+    request<
+      Version & {
+        base_version_id: string;
+        rebased: boolean;
+        // With rebased: what turns the source that the caller made into the
+        // source of the new version, the changes of the other people.
+        others?: Replacement[];
+      }
+    >(`/v1/documents/${doc}/source-edits`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  // The changes from the version `from` to the current version.
+  documentChanges: (doc: string, from: string) =>
+    request<DocumentChanges>(
+      `/v1/documents/${doc}/changes?from=${encodeURIComponent(from)}`,
     ),
   // Saves the content of an earlier version as the newest one.
   restoreVersion: (doc: string, version: string) =>
