@@ -28,6 +28,7 @@ import {
   settled,
   slide,
 } from "./dom.ts";
+import type { Patch } from "./source-pieces.ts";
 import { startTextEditing, type TextEditor } from "./text-editing.ts";
 import { BRIDGE_UI, elementOf, REFUSED } from "./structure.ts";
 import { probe, startScriptText, type ScriptText } from "./script-text.ts";
@@ -559,7 +560,8 @@ type Theme = "dark" | "light";
   const DRAFT_MS = 100;
   let draftTimer: ReturnType<typeof setTimeout> | undefined;
 
-  // textChanges gives the edits on screen and the scroll of the document.
+  // textChanges gives the edits on screen, the count of user operations that
+  // made them, and the scroll of the document.
   // A take starts the next save: the highlights of the changed blocks come
   // back.
   function textChanges(take: boolean) {
@@ -569,6 +571,7 @@ type Theme = "dark" | "light";
     if (take) releaseHighlights();
     return {
       regions,
+      edits: textEditor?.edits() ?? 0,
       scripts: scriptText?.take() ?? [],
       top: Math.round(doc()?.defaultView?.scrollY ?? 0),
     };
@@ -612,20 +615,61 @@ type Theme = "dark" | "light";
         DRAFT_MS,
       );
     };
-    textEditor = startTextEditing(d, frame.srcdoc, {
-      beforeTouch: holdHighlights,
-      onDirty,
-      // A hint at the script text already says why it does not change.
-      onRefused: (reason) =>
-        (reason === REFUSED.script && scriptText?.pulse()) ||
-        post({ type: "slashdocs:text-refused", reason }),
+    textEditor = startTextEditing(
+      d,
+      frame.srcdoc,
+      {
+        beforeTouch: holdHighlights,
+        onDirty,
+        // A hint at the script text already says why it does not change.
+        onRefused: (reason) =>
+          (reason === REFUSED.script && scriptText?.pulse()) ||
+          post({ type: "slashdocs:text-refused", reason }),
+      },
+      textEditing,
+    );
+    if (!textEditor) return;
+    scriptText = startScriptText(d, {
+      source: textEditor.map,
+      post,
+      onChange: () => onDirty(1),
     });
-    if (textEditor)
-      scriptText = startScriptText(d, {
-        source: textEditor.map,
-        post,
-        onChange: () => onDirty(1),
-      });
+    scriptText.setEditable(textEditing);
+  }
+
+  // patchText shows the text of other people in place, without a load. The
+  // app made the patches for the count of user operations that its last take
+  // gave: after one more operation they are stale, and change nothing. A
+  // reader who does not edit gets the editor too, not editable, because a
+  // later save writes every change since the load. The reply is a take.
+  function patchText(data: {
+    requestId: string;
+    edits: number;
+    patches: Patch[];
+    flash?: boolean;
+  }): void {
+    const d = doc();
+    if (!textEditor && d?.body) startEditor(d);
+    const { ranges, ...result } = textEditor?.patch(data.patches, data.edits) ?? {
+      ok: false,
+    };
+    if (d && ranges && data.flash === true)
+      flashRects(
+        d,
+        ranges.flatMap((range) => Array.from(range.getClientRects())),
+        CHANGED_FLASH,
+      );
+    // The text moved under the carets of the other editors.
+    cursors.refresh();
+    parent.postMessage(
+      {
+        type: "slashdocs:text-patched",
+        requestId: data.requestId,
+        ...result,
+        ...textChanges(true),
+      },
+      targetOrigin(),
+    );
   }
 
   function holdHighlights(block: Element): void {
@@ -1462,7 +1506,7 @@ type Theme = "dark" | "light";
     if (!a) return;
     // A click on a link while editing places the caret. Cmd or Ctrl and
     // click follows the link, as in other editors.
-    if (textEditor && !e.metaKey && !e.ctrlKey) {
+    if (textEditing && !e.metaKey && !e.ctrlKey) {
       e.preventDefault();
       return;
     }
@@ -1714,7 +1758,7 @@ type Theme = "dark" | "light";
     const range = selectedRange(d.getSelection());
     // Text selected in the document editor is still document text to
     // comment on; text in the document's own inputs is not.
-    const inEditor = !!textEditor && d.activeElement === d.body;
+    const inEditor = textEditing && d.activeElement === d.body;
     if (!range || (isEditableTarget(d, d.activeElement) && !inEditor)) {
       dismissSelectionAction();
       actionRange = null;
@@ -1770,7 +1814,7 @@ type Theme = "dark" | "light";
         selectionAction!.appendChild(button);
         return button;
       };
-      if (textEditor)
+      if (textEditing)
         for (const format of FORMATS) {
           const button = addAction(format.name, format.icon, () => {
             textEditor?.run(format.type);
@@ -2554,7 +2598,7 @@ type Theme = "dark" | "light";
         parent.postMessage(
           {
             type: "slashdocs:text-focus",
-            on: !!textEditor && isEditableTarget(d, d.activeElement),
+            on: textEditing && isEditableTarget(d, d.activeElement),
           },
           targetOrigin(),
         ),
@@ -2666,6 +2710,14 @@ type Theme = "dark" | "light";
         },
         targetOrigin(),
       );
+      return;
+    }
+    if (
+      e.data.type === "slashdocs:text-patch" &&
+      typeof e.data.requestId === "string" &&
+      Array.isArray(e.data.patches)
+    ) {
+      patchText(e.data);
       return;
     }
     // A saved script string shows its new text in every place, and the

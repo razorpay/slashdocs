@@ -51,3 +51,15 @@ export type Locator = { at: number | null; path: number[] };
 
 // A change to text that a script shows: its text before and after the edit.
 export type ScriptChange = { locator: Locator; before: string; after: string };
+
+// A patch brings the frame to a newer source without a load. It changes the
+// nodes of the original element `in` that lie between its original child
+// elements `after` and `before` to html. null is the start or the end of the
+// element. `in` is null for a body that has no start tag in the source. The
+// offsets are those of the version that the frame loaded.
+export type Patch = {
+  in: number | null;
+  after: number | null;
+  before: number | null;
+  html: string;
+};

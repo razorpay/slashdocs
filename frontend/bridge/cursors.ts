@@ -6,6 +6,7 @@ import {
   reducedMotion,
   scrollBehavior,
 } from "./dom.ts";
+import { BRIDGE_NODE } from "./source-map.ts";
 
 // Live cursors of other viewers. A cursor names the element under the pointer
 // and a place in that element's box, so it lands on the same content in every
@@ -74,6 +75,9 @@ const EDIT_IDLE = 30_000;
 // Where a cursor's label sits from its pointer's tip.
 const LABEL_X = 12;
 const LABEL_Y = 16;
+
+// A caret offset is at most this, like the server takes.
+const MAX_CARET = 1_000_000;
 
 // The zoom that a spot records is clamped to this, like the server does.
 const MAX_ZOOM = 100;
@@ -160,6 +164,78 @@ export function elementAtPath(d: Document, path: string): Element | undefined {
   return el;
 }
 
+// textsOf gives the text nodes of a block in order, without those of the
+// bridge's own nodes, which viewers do not all have.
+function textsOf(block: Element): Text[] {
+  const walker = block.ownerDocument.createTreeWalker(
+    block,
+    NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
+    {
+      acceptNode: (node) =>
+        node.nodeType === Node.ELEMENT_NODE && (node as Element).matches(BRIDGE_NODE)
+          ? NodeFilter.FILTER_REJECT
+          : NodeFilter.FILTER_ACCEPT,
+    },
+  );
+  const texts: Text[] = [];
+  for (let node = walker.nextNode(); node; node = walker.nextNode())
+    if (node.nodeType === Node.TEXT_NODE) texts.push(node as Text);
+  return texts;
+}
+
+// caretOffset counts the characters of the text of block before a caret.
+export function caretOffset(block: Element, node: Node, offset: number): number {
+  const before = block.ownerDocument.createRange();
+  before.setStart(block, 0);
+  before.setEnd(node, offset);
+  // comparePoint gives 0 for the end of a text that is all before the caret.
+  const count = textsOf(block).reduce(
+    (sum, text) =>
+      sum +
+      (text === node
+        ? offset
+        : before.comparePoint(text, text.length)
+          ? 0
+          : text.length),
+    0,
+  );
+  return Math.min(count, MAX_CARET);
+}
+
+// caretLine gives the line of a caret in the viewport, for its offset in the
+// text of block. A caret past the text is at its end. A collapsed range has
+// no box in each browser, so the character before the caret gives the line,
+// or else the one after it. With no such character, as in an empty block,
+// the caret is at the start of the block.
+export function caretLine(block: Element, offset: number): DOMRect {
+  let text: Text | undefined;
+  let at = 0;
+  for (text of textsOf(block)) {
+    at = Math.min(offset, text.length);
+    if (offset <= text.length) break;
+    offset -= text.length;
+  }
+  if (text) {
+    const range = block.ownerDocument.createRange();
+    for (const from of [at - 1, at]) {
+      if (from < 0 || from >= text.length) continue;
+      range.setStart(text, from);
+      range.setEnd(text, from + 1);
+      const rects = Array.from(range.getClientRects()).filter((rect) => rect.height);
+      const rect = from < at ? rects.at(-1) : rects[0];
+      if (rect)
+        return new DOMRect(
+          from < at ? rect.right : rect.left,
+          rect.top,
+          0,
+          rect.height,
+        );
+    }
+  }
+  const box = block.getBoundingClientRect();
+  return new DOMRect(box.left, box.top, 0, box.height);
+}
+
 // scrollerOf gives the nearest ancestor of an element that scrolls, or else
 // the document's scrolling element. Many documents scroll an inner element.
 export function scrollerOf(el: Element): Element {
@@ -189,9 +265,9 @@ const LEFT = { path: "", x: 0, y: 0, hidden: true } as const;
 
 // trackPointer reports where this viewer's pointer is, in v the place at the
 // center of their view with its zoom, which those who follow them show, in m
-// their cursor chat message, and in e the block that holds their caret while
-// they edit. It reports at most once a frame and only when any changes. Null
-// means that the pointer left.
+// their cursor chat message, and in e and c the block that holds their caret
+// while they edit and the caret's offset in its text. It reports at most once
+// a frame and only when any changes. Null means that the pointer left.
 export function trackPointer(
   d: Document,
   report: (spot: CursorSpot | null) => void,
@@ -217,9 +293,11 @@ export function trackPointer(
     if (!keep) anchor = el;
     return anchor && placeIn(anchor, x, y, false);
   };
-  // The path of the block with the caret, while this viewer edits it.
+  // The path of the block with the caret, and the offset of the caret in
+  // the text of the block, while this viewer edits it.
   const editing = () => {
-    const caret = d.getSelection()?.focusNode;
+    const selection = d.getSelection();
+    const caret = selection?.focusNode;
     if (
       !caret ||
       performance.now() - edited >= EDIT_IDLE ||
@@ -227,20 +305,21 @@ export function trackPointer(
     )
       return undefined;
     const block = sharedElement(d, blockOf(caret));
-    return (block && pathOf(block)) || undefined;
+    const e = block && pathOf(block);
+    return e ? { e, c: caretOffset(block, caret, selection.focusOffset) } : undefined;
   };
   const send = () => {
     frame = 0;
     const at = pointer && cursorSpot(d, pointer.x, pointer.y);
     const centerPlace = center();
-    const e = editing();
-    const extras = { ...(centerPlace && { v: centerPlace }), ...(e && { e }) };
+    const edit = editing();
+    const extras = { ...(centerPlace && { v: centerPlace }), ...edit };
     // With the pointer out of the document, the view and the edited block are
     // still sent, so that followers keep following while this viewer zooms by
     // key or reads, and others see where they type.
     const spot: CursorSpot | null = at
       ? { ...at, ...extras, ...(message && { m: message }) }
-      : centerPlace || e
+      : centerPlace || edit
         ? { ...LEFT, ...extras }
         : null;
     const key = JSON.stringify(spot);
@@ -480,13 +559,16 @@ export type RemoteCursor = {
 };
 
 // An edit mark shows which block another viewer edits: a bar in their color
-// beside the block, and a label where it covers no text. fit holds the
+// beside the block, their caret in its text, and a label where it covers no
+// text. c is the offset of the caret in the text of the block. fit holds the
 // label text and block size that the label was placed for, and dx and dy where
 // it went from the block's corner.
 type EditMark = {
   path: string;
+  c?: number;
   el: HTMLElement;
   bar: HTMLElement;
+  caret: HTMLElement;
   label: HTMLElement;
   fit: string;
   dx: number;
@@ -598,19 +680,31 @@ export function createCursorLayer(
     return cursor;
   }
 
-  // markEdit shows that a session edits the block at path.
-  function markEdit(session: string, path: string, text: string, color: string) {
+  // markEdit shows that a session edits the block at path, with its caret
+  // at the offset c in the text of the block.
+  function markEdit(
+    session: string,
+    path: string,
+    c: number | undefined,
+    text: string,
+    color: string,
+  ) {
     let mark = edits.get(session);
     if (!mark) {
       const el = document.createElement("div");
       el.className = "slashdocs-edit";
-      el.append(document.createElement("i"), document.createElement("span"));
+      el.append(
+        document.createElement("i"),
+        document.createElement("i"),
+        document.createElement("span"),
+      );
       layer.appendChild(el);
-      const [bar, label] = el.children as unknown as [HTMLElement, HTMLElement];
-      mark = { path, el, bar, label, fit: "", dx: 0, dy: 0 };
+      const [bar, caret, label] = Array.from(el.children) as HTMLElement[];
+      mark = { path, el, bar, caret, label, fit: "", dx: 0, dy: 0 };
       edits.set(session, mark);
     }
     mark.path = path;
+    mark.c = c;
     mark.label.textContent = text;
     mark.el.style.setProperty("--c", color);
   }
@@ -624,7 +718,8 @@ export function createCursorLayer(
   }
 
   // placeEdit puts an edit mark at its block, and hides it while the block
-  // is not in this document. The label goes at the end of the block's text,
+  // is not in this document. The caret goes at its offset in the text that
+  // the block has now. The label goes at the end of the block's text,
   // else above or below it, where it covers no text. It keeps its place from
   // the block's corner until the label or the block's text changes size.
   function placeEdit(mark: EditMark) {
@@ -632,7 +727,7 @@ export function createCursorLayer(
     const block = d && elementAtPath(d, mark.path);
     const box = block?.getBoundingClientRect();
     if (d && block && box?.height) {
-      const { label, bar } = mark;
+      const { label, bar, caret } = mark;
       const range = d.createRange();
       range.selectNodeContents(block);
       const lines = Array.from(range.getClientRects()).filter((line) => line.width);
@@ -652,6 +747,10 @@ export function createCursorLayer(
       label.style.setProperty("left", `${box.left + mark.dx}px`, "important");
       label.style.setProperty("top", `${box.top + mark.dy}px`, "important");
       bar.style.cssText = `left:${box.left - 6}px;top:${box.top}px;height:${box.height}px`;
+      const line = mark.c === undefined ? null : caretLine(block, mark.c);
+      caret.style.cssText = line
+        ? `left:${line.x - 1}px;top:${line.y}px;height:${line.height}px`
+        : "display:none";
     }
     // Last, so that a new mark fades in from its first style.
     mark.el.toggleAttribute("data-on", !!box?.height);
@@ -730,12 +829,13 @@ export function createCursorLayer(
   }
 
   function receive({ session, name, color, points, own }: RemoteCursor) {
-    const edit = points.at(-1)?.e;
+    const { e: edit, c } = points.at(-1) ?? {};
     if (!edit) unmarkEdit(session);
     else
       markEdit(
         session,
         edit,
+        c,
         own ? "You are editing in another tab" : `${name} is editing`,
         color,
       );

@@ -14,18 +14,26 @@
 // line up with the pristine children by their places between the original
 // elements around them.
 
-import { SOURCE_ATTR, type Piece, type Region } from "./source-pieces.ts";
+import { SOURCE_ATTR, type Patch, type Piece, type Region } from "./source-pieces.ts";
 
 // The changes of the editor since editing started. The editor keeps adding
 // to them; the source map reads them when it needs them.
 export type EditorChanges = {
   // The original blocks that the editor changed.
   touched: Iterable<Element>;
+  // The original elements next to text of their parent that the editor
+  // changed. The regions cover the source from one to the next, and not all
+  // of the parent.
+  beside: Iterable<Element>;
   // The nodes that the editor, or the browser for the editor's input, made.
   made: WeakSet<Node>;
   // The source offsets of the original elements that the editor deleted.
   removed: Iterable<number>;
 };
+
+// The live place of a patch: the original element that holds its run, and
+// the original children of that element around the run.
+export type Place = { in: Element; after: Element | null; before: Element | null };
 
 export interface SourceMap {
   // The source offset of el when el is the one live element for an original
@@ -43,6 +51,9 @@ export interface SourceMap {
   refresh(roots: Iterable<Node>): void;
   // The regions for all the editor's changes since editing started.
   regions(): Region[];
+  // The live place of a patch, or null when one of its elements is not in
+  // the document, or is not where the patch says.
+  find(patch: Patch): Place | null;
   // Takes the marks off.
   stop(): void;
 }
@@ -50,7 +61,7 @@ export interface SourceMap {
 // The bridge's own nodes in the document. Comment highlights wrap text and
 // are unwrapped. The other nodes are left out.
 const BRIDGE_WRAPPER = "mark.slashdocs-mark";
-const BRIDGE_NODE =
+export const BRIDGE_NODE =
   ".slashdocs-heading-link,.slashdocs-selection-action,.slashdocs-text-flash," +
   ".slashdocs-svg-mark-rect,[data-slashdocs-injected],[id^='slashdocs-']";
 
@@ -218,6 +229,9 @@ export function createSourceMap(
     return { twin, kind, children, parentOf, placeOf, offset, pristineOf, liveAt };
   };
   type View = ReturnType<typeof view>;
+  // The original elements whose content the editor changed, and those with
+  // text of their own that it changed.
+  type Edited = { touched: Set<Element>; own: Set<Node | null> };
 
   // ownText tells whether the text of an original element is still the text
   // of the source. Elements may move: only the text counts.
@@ -226,19 +240,21 @@ export function createSourceMap(
 
   // examine marks the content at el that a script made, and the original
   // elements under it whose text a script changed. The editor's own content
-  // and the blocks that it changed are left as they are.
-  const examine = (v: View, el: Element, touched: Set<Element>, edited: boolean) => {
+  // and the blocks that it changed are left as they are, and so is the text
+  // of an element when the editor changed it.
+  const examine = (v: View, el: Element, by: Edited, edited: boolean) => {
     const k = v.kind(el);
     if (k === "bridge" || marked.has(el)) return;
     if (k === "script") return mark(el);
-    edited ||= k === "editor" || touched.has(el);
-    const root = el === d.body || el === d.documentElement;
-    if (k === "original" && !edited && !root && !ownText(v, el)) return mark(el);
-    for (const child of Array.from(el.children)) examine(v, child, touched, edited);
+    edited ||= k === "editor" || by.touched.has(el);
+    const own = edited || by.own.has(el) || el === d.body || el === d.documentElement;
+    if (k === "original" && !own && !ownText(v, el)) return mark(el);
+    for (const child of Array.from(el.children)) examine(v, child, by, edited);
   };
   const examineAt = (nodes: Iterable<Node>) => {
     const v = view();
     const touched = new Set(changes.touched);
+    const by = { touched, own: new Set(Array.from(changes.beside, v.parentOf)) };
     for (const node of nodes) {
       let el =
         node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
@@ -251,7 +267,7 @@ export function createSourceMap(
       for (let up = el.parentElement; up; up = up.parentElement) {
         edited ||= touched.has(up) || v.kind(up) === "editor";
       }
-      examine(v, el, touched, edited);
+      examine(v, el, by, edited);
     }
   };
   if (d.body) examineAt([d.body]);
@@ -424,7 +440,7 @@ export function createSourceMap(
         return groupOf(parent).nodes.add(el);
       }
     };
-    for (const el of changes.touched)
+    for (const el of [...changes.touched, ...changes.beside])
       if (el.isConnected && v.offset(el) !== null) add(el);
     for (const el of Array.from(d.body?.querySelectorAll("*") ?? [])) {
       if (changes.made.has(el) && v.kind(el) === "editor") add(el);
@@ -565,6 +581,26 @@ export function createSourceMap(
     },
     refresh: examineAt,
     regions,
+    find({ in: at, after, before }) {
+      const v = view();
+      const parent = at === null ? d.body : v.liveAt(at);
+      // The live child of parent for an offset, or undefined when it is not
+      // one. Flat elements between the two do not count.
+      const child = (offset: number | null) => {
+        if (offset === null) return null;
+        const el = v.liveAt(offset);
+        let up = el?.parentElement;
+        while (up && up !== parent && v.kind(up) === "flat") up = up.parentElement;
+        return up === parent ? el : undefined;
+      };
+      const [first, last] = [child(after), child(before)];
+      if (!parent || first === undefined || last === undefined) return null;
+      const ordered =
+        !first ||
+        !last ||
+        first.compareDocumentPosition(last) & Node.DOCUMENT_POSITION_FOLLOWING;
+      return ordered ? { in: parent, after: first, before: last } : null;
+    },
     stop() {
       for (const [el, value] of marked) {
         if (value === null) el.removeAttribute("contenteditable");

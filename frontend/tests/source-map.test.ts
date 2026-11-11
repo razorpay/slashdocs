@@ -22,6 +22,7 @@ async function open(source: string, script?: (d: Document) => void) {
   script?.(d);
   const changes = {
     touched: new Set<Element>(),
+    beside: new Set<Element>(),
     made: new WeakSet<Node>(),
     removed: new Set<number>(),
   };
