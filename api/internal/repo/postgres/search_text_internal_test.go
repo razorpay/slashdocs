@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
 func TestSearchText(t *testing.T) {
@@ -31,29 +33,30 @@ exceeded.</p><noscript>Enable JS</noscript><template><p>later</p></template><p>E
 	}
 }
 
-func TestTSQuery(t *testing.T) {
+func TestSearchQueries(t *testing.T) {
 	t.Parallel()
-	if got, want := tsquery([]string{"error budget", `it's\`}, " & "), `'error budget':* & 'it''s\\':*`; got != want {
-		t.Fatalf("tsquery() = %q, want %q", got, want)
-	}
-	if got := tsquery(nil, " | "); got != "" {
-		t.Fatalf("tsquery(nil) = %q, want empty", got)
-	}
-}
-
-func TestTsqueryWords(t *testing.T) {
 	for _, tc := range []struct {
-		terms []string
-		want  string
+		search repo.DocumentSearch
+		want   tsqueries
 	}{
-		{terms: nil, want: ""},
-		{terms: []string{"incident"}, want: "'incident':*"},
-		{terms: []string{"error budget", "q3"}, want: "'error':* & 'budget':* & 'q3':*"},
-		{terms: []string{" spaced   out "}, want: "'spaced':* & 'out':*"},
-		{terms: []string{"it's"}, want: "'it''s':*"},
+		{},
+		{
+			search: repo.DocumentSearch{Terms: []string{"error budget", `it's\`}, ExcludedTerms: []string{"draft", "old"}},
+			want: tsqueries{
+				match: `'error budget':* & 'it''s\\':*`, words: `'error':* & 'budget':* & 'it''s\\':*`,
+				exclude: `'draft':* | 'old':*`, rank: `'error budget':* | 'it''s\\':*`, snippet: `'error budget':* & 'it''s\\':*`,
+			},
+		},
+		{
+			search: repo.DocumentSearch{Terms: []string{"q3"}, TitleTerms: []string{"rollout plan"}},
+			want: tsqueries{
+				match: `'q3':* & 'rollout plan':*A`, words: `'q3':* & 'rollout':*A & 'plan':*A`,
+				rank: `'q3':* | 'rollout plan':*`, snippet: `'q3':*`,
+			},
+		},
 	} {
-		if got := tsqueryWords(tc.terms); got != tc.want {
-			t.Errorf("tsqueryWords(%q) = %q, want %q", tc.terms, got, tc.want)
+		if got := searchQueries(tc.search); got != tc.want {
+			t.Errorf("searchQueries(%+v) = %+v, want %+v", tc.search, got, tc.want)
 		}
 	}
 }

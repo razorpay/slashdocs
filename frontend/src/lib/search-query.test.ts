@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  folderSearchText,
   hasDocumentSearchOperators,
   replaceSearchToken,
   searchTokenAt,
@@ -59,6 +60,11 @@ describe("document search query helpers", () => {
     expect(hasDocumentSearchOperators('"exact phrase"')).toBe(true);
     expect(hasDocumentSearchOperators("plan -draft")).toBe(true);
     expect(hasDocumentSearchOperators("plain title - notes")).toBe(false);
+    expect(hasDocumentSearchOperators('title:"q3 plan" notes')).toBe(false);
+  });
+
+  it("finds folders by the words of title modifiers", () => {
+    expect(folderSearchText('title:"q3 plan" notes')).toBe("q3 plan notes");
   });
 
   it("replaces the token and ends a finished modifier with a space", () => {

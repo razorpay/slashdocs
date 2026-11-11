@@ -36,6 +36,11 @@ func TestParseDocumentSearch(t *testing.T) {
 			want: repo.DocumentSearch{Terms: []string{"error budget", "it's"}, ExcludedTerms: []string{"draft", "old plan"}},
 		},
 		{
+			name: "title words and a title phrase",
+			raw:  `title:Rollout title:"Q3 plan" title: budget`,
+			want: repo.DocumentSearch{Terms: []string{"budget"}, TitleTerms: []string{"rollout", "q3 plan"}},
+		},
+		{
 			name: "people, folders, and labels",
 			raw:  `from:@Alice author:me in:"Product Specs" in:#fld_1 labels:api,review label:ops`,
 			want: repo.DocumentSearch{

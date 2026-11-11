@@ -354,16 +354,17 @@ WITH search AS NOT MATERIALIZED (
   -- which raises a notice on every call.
   SELECT to_tsquery('english', NULLIF((SELECT $1::text), '')) AS match,
          to_tsquery('english', NULLIF((SELECT $2::text), '')) AS words,
-         to_tsquery('english', NULLIF((SELECT $3::text), '')) AS exclude
+         to_tsquery('english', NULLIF((SELECT $3::text), '')) AS exclude,
+         to_tsquery('english', NULLIF((SELECT $4::text), '')) AS snippet
 ),
 ranking AS MATERIALIZED (
-  SELECT to_tsquery('english', NULLIF($4::text, '')) AS rank
+  SELECT to_tsquery('english', NULLIF($5::text, '')) AS rank
 ),
 named_owners AS (
   SELECT 'user' AS owner_type, u.id FROM users u
-  WHERE lower(u.email) = ANY($5::text[]) OR lower(split_part(u.email, '@', 1)) = ANY($5::text[])
+  WHERE lower(u.email) = ANY($6::text[]) OR lower(split_part(u.email, '@', 1)) = ANY($6::text[])
   UNION ALL
-  SELECT 'service_account', sa.id FROM service_accounts sa WHERE lower(sa.name) = ANY($5::text[])
+  SELECT 'service_account', sa.id FROM service_accounts sa WHERE lower(sa.name) = ANY($6::text[])
 ),
 candidates AS NOT MATERIALIZED (
   SELECT d.id, d.title, d.updated_at, d.search_vector
@@ -374,49 +375,49 @@ candidates AS NOT MATERIALIZED (
   LEFT JOIN (
     SELECT DISTINCT g.resource_id FROM resource_grants g
     WHERE g.resource_type='document' AND g.revoked_at IS NULL
-      AND ((g.principal_type= $6 AND g.principal_id= $7)
-        OR (g.principal_type='google_group' AND g.principal_id=ANY($8::text[]))
-        OR ($9::boolean AND g.principal_type='anyone'))
+      AND ((g.principal_type= $7 AND g.principal_id= $8)
+        OR (g.principal_type='google_group' AND g.principal_id=ANY($9::text[]))
+        OR ($10::boolean AND g.principal_type='anyone'))
   ) granted ON granted.resource_id=d.id
   -- The subquery finds the excluded documents in the index, once, and the
   -- planner hashes them. Without excluded words it finds none.
   WHERE d.id NOT IN (SELECT x.id FROM documents x WHERE x.search_vector @@ search.exclude)
   AND (
-    COALESCE(cardinality($5::text[]), 0) = 0
-    OR lower(d.owner_id) = ANY($5::text[])
+    COALESCE(cardinality($6::text[]), 0) = 0
+    OR lower(d.owner_id) = ANY($6::text[])
     OR (d.owner_type, d.owner_id) IN (SELECT owner_type, id FROM named_owners)
   )
   AND (
-    COALESCE(cardinality($10::text[]), 0) = 0
+    COALESCE(cardinality($11::text[]), 0) = 0
     OR d.parent_folder_id IN (
       SELECT subtree.id FROM folder_subtrees(ARRAY(
         SELECT f.id FROM folders f
-        WHERE f.id = ANY($10::text[]) OR lower(f.title) = ANY($10::text[]))) AS subtree(id)
+        WHERE f.id = ANY($11::text[]) OR lower(f.title) = ANY($11::text[]))) AS subtree(id)
     )
   )
   AND NOT EXISTS (
-    SELECT 1 FROM unnest($11::text[]) AS requested_label
+    SELECT 1 FROM unnest($12::text[]) AS requested_label
     WHERE NOT EXISTS (
       SELECT 1 FROM document_labels dl
       WHERE dl.document_id=d.id AND dl.label = requested_label
     )
   )
-  AND ($12::timestamptz IS NULL OR d.updated_at >= $12)
-  AND ($13::timestamptz IS NULL OR d.updated_at < $13)
+  AND ($13::timestamptz IS NULL OR d.updated_at >= $13)
+  AND ($14::timestamptz IS NULL OR d.updated_at < $14)
   AND (
-    (d.owner_type= $6 AND d.owner_id= $7)
+    (d.owner_type= $7 AND d.owner_id= $8)
     OR granted.resource_id IS NOT NULL
     OR d.parent_folder_id IN (
       SELECT subtree.id FROM folder_subtrees(ARRAY(
         SELECT g.resource_id FROM resource_grants g
         WHERE g.resource_type='folder' AND g.revoked_at IS NULL
-          AND ((g.principal_type= $6 AND g.principal_id= $7)
-            OR (g.principal_type='google_group' AND g.principal_id=ANY($8::text[]))
-            OR ($9::boolean AND g.principal_type='anyone'))
+          AND ((g.principal_type= $7 AND g.principal_id= $8)
+            OR (g.principal_type='google_group' AND g.principal_id=ANY($9::text[]))
+            OR ($10::boolean AND g.principal_type='anyone'))
         -- Folder ownership counts like an editor grant on the folder.
         UNION ALL
         SELECT f.id FROM folders f
-        WHERE f.owner_type= $6 AND f.owner_id= $7)) AS subtree(id)
+        WHERE f.owner_type= $7 AND f.owner_id= $8)) AS subtree(id)
     )
   )
 ),
@@ -440,7 +441,7 @@ matches AS MATERIALIZED (
     CROSS JOIN search
     WHERE o.search_vector @@ search.match
     ORDER BY o.rank DESC, o.updated_at DESC, o.title, o.id
-    LIMIT $15 OFFSET $14
+    LIMIT $16 OFFSET $15
   )
   UNION ALL
   (
@@ -450,7 +451,7 @@ matches AS MATERIALIZED (
     CROSS JOIN search
     WHERE COALESCE(numnode(search.match), 0) = 0
     ORDER BY c.updated_at DESC, c.title, c.id
-    LIMIT $15 OFFSET $14
+    LIMIT $16 OFFSET $15
   )
 )
 SELECT d.id, d.title, d.current_version_id, d.owner_type, d.owner_id,
@@ -459,8 +460,9 @@ SELECT d.id, d.title, d.current_version_id, d.owner_type, d.owner_id,
        COALESCE(pf.id,'') AS parent_folder_id,
        COALESCE(pf.title,'') AS parent_folder_title,
        d.updated_at,
-       CASE WHEN numnode(search.match) > 0 AND cv.search_vector @@ search.match
-         THEN ts_headline('english', cv.search_text, search.match,
+       -- The snippet shows the words of the text, so title terms are not in it.
+       CASE WHEN numnode(search.snippet) > 0 AND cv.search_vector @@ search.snippet
+         THEN ts_headline('english', cv.search_text, search.snippet,
            'MaxFragments=1,MaxWords=24,MinWords=12,StartSel="'||chr(2)||'",StopSel="'||chr(3)||'"')
          ELSE '' END::text AS snippet
 FROM matches m
@@ -478,6 +480,7 @@ type SearchDocumentsParams struct {
 	MatchQuery     string
 	WordsQuery     string
 	ExcludeQuery   string
+	SnippetQuery   string
 	RankQuery      string
 	Owners         []string
 	OwnerType      string
@@ -535,6 +538,7 @@ func (q *Queries) SearchDocuments(ctx context.Context, arg SearchDocumentsParams
 		arg.MatchQuery,
 		arg.WordsQuery,
 		arg.ExcludeQuery,
+		arg.SnippetQuery,
 		arg.RankQuery,
 		arg.Owners,
 		arg.OwnerType,

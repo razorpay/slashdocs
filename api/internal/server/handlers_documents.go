@@ -168,7 +168,7 @@ func documentPage(c *gin.Context) (repo.Page, error) {
 // @Security bearerAuth
 // @Security cookieAuth
 // @Produce json
-// @Param q query string false "Slack-style search of titles and text: words, \"phrases\", -word, from:, in:, label:, before:, after:, on:, and during:"
+// @Param q query string false "Slack-style search of titles and text: words, \"phrases\", -word, title:, from:, in:, label:, before:, after:, on:, and during:"
 // @Param tz query string false "IANA time zone for date modifiers; defaults to UTC"
 // @Param label query string false "Deprecated exact label filter; use q=label:<label>"
 // @Param limit query int false "Page size: 25 by default, 100 at most"
@@ -214,6 +214,7 @@ func (h handlers) listDocuments(c *gin.Context) {
 			internalErr(c, err)
 			return
 		}
+		h.hideUnseenParentFolders(c, items)
 		// Search hits are the same documents as the plain listing, so they
 		// carry the same approval status rather than losing it mid-query.
 		h.annotateApprovalSummaries(c, items)
@@ -227,6 +228,26 @@ func (h handlers) listDocuments(c *gin.Context) {
 	}
 	h.annotateApprovalSummaries(c, items)
 	c.JSON(http.StatusOK, documentListResponse{Items: items, HasMore: more})
+}
+
+// hideUnseenParentFolders removes the parent folder of a search result when
+// the caller cannot view that folder, as getDocument does. A failed lookup
+// also removes it, because the folder is decorative.
+func (h handlers) hideUnseenParentFolders(c *gin.Context, docs []repo.Document) {
+	seen := map[string]bool{}
+	for i, d := range docs {
+		if d.ParentFolder == nil {
+			continue
+		}
+		id := d.ParentFolder.ID
+		if _, ok := seen[id]; !ok {
+			role, err := h.deps.repository.RoleForFolder(c.Request.Context(), *current(c), id)
+			seen[id] = err == nil && atLeast(role, repo.RoleViewer)
+		}
+		if !seen[id] {
+			docs[i].ParentFolder = nil
+		}
+	}
 }
 
 // GetDocument godoc
