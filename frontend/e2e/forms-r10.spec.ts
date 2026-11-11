@@ -15,7 +15,7 @@ async function addReviewer(page: Page) {
   await page.getByRole("button", { name: "Request approval" }).click();
   await page.getByRole("combobox", { name: "Approver" }).fill("reviewer@example.com");
   await page.getByRole("button", { name: "Add", exact: true }).click();
-  await page.getByRole("button", { name: "Share as viewer and add" }).click();
+  await page.getByRole("button", { name: "Give access and add" }).click();
   await expect(
     page.getByRole("dialog").getByText("Pending", { exact: true }),
   ).toBeVisible();

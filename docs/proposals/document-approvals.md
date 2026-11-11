@@ -24,7 +24,8 @@
 | 2026-11-01 | One name: reject                                                      | The decision value, the CLI verb (`docs reject`), the UI and the events all say "rejected". The value was `changes_requested` while the UI said Reject                                                     |
 | 2026-11-01 | Approvers and owners get Slack notifications                          | An approver hears when they are asked. The owner hears each approval or rejection. Revoking does not notify                                                                                                |
 | 2026-11-01 | Approval events go to a webhook through an outbox                     | Replaces the insert-only event log proposal (#245). Off by default. See "Events"                                                                                                                           |
-| 2026-11-11 | A person who edited the document can approve it                       | Maintainer: the creator rule blocked the people who know the document best, and needed a help tooltip to explain. An edit still makes every decision on the old content stale                              |
+| 2026-11-11 | A person who edited the document can approve it                       | Maintainer asked to remove the rule. Its "Who can approve?" tooltip was bad product UX. An edit still makes every decision on the old content stale                                                        |
+| 2026-11-11 | The UI gives an approver editor access first                          | An approver picked in the search who cannot edit gets a confirmation to grant editor through the share grants API, then the add. The server still refuses an approver without access                       |
 
 ## Summary
 
@@ -34,6 +35,7 @@ Document owners assign approvers. Approvers approve or reject the content of the
 
 - Only the document owner can assign or remove approvers.
 - Approvers must already have viewer+ access on the document.
+- In the UI, an approver who is not an editor gets editor access first, after the owner confirms it.
 - An approver who loses read access when a grant is revoked stops being an approver.
 - Approvers approve or reject what the document says now. A decision names the version it was made on and vouches for that version's content (`sha256`).
 - All assigned approvers must approve for the document status to be "approved."

@@ -21,6 +21,15 @@ import {
 } from "@/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Combobox } from "@/components/ui/combobox";
 import {
   Dialog,
@@ -35,7 +44,7 @@ import { RetryButton, revealOnHover, Skeleton } from "@/components/ui/misc";
 import { ErrorState, LoadErrorLine } from "@/components/error-state";
 import { cn } from "@/lib/cn";
 import { useEditDraft } from "@/lib/edit-drafts";
-import { ADDRESS_PATTERN, COMMENT_STATUS } from "@/lib/constants";
+import { ADDRESS_PATTERN, COMMENT_STATUS, ROLE_RANK } from "@/lib/constants";
 import { errorMessage } from "@/lib/errors";
 import { queryKeys } from "@/lib/queryKeys";
 import { loadFailed } from "@/lib/query-retry";
@@ -748,15 +757,34 @@ function ApproverRow({
   );
 }
 
-// The share as a viewer worked, but the add did not. The person can now open
-// the document, and is not an approver yet.
-class SharedNotAdded extends Error {}
+// What a person who cannot edit the document can do on it, by their role.
+const CANNOT_EDIT: Record<string, string> = {
+  "": "can't open",
+  viewer: "can only view",
+  commenter: "can only comment on",
+};
 
-// AddApprover assigns an approver. Its errors show under the field, or in a
-// toast when the dialog closed before the answer. A person who cannot open
-// the document can be shared with as a viewer and added in one step. The
-// address is a draft of the document (`approver:<docId>`), so that it stays
-// through a failure, a close and a reload.
+// The note of a person in the search, by their role, when they cannot edit.
+const ACCESS_NOTE: Record<string, string> = {
+  "": "No access",
+  viewer: "Viewer",
+  commenter: "Commenter",
+};
+
+const rank = (role: string) => ROLE_RANK[role] ?? 0;
+// A person needs editor access when their role loaded and is less.
+const needsAccess = (role?: string): role is string =>
+  role !== undefined && rank(role) < ROLE_RANK.editor;
+
+// A person to add as an approver, who cannot edit the document yet.
+type Asked = { address: string; name: string; role: string };
+
+// AddApprover assigns an approver. An approver can edit the document, so a
+// person who cannot edit it gets editor access first, once the owner says
+// so. Its errors show under the field, or in a toast when the dialog closed
+// before the answer. The address is a draft of the document
+// (`approver:<docId>`), so that it stays through a failure, a close and a
+// reload.
 function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void }) {
   const q = useQueryClient();
   const mounted = useRef(true);
@@ -764,6 +792,7 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
     mounted.current = true;
     return () => void (mounted.current = false);
   }, []);
+  const field = useRef<HTMLInputElement>(null);
   const draft = useEditDraft(`approver:${docId}`, "");
   const address = draft.value;
   const [debounced, setDebounced] = useState("");
@@ -777,47 +806,86 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
     enabled: debounced.length >= 2,
     staleTime: 30_000,
   });
+  const access = useQuery({
+    queryKey: queryKeys.documentAccess(docId),
+    queryFn: () => api.documentAccess(docId),
+  });
+  // roleOf is the role on the document of the person at an address: their
+  // own access or everyone's, as the server reads it for an approver. It is
+  // "" for no access, and undefined until the access loads.
+  const roleOf = (addr: string) =>
+    access.data?.items
+      .filter(
+        ({ principal: p }) =>
+          p.type === "anyone" || (p.type === "user" ? p.email : p.name) === addr,
+      )
+      .map((item) => item.effective_role)
+      .reduce((best, role) => (rank(role) > rank(best) ? role : best), "");
+  // The confirmation stays filled while it closes.
+  const [asked, setAsked] = useState<Asked>();
+  const [asking, setAsking] = useState(false);
+  const ask = (person: Asked) => {
+    setAsked(person);
+    setAsking(true);
+  };
   const add = useMutation({
-    mutationFn: async ({ addr, share }: { addr: string; share?: boolean }) => {
-      if (!share) return api.createApprover(docId, addr);
-      await api.createGrant(docId, addr, "viewer");
+    mutationFn: async ({ addr, grant }: { addr: string; grant?: boolean }) => {
+      if (!grant) return api.createApprover(docId, addr);
+      await api.createGrant(docId, addr, "editor");
       return api.createApprover(docId, addr).catch((e: unknown) => {
-        throw new SharedNotAdded(
-          `Shared with ${addr} as viewer, but could not add them as approver. ${errorMessage(e, "Try Add again.")}`,
+        throw new Error(
+          `Gave ${addr} editor access, but could not add them as approver. ${errorMessage(e, "Try Add again.")}`,
         );
       });
     },
-    onSuccess: ({ approver }, { addr, share }) => {
+    onSuccess: ({ approver }, { addr, grant }) => {
       draft.sent(addr);
       const name = approver.name || addr;
-      if (share) q.invalidateQueries({ queryKey: queryKeys.documentAccess(docId) });
       toast.success(
-        share
-          ? `Shared with ${name} as viewer and added as approver.`
+        grant
+          ? `Gave ${name} editor access and added them as approver.`
           : `Added ${name} as approver.`,
       );
       onAdded();
     },
-    onError: (e) => {
+    onError: (e, { addr }) => {
       if (!mounted.current) toast.error(errorMessage(e, "Could not assign approver."));
-      if (e instanceof SharedNotAdded)
-        q.invalidateQueries({ queryKey: queryKeys.documentAccess(docId) });
+      // The access did not load, so the server says who cannot open the
+      // document.
+      if (e instanceof APIError && e.code === "approver_no_access")
+        ask({ address: addr, name: addr, role: "" });
+    },
+    onSettled: (_, __, { grant }) => {
+      if (grant) q.invalidateQueries({ queryKey: queryKeys.documentAccess(docId) });
     },
   });
-  const send = (addr: string, share?: boolean) => add.mutate({ addr, share });
-  const noAccess =
-    add.error instanceof APIError && add.error.code === "approver_no_access";
+  // choose adds a person who can edit the document, and first asks to give
+  // editor access to a person who cannot.
+  const choose = (addr: string, name = addr) => {
+    const role = roleOf(addr);
+    if (needsAccess(role)) ask({ address: addr, name, role });
+    else add.mutate({ addr });
+  };
   const trimmed = address.trim();
   const options = (suggestions.data?.items || [])
     .filter((u) => u.email !== trimmed)
     .slice(0, 5)
-    .map((u) => ({
-      key: u.id,
-      name: u.name || u.email || u.id,
-      detail: u.name ? u.email : undefined,
-      address: u.email || "",
-      icon: <PersonAvatar who={u} size={24} />,
-    }));
+    .map((u) => {
+      const address = u.email || "";
+      const role = roleOf(address);
+      return {
+        key: u.id,
+        name: u.name || u.email || u.id,
+        detail: [
+          u.name ? u.email : undefined,
+          needsAccess(role) ? ACCESS_NOTE[role] : undefined,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        address,
+        icon: <PersonAvatar who={u} size={24} />,
+      };
+    });
   return (
     <form
       className="px-6 py-3"
@@ -826,12 +894,13 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
         // Send the raw address so the server resolves either a user email or a
         // service-account (bot) address; assuming "user" here made bot
         // approvers impossible to assign from the UI.
-        if (ADDRESS_PATTERN.test(trimmed)) send(trimmed);
+        if (ADDRESS_PATTERN.test(trimmed)) choose(trimmed);
       }}
     >
       <div className="flex gap-2">
         <div className="flex-1">
           <Combobox
+            ref={field}
             autoFocus
             aria-label="Approver"
             placeholder="Email or bot address"
@@ -842,39 +911,26 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
               add.reset();
             }}
             options={options}
-            onPick={(u) => draft.setValue(u.address)}
+            onPick={(u) => {
+              draft.setValue(u.address);
+              choose(u.address, u.name);
+            }}
             listAbove
             busy={suggestions.isFetching}
           />
         </div>
-        {/* Add cannot work for a person without access, so Share as viewer
-            and add takes the primary place. */}
         <Button
           type="submit"
-          variant={noAccess ? "outline" : "primary"}
           disabled={!ADDRESS_PATTERN.test(trimmed) || add.isPending}
-          busy={add.isPending && !add.variables?.share}
+          busy={add.isPending}
         >
           Add
         </Button>
       </div>
       {add.error ? (
-        <div className="mt-1.5 flex flex-wrap items-start gap-2 text-xs">
-          <p role="alert" className="text-[var(--color-danger)]">
-            {errorMessage(add.error, "Could not assign approver.")}
-          </p>
-          {noAccess ? (
-            <Button
-              type="button"
-              size="sm"
-              className="shrink-0"
-              busy={add.isPending}
-              onClick={() => send(trimmed, true)}
-            >
-              Share as viewer and add
-            </Button>
-          ) : null}
-        </div>
+        <p role="alert" className="mt-1.5 text-xs text-[var(--color-danger)]">
+          {errorMessage(add.error, "Could not assign approver.")}
+        </p>
       ) : loadFailed(suggestions) ? (
         // A failed search keeps its line while Retry runs.
         <LoadErrorLine query={suggestions} className="mt-1.5">
@@ -882,6 +938,29 @@ function AddApprover({ docId, onAdded }: { docId: string; onAdded: () => void })
         </LoadErrorLine>
       ) : null}
       <DraftNotice draft={draft} cameBack="Your address from earlier came back." />
+      <AlertDialog open={asking} onOpenChange={setAsking}>
+        <AlertDialogContent
+          // The focus goes back to the search, also after a click on Add.
+          onCloseAutoFocus={(e) => {
+            e.preventDefault();
+            field.current?.focus();
+          }}
+        >
+          <AlertDialogTitle>Give {asked?.name} editor access?</AlertDialogTitle>
+          <AlertDialogDescription>
+            {asked?.name} {CANNOT_EDIT[asked?.role ?? ""]} this document. Give them
+            editor access and add them as an approver?
+          </AlertDialogDescription>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => asked && add.mutate({ addr: asked.address, grant: true })}
+            >
+              Give access and add
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </form>
   );
 }
