@@ -96,8 +96,8 @@ func TestCommentMentionMigrationsSplitTriggerFromLegacyCleanup(t *testing.T) {
 	}
 	assertMentionMigrationObjects(t, database)
 	version, err := goose.GetDBVersion(database)
-	if err != nil || version != 41 {
-		t.Fatalf("migration version = %d, %v; want 41", version, err)
+	if err != nil || version != 42 {
+		t.Fatalf("migration version = %d, %v; want 42", version, err)
 	}
 
 	// The cleanup cannot reconstruct markers, so migration 19's Down is a
@@ -127,6 +127,51 @@ func TestCommentMentionMigrationsSplitTriggerFromLegacyCleanup(t *testing.T) {
 	}
 	if got := migrationCommentBody(t, database, "cmt_after_rollback"); got != "Rollback @admin" {
 		t.Fatalf("cleanup after re-upgrade body = %q", got)
+	}
+}
+
+// Migration 42 adds read marks to a database that already has threads. A
+// mark goes with its thread, a reader that cannot sign in takes none, and
+// Down removes the table.
+func TestCommentReadsMigration(t *testing.T) {
+	databaseURL := testdb.New(t)
+	database, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	setMigrationTestFS(t)
+	if err := goose.SetDialect("postgres"); err != nil {
+		t.Fatal(err)
+	}
+	if err := goose.DownTo(database, "migrations", 41); err != nil {
+		t.Fatal(err)
+	}
+	seedMigrationGraph(t, database)
+	insertMigrationComment(t, database, "cmt_before_reads", "Before")
+	if err := aidb.Migrate(databaseURL); err != nil {
+		t.Fatalf("migrate to 42 on existing threads: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO comment_reads(thread_id, principal_type, principal_id) VALUES ('cmt_before_reads', 'user', 'usr_migration')`); err != nil {
+		t.Fatalf("mark an existing thread read: %v", err)
+	}
+	if _, err := database.Exec(`INSERT INTO comment_reads(thread_id, principal_type, principal_id) VALUES ('cmt_before_reads', 'anonymous', 'x')`); err == nil {
+		t.Fatal("an anonymous reader took a read mark")
+	}
+	if _, err := database.Exec(`DELETE FROM comments WHERE id = 'cmt_before_reads'`); err != nil {
+		t.Fatal(err)
+	}
+	var marks int
+	if err := database.QueryRow(`SELECT count(*) FROM comment_reads`).Scan(&marks); err != nil || marks != 0 {
+		t.Fatalf("read marks after the thread went = %d, %v; want 0", marks, err)
+	}
+	setMigrationTestFS(t)
+	if err := goose.DownTo(database, "migrations", 41); err != nil {
+		t.Fatalf("down migration 42: %v", err)
+	}
+	var table sql.NullString
+	if err := database.QueryRow(`SELECT to_regclass('public.comment_reads')::text`).Scan(&table); err != nil || table.Valid {
+		t.Fatalf("comment_reads after Down = %v, %v; want gone", table, err)
 	}
 }
 

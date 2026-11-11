@@ -72,6 +72,9 @@ type commentResponse struct {
 	Anchor             *repo.Anchor              `json:"anchor,omitempty"`
 	CurrentPlacement   *commentPlacementResponse `json:"current_placement,omitempty"`
 	Replies            *[]commentResponse        `json:"replies,omitempty"`
+	// Unread is set on a thread with a message by someone else that the
+	// signed-in reader did not read. Anonymous readers get no read state.
+	Unread bool `json:"unread,omitempty"`
 }
 
 // commentReactionResponse is one emoji group on a comment. Reacted reports
