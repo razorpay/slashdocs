@@ -57,16 +57,13 @@ const fadeFor = (seconds: number, reduced: boolean | null) =>
   reduced ? Math.min(seconds, 0.1) : seconds;
 
 // The content of a popover gives way to the next thread's, as J and K go to
-// it.
-export const crossFade = (reduced: boolean | null): MotionProps => ({
+// it: the new content fades in over the old, which goes at once, so that the
+// popover never holds two threads.
+export const fadeIn = (reduced: boolean | null): MotionProps => ({
   initial: { opacity: 0 },
   animate: {
     opacity: 1,
     transition: { duration: fadeFor(0.12, reduced), ease: "easeOut" },
-  },
-  exit: {
-    opacity: 0,
-    transition: { duration: fadeFor(0.12, reduced), ease: "easeIn" },
   },
 });
 

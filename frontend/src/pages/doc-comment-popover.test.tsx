@@ -74,7 +74,7 @@ it("takes the focus that was lost, so Esc reaches the thread", () => {
   expect(screen.getByRole("dialog", { name: "Comment thread" })).toHaveFocus();
 });
 
-it("moves to the next thread without closing, and cross-fades its content", async () => {
+it("moves to the next thread without closing, and fades its content in", async () => {
   const next = { ...c, id: "c2", body: "And here" };
   const view = render(
     <Thread comments={[c, next]} unanchoredComments={new Set(["c1", "c2"])} />,
