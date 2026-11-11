@@ -180,7 +180,15 @@ export function DocumentPage() {
   // What the reader may do did not load: the bar says so, with Retry.
   const accessUnknown =
     role.failed ?? (approvals.isError && !approvals.data ? approvals : undefined);
-  const editable = canChangeContent && !previewing;
+  const canEdit = canChangeContent && !previewing;
+  // Each document opens in Comment mode, and so does each version that the
+  // reader goes to. An editor turns on Edit mode to type in the document.
+  const [editingIn, setEditingIn] = useState<string>();
+  const editing = canEdit && editingIn === id;
+  const setEditing = useCallback(
+    (on: boolean) => setEditingIn(on ? id : undefined),
+    [id],
+  );
 
   // The version on screen is in the link, so a reload or a copied link keeps
   // a preview from the history. The link keeps its fragment, such as a text
@@ -191,6 +199,7 @@ export function DocumentPage() {
   const showVersion = useCallback(
     (version?: string, hash = location.hash) => {
       if (!onPage.current) return;
+      setEditingIn(undefined);
       const search = new URLSearchParams(location.search);
       if (!version || version === latest) {
         setPinnedVersion(undefined);
@@ -224,7 +233,7 @@ export function DocumentPage() {
     // another tab, so the frame keeps what they type. Saves from this tab
     // move the editor on (see RenderFrame).
     onDocumentChange: (by) => {
-      if (editable || !samePrincipal(by, me.data?.principal)) stayOnVersion();
+      if (canEdit || !samePrincipal(by, me.data?.principal)) stayOnVersion();
     },
   });
 
@@ -274,7 +283,9 @@ export function DocumentPage() {
       followedCursor={followedCursor}
       onUnfollowCursor={unfollow}
       onDocumentClick={closeShare}
-      editable={editable}
+      canEdit={canEdit}
+      editing={editing}
+      onEditingChange={setEditing}
       stayOnVersion={stayOnVersion}
       showLatest={showLatest}
       showsLatest={current === latest}

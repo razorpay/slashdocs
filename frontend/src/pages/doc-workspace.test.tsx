@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, type Principal } from "@/api";
@@ -111,4 +112,74 @@ it("opens the draft on that text once the reader is back", async () => {
   expect(await screen.findByText('Draft on "old words" in v0')).toBeInTheDocument();
   expect(screen.getByText("/app/d/doc-1")).toBeInTheDocument();
   expect(takePendingComment("doc-1")).toBeNull();
+});
+
+// The page keeps Edit mode. The bar says the mode, holds a field, and can make
+// the edits on screen fail to save.
+function ModeBar() {
+  const { editing, setEditing, registerTextSettle } = useDoc();
+  return (
+    <>
+      <p>{editing ? "Editing" : "Commenting"}</p>
+      <input aria-label="Title" />
+      <button onClick={() => void setEditing(false)}>Done</button>
+      <button onClick={() => registerTextSettle(async () => false)}>Fail saves</button>
+    </>
+  );
+}
+
+function ModePage({ canEdit }: { canEdit: boolean }) {
+  const [editing, setEditing] = useState(false);
+  return (
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter>
+        <DocWorkspace
+          docId="doc-1"
+          version="v1"
+          home="/app/documents"
+          principal={reader}
+          canEdit={canEdit}
+          editing={canEdit && editing}
+          onEditingChange={setEditing}
+          bar={() => <ModeBar />}
+        />
+      </MemoryRouter>
+    </QueryClientProvider>
+  );
+}
+
+it("opens in Comment mode, E starts Edit mode, and C, Done or a second Esc leaves it", async () => {
+  render(<ModePage canEdit />);
+  expect(screen.getByText("Commenting")).toBeInTheDocument();
+  for (const leave of ["c", "{Escape}", "done"]) {
+    await userEvent.keyboard("e");
+    expect(screen.getByText("Editing")).toBeInTheDocument();
+    if (leave === "done")
+      await userEvent.click(screen.getByRole("button", { name: "Done" }));
+    else await userEvent.keyboard(leave);
+    expect(await screen.findByText("Commenting")).toBeInTheDocument();
+  }
+});
+
+it("takes E and C only without modifiers, outside fields, from a reader who can edit", async () => {
+  const { unmount } = render(<ModePage canEdit />);
+  await userEvent.keyboard("{Control>}e{/Control}");
+  await userEvent.type(screen.getByRole("textbox", { name: "Title" }), "e");
+  expect(screen.getByText("Commenting")).toBeInTheDocument();
+  unmount();
+  render(<ModePage canEdit={false} />);
+  await userEvent.keyboard("e");
+  expect(screen.getByText("Commenting")).toBeInTheDocument();
+});
+
+it("stays in Edit mode while the edits on screen do not save", async () => {
+  render(<ModePage canEdit />);
+  await userEvent.keyboard("e");
+  await userEvent.click(screen.getByRole("button", { name: "Fail saves" }));
+  for (const leave of ["c", "{Escape}"]) {
+    (document.activeElement as HTMLElement | null)?.blur();
+    await userEvent.keyboard(leave);
+  }
+  await userEvent.click(screen.getByRole("button", { name: "Done" }));
+  expect(screen.getByText("Editing")).toBeInTheDocument();
 });

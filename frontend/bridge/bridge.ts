@@ -539,6 +539,8 @@ type Theme = "dark" | "light";
 
   let printPreparing = false;
   let textEditor: TextEditor | null = null;
+  // The app's Edit mode: the reader types in the document.
+  let textEditing = false;
   let scriptText: ScriptText | null = null;
   // Highlights split the text nodes that the editor changes, so they come
   // off each block that the editor changes, and go back when the app takes
@@ -565,23 +567,31 @@ type Theme = "dark" | "light";
   }
 
   // Text editing makes the document editable in place. The frame's srcdoc
-  // is the source as the server tagged it, before any script ran.
+  // is the source as the server tagged it, before any script ran. Leaving
+  // Edit mode only pauses the editor, so that the next save still holds
+  // every change since the frame loaded. Text that is selected as Edit mode
+  // starts gets the caret.
   function setTextEditing(on: boolean): void {
     const d = doc();
+    textEditing = on;
     // The selection actions change with editing.
     selectionAction?.remove();
-    if (!on) {
-      clearTimeout(draftTimer);
-      // Script text gives back the contenteditable values that the source
-      // map gave it, so it stops first.
-      scriptText?.stop();
-      scriptText = null;
-      textEditor?.stop();
-      textEditor = null;
-      releaseHighlights();
-      return;
-    }
-    if (textEditor || !d) return;
+    // Script text gives back the contenteditable values that the source map
+    // gave it, so it pauses first.
+    scriptText?.setEditable(on);
+    textEditor?.setEditable(on);
+    if (!on) return releaseHighlights();
+    if (!d?.body) return;
+    if (!textEditor) startEditor(d);
+    const selection = d.getSelection();
+    const range = selectedRange(selection);
+    if (!range) return;
+    d.body.focus({ preventScroll: true });
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }
+
+  function startEditor(d: Document): void {
     markSurface(d);
     const post = (message: object) => parent.postMessage(message, targetOrigin());
     // Each change also sends a draft soon after it, which the app saves when
@@ -2314,7 +2324,7 @@ type Theme = "dark" | "light";
     const onKey = (ev: KeyboardEvent) => {
       // An Esc that closes the actions at the selection is theirs alone.
       if (ev.key === "Escape") {
-        const shown = !!selectionAction;
+        const shown = !!selectionAction?.isConnected;
         dismissSelectionAction();
         if (shown) return;
       }
@@ -2334,10 +2344,10 @@ type Theme = "dark" | "light";
           return;
         }
       }
-      // In the document editor every key types while the text has the
-      // caret, as in Google Docs. Esc leaves the text, so the keys after it
-      // work as shortcuts. That Esc also closes the open thread in the app,
-      // but it arms no chord, so Esc, then C places a pin.
+      // In Edit mode every key types while the text has the caret, as in
+      // Google Docs. Esc leaves the text, so the keys after it work as
+      // shortcuts. That Esc also closes the open thread in the app, but it
+      // arms no chord, so Esc, then C comments.
       if (ev.key === "Escape" && ev.target === d.body && isEditableTarget(d, d.body)) {
         d.body.blur();
         if (watched)
@@ -2356,8 +2366,9 @@ type Theme = "dark" | "light";
 
       const key = ev.key.toLowerCase();
       if (ev.key === "Escape") {
-        // An Esc closes the open thread in the app, and arms no chord.
-        armChord(!chordArmed && !watched);
+        // An Esc closes the open thread in the app, or leaves Edit mode, and
+        // arms no chord.
+        armChord(!chordArmed && !watched && !textEditing);
         parent.postMessage(
           { type: "slashdocs:keydown", key: "Escape" },
           targetOrigin(),
@@ -2396,21 +2407,26 @@ type Theme = "dark" | "light";
       handleKVUndoRedoShortcut(d, ev);
     };
     // C comments on the selected text, as in Figma, and with nothing
-    // selected it places a comment pin. It runs after the document's own
-    // handlers, on its window, so a document that takes C keeps it.
-    const onCommentKey = (ev: KeyboardEvent) => {
-      if (ev.key !== "c" || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+    // selected it places a comment pin. In Edit mode it goes back to Comment
+    // mode, with a comment on the selected text, and E, which the app takes,
+    // starts Edit mode. They run after the document's own handlers, on its
+    // window, so a document that takes them keeps them.
+    const onModeKey = (ev: KeyboardEvent) => {
+      if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
       if (ev.defaultPrevented || isEditableTarget(d, ev.target)) return;
+      if (ev.key === (textEditing ? "c" : "e"))
+        parent.postMessage({ type: "slashdocs:keydown", key: ev.key }, targetOrigin());
+      if (ev.key !== "c") return;
       ev.preventDefault();
       const range = selectedRange(d.getSelection());
       if (range) commitSelection(range);
-      else pins.setPlacing(!pins.isPlacing());
+      else if (!textEditing) pins.setPlacing(!pins.isPlacing());
     };
     d.addEventListener("keydown", onKey);
-    d.defaultView?.addEventListener("keydown", onCommentKey);
+    d.defaultView?.addEventListener("keydown", onModeKey);
     documentKeys = (ev) => {
       onKey(ev);
-      onCommentKey(ev);
+      onModeKey(ev);
     };
     // Forward trackpad pinch-to-zoom (wheel + ctrlKey) to parent so the
     // app can scale only the document iframe instead of browser-zooming. A
@@ -2432,8 +2448,9 @@ type Theme = "dark" | "light";
       },
       { passive: false },
     );
-    // The app shows Done on touch screens while the text has the caret. The
-    // focus settles first, as it moves from the body into script text.
+    // The app tells an editor what a change does to approvals when the text
+    // takes the caret. The focus settles first, as it moves from the body
+    // into script text.
     const reportFocus = () =>
       setTimeout(() =>
         parent.postMessage(
@@ -2468,11 +2485,9 @@ type Theme = "dark" | "light";
     );
     chat = pointer ? createCursorChat(d, pointer, () => chatColor) : null;
     // A document that reloads by itself while being edited stays editable.
-    if (textEditor) {
-      textEditor = null;
-      scriptText = null;
-      setTextEditing(true);
-    }
+    textEditor = null;
+    scriptText = null;
+    if (textEditing) setTextEditing(true);
     // The address says which document is ready, so that the app does not
     // take a late ready of the document before it as this one's.
     parent.postMessage(
@@ -2541,13 +2556,9 @@ type Theme = "dark" | "light";
       setTextEditing(e.data.on === true);
       return;
     }
-    // The app's Undo after a save, and its Done on touch screens.
+    // The app's Undo after a save.
     if (e.data.type === "slashdocs:text-undo") {
       textEditor?.run("historyUndo");
-      return;
-    }
-    if (e.data.type === "slashdocs:leave-text") {
-      doc()?.body?.blur();
       return;
     }
     if (

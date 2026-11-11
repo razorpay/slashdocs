@@ -102,6 +102,33 @@ it("saves the edits as replacements on the loaded version", async () => {
   expect(setState).toHaveBeenLastCalledWith("saved");
 });
 
+it("settles the edits at once, after the save on its way, and says whether all saved", async () => {
+  let land = () => {};
+  const edit = vi
+    .spyOn(api, "editSource")
+    .mockImplementationOnce(
+      () => new Promise((done) => (land = () => done(saved("ver_2")))),
+    )
+    .mockResolvedValueOnce(saved("ver_3"))
+    .mockRejectedValueOnce(new TypeError("Failed to fetch"));
+  const { type, frame, result } = setup();
+  // Nothing typed: nothing to save.
+  expect(await act(() => result.current.settle())).toBe(true);
+
+  await type("Try it now.");
+  // The reader typed more while the first save was on its way.
+  frame.regions = [second("Try it now!")];
+  act(() => result.current.changed(1));
+  const settled = act(() => result.current.settle());
+  land();
+  expect(await settled).toBe(true);
+  expect(edit).toHaveBeenCalledTimes(2);
+
+  frame.regions = [second("Try it later.")];
+  act(() => result.current.changed(1));
+  expect(await act(() => result.current.settle())).toBe(false);
+});
+
 it("saves each pause on top of the last save", async () => {
   const edit = vi
     .spyOn(api, "editSource")

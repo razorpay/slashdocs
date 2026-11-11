@@ -54,7 +54,7 @@ async function open(body: string, script?: (d: Document) => void) {
       saved(),
       changes.reduce((html, [from, to]) => html.replace(from, to), source),
     );
-  return { source, saved, expect, refused, run: editor.run };
+  return { source, saved, expect, refused, run: editor.run, editor };
 }
 
 // at finds a place in the text of the document. "|" marks it in the text of
@@ -402,6 +402,27 @@ describe("undo", () => {
     doc.expect(["Hello world", "Hello, world"]);
     key({ key: "z", ctrlKey: true });
     assert.equal(doc.saved(), doc.source);
+  });
+});
+
+describe("Comment mode", () => {
+  test("pauses the editor, which keeps the earlier changes for the next save", async () => {
+    const doc = await open("<p>Hello world</p>");
+    place("Hello| world");
+    input("insertText", { text: "," });
+    doc.editor.setEditable(false);
+    assert.isFalse(document.body.hasAttribute("contenteditable"));
+    assert.isFalse(
+      document.documentElement.hasAttribute("data-slashdocs-text-editing"),
+    );
+    // Its shortcuts change nothing while the reader comments.
+    place("|world", "world|");
+    key({ key: "b", ctrlKey: true });
+    doc.editor.setEditable(true);
+    assert.equal(document.body.getAttribute("contenteditable"), "true");
+    place("world|");
+    input("insertText", { text: "!" });
+    doc.expect(["Hello world", "Hello, world!"]);
   });
 });
 

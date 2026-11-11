@@ -131,13 +131,9 @@ it("keeps a reply after the thread closes, until it is posted", async () => {
 });
 
 it.each([
-  ["the author", { principal: { type: "user", id: "usr_ana" }, editable: false }, true],
-  ["an editor", { principal: { type: "user", id: "usr_ed" }, editable: true }, true],
-  [
-    "a commenter",
-    { principal: { type: "user", id: "usr_bo" }, editable: false },
-    false,
-  ],
+  ["the author", { principal: { type: "user", id: "usr_ana" }, canEdit: false }, true],
+  ["an editor", { principal: { type: "user", id: "usr_ed" }, canEdit: true }, true],
+  ["a commenter", { principal: { type: "user", id: "usr_bo" }, canEdit: false }, false],
 ])("offers Move pin to %s", async (_, reader, offered) => {
   const user = userEvent.setup();
   const setPlacingPin = vi.fn();

@@ -77,8 +77,8 @@ export function StartPage() {
         >
           slashdocs is meant to be driven by your AI agent — Claude Code, Codex, Cursor,
           Pi, OpenCode, Aider, or anything else. These steps wire it up. People then
-          comment on what it publishes, and editors fix the words in place: they click
-          the text and type.
+          comment on what it publishes, and editors fix the words in place: they press
+          E, or pick Edit in the document bar, and type.
         </p>
       </header>
 

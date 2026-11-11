@@ -26,8 +26,6 @@ export type UnanchoredKind = "text" | "pins";
 // region and every script text that changed since it loaded.
 export type TextEditResult = { regions: Region[]; scripts: ScriptChange[] };
 
-export type TextControls = { focused: boolean; leave(): void };
-
 // What a save of the editor changed, in the words of the history, and the
 // way to take it back, if it offers one.
 export type SaveNote = { said: string; undo?: () => void };
@@ -96,19 +94,23 @@ export type DocContextValue = {
   // The reader stopped following in the document, by moving the view or with
   // the stop button.
   onUnfollowCursor?: () => void;
-  // An editor edits the words of the rendered document in place, and the
-  // edits save as they pause.
-  editable: boolean;
+  // The reader may edit the words of the version on screen.
+  canEdit: boolean;
+  // Edit mode: the editor types in the rendered document, and the edits
+  // save as they pause. Otherwise they comment on it, as every reader does.
+  editing: boolean;
+  // Starts Edit mode, or leaves it once the edits on screen are saved. It
+  // stays when they do not save.
+  setEditing: (on: boolean) => Promise<void>;
+  // The frame gives the way to save the edits on screen at once, which
+  // tells whether all of them are saved.
+  registerTextSettle: (settle: (() => Promise<boolean>) | null) => void;
   saveState: SaveState;
   setSaveState: (state: SaveState) => void;
   // The note of the last save, for a while after it. The bar shows it, so
   // that no message covers the words that the editor types.
   saveNote?: SaveNote;
   setSaveNote: (note: SaveNote | undefined) => void;
-  // The text of the frame: whether it has the caret, and how to leave the
-  // text. The frame sets them.
-  text?: TextControls;
-  setText: (text: TextControls | undefined) => void;
   // The frame shows the text and takes edits. Until then, and when it did
   // not load, the bar does not say that the reader can edit.
   frameReady: boolean;

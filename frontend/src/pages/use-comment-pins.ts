@@ -30,6 +30,12 @@ export function typingOrInLayer(e: KeyboardEvent): boolean {
   );
 }
 
+// plainKey tells whether a key in the app is key alone, as a shortcut, and
+// not a key of a field, dialog or menu.
+export function plainKey(e: KeyboardEvent, key: string): boolean {
+  return e.key === key && !e.metaKey && !e.ctrlKey && !e.altKey && !typingOrInLayer(e);
+}
+
 // useCommentPins draws the point comments of the document as pins in the
 // render frame, and turns the frame's pin gestures into drafts and moves. The
 // frame tells which pins it could not place, and which moved to their spot
@@ -48,7 +54,9 @@ export function useCommentPins(
     drafts,
     activeComment,
     principal,
-    editable,
+    canEdit,
+    editing,
+    setEditing,
     startDraft,
     moveDraft,
     setUnanchoredComments,
@@ -71,7 +79,7 @@ export function useCommentPins(
                 anchor: c.anchor,
                 initials: initialsOf(principalLabel(c.author)),
                 replies: c.replies?.length ?? 0,
-                movable: canMovePin(c, editable, principal),
+                movable: canMovePin(c, canEdit, principal),
                 color: principalColor(c.author),
               },
             ]
@@ -91,7 +99,7 @@ export function useCommentPins(
           : [],
       ),
     ],
-    [comments, drafts, version, activeComment, editable, principal],
+    [comments, drafts, version, activeComment, canEdit, principal],
   );
   useEffect(() => {
     if (ready) postToFrame({ type: "slashdocs:pins", pins, active: activeComment });
@@ -164,20 +172,20 @@ export function useCommentPins(
   });
 
   // C places a pin from outside the document too, unless the reader types
-  // or is in a dialog. The Esc chord takes its own C first (useEscChord).
-  // Esc stops placing.
+  // or is in a dialog, and in Edit mode it goes back to Comment mode. The
+  // Esc chord takes its own C first (useEscChord). Esc stops placing.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         if (placingPin) setPlacingPin(false);
         return;
       }
-      if (e.key !== "c" || e.metaKey || e.ctrlKey || e.altKey || typingOrInLayer(e))
-        return;
+      if (!plainKey(e, "c")) return;
       e.preventDefault();
-      setPlacingPin(!placingPin);
+      if (editing) void setEditing(false);
+      else setPlacingPin(!placingPin);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [placingPin, setPlacingPin]);
+  }, [placingPin, setPlacingPin, editing, setEditing]);
 }

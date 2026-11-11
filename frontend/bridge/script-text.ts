@@ -25,6 +25,9 @@ export interface ScriptText {
   // Each script string that the reader typed in since editing started, with
   // its text at the start and its text now, which can be the same again.
   take(): ScriptChange[];
+  // setEditable lets the reader type in the script text again, or stops it
+  // while they comment. The texts that they typed keep their changes.
+  setEditable(on: boolean): void;
   stop(): void;
 }
 
@@ -50,6 +53,12 @@ const EDITABLE = "A script on the page writes this text. You can change it here.
 const BRIDGE_OWNED =
   "[class^='slashdocs-'],[class*=' slashdocs-'],[id^='slashdocs-'],[data-slashdocs-injected]";
 const bridgeOwned = (el: Element) => el.matches(BRIDGE_OWNED);
+
+// restore gives el back the contenteditable value that it had.
+function restore(el: Element, was: string | null): void {
+  if (was === null) el.removeAttribute("contenteditable");
+  else el.setAttribute("contenteditable", was);
+}
 
 function children(el: Element): Element[] {
   return [...el.children].filter((child) => !bridgeOwned(child));
@@ -104,6 +113,7 @@ export function startScriptText(
   type Edit = { locator: Locator; before: string; was: string | null; typed: number };
   const edits = new Map<Element, Edit>();
   let keys = 0;
+  let editing = true;
   // The hint or note that shows at script text, and that text.
   let hint: { box: HTMLElement; el: Element } | null = null;
   const typing = new MutationObserver((records) => {
@@ -119,6 +129,7 @@ export function startScriptText(
   // ask starts at the element of the clicked or focused text. The bridge's
   // own wrappers, such as comment highlights, are not that element.
   function ask(ev: Event): void {
+    if (!editing) return;
     const target = ev.target as Node;
     if (hint?.box.contains(target)) return;
     let el =
@@ -188,7 +199,7 @@ export function startScriptText(
   // locator, and names it as script text that they can change.
   function allowTyping(el: Element, edit: Pick<Edit, "locator" | "before">): void {
     edits.set(el, { ...edit, was: el.getAttribute("contenteditable"), typed: 0 });
-    el.setAttribute("contenteditable", "true");
+    if (editing) el.setAttribute("contenteditable", "true");
     el.setAttribute(EDIT_ATTR, "");
     el.setAttribute("aria-description", EDITABLE);
     typing.observe(el, { characterData: true, childList: true, subtree: true });
@@ -379,6 +390,14 @@ export function startScriptText(
         mark(textsShowing(to).filter((t) => !hint?.el.contains(t)));
       return texts;
     },
+    setEditable(on) {
+      editing = on;
+      if (!on) dismissHint();
+      for (const [el, { was }] of edits) {
+        if (on) el.setAttribute("contenteditable", "true");
+        else restore(el, was);
+      }
+    },
     // The places of one string give one change: the text of the place that
     // the reader typed in last.
     take: () => {
@@ -407,8 +426,7 @@ export function startScriptText(
       for (const [el, { was }] of edits) {
         el.removeAttribute(EDIT_ATTR);
         el.removeAttribute("aria-description");
-        if (was === null) el.removeAttribute("contenteditable");
-        else el.setAttribute("contenteditable", was);
+        restore(el, was);
       }
     },
   };

@@ -39,7 +39,6 @@ import {
   type PendingSelection,
   type SaveNote,
   type SaveState,
-  type TextControls,
   type UnanchoredKind,
 } from "./doc-context";
 import { RenderFrame } from "./doc-render-frame";
@@ -48,6 +47,7 @@ import { CommentMap } from "./comment-map";
 import { Keycast } from "./doc-keycast";
 import { ShortcutsDialog } from "./doc-shortcuts";
 import { useCommentLink } from "./use-comment-link";
+import { plainKey } from "./use-comment-pins";
 
 const THEME_LABELS = { light: "Light", dark: "Dark", system: "System" } as const;
 
@@ -97,7 +97,9 @@ export function DocWorkspace({
   followedCursor,
   onUnfollowCursor,
   onDocumentClick,
-  editable = false,
+  canEdit = false,
+  editing = false,
+  onEditingChange = noop,
   stayOnVersion = noop,
   showLatest = noop,
   showsLatest = true,
@@ -121,7 +123,10 @@ export function DocWorkspace({
   onUnfollowCursor?: DocContextValue["onUnfollowCursor"];
   onDocumentClick?: () => void;
   // The reader may edit the version on screen.
-  editable?: boolean;
+  canEdit?: boolean;
+  // Edit mode, which the page keeps. Each document opens in Comment mode.
+  editing?: boolean;
+  onEditingChange?: (editing: boolean) => void;
   stayOnVersion?: (version?: string) => void;
   showLatest?: () => void;
   // The version on screen is the document's latest one.
@@ -168,8 +173,18 @@ export function DocWorkspace({
   }, []);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [saveNote, setSaveNote] = useState<SaveNote>();
-  const [text, setText] = useState<TextControls>();
   const [frameReady, setFrameReady] = useState(false);
+  const textSettle = useRef<(() => Promise<boolean>) | null>(null);
+  const registerTextSettle = useCallback((settle: (() => Promise<boolean>) | null) => {
+    textSettle.current = settle;
+  }, []);
+  const setEditing = useCallback(
+    async (on: boolean) => {
+      if (on ? !canEdit : (await textSettle.current?.()) === false) return;
+      onEditingChange(on);
+    },
+    [canEdit, onEditingChange],
+  );
   useEffect(() => {
     setSaveState("idle");
     setSaveNote(undefined);
@@ -424,27 +439,33 @@ export function DocWorkspace({
       home,
     ],
   );
-  // ? shows every shortcut, as in GitHub and Gmail. The bridge forwards it
-  // from the document.
+  // ? shows every shortcut, as in GitHub and Gmail, and E starts Edit mode.
+  // The bridge forwards them from the document.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "?" && !isChordBlocked(event.target)) setShortcutsOpen(true);
+      if (canEdit && !editing && plainKey(event, "e")) {
+        event.preventDefault();
+        void setEditing(true);
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [canEdit, editing, setEditing]);
   const onBareEscape = useCallback(() => {
     if (fullscreen) exitFullscreen();
     else if (listOpen) setListOpen(false);
     else setActiveComment(undefined);
   }, [fullscreen, exitFullscreen, listOpen]);
-  // An Esc from anywhere stops placing a pin, or closes the open thread.
+  // An Esc from anywhere stops placing a pin, or closes the open thread, or
+  // leaves Edit mode. In the text, an Esc first leaves the text.
   const takeEscape = useCallback(() => {
     if (placingPin) setPlacingPin(false);
     else if (activeComment) setActiveComment(undefined);
+    else if (editing) void setEditing(false);
     else return false;
     return true;
-  }, [placingPin, activeComment]);
+  }, [placingPin, activeComment, editing, setEditing]);
   const chord = useEscChord({
     available: chordKeys,
     onRun: runChord,
@@ -491,13 +512,14 @@ export function DocWorkspace({
       subscribeCursors: stream.subscribeCursors,
       followedCursor,
       onUnfollowCursor,
-      editable,
+      canEdit,
+      editing,
+      setEditing,
+      registerTextSettle,
       saveState,
       setSaveState,
       saveNote,
       setSaveNote,
-      text,
-      setText,
       frameReady,
       setFrameReady,
       stayOnVersion,
@@ -535,10 +557,12 @@ export function DocWorkspace({
       stream.subscribeCursors,
       followedCursor,
       onUnfollowCursor,
-      editable,
+      canEdit,
+      editing,
+      setEditing,
+      registerTextSettle,
       saveState,
       saveNote,
-      text,
       frameReady,
       stayOnVersion,
       showLatest,
@@ -566,6 +590,15 @@ export function DocWorkspace({
       )}
       <CommentMap comments={shownComments} />
       <Keycast state={chord} available={chordKeys} label={chordLabel} />
+      {/* In Edit mode an accent edge runs along the top of the document. It
+          grows from the middle and shrinks back, by its transform alone. */}
+      <div
+        aria-hidden="true"
+        className={cn(
+          "pointer-events-none absolute inset-x-0 top-0 z-10 h-0.5 bg-[var(--color-accent)] transition-transform duration-200 ease-out motion-reduce:transition-none",
+          !editing && "scale-x-0",
+        )}
+      />
     </>
   );
   return (

@@ -240,7 +240,7 @@ export function CommentThread({
     signIn,
     unanchoredComments,
     movedPins,
-    editable,
+    canEdit,
     principal,
     setPlacingPin,
   } = useDoc();
@@ -261,7 +261,7 @@ export function CommentThread({
           lost={unanchoredComments.has(c.id)}
           moved={movedPins.has(c.id)}
         />
-        {movedPins.has(c.id) && canMovePin(c, editable, principal) ? (
+        {movedPins.has(c.id) && canMovePin(c, canEdit, principal) ? (
           <Button
             variant="link"
             className="h-auto p-0 text-xs"
@@ -447,7 +447,6 @@ export function CommentsList({
     unanchoredComments,
     movedPins,
     activeComment,
-    editable,
   } = useDoc();
   const self = useSelf(principal);
   const [filter, setFilter] = useState<ListFilter>("all");
@@ -607,11 +606,7 @@ export function CommentsList({
           />
         ) : items.length === 0 ? (
           unsent.length ? null : (
-            <CommentsEmptyState
-              filter={filter}
-              signedOut={!!signIn}
-              editable={editable}
-            />
+            <CommentsEmptyState filter={filter} signedOut={!!signIn} />
           )
         ) : (
           <ul className="space-y-1">
@@ -664,16 +659,12 @@ export function CommentsList({
   );
 }
 
-// For an editor, a click in the document puts the caret in its text, where C
-// types a letter. Esc first leaves the text.
 function CommentsEmptyState({
   filter,
   signedOut,
-  editable,
 }: {
   filter: ListFilter;
   signedOut: boolean;
-  editable: boolean;
 }) {
   const titles: Record<ListFilter, string> = {
     all: "No comments yet",
@@ -690,9 +681,7 @@ function CommentsEmptyState({
           ? "Resolved conversations will appear here."
           : signedOut
             ? "Sign in to start a thread."
-            : editable
-              ? "Select text, or press Esc, then C, and click a spot, to start a thread."
-              : "Select text, or press C and click a spot, to start a thread."
+            : "Select text, or press C and click a spot, to start a thread."
       }
     />
   );
