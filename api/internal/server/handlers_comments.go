@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -213,7 +214,55 @@ func (h handlers) listComments(c *gin.Context) {
 	if placementVersionID != "" {
 		placementHTML, _ = h.deps.repository.GetVersionHTML(c.Request.Context(), placementVersionID)
 	}
-	c.JSON(http.StatusOK, listResponse[commentResponse]{Items: commentsJSON(items, placementVersionID, placementHTML, *current(c))})
+	threads := commentsJSON(items, placementVersionID, placementHTML, *current(c))
+	if !h.markUnread(c, threads) {
+		return
+	}
+	c.JSON(http.StatusOK, listResponse[commentResponse]{Items: threads})
+}
+
+// markUnread sets Unread on the threads that the signed-in reader did not
+// read. It answers the client when it fails.
+func (h handlers) markUnread(c *gin.Context, threads []commentResponse) bool {
+	reader := current(c)
+	if reader.Type == auth.PrincipalAnonymous {
+		return true
+	}
+	unread, err := h.deps.repository.UnreadCommentThreads(c.Request.Context(), c.Param("id"), *reader)
+	if err != nil {
+		internalErr(c, err)
+		return false
+	}
+	for i := range threads {
+		threads[i].Unread = slices.Contains(unread, threads[i].ID)
+	}
+	return true
+}
+
+// MarkCommentThreadRead godoc
+// @Summary Mark comment thread read
+// @Description Sets the caller's read time of a thread to now. The thread then shows as read to the caller until someone else adds a message to it. Only the thread's first comment takes a mark: a reply id answers 404.
+// @Tags comments
+// @Security bearerAuth
+// @Security cookieAuth
+// @Param id path string true "Document ID"
+// @Param comment_id path string true "Thread ID, the id of the thread's first comment"
+// @Success 204
+// @Failure 404 {object} errorEnvelope "not_found: no such thread in the document"
+// @Router /v1/documents/{id}/comments/{comment_id}/read [put]
+func (h handlers) markCommentThreadRead(c *gin.Context) {
+	if !h.needDocRole(c, c.Param("id"), repo.RoleViewer) {
+		return
+	}
+	err := h.deps.repository.MarkCommentThreadRead(c.Request.Context(), c.Param("id"), c.Param("comment_id"), *current(c))
+	switch {
+	case errors.Is(err, repo.ErrNotFound):
+		c.JSON(http.StatusNotFound, errorResponse("not_found", "comment not found in document", nil))
+	case err != nil:
+		internalErr(c, err)
+	default:
+		c.Status(http.StatusNoContent)
+	}
 }
 
 // CreateCommentReply godoc

@@ -606,6 +606,12 @@ type Repository interface {
 	DeleteComment(ctx context.Context, id string) error
 	PutCommentReaction(ctx context.Context, commentID string, principal auth.Principal, emoji string) error
 	DeleteCommentReaction(ctx context.Context, commentID string, principal auth.Principal, emoji string) error
+	// MarkCommentThreadRead sets the reader's read time of a thread to now.
+	// Returns ErrNotFound when threadID is not a thread of the document.
+	MarkCommentThreadRead(ctx context.Context, documentID, threadID string, reader auth.Principal) error
+	// UnreadCommentThreads returns the ids of the document's threads that
+	// have a message by someone else, newer than the reader's read time.
+	UnreadCommentThreads(ctx context.Context, documentID string, reader auth.Principal) ([]string, error)
 	ListDocumentKV(ctx context.Context, documentID string) (DocumentKVSnapshot, error)
 	// CurrentDocumentKVRevision returns the high-water mark of the document's
 	// event log.

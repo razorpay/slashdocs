@@ -816,6 +816,22 @@ func (s *Store) DeleteCommentReaction(ctx context.Context, commentID string, p a
 	})
 }
 
+func (s *Store) MarkCommentThreadRead(ctx context.Context, documentID, threadID string, reader auth.Principal) error {
+	marked, err := s.q.MarkCommentThreadRead(ctx, dbsqlc.MarkCommentThreadReadParams{
+		PrincipalType: string(reader.Type), PrincipalID: reader.ID, ThreadID: threadID, DocumentID: documentID,
+	})
+	if err == nil && marked == 0 {
+		return repo.ErrNotFound
+	}
+	return err
+}
+
+func (s *Store) UnreadCommentThreads(ctx context.Context, documentID string, reader auth.Principal) ([]string, error) {
+	return s.q.ListUnreadCommentThreads(ctx, dbsqlc.ListUnreadCommentThreadsParams{
+		PrincipalType: string(reader.Type), PrincipalID: reader.ID, DocumentID: documentID,
+	})
+}
+
 func upsertUser(ctx context.Context, q *dbsqlc.Queries, p auth.Principal) error {
 	return q.UpsertUser(ctx, dbsqlc.UpsertUserParams{ID: p.ID, Email: p.Email, Name: p.Name})
 }

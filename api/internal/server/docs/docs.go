@@ -1225,6 +1225,50 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/documents/{id}/comments/{comment_id}/read": {
+            "put": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Sets the caller's read time of a thread to now. The thread then shows as read to the caller until someone else adds a message to it. Only the thread's first comment takes a mark: a reply id answers 404.",
+                "tags": [
+                    "comments"
+                ],
+                "summary": "Mark comment thread read",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Thread ID, the id of the thread's first comment",
+                        "name": "comment_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "not_found: no such thread in the document",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/documents/{id}/comments/{comment_id}/replies": {
             "post": {
                 "security": [
@@ -3112,6 +3156,10 @@ const docTemplate = `{
                 },
                 "status": {
                     "type": "string"
+                },
+                "unread": {
+                    "description": "Unread is set on a thread with a message by someone else that the\nsigned-in reader did not read. Anonymous readers get no read state.",
+                    "type": "boolean"
                 }
             }
         },

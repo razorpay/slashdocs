@@ -450,6 +450,11 @@ definitions:
         type: string
       status:
         type: string
+      unread:
+        description: |-
+          Unread is set on a thread with a message by someone else that the
+          signed-in reader did not read. Anonymous readers get no read state.
+        type: boolean
     type: object
   server.configResponse:
     properties:
@@ -1764,6 +1769,35 @@ paths:
       - bearerAuth: []
       - cookieAuth: []
       summary: Add comment reaction
+      tags:
+      - comments
+  /v1/documents/{id}/comments/{comment_id}/read:
+    put:
+      description: 'Sets the caller''s read time of a thread to now. The thread then
+        shows as read to the caller until someone else adds a message to it. Only
+        the thread''s first comment takes a mark: a reply id answers 404.'
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Thread ID, the id of the thread's first comment
+        in: path
+        name: comment_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: 'not_found: no such thread in the document'
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Mark comment thread read
       tags:
       - comments
   /v1/documents/{id}/comments/{comment_id}/replies:

@@ -127,6 +127,14 @@ type CommentReaction struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+// One row per (thread, reader): the last time the reader read the thread. Only the root comment of a thread has rows. Readers who never opened a thread have no row, and every message by someone else in it is unread for them.
+type CommentRead struct {
+	ThreadID      string
+	PrincipalType string
+	PrincipalID   string
+	ReadAt        pgtype.Timestamptz
+}
+
 type Document struct {
 	ID               string
 	Title            string
