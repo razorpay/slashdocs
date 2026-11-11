@@ -754,11 +754,13 @@ test("a pin or highlight opened under a comment sheet comes up above it", () => 
   }
 });
 
-test("a dragged pin shows once, under the pointer, while the app sends the pins again, and stays where it is let go", () => {
+test("a dragged pin shows once, under the pointer, while the app sends the pins again, and keeps its face where it is let go", () => {
   document.body.innerHTML = '<main><p id="spot">Drag me</p></main>';
   layout();
   const spot = document.querySelector("#spot")!;
   document.elementFromPoint = (() => spot) as typeof document.elementFromPoint;
+  // Text above the tip turns the face down.
+  const restore = textAt([new DOMRect(290, 215, 60, 30)]);
   const posted: Record<string, unknown>[] = [];
   const layer = createPinLayer({
     doc: () => document,
@@ -775,20 +777,29 @@ test("a dragged pin shows once, under the pointer, while the app sends the pins 
   ];
   layer.setPins(parsePins(pins));
   const shown = () => document.querySelectorAll<HTMLElement>(".sd-pin");
+  const at = () => [
+    shown().length,
+    shown()[0].style.translate,
+    shown()[0].dataset.turn,
+  ];
   const pointer = (type: string, clientX: number, clientY: number) =>
     shown()[0].dispatchEvent(
       new MouseEvent(type, { button: 0, clientX, clientY, bubbles: true }),
     );
-  // The tip is at 300, 250, and the face above it.
-  assert.strictEqual(shown()[0].style.translate, "300px 222px");
-  pointer("pointerdown", 310, 240);
-  pointer("pointermove", 410, 290);
-  // The app sends the same pins again, as on any repaint of the page.
-  layer.setPins(parsePins(pins));
-  assert.strictEqual(shown().length, 1);
-  assert.strictEqual(shown()[0].style.translate, "400px 272px");
-  pointer("pointerup", 410, 290);
-  assert.strictEqual(posted.filter((m) => m.type === "slashdocs:pin-move").length, 1);
-  assert.strictEqual(shown().length, 1);
-  assert.strictEqual(shown()[0].style.translate, "400px 272px");
+  try {
+    // The tip is at 300, 250.
+    assert.deepEqual(at(), [1, "300px 250px", "down"]);
+    pointer("pointerdown", 310, 260);
+    pointer("pointermove", 410, 310);
+    assert.deepEqual(at(), [1, "400px 300px", "down"]);
+    // The app sends the same pins again, as on any repaint of the page.
+    layer.setPins(parsePins(pins));
+    assert.deepEqual(at(), [1, "400px 300px", "down"]);
+    // Where it is let go, no text is above the tip, but the face stays.
+    pointer("pointerup", 410, 310);
+    assert.strictEqual(posted.filter((m) => m.type === "slashdocs:pin-move").length, 1);
+    assert.deepEqual(at(), [1, "400px 300px", "down"]);
+  } finally {
+    restore();
+  }
 });

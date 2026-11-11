@@ -630,7 +630,10 @@ export function createPinLayer(host: PinHost) {
   // outside the frame, where the frame hears no release.
   let cancelDrag: (() => void) | null = null;
   // Where the dragged pin is, which its popover follows.
-  let dragged: { id: string; x: number; y: number } | null = null;
+  let dragged: { id: string; x: number; y: number; face: Face } | null = null;
+  // A pin keeps the face that it was dragged by where it is dropped, until
+  // the text moves on a resize.
+  const droppedFaces = new Map<string, Face>();
   // The pin pressed last, which is already in view when the app opens it.
   let pressed: string | undefined;
   let placing = false;
@@ -699,8 +702,11 @@ export function createPinLayer(host: PinHost) {
         inside(screen, p.x, p.y) &&
         p.clips.every((clip) => inside(clip.getBoundingClientRect(), p.x, p.y));
       // Measured on screen, where the text around the pin can be found.
+      const dropped = droppedFaces.get(p.pin.id);
       if (p.shown && !p.sure)
-        ({ face: p.face, sure: p.sure } = faceOf(view.document, p.x, p.y));
+        ({ face: p.face, sure: p.sure } = dropped
+          ? { face: dropped, sure: true }
+          : faceOf(view.document, p.x, p.y));
     }
     placeRing();
     const positions = placed
@@ -895,12 +901,13 @@ export function createPinLayer(host: PinHost) {
         to = { x: from.x + dx, y: from.y + dy };
         delete b.dataset.pressed;
         b.dataset.dragging = "";
-        put(b, to.x, to.y, TURNS[0]);
-        dragged = { id: pin.id, ...to };
+        dragged = { id: pin.id, ...to, face: from.face ?? TURNS[0] };
+        put(b, to.x, to.y, dragged.face);
       };
       const finish = () => {
         if (done) return;
         done = true;
+        const face = dragged?.face;
         for (const v of views) v.removeEventListener("keydown", key, true);
         if (b.hasPointerCapture(e.pointerId)) b.releasePointerCapture(e.pointerId);
         b.removeEventListener("pointermove", move);
@@ -914,7 +921,7 @@ export function createPinLayer(host: PinHost) {
         else {
           cancelDrag = null;
           host.post({ type: "slashdocs:pin-dragging", on: false });
-          if (to) drop(pin, to);
+          if (to && face) drop(pin, to, face);
         }
         schedule();
       };
@@ -924,15 +931,18 @@ export function createPinLayer(host: PinHost) {
     });
   }
 
-  // drop moves a pin to the spot under its tip, or puts it back where no
-  // element takes it.
-  function drop(pin: Pin, at: { x: number; y: number }) {
+  // drop moves a pin to the spot under its tip, with the face that it was
+  // dragged by, or puts it back where no element takes it.
+  function drop(pin: Pin, at: { x: number; y: number }, face: Face) {
     const anchor = d && pointAt(d, at.x, at.y);
-    if (anchor) move(pin.id, anchor);
+    if (anchor) move(pin.id, anchor, face);
   }
 
-  // move puts a pin at anchor. The move shows at once; the app saves it.
-  function move(id: string, anchor: PinAnchor) {
+  // move puts a pin at anchor, with the given face or else the one that
+  // fits there. The move shows at once; the app saves it.
+  function move(id: string, anchor: PinAnchor, face?: Face) {
+    if (face) droppedFaces.set(id, face);
+    else droppedFaces.delete(id);
     pins = pins.map((p) => (p.id === id ? { ...p, anchor } : p));
     layout();
     host.post({ type: "slashdocs:pin-move", id, anchor });
@@ -1058,6 +1068,7 @@ export function createPinLayer(host: PinHost) {
     view?.addEventListener(
       "resize",
       () => {
+        droppedFaces.clear();
         for (const p of placed) p.sure = false;
         lastPositions = null;
         schedule();
