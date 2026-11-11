@@ -447,7 +447,7 @@ test("nested group access inherited from a parent folder opens the document", as
   await page.goto("/app/folders/fld_1");
   await expect(page.getByText("Group Plan", { exact: true }).first()).toBeVisible();
   await page.goto("/app/d/doc_1");
-  await expect(page.getByText("Shared Folder", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Back to Shared Folder" })).toBeVisible();
   await expect(page.getByText("Group Plan", { exact: true })).toBeVisible();
 });
 

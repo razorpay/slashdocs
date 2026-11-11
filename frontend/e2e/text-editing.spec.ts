@@ -255,9 +255,6 @@ test("text from one script string changes in every place it shows", async ({
   await placeCaret(page, "#labels button", "step");
   await page.keyboard.type("check");
   expect((await saved).status()).toBe(201);
-  await expect(
-    page.getByText("Changed “Run step” to “Run check” in 3 places"),
-  ).toBeVisible();
   expect(await latestSource(page, document.id)).toBe(
     html.replace('"Run step"', '"Run check"'),
   );

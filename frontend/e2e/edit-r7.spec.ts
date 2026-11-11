@@ -1,5 +1,5 @@
 import { type FrameLocator, type Locator, type Page } from "@playwright/test";
-import { expect, openEditable, test, uniqueName } from "./fixtures";
+import { expect, openEditable, startEditing, test, uniqueName } from "./fixtures";
 
 // The controls at the text that the reader edits: the selection actions, the
 // link field and the note of a script string in several places.
@@ -121,8 +121,10 @@ test.describe("at 1440x900", () => {
     // A save makes every place take keys. Each entry says again where they go.
     await page.keyboard.type("s");
     await expect(chips).toHaveText(["Needs reviews", "Needs reviews", "Needs reviews"]);
+    // Esc leaves Edit mode. Each entry in Edit mode says again where they go.
     await page.keyboard.press("Escape");
     await expect(note).toHaveCount(0);
+    await startEditing(page);
     await chips.nth(0).click();
     await expect(note).toHaveText(NOTE);
   });
