@@ -126,10 +126,11 @@ test("an editor whose access did not load is told so, not that they may only vie
   await expect(reviewer.getByText("Could not check your access")).toBeVisible(
     afterRetries,
   );
-  await expect(reviewer.getByText("Can view", { exact: true })).toBeHidden();
   await reviewer.unroute(`**/v1/documents/${document.id}/access`);
   await reviewer.getByRole("button", { name: "Retry" }).click();
-  await expect(reviewer.getByRole("radio", { name: "Edit" })).toBeVisible();
+  await expect(
+    reviewer.getByRole("button", { name: "Edit", exact: true }),
+  ).toBeVisible();
   await reviewer.context().close();
 });
 
@@ -158,6 +159,5 @@ test("the page that waits for access opens the document when access is granted",
   await expect(reviewer.locator('iframe[title="Rendered document"]')).toBeVisible({
     timeout: 10_000,
   });
-  await expect(reviewer.getByText("Can comment", { exact: true })).toBeVisible();
   await reviewer.context().close();
 });

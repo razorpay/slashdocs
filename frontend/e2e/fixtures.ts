@@ -34,27 +34,32 @@ export async function installAppStorage(page: Page) {
       if (window.location.origin !== appOrigin) return;
       window.localStorage.setItem("slashdocs.onboarding", JSON.stringify(onboarding));
       window.localStorage.setItem("slashdocs:view-mode", JSON.stringify("list"));
-      window.localStorage.setItem("slashdocs:edit-hint-seen", "true");
     },
     { appOrigin: APP_ORIGIN, onboarding: ONBOARDING_STATE },
   );
 }
 
-// startEditing turns on Edit mode with the switch in the document bar, or
-// with Edit on a narrow bar, as each document opens in Comment mode, and
-// waits until its text takes edits.
+// startEditing turns on Edit mode with Edit in the document bar, as each
+// document opens in Comment mode, and waits until its text takes edits.
 export async function startEditing(page: Page) {
-  await page
-    .getByRole("radio", { name: "Edit" })
-    .or(page.getByRole("button", { name: "Edit", exact: true }))
-    .filter({ visible: true })
-    .click();
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
   await expect(
     page
       .frameLocator('iframe[title="Rendered document"]')
       .frameLocator("iframe#slashdocs-doc")
       .locator("body"),
   ).toHaveAttribute("contenteditable", "true");
+}
+
+// notSaved is the chip that shows edits that did not save, with Retry. It
+// is the only state of a save that the bar shows.
+export const notSaved = (page: Page) =>
+  page.getByRole("button", { name: "Not saved · Retry" });
+
+// openHistory opens the history of the document from the More menu.
+export async function openHistory(page: Page) {
+  await page.getByRole("button", { name: "More" }).click();
+  await page.getByRole("menuitem", { name: "History" }).click();
 }
 
 // openEditable opens a document as an editor, in Edit mode.

@@ -282,7 +282,7 @@ test("comments on a selection with C and lists every shortcut with ?", async ({
   await page.getByRole("button", { name: "Discard comment" }).click();
   await expect(doc.locator("p")).toHaveText("Keys beat clicks, again.");
 
-  // Esc leaves the text, so ? lists every shortcut and types nothing.
+  // Esc leaves Edit mode, so ? lists every shortcut and types nothing.
   await doc.locator("p").click();
   await page.keyboard.press("Escape");
   await page.keyboard.press("?");

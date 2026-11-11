@@ -102,19 +102,29 @@ test("a phone bar keeps the title, and gives 40px targets", async ({
   await page.goto(path);
 
   const more = page.getByRole("button", { name: "More" });
+  // More carries the badge of the approvals, as the bar has no room for them.
+  await expect(more.locator('span[aria-hidden="true"]')).toBeVisible();
   await more.click();
   await expect(page.getByRole("menuitem", { name: /Follow reviewer/ })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: /Approvals/ })).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("button", { name: "People" })).toBeHidden();
-  await expect(page.getByRole("button", { name: /Open approvals/ })).toBeHidden();
+  await expect(
+    page.getByRole("group", { name: "People viewing this document" }),
+  ).toBeHidden();
+  await expect(page.getByRole("button", { name: /^Approvals: / })).toBeHidden();
+  await expect(page.getByRole("button", { name: "Account menu" })).toBeHidden();
   // About 7px a letter: at least 12 letters of the title show.
   expect(
     (await box(page.getByRole("button", { name: /^Rename/ }))).width,
   ).toBeGreaterThan(84);
 
   const comments = page.getByRole("button", { name: "Comments" });
-  for (const target of [page.getByRole("button", { name: "Share" }), comments, more]) {
+  for (const target of [
+    page.getByRole("button", { name: "Edit", exact: true }),
+    page.getByRole("button", { name: "Share" }),
+    comments,
+    more,
+  ]) {
     const { width, height } = await box(target);
     expect(Math.min(width, height)).toBeGreaterThanOrEqual(40);
   }

@@ -129,8 +129,8 @@ test.describe("at 1440x900", () => {
 const keycast = (page: Page) => page.locator('[aria-label="Time to press a letter"]');
 const placeHint = (page: Page) => bridge(page).locator(".sd-place-hint");
 
-// An Esc that leaves the text is the text's: it arms no chord, so C after it
-// goes back to Comment mode at any speed. In Comment mode, Esc arms the chord.
+// An Esc in the text leaves Edit mode, and arms no chord. In Comment mode,
+// Esc arms the chord.
 test("Esc that leaves the text arms no chord", async ({ page, slashdocs }) => {
   const title = uniqueName("Esc text");
   const document = await slashdocs.createDocument(title, denseHTML(title));
@@ -140,12 +140,8 @@ test("Esc that leaves the text arms no chord", async ({ page, slashdocs }) => {
   await doc.locator("#p0").click();
 
   await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
   await expect(keycast(page)).toHaveCount(0);
-  await page.waitForTimeout(300);
-  await page.keyboard.press("c");
-  await expect(page.getByRole("radio", { name: "Comment" })).toBeChecked();
-  await expect(placeHint(page)).toBeHidden();
-  await expect(page.getByRole("dialog", { name: "Comments" })).toBeHidden();
 
   // In Comment mode, Esc, then C opens the comments.
   await page.waitForTimeout(1200);

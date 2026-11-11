@@ -55,9 +55,7 @@ test("an older version whose approvals fail shows no counts, and Retry loads the
   await page.route(olderApprovals, (r) => r.fulfill(unavailable));
   await page.goto(`/app/d/${document.id}?version=${v1}`);
 
-  const chip = page.getByRole("button", {
-    name: "Approvals did not load. Open approvals",
-  });
+  const chip = page.getByRole("button", { name: "Approvals did not load" });
   await expect(chip).toBeVisible(soon);
   await expect(page.getByText(/0 of 1 approved/)).toBeHidden();
 
@@ -69,7 +67,7 @@ test("an older version whose approvals fail shows no counts, and Retry loads the
   await expect(dialog.getByText("1 of 1 approved")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(
-    page.getByRole("button", { name: /^Approval approved: 1 of 1 approved/ }),
+    page.getByRole("button", { name: "Approvals: 1 of 1 approved" }),
   ).toBeVisible();
 });
 
@@ -84,7 +82,7 @@ test("the owner is told when the approvers fail, and Remove waits for them", asy
     r.request().method() === "GET" ? r.fulfill(unavailable) : r.fallback(),
   );
   await page.goto(`/app/d/${document.id}`);
-  await page.getByRole("button", { name: /Open approvals$/ }).click();
+  await page.getByRole("button", { name: /^Approvals: / }).click();
 
   const dialog = page.getByRole("dialog");
   const remove = dialog.getByRole("button", { name: /^Remove .+ as approver$/ });

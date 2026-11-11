@@ -1,6 +1,7 @@
 import { type FrameLocator, type Page } from "@playwright/test";
 import {
   expect,
+  notSaved,
   openEditable,
   reviewerOn,
   startEditing,
@@ -9,8 +10,8 @@ import {
 } from "./fixtures";
 
 // Each document opens in Comment mode. An editor starts Edit mode with E or
-// the switch in the bar, and leaves it with C, Done, the switch, or a second
-// Esc, once their edits are saved.
+// Edit in the bar, and leaves it with C, Done or one Esc, once their edits
+// are saved.
 
 function bridge(page: Page): FrameLocator {
   return page.frameLocator('iframe[title="Rendered document"]');
@@ -37,7 +38,8 @@ function documentHTML(title: string) {
 </html>`;
 }
 
-const mode = (page: Page) => page.getByRole("radiogroup", { name: "Mode" });
+const edit = (page: Page) => page.getByRole("button", { name: "Edit", exact: true });
+const done = (page: Page) => page.getByRole("button", { name: "Done", exact: true });
 const editingText = (page: Page) =>
   expect(renderedDocument(page).locator("body")).toHaveAttribute(
     "contenteditable",
@@ -56,7 +58,7 @@ test("a document opens in Comment mode, and E and C switch modes from the docume
   const title = uniqueName("Modes");
   const document = await slashdocs.createDocument(title, documentHTML(title));
   await page.goto(`/app/d/${document.id}`);
-  await expect(mode(page).getByRole("radio", { name: "Comment" })).toBeChecked();
+  await expect(edit(page)).toBeVisible();
   await commentingText(page);
 
   // C in Comment mode places a pin, as it did.
@@ -69,21 +71,21 @@ test("a document opens in Comment mode, and E and C switch modes from the docume
   // E starts Edit mode, and a click puts the caret at its point.
   await page.keyboard.press("e");
   await editingText(page);
-  await expect(page.getByRole("button", { name: "Done", exact: true })).toBeVisible();
+  await expect(done(page)).toBeVisible();
   await doc.locator("#tail").click();
   await page.keyboard.press("End");
   await page.keyboard.type(" Clearly.");
   await expect(doc.locator("#tail")).toHaveText("The notes say why. Clearly.");
 
-  // Esc leaves the text, and C after it goes back to Comment mode.
-  await page.keyboard.press("Escape");
+  // C with the caret out of the text goes back to Comment mode.
+  await page.locator("body").click({ position: { x: 5, y: 5 } });
   await page.keyboard.press("c");
-  await expect(mode(page).getByRole("radio", { name: "Comment" })).toBeChecked();
+  await expect(edit(page)).toBeVisible();
   await commentingText(page);
   await expect(bridge(page).locator(".sd-place-hint")).toBeHidden();
 });
 
-test("E with text selected puts the caret there, and a second Esc leaves Edit mode", async ({
+test("E with text selected puts the caret there, and one Esc in the text leaves Edit mode", async ({
   page,
   slashdocs,
 }) => {
@@ -102,10 +104,46 @@ test("E with text selected puts the caret there, and a second Esc leaves Edit mo
   await page.keyboard.type("three times");
   await expect(intro).toHaveText("Clients retry three times before giving up.");
 
+  // The caret is still in the text. One Esc leaves Edit mode, saves the
+  // edit, and arms no Esc chord.
+  const saved = page.waitForResponse(
+    (r) => r.request().method() === "POST" && r.url().endsWith("/source-edits"),
+  );
   await page.keyboard.press("Escape");
-  await expect(mode(page).getByRole("radio", { name: "Edit" })).toBeChecked();
+  await expect(edit(page)).toBeVisible();
+  await commentingText(page);
+  expect((await saved).status()).toBe(201);
+  await page.keyboard.press("c");
+  await expect(page.getByRole("dialog", { name: "Comments" })).toBeHidden();
+});
+
+test("Esc in Edit mode leaves it, and keeps following a viewer", async ({
+  page,
+  browser,
+  slashdocs,
+}) => {
+  const title = uniqueName("Esc follow");
+  const document = await slashdocs.createDocument(title, documentHTML(title));
+  await slashdocs.shareWithAnyone(document.id, "commenter");
+  const reviewer = await reviewerOn(browser, `/app/d/${document.id}`);
+  await page.goto(`/app/d/${document.id}`);
+  const avatar = page
+    .getByRole("group", { name: "People viewing this document" })
+    .getByRole("button")
+    .first();
+  await avatar.click();
+  await page.getByRole("menuitem", { name: /^Follow / }).click();
+  const following = page.getByRole("button", { name: /^Stop following / });
+  await expect(following).toBeVisible();
+  await page.keyboard.press("e");
+  await expect(done(page)).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(mode(page).getByRole("radio", { name: "Comment" })).toBeChecked();
+  await expect(edit(page)).toBeVisible();
+  await expect(following).toBeVisible();
+  // The next Esc stops following.
+  await page.keyboard.press("Escape");
+  await expect(following).toBeHidden();
+  await reviewer.context().close();
 });
 
 test("Done saves an edit that waits for its pause before Comment mode", async ({
@@ -122,10 +160,10 @@ test("Done saves an edit that waits for its pause before Comment mode", async ({
   );
   await page.keyboard.type(" Now.");
   // Before the pause of typing ends, Done saves at once.
-  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await done(page).click();
   expect((await saved).status()).toBe(201);
-  await expect(mode(page).getByRole("radio", { name: "Comment" })).toBeChecked();
-  await expect(page.getByRole("button", { name: "Done", exact: true })).toBeHidden();
+  await expect(done(page)).toBeHidden();
+  await expect(edit(page)).toBeVisible();
   await commentingText(page);
 
   // Edit mode again keeps the saved edit, and the next save holds both.
@@ -150,21 +188,42 @@ test("Done saves an edit that waits for its pause before Comment mode", async ({
   expect(html).toContain("before giving up. Twice.");
 });
 
-test("an edit that does not save keeps Edit mode", async ({ page, slashdocs }) => {
+test("the bar shows no state of a save, only a failure, and Retry saves", async ({
+  page,
+  slashdocs,
+}) => {
   const title = uniqueName("Stay");
   const document = await slashdocs.createDocument(title, documentHTML(title));
   await openEditable(page, document.id);
-  await page.route("**/source-edits", (route) => route.abort());
+  const header = page.locator("header");
   await renderedDocument(page).locator("#tail").click();
   await page.keyboard.press("End");
+  const saved = page.waitForResponse(
+    (r) => r.request().method() === "POST" && r.url().endsWith("/source-edits"),
+  );
+  await page.keyboard.type(" Kept.");
+  expect((await saved).status()).toBe(201);
+  for (const text of ["Saved", "Saving", "Editing", "Edited", "Undo"])
+    await expect(header.getByText(text)).toHaveCount(0);
+  await expect(notSaved(page)).toBeHidden();
+
+  // An edit that does not save keeps Edit mode, and only then the bar says so.
+  await page.route("**/source-edits", (route) => route.abort());
   await page.keyboard.type(" Lost?");
-  await page.getByRole("button", { name: "Done", exact: true }).click();
-  await expect(page.getByText("Not saved", { exact: true })).toBeVisible();
-  await expect(mode(page).getByRole("radio", { name: "Edit" })).toBeChecked();
+  await done(page).click();
+  await expect(notSaved(page)).toBeVisible();
+  await expect(done(page)).toBeVisible();
   await editingText(page);
+  await page.unroute("**/source-edits");
+  const retried = page.waitForResponse(
+    (r) => r.request().method() === "POST" && r.url().endsWith("/source-edits"),
+  );
+  await notSaved(page).click();
+  expect((await retried).status()).toBe(201);
+  await expect(notSaved(page)).toBeHidden();
 });
 
-test("a reader who cannot edit sees no switch, and E does nothing", async ({
+test("a reader who cannot edit sees no Edit, and E does nothing", async ({
   browser,
   slashdocs,
 }) => {
@@ -173,8 +232,8 @@ test("a reader who cannot edit sees no switch, and E does nothing", async ({
   await slashdocs.shareWithAnyone(document.id, "commenter");
   const reviewer = await reviewerOn(browser, `/app/d/${document.id}`);
   await expect(renderedDocument(reviewer).locator("h1")).toBeVisible();
-  await expect(reviewer.getByText("Can comment", { exact: true })).toBeVisible();
-  await expect(mode(reviewer)).toHaveCount(0);
+  await expect(reviewer.getByRole("button", { name: "Comments" })).toBeVisible();
+  await expect(edit(reviewer)).toHaveCount(0);
   await renderedDocument(reviewer).locator("#tail").click();
   await reviewer.keyboard.press("e");
   await commentingText(reviewer);

@@ -44,7 +44,7 @@ for (const [name, failure] of FAILURES) {
 
     await expect(page.getByText("Could not open the document")).toBeVisible(soon);
     await expect(page.getByText(/R10 failure/)).toHaveCount(0);
-    await expect(page.getByRole("radio", { name: "Edit" })).toBeHidden();
+    await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeHidden();
     const url = page.url();
 
     await page.unroute(render);
@@ -54,7 +54,7 @@ for (const [name, failure] of FAILURES) {
         name: "Render fault",
       }),
     ).toBeVisible();
-    await expect(page.getByRole("radio", { name: "Edit" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
     expect(page.url()).toBe(url);
   });
 }
