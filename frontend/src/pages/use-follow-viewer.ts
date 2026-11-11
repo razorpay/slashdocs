@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { cursorsShownStore } from "@/lib/live-cursors";
 import { textLinkFragment } from "../../bridge/text-link";
 import type { FollowRequest } from "./doc-context";
-import type { Viewer } from "./use-document-stream";
+import { LIVE, type Viewer } from "./use-document-stream";
 
 // useFollowViewer shows the version another viewer reads: once at their
 // cursor, or else at the passage they look at, or, to follow them, at their
@@ -31,7 +31,8 @@ export function useFollowViewer(
         version || continuous ? { session: viewer.session, continuous } : undefined,
       );
       if (version) {
-        showVersion(version);
+        // A viewer who follows the newest version is on the latest one.
+        showVersion(version === LIVE ? undefined : version);
         return;
       }
       const hash = textLinkFragment(viewer.anchor) || undefined;

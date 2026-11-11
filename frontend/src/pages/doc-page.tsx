@@ -10,10 +10,16 @@ import {
 import { AnimatePresence, motion } from "framer-motion";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, KeyRound, Send } from "lucide-react";
-import { api, APIError, currentVersionID, docTitle, versionID } from "@/api";
+import {
+  api,
+  APIError,
+  currentVersionID,
+  docTitle,
+  versionID,
+  type Document,
+} from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { useDocumentRole, useMe, useMounted } from "@/lib/hooks";
-import { samePrincipal } from "@/lib/principals";
 import { useSignInPath } from "@/lib/auth-state";
 import { Skeleton } from "@/components/ui/misc";
 import { Button } from "@/components/ui/button";
@@ -23,8 +29,14 @@ import { Page } from "@/components/layout/page";
 import { DocBar } from "./doc-bar";
 import { DocWorkspace } from "./doc-workspace";
 import { PreviewBanner } from "./doc-preview-banner";
+import { UpdateBanner, type DocUpdate } from "./doc-update-banner";
 import { useDocumentStream } from "./use-document-stream";
 import { useFollowViewer } from "./use-follow-viewer";
+import { useRefreshLists } from "./use-refresh-lists";
+
+// The frame follows a change in place in less time than this. A page that
+// stays behind the latest version for longer offers it to the reader.
+const BEHIND_MS = 1500;
 
 // A reader without access waits on the page. The page asks for the document
 // again while they wait, and on Check access, so it opens the document by
@@ -128,6 +140,7 @@ function AccessDeniedState({ documentID }: { documentID: string }) {
 
 export function DocumentPage() {
   const { id = "" } = useParams();
+  const q = useQueryClient();
   const [searchParams] = useSearchParams();
   const queryVersion = searchParams.get("version") || undefined;
   const doc = useQuery({
@@ -142,8 +155,9 @@ export function DocumentPage() {
     enabled: !!id && !doc.error,
     meta: { suppressGlobalError: true },
   });
-  // The version on screen when someone else changed the document: the reader
-  // stays on it until they ask for the latest.
+  // The version on screen when the document changed: the page stays on it
+  // until the frame shows a newer one in place, or the reader asks for the
+  // latest.
   const [pinnedVersion, setPinnedVersion] = useState<string>();
   const [shareOpen, setShareOpen] = useState(searchParams.get("share") === "1");
   const closeShare = useCallback(() => setShareOpen(false), []);
@@ -206,18 +220,43 @@ export function DocumentPage() {
     [],
   );
 
+  // A change that waits for the reader, as the frame scored it. The banner
+  // for it also shows when the page stays behind for another reason, as
+  // when the frame cannot follow.
+  const [update, setUpdate] = useState<DocUpdate>();
+  const behind = !previewing && !!current && !!latest && current !== latest;
+  const [stuck, setStuck] = useState(false);
+  useEffect(() => {
+    if (!behind) return setStuck(false);
+    const timer = window.setTimeout(() => setStuck(true), BEHIND_MS);
+    return () => window.clearTimeout(timer);
+  }, [behind, current]);
+  const offered = behind && (!!update || stuck);
+
+  const refreshLists = useRefreshLists(id);
   const stream = useDocumentStream({
     docId: id,
     // A document that does not open has no viewers to report to or hear from.
     enabled: !!doc.data,
     version: current,
+    following: !previewing && !offered,
     principal: me.data?.principal,
-    // Keep the reader on the version they read when someone else edits. An
-    // editor stays on it after any change, even their own from an agent or
-    // another tab, so the frame keeps what they type. Saves from this tab
-    // move the editor on (see RenderFrame).
-    onDocumentChange: (by) => {
-      if (canEdit || !samePrincipal(by, me.data?.principal)) stayOnVersion();
+    // The page stays on the version on screen, and the frame moves it to
+    // the new one when it shows that version (see RenderFrame). The event
+    // names the new version, so the page learns of it without a request. An
+    // event with no version, or a stream that opens, asks for the document.
+    onDocumentChange: (version) => {
+      stayOnVersion();
+      const queryKey = queryKeys.document(id);
+      if (!version) return void q.invalidateQueries({ queryKey });
+      // The answer of a request that is on its way can name an earlier
+      // version, so it must not come after this one.
+      void q.cancelQueries({ queryKey });
+      q.setQueryData<Document>(
+        queryKey,
+        (doc) => doc && { ...doc, current_version_id: version },
+      );
+      refreshLists();
     },
   });
 
@@ -273,6 +312,10 @@ export function DocumentPage() {
       stayOnVersion={stayOnVersion}
       showLatest={showLatest}
       showsLatest={current === latest}
+      latest={latest}
+      live={!previewing}
+      others={stream.viewers.length > 0}
+      holdUpdate={setUpdate}
       bar={(controls) => (
         <DocBar
           {...controls}
@@ -289,7 +332,6 @@ export function DocumentPage() {
           accessUnknown={role.failed}
           labels={doc.data.labels || []}
           onSelectVersion={showVersion}
-          onShowLatest={showLatest}
           viewers={stream.viewers}
           onFollowViewer={followViewer}
           followedSession={followedSession}
@@ -309,6 +351,8 @@ export function DocumentPage() {
             canRestore={role.canEdit}
             floating={floating}
           />
+        ) : offered ? (
+          <UpdateBanner update={update} onShowLatest={showLatest} floating={floating} />
         ) : null
       }
     />

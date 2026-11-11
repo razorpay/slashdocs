@@ -1,9 +1,32 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DocumentPage } from "./doc-page";
+import type { DocWorkspace } from "./doc-workspace";
+
+// The workspace shows what the page gives it: the version on screen, the
+// latest one, and the banner. Its button holds an update, as the frame does.
+vi.mock("./doc-workspace", () => ({
+  DocWorkspace: (props: Parameters<typeof DocWorkspace>[0]) => (
+    <div>
+      <p>
+        on {props.version}, latest {props.latest}
+      </p>
+      <button
+        onClick={() =>
+          props.holdUpdate?.({
+            authors: [{ type: "user", id: "usr_a", name: "Asha" }],
+          })
+        }
+      >
+        Hold
+      </button>
+      {props.banner?.(false)}
+    </div>
+  ),
+}));
 
 function jsonResponse(payload: unknown, status = 200) {
   return new Response(JSON.stringify(payload), {
@@ -130,5 +153,94 @@ describe("DocumentPage", () => {
     await waitFor(() => expect(asked()).toHaveLength(3));
     // The page that waits does not blink to a load while it asks.
     expect(screen.getByText("You don't have access to this document")).toBeVisible();
+  });
+});
+
+describe("a document that changes", () => {
+  // The stream of the page, which a test sends events on.
+  class Stream {
+    static last: Stream;
+    listeners = new Map<string, (message: MessageEvent) => void>();
+    onopen?: () => void;
+    constructor() {
+      Stream.last = this;
+    }
+    addEventListener(kind: string, listener: (message: MessageEvent) => void) {
+      this.listeners.set(kind, listener);
+    }
+    send(event: object) {
+      this.listeners.get("document")?.(
+        new MessageEvent("document", { data: JSON.stringify(event) }),
+      );
+    }
+    close() {}
+  }
+
+  // The server has the document at a version, and makes a new one on change.
+  function open() {
+    const server = { id: "doc_1", title: "Plan", current_version_id: "ver_1" };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) =>
+        jsonResponse(String(input) === "/v1/documents/doc_1" ? server : { items: [] }),
+      ),
+    );
+    vi.stubGlobal("EventSource", Stream);
+    renderPage();
+    const change = (version: string) => {
+      server.current_version_id = version;
+      act(() => Stream.last.send({ data: { version_id: version } }));
+    };
+    return { change };
+  }
+
+  const banner = () => screen.queryByRole("status");
+
+  it("stays on the version on screen, and learns the latest one from the event", async () => {
+    const { change } = open();
+    await screen.findByText("on ver_1, latest ver_1");
+
+    change("ver_2");
+
+    expect(screen.getByText("on ver_1, latest ver_2")).toBeVisible();
+    expect(banner()).toBeNull();
+  });
+
+  it("offers the latest version when the page stays behind", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { change } = open();
+    await screen.findByText("on ver_1, latest ver_1");
+
+    change("ver_2");
+    await act(() => vi.advanceTimersByTimeAsync(1400));
+    expect(banner()).toBeNull();
+    await act(() => vi.advanceTimersByTimeAsync(100));
+    expect(banner()).toHaveTextContent("This document changed.");
+
+    await userEvent.click(screen.getByRole("button", { name: "Show the latest" }));
+    expect(screen.getByText("on ver_2, latest ver_2")).toBeVisible();
+    expect(banner()).toBeNull();
+  });
+
+  it("shows at once the change that the frame holds for the reader", async () => {
+    const { change } = open();
+    await screen.findByText("on ver_1, latest ver_1");
+
+    change("ver_2");
+    await userEvent.click(screen.getByRole("button", { name: "Hold" }));
+
+    expect(banner()).toHaveTextContent("Asha updated this document.");
+  });
+
+  it("asks for the document again when the stream opens", async () => {
+    open();
+    await screen.findByText("on ver_1, latest ver_1");
+    const asked = () =>
+      vi.mocked(fetch).mock.calls.filter(([url]) => url === "/v1/documents/doc_1");
+    const before = asked().length;
+
+    act(() => Stream.last.onopen?.());
+
+    await waitFor(() => expect(asked().length).toBeGreaterThan(before));
   });
 });

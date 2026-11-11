@@ -107,6 +107,10 @@ export function DocWorkspace({
   stayOnVersion = noop,
   showLatest = noop,
   showsLatest = true,
+  latest,
+  live = true,
+  others = false,
+  holdUpdate = noop,
   bar,
   banner,
 }: {
@@ -135,6 +139,12 @@ export function DocWorkspace({
   showLatest?: () => void;
   // The version on screen is the document's latest one.
   showsLatest?: boolean;
+  // What the frame needs to follow the newest version. A document without
+  // an event stream has no newer version to follow.
+  latest?: DocContextValue["latest"];
+  live?: boolean;
+  others?: boolean;
+  holdUpdate?: DocContextValue["holdUpdate"];
   bar: (controls: DocBarControls) => ReactNode;
   // Shown under the bar, or floating over the document in full screen.
   banner?: (floating: boolean) => ReactNode;
@@ -543,6 +553,10 @@ export function DocWorkspace({
       setFrameReady,
       stayOnVersion,
       showLatest,
+      latest,
+      live,
+      others,
+      holdUpdate,
     }),
     [
       docId,
@@ -590,6 +604,10 @@ export function DocWorkspace({
       frameReady,
       stayOnVersion,
       showLatest,
+      latest,
+      live,
+      others,
+      holdUpdate,
     ],
   );
 

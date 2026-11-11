@@ -52,6 +52,12 @@ describe("useFollowViewer", () => {
     expect(showVersion).toHaveBeenCalledWith("ver_3");
   });
 
+  it("shows the latest version for a viewer who follows the newest one", () => {
+    const { hook, showVersion } = follow(() => "live");
+    act(() => hook.result.current.followViewer(reviewer, true));
+    expect(showVersion).toHaveBeenCalledWith(undefined);
+  });
+
   it("stops following on an Esc that nothing else took", () => {
     const { hook } = follow(() => undefined);
     act(() => hook.result.current.followViewer(reviewer, true));

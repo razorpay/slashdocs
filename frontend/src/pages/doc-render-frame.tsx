@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type Anchor } from "@/api";
+import { api, type Anchor, type Document } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { COMMENT_STATUS } from "@/lib/constants";
 import { Center, CodeBlock } from "@/components/ui/misc";
@@ -28,16 +28,18 @@ import { useDocumentExport } from "./use-document-export";
 import { useDoc } from "./doc-context";
 import { useBridgeHost } from "./use-bridge-host";
 import { useFrameMessage } from "./use-frame-message";
-import { useTextAutosave } from "./use-text-autosave";
+import { useLiveText } from "./use-live-text";
+import { useRefreshLists } from "./use-refresh-lists";
 import { typingOrInLayer, useCommentPins } from "./use-comment-pins";
 import { CommentPopovers } from "./doc-comment-popover";
 import { useCommentJumps } from "./use-comment-jumps";
-import type { TextEditResult } from "./doc-context";
+import type { TextEditResult, TextPatchResult } from "./doc-context";
 import type { Render } from "@/lib/script-literals";
 import type { ProbeResult } from "../../bridge/script-text";
 import type {
   ChildRef,
   Locator,
+  Patch,
   Piece,
   Region,
   ScriptChange,
@@ -102,6 +104,10 @@ export function RenderFrame({
     setFrameReady,
     stayOnVersion,
     showLatest,
+    latest,
+    live,
+    others,
+    holdUpdate,
     leaving,
   } = useDoc();
   const cursorsShown = cursorsShownStore.useStore();
@@ -109,11 +115,12 @@ export function RenderFrame({
   versionRef.current = version;
   const location = useLocation();
   const q = useQueryClient();
+  const refreshLists = useRefreshLists(docId);
 
-  // The last version saved from the frame is already on screen, so moving to
-  // it keeps the frame on the version it loaded: the editor keeps its caret
-  // and scroll. Any other version, an earlier save too, loads the frame
-  // again, as does a reload.
+  // The frame already shows the version that it saved or that a patch made,
+  // so moving to it keeps the frame on the version it loaded: the reader
+  // keeps their caret and scroll. Any other version, an earlier save too,
+  // loads the frame again, as does a reload.
   const [kept, setKept] = useState<{ loaded: string; saved: string }>();
   const [reloads, setReloads] = useState(0);
   const frameVersion = kept?.saved === version ? kept.loaded : version;
@@ -243,51 +250,45 @@ export function RenderFrame({
     if (ready) postToFrame({ type: "slashdocs:text-editing", on: editing });
   }, [ready, editing, postToFrame]);
 
-  // The frame hands over its text changes on request.
-  const textCollects = useRef(
-    new Map<string, (result: TextEditResult | undefined) => void>(),
-  );
-  const takeTextEdits = useCallback(
-    () =>
-      new Promise<TextEditResult>((resolve, reject) => {
-        const requestId = `text-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  // The frame answers a request by its id. A request that gets no answer,
+  // or one that cannot be read, fails.
+  const requests = useRef(new Map<string, (result: unknown) => void>());
+  const ask = useCallback(
+    <T,>(message: Record<string, unknown>, timeout = 5000) =>
+      new Promise<T>((resolve, reject) => {
+        const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
         const timer = window.setTimeout(() => {
-          textCollects.current.delete(requestId);
-          reject(new Error("The document did not report its changes."));
-        }, 5000);
-        textCollects.current.set(requestId, (result) => {
+          requests.current.delete(requestId);
+          reject(new Error("The document did not answer."));
+        }, timeout);
+        requests.current.set(requestId, (result) => {
           window.clearTimeout(timer);
-          if (result) resolve(result);
-          else reject(new Error("The document reported changes that cannot be read."));
+          requests.current.delete(requestId);
+          if (result) resolve(result as T);
+          else reject(new Error("The document gave an answer that cannot be read."));
         });
-        postToFrame({ type: "slashdocs:text-collect", requestId });
+        postToFrame({ ...message, requestId });
       }),
     [postToFrame],
+  );
+  // The frame hands over its text changes on request.
+  const takeTextEdits = useCallback(
+    () => ask<TextEditResult>({ type: "slashdocs:text-collect" }),
+    [ask],
+  );
+  // The frame shows the text of other people in place. It gives no answer
+  // to a patch that it cannot read.
+  const patchFrame = useCallback(
+    (patches: Patch[], edits: number, flash: boolean) =>
+      ask<TextPatchResult>({ type: "slashdocs:text-patch", patches, edits, flash }),
+    [ask],
   );
   // The frame renders a changed source in a hidden frame on request. A probe
   // waits for its load for at most five seconds, so this gives it ten.
-  const probes = useRef(new Map<string, (result: ProbeResult | undefined) => void>());
   const probe = useCallback<Render>(
     (html, locator, strings) =>
-      new Promise((resolve, reject) => {
-        const requestId = `probe-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        const timer = window.setTimeout(() => {
-          probes.current.delete(requestId);
-          reject(new Error("The document did not render the change."));
-        }, 10_000);
-        probes.current.set(requestId, (result) => {
-          window.clearTimeout(timer);
-          if (result) resolve(result);
-          else
-            reject(
-              new Error(
-                "The document rendered the change in a form that cannot be read.",
-              ),
-            );
-        });
-        postToFrame({ type: "slashdocs:probe", requestId, html, locator, strings });
-      }),
-    [postToFrame],
+      ask({ type: "slashdocs:probe", html, locator, strings }, 10_000),
+    [ask],
   );
   // The scroll of the frame at its last report, which a load for a save
   // keeps.
@@ -299,29 +300,35 @@ export function RenderFrame({
     scriptEditable,
     focused: textFocused,
     settle: settleText,
-  } = useTextAutosave({
+  } = useLiveText({
     docId,
     loaded,
+    latest,
+    live: live && ready,
+    others,
     take: takeTextEdits,
+    patch: patchFrame,
     setState: setSaveState,
-    // A clean save holds what is on screen, so the editor stays on it rather
-    // than on the latest, which may hold changes from elsewhere.
-    onSaved: (saved, clean) => {
-      if (clean) {
-        setKept((k) => ({ loaded: k?.loaded ?? frameVersion, saved }));
-        stayOnVersion(saved);
-      } else stayOnVersion();
-      for (const queryKey of [
-        queryKeys.document(docId),
-        queryKeys.versions(docId),
-        queryKeys.approvalsAll(docId),
-        queryKeys.documents(),
-      ]) {
-        q.invalidateQueries({ queryKey });
-      }
+    move: (shown, from) => {
+      setKept((k) => ({ loaded: k?.loaded ?? frameVersion, saved: shown }));
+      stayOnVersion(shown);
+      // The server made the version on top of from. The page learns of it
+      // here too, because the event for it does not come while the stream
+      // is down. A page that already knows a later version keeps that one.
+      if (from)
+        q.setQueryData<Document>(
+          queryKeys.document(docId),
+          (doc) =>
+            doc &&
+            (doc.current_version_id === from
+              ? { ...doc, current_version_id: shown }
+              : doc),
+        );
+      refreshLists();
     },
-    // A load right after a save shows the version that it made: the document
-    // stream must not keep the frame on the version before it.
+    holdUpdate,
+    // A load of a given version keeps the page on it: the document stream
+    // must not keep the frame on the version before it.
     reload: (saved) => {
       if (saved) stayOnVersion(saved);
       else showLatest();
@@ -575,25 +582,24 @@ export function RenderFrame({
       if (e.data?.type === "slashdocs:ready" && readyRef.current) {
         paintRef.current();
       }
-      if (/^slashdocs:text-(changes|draft)$/.test(e.data?.type)) {
+      const answer = (result: unknown) =>
+        requests.current.get(e.data.requestId)?.(result);
+      if (/^slashdocs:text-(changes|draft|patched)$/.test(e.data?.type)) {
         if (isOffset(e.data.top)) frameTop.current = e.data.top;
         const result = parseTextEditResult(e.data);
         if (e.data.type === "slashdocs:text-draft") {
           if (result) textDrafted(result);
-        } else if (typeof e.data.requestId === "string") {
-          const resolve = textCollects.current.get(e.data.requestId);
-          textCollects.current.delete(e.data.requestId);
-          resolve?.(result);
-        }
+        } else if (e.data.type === "slashdocs:text-changes") answer(result);
+        else
+          answer(
+            result && {
+              ...result,
+              ok: e.data.ok === true,
+              stale: e.data.stale === true,
+            },
+          );
       }
-      if (
-        e.data?.type === "slashdocs:probe-result" &&
-        typeof e.data.requestId === "string"
-      ) {
-        const resolve = probes.current.get(e.data.requestId);
-        probes.current.delete(e.data.requestId);
-        resolve?.(parseProbeResult(e.data));
-      }
+      if (e.data?.type === "slashdocs:probe-result") answer(parseProbeResult(e.data));
       if (
         e.data?.type === "slashdocs:script-text" &&
         typeof e.data.requestId === "string" &&
@@ -930,12 +936,13 @@ const REFUSALS = new Map([
 function parseTextEditResult(
   data: Record<string, unknown>,
 ): TextEditResult | undefined {
-  const { regions, scripts } = data;
+  const { regions, scripts, edits } = data;
   return Array.isArray(regions) &&
     regions.every(isRegion) &&
     Array.isArray(scripts) &&
-    scripts.every(isScriptChange)
-    ? { regions, scripts }
+    scripts.every(isScriptChange) &&
+    isOffset(edits)
+    ? { regions, scripts, edits }
     : undefined;
 }
 

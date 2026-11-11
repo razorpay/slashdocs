@@ -33,7 +33,7 @@ export const fade: MotionProps = {
   exit: { opacity: 0, transition: { duration: 0.15, ease: "easeIn" } },
 };
 
-// A control that comes and goes in the bar, as Show changes, rises a little
+// A control that comes and goes in the bar, as Stop following, rises a little
 // into place, and sinks back faster.
 export const rise: MotionProps = {
   initial: { opacity: 0, y: 4, scale: 0.96 },

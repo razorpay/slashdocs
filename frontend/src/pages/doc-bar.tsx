@@ -13,7 +13,6 @@ import {
   FileDown,
   FolderInput,
   History,
-  ArrowUpToLine,
   Maximize2,
   Keyboard,
   LocateFixed,
@@ -100,7 +99,6 @@ export function DocBar({
   accessUnknown,
   labels,
   onSelectVersion,
-  onShowLatest,
   viewers,
   onFollowViewer,
   followedSession,
@@ -131,7 +129,6 @@ export function DocBar({
   accessUnknown?: RetryQuery;
   labels: string[];
   onSelectVersion: (versionID: string) => void;
-  onShowLatest: () => void;
   viewers: Viewer[];
   // Goes to a viewer once, or follows them continuously.
   onFollowViewer: (viewer: Viewer, continuous?: boolean) => void;
@@ -159,9 +156,6 @@ export function DocBar({
   const [approvalsDialogOpen, setApprovalsDialogOpen] = useState(!!approvalsOpen);
   const backTo = parentFolder ? `/app/folders/${parentFolder.id}` : "/app/documents";
   const config = useQuery({ queryKey: queryKeys.config(), queryFn: api.getConfig });
-  // Behind: the document changed elsewhere while the reader stayed on the
-  // version on screen. A preview is not behind: it has its own banner.
-  const behind = !previewing && !!current && !!latest && current !== latest;
   const {
     isOwner: canManage,
     role,
@@ -231,9 +225,7 @@ export function DocBar({
     >
       <LayoutGroup>
         {/* What comes and goes sits left of the actions, so that they never
-            move. The offer of the edits made elsewhere waits here, where it
-            covers no words, until the reader takes it or reaches the latest
-            version on their own. */}
+            move. */}
         <motion.div
           layout="position"
           className="flex shrink-0 items-center gap-2 empty:hidden"
@@ -253,29 +245,8 @@ export function DocBar({
                 onUnfollow={onUnfollowViewer}
               />
             ) : null}
-            {behind ? (
-              <motion.span key="behind" {...rise} className="shrink-0">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  tooltip="This document changed elsewhere. Show the latest version."
-                  aria-label="Show changes"
-                  className="rounded-[6px] px-2"
-                  onClick={onShowLatest}
-                >
-                  <span className="relative">
-                    <ArrowUpToLine className="size-4" />
-                    <span className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-[var(--color-accent)] ring-2 ring-[var(--color-surface-muted)]" />
-                  </span>
-                  <span className="hidden xl:inline">Show changes</span>
-                </Button>
-              </motion.span>
-            ) : null}
           </AnimatePresence>
         </motion.div>
-        <span role="status" className="sr-only">
-          {behind ? "This document changed elsewhere." : ""}
-        </span>
         <Viewers viewers={viewers} latest={latest} {...viewerActions} />
         <BarGroup>
           <ModeButton />
