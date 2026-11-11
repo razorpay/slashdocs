@@ -10,7 +10,11 @@ import { Button } from "@/components/ui/button";
 import { Center, EmptyState, Skeleton } from "@/components/ui/misc";
 import { TopBar } from "@/components/layout/topbar";
 import { LoadError } from "@/components/error-state";
-import { CommentsToggle, DocBarFrame } from "@/components/layout/doc-bar-frame";
+import {
+  BarGroup,
+  CommentsToggle,
+  DocBarFrame,
+} from "@/components/layout/doc-bar-frame";
 import { DocWorkspace } from "@/pages/doc-workspace";
 import { api, APIError } from "@/api";
 import { errorMessage } from "@/lib/errors";
@@ -224,23 +228,25 @@ function DocumentPage({ doc }: { doc: Doc }) {
           folder={folder ? { to: href(folder), title: base(folder) } : undefined}
           title={doc.title}
         >
-          <Button
-            asChild
-            variant="ghost"
-            size="icon"
-            className="shrink-0"
-            tooltip="Open raw HTML"
-          >
-            <a
-              href={doc.raw}
-              target="_blank"
-              rel="noreferrer"
-              aria-label="Open raw HTML"
+          <BarGroup>
+            <Button
+              asChild
+              variant="chrome"
+              size="icon-sm"
+              className="shrink-0"
+              tooltip="Open raw HTML"
             >
-              <ExternalLink className="h-4 w-4" />
-            </a>
-          </Button>
-          <CommentsToggle open={commentsOpen} onToggle={onToggleComments} />
+              <a
+                href={doc.raw}
+                target="_blank"
+                rel="noreferrer"
+                aria-label="Open raw HTML"
+              >
+                <ExternalLink className="size-4" />
+              </a>
+            </Button>
+            <CommentsToggle open={commentsOpen} onToggle={onToggleComments} />
+          </BarGroup>
         </DocBarFrame>
       )}
     />

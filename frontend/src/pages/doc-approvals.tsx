@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   useIsMutating,
   useMutation,
@@ -6,7 +7,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Check, ClipboardCheck, Clock, CloudOff, X } from "lucide-react";
+import { Check, ClipboardCheck, Clock, X } from "lucide-react";
 
 import {
   api,
@@ -65,55 +66,98 @@ function badgeText(status: ApprovalStatus, approved?: number, total?: number) {
   return counts || STATUS_BADGE[status].label;
 }
 
-// badgeAria spells the status out. For approved and pending the visible text is
-// only the count, so the status would otherwise be carried by colour and icon.
-function badgeAria(status: ApprovalStatus, approved?: number, total?: number) {
-  const label = `Approval ${STATUS_BADGE[status].label.toLowerCase()}`;
-  return total ? `${label}: ${approved ?? 0} of ${total} approved` : label;
+// approvalsLabel names the approvals icon by its state and count, as
+// "Approvals: pending, 1 of 3 approved". The badge shows the state by color
+// and glyph alone.
+function approvalsLabel(status: ApprovalStatus, approved?: number, total?: number) {
+  const counts = total ? `${approved ?? 0} of ${total} approved` : "";
+  const state = status === "approved" && counts ? "" : STATUS_BADGE[status].label;
+  return `Approvals: ${[state.toLowerCase(), counts].filter(Boolean).join(", ")}`;
 }
 
-// ApprovalStatusBadge is the compact aggregate-status chip. Hidden entirely
-// when the document has no assigned approvers. A narrow badge shows only the
-// icon and the count below the sm breakpoint, so the title keeps its space.
+// ApprovalStatusBadge is the aggregate-status chip of the approvals dialog.
+// Hidden entirely when the document has no assigned approvers.
 export function ApprovalStatusBadge({
   status,
   approved,
   total,
-  narrow = false,
-  className = "",
 }: {
   status?: ApprovalStatus;
   approved?: number;
   total?: number;
-  narrow?: boolean;
-  className?: string;
 }) {
   if (!status) return null;
   const { Icon, variant } = STATUS_BADGE[status];
-  const text = badgeText(status, approved, total);
   return (
-    <Badge variant={variant} className={`shrink-0 gap-1 ${className}`}>
+    <Badge variant={variant} className="shrink-0 gap-1">
       <Icon className="h-3 w-3" aria-hidden="true" />
-      {narrow ? (
-        <>
-          {total ? (
-            <span className="tabular-nums sm:hidden">
-              {approved ?? 0}/{total}
-            </span>
-          ) : null}
-          <span className="hidden sm:inline">{text}</span>
-        </>
-      ) : (
-        text
-      )}
+      {badgeText(status, approved, total)}
     </Badge>
   );
 }
 
-// ApprovalsDialog is the document bar's entry point into approvals: the status
-// chip is the trigger, so a reader who sees "Pending 0/1" can click straight
-// through to who still owes a decision. Approvals live here rather than in the
-// comments sidebar — they are a different concern from discussion.
+// The badge of each state of the approvals: a color and a glyph. "failed" is
+// approvals that did not load, as the Share button marks its requests.
+const ICON_BADGE: Record<
+  ApprovalStatus | "failed",
+  { color: string; glyph: ReactNode }
+> = {
+  pending: {
+    color: "bg-[var(--color-warning)]",
+    glyph: <Clock className="size-2" strokeWidth={3} />,
+  },
+  approved: {
+    color: "bg-[var(--color-success)]",
+    glyph: <Check className="size-2" strokeWidth={4} />,
+  },
+  rejected: { color: "bg-[var(--color-danger)]", glyph: "!" },
+  failed: { color: "bg-[var(--color-fg-muted)]", glyph: "!" },
+};
+
+// ApprovalBadge marks an icon at its top right with the state of the
+// approvals. It pops in when the state changes, not when the page loads.
+export function ApprovalBadge({
+  status,
+  failed,
+  className,
+}: {
+  status?: ApprovalStatus;
+  failed?: boolean;
+  className?: string;
+}) {
+  const state = status ?? (failed ? "failed" : undefined);
+  return (
+    <AnimatePresence initial={false}>
+      {state ? (
+        <motion.span
+          key={state}
+          aria-hidden="true"
+          initial={{ opacity: 0, scale: 0.8 }}
+          animate={{
+            opacity: 1,
+            scale: 1,
+            transition: { type: "spring", duration: 0.2, bounce: 0 },
+          }}
+          exit={{ opacity: 0, transition: { duration: 0.1 } }}
+          className={cn(
+            "absolute right-0.5 top-0.5 grid size-3 place-items-center rounded-full text-[9px] font-bold leading-none text-white ring-2 ring-[var(--color-chrome)]",
+            ICON_BADGE[state].color,
+            className,
+          )}
+        >
+          {ICON_BADGE[state].glyph}
+        </motion.span>
+      ) : null}
+    </AnimatePresence>
+  );
+}
+
+// ApprovalsDialog is the document bar's entry point into approvals: an icon
+// whose badge gives their state, so a reader who sees it pending can click
+// straight through to who still owes a decision. Approvals live here rather
+// than in the comments sidebar: they are a different concern from
+// discussion. A phone bar has no room for the icon: the More menu opens the
+// dialog, and its button carries the badge.
 export function ApprovalsDialog({
   status,
   approved,
@@ -130,65 +174,40 @@ export function ApprovalsDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   // The props describe the document's *current* version. The dialog lists
-  // the decisions on the version on screen, so the chip does too.
+  // the decisions on the version on screen, so the icon does too.
   const shown = useShownApprovals({ status, approved, total });
 
   // With no approvers the API omits the status entirely. The owner still
   // needs a way in, because this dialog is the only place approvers can be
-  // assigned; without a trigger the first approver could never be added. It is
-  // a real button, not a chip: asking for a review is the point of the feature.
+  // assigned; without a trigger the first approver could never be added.
   const unassigned = !shown.status && !shown.failed && !shown.pending;
   if (unassigned && !isOwner) return null;
+  const label = shown.status
+    ? approvalsLabel(shown.status, shown.approved, shown.total)
+    : shown.failed
+      ? "Approvals did not load"
+      : shown.pending
+        ? "Approvals"
+        : "Request approval";
 
-  // The dialog stays mounted while the chip changes, so an open dialog stays
-  // open when the status of an older version loads.
+  // The dialog stays mounted while the badge changes, so an open dialog
+  // stays open when the status of an older version loads.
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      {shown.pending ? (
-        <Skeleton className="hidden h-5 w-24 shrink-0 rounded-full xs:block" />
-      ) : (
-        <DialogTrigger asChild>
-          {unassigned ? (
-            // On a phone only the icon shows, so it looks like the other icons
-            // of the bar and not like a pressed toggle.
-            <Button
-              variant="outline"
-              size="sm"
-              className="hidden shrink-0 xs:inline-flex max-sm:bg-transparent max-sm:shadow-none"
-              aria-label="Request approval"
-            >
-              <ClipboardCheck className="h-4 w-4" />
-              <span className="hidden sm:inline">Request approval</span>
-            </Button>
-          ) : (
-            // The pseudo-element makes a 40px tall target.
-            <button
-              type="button"
-              aria-label={`${shown.status ? badgeAria(shown.status, shown.approved, shown.total) : "Approvals did not load"}. Open approvals`}
-              className="relative hidden shrink-0 rounded-full transition-transform xs:block duration-150 ease-out active:scale-[0.97] after:absolute after:inset-x-0 after:-inset-y-2"
-            >
-              {shown.status ? (
-                <ApprovalStatusBadge
-                  status={shown.status}
-                  approved={shown.approved}
-                  total={shown.total}
-                  narrow
-                  className="cursor-pointer hover:opacity-90"
-                />
-              ) : (
-                // The dialog says that they did not load, with Retry.
-                <Badge
-                  variant="muted"
-                  className="cursor-pointer gap-1 hover:opacity-90"
-                >
-                  <CloudOff className="h-3 w-3" aria-hidden="true" />
-                  <span className="hidden sm:inline">Approvals unknown</span>
-                </Badge>
-              )}
-            </button>
+      <DialogTrigger asChild>
+        <Button
+          variant="chrome"
+          size="icon-sm"
+          aria-label={label}
+          className={cn(
+            "relative hidden shrink-0 sm:inline-flex",
+            !shown.status && "text-[var(--color-fg-muted)]",
           )}
-        </DialogTrigger>
-      )}
+        >
+          <ClipboardCheck className="size-4" />
+          <ApprovalBadge status={shown.status} failed={shown.failed} />
+        </Button>
+      </DialogTrigger>
       <DialogContent
         anchor="top"
         className="max-w-lg overflow-hidden p-0"

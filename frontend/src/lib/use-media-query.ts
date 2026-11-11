@@ -35,3 +35,8 @@ export function usePrefersReducedMotion(): boolean {
 export function useCoarsePointer(): boolean {
   return useMediaQuery("(pointer: coarse)");
 }
+
+/** True from Tailwind's `xl` breakpoint (1280px), wider than a laptop. */
+export function useWideScreen(): boolean {
+  return useMediaQuery("(min-width: 80rem)");
+}

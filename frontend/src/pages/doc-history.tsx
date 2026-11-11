@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Check, ChevronDown, History, RotateCcw } from "lucide-react";
+import { Check, ChevronDown, RotateCcw } from "lucide-react";
 import { api, docTitle, type Document, type Version } from "@/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,6 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import { changeSummaryLines } from "@/lib/change-summary";
 import { errorMessage } from "@/lib/errors";
@@ -64,17 +63,6 @@ export function HistoryDialog({
   };
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="hidden shrink-0 sm:inline-flex"
-          aria-label="History"
-          title="History"
-        >
-          <History className="h-4 w-4" />
-        </Button>
-      </DialogTrigger>
       {/* The top stays put, so the dialog does not jump as a session opens. */}
       <DialogContent className="top-[12vh] max-w-2xl translate-y-0">
         <DialogHeader>

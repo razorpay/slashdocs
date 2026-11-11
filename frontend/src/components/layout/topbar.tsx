@@ -157,9 +157,6 @@ export function AccessRequestsMenu() {
 }
 
 export function AccountMenu({ user }: { user: Principal }) {
-  const nav = useNavigate();
-  const signOut = useSignOut();
-  const { theme, setTheme } = useTheme();
   // The profile user has no principal type, so the color comes from the
   // principal, as on pins and comments.
   const principal = useMe().data?.principal;
@@ -180,50 +177,63 @@ export function AccountMenu({ user }: { user: Principal }) {
         </Button>
       </DropdownTrigger>
       <DropdownContent>
-        <div className="px-2 py-2">
-          <div className="text-sm font-medium">{user.name || "Signed in"}</div>
-          <div className="text-xs text-[var(--color-fg-muted)]">
-            {user.email || user.id}
-          </div>
-        </div>
-        <DropdownSeparator />
-        <DropdownItem onSelect={() => nav("/app/start")}>
-          <Rocket className="h-4 w-4" /> Setup guide
-        </DropdownItem>
-        <DropdownItem onSelect={() => nav("/app/settings/profile")}>
-          <UserIcon className="h-4 w-4" /> Profile
-        </DropdownItem>
-        <DropdownItem onSelect={() => nav("/app/settings/developers")}>
-          <Terminal className="h-4 w-4" /> Developers
-        </DropdownItem>
-        <DropdownItem onSelect={() => nav("/app/settings/service-accounts")}>
-          <Bot className="h-4 w-4" /> Bots
-        </DropdownItem>
-        <DropdownSeparator />
-        <DropdownLabel>Theme</DropdownLabel>
-        {(
-          [
-            { value: "light", label: "Light", icon: Sun },
-            { value: "dark", label: "Dark", icon: Moon },
-            { value: "system", label: "System", icon: Monitor },
-          ] as const
-        ).map(({ value, label, icon: Icon }) => (
-          <DropdownItem
-            key={value}
-            onSelect={(e) => {
-              e.preventDefault();
-              setTheme(value);
-            }}
-          >
-            <Icon className="h-4 w-4" /> {label}
-            {theme === value && <Check className="ml-auto h-4 w-4" />}
-          </DropdownItem>
-        ))}
-        <DropdownSeparator />
-        <DropdownItem disabled={signOut.isPending} onSelect={() => signOut.mutate()}>
-          <LogOut className="h-4 w-4" /> Sign out
-        </DropdownItem>
+        <AccountItems user={user} />
       </DropdownContent>
     </Dropdown>
+  );
+}
+
+// AccountItems are the items of the account menu, which a menu with no room
+// for the account's own button holds too, as the document bar on a phone.
+export function AccountItems({ user }: { user: Principal }) {
+  const nav = useNavigate();
+  const signOut = useSignOut();
+  const { theme, setTheme } = useTheme();
+  return (
+    <>
+      <div className="px-2 py-2">
+        <div className="text-sm font-medium">{user.name || "Signed in"}</div>
+        <div className="text-xs text-[var(--color-fg-muted)]">
+          {user.email || user.id}
+        </div>
+      </div>
+      <DropdownSeparator />
+      <DropdownItem onSelect={() => nav("/app/start")}>
+        <Rocket className="h-4 w-4" /> Setup guide
+      </DropdownItem>
+      <DropdownItem onSelect={() => nav("/app/settings/profile")}>
+        <UserIcon className="h-4 w-4" /> Profile
+      </DropdownItem>
+      <DropdownItem onSelect={() => nav("/app/settings/developers")}>
+        <Terminal className="h-4 w-4" /> Developers
+      </DropdownItem>
+      <DropdownItem onSelect={() => nav("/app/settings/service-accounts")}>
+        <Bot className="h-4 w-4" /> Bots
+      </DropdownItem>
+      <DropdownSeparator />
+      <DropdownLabel>Theme</DropdownLabel>
+      {(
+        [
+          { value: "light", label: "Light", icon: Sun },
+          { value: "dark", label: "Dark", icon: Moon },
+          { value: "system", label: "System", icon: Monitor },
+        ] as const
+      ).map(({ value, label, icon: Icon }) => (
+        <DropdownItem
+          key={value}
+          onSelect={(e) => {
+            e.preventDefault();
+            setTheme(value);
+          }}
+        >
+          <Icon className="h-4 w-4" /> {label}
+          {theme === value && <Check className="ml-auto h-4 w-4" />}
+        </DropdownItem>
+      ))}
+      <DropdownSeparator />
+      <DropdownItem disabled={signOut.isPending} onSelect={() => signOut.mutate()}>
+        <LogOut className="h-4 w-4" /> Sign out
+      </DropdownItem>
+    </>
   );
 }
