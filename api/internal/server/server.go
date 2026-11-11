@@ -326,6 +326,9 @@ func (s *Server) routes(deps dependencies) {
 	reader := v1.Group("", requireAuth(deps.readerAuthenticator(), deps.appOrigin, deps.googleGroupResolver))
 	reader.GET("/documents/:id", h.getDocument)
 	reader.GET("/documents/:id/versions", h.listVersions)
+	// A browser that follows live edits asks for the changes after each save
+	// of another person, and a live editor saves about 100 times a minute.
+	reader.GET("/documents/:id/changes", activityRateLimit(600), h.documentChanges)
 	reader.GET("/documents/:id/versions/:version_id", h.getVersion)
 	reader.GET("/documents/:id/versions/:version_id/html", h.getVersionHTML)
 	reader.POST("/documents/:id/versions/:version_id/render-token", h.createRenderToken)
@@ -376,7 +379,7 @@ func (s *Server) routes(deps dependencies) {
 	authed.DELETE("/documents/:id/approvals/:approval_id", h.deleteApproval)
 	authed.POST("/documents/:id/versions", h.createVersion)
 	authed.POST("/documents/:id/edits", h.editDocument)
-	authed.POST("/documents/:id/source-edits", h.editSource)
+	authed.POST("/documents/:id/source-edits", activityRateLimit(600), h.editSource)
 	authed.POST("/documents/:id/versions/:version_id/restore", h.restoreVersion)
 	authed.GET("/documents/:id/labels", h.listDocumentLabels)
 	authed.PUT("/documents/:id/labels", h.replaceDocumentLabels)

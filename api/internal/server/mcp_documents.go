@@ -281,7 +281,7 @@ func registerMCPVersionTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 	})
 
 	server.AddTool(mcp.NewTool("update_document", mutationOptions(false, false,
-		mcp.WithDescription("Publish complete HTML as a new document version using optimistic concurrency. To change existing text, prefer edit_document: it sends only the changed strings."),
+		mcp.WithDescription("Publish complete HTML as a new document version. When base_version_id is an earlier version, the changes from it move onto the current version and the result has rebased set. When the current version changed the same HTML, the call fails with version_conflict. To change existing text, prefer edit_document: it sends only the changed strings."),
 		mcpDocumentID(),
 		mcp.WithString("base_version_id", mcp.Required(), mcp.Description("Version on which these edits are based.")),
 		mcp.WithString("html", mcp.Required(), mcp.Description("Complete replacement HTML, up to 50 MiB.")),

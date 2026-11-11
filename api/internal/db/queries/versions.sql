@@ -43,7 +43,8 @@ SELECT
   COALESCE(u.picture_url, '') AS created_by_picture_url,
   v.change_summary,
   v.sha256,
-  v.created_at
+  v.created_at,
+  (v.client_change_id IS NOT NULL)::bool AS live
 FROM versions v
 LEFT JOIN users u
   ON v.created_by_type = 'user' AND v.created_by_id = u.id
@@ -66,7 +67,8 @@ SELECT
   COALESCE(u.picture_url, '') AS created_by_picture_url,
   v.change_summary,
   v.sha256,
-  v.created_at
+  v.created_at,
+  (v.client_change_id IS NOT NULL)::bool AS live
 FROM versions v
 LEFT JOIN users u
   ON v.created_by_type = 'user' AND v.created_by_id = u.id
@@ -75,6 +77,30 @@ LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account 
   -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
   ON v.created_by_type = 'service_account' AND v.created_by_id = sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE v.id=$1;
+
+-- name: ListVersionAuthorsBetween :many
+-- The authors of the versions of a document after one version, up to and
+-- including a later one. The author of the newest version comes first. live
+-- says that the browser editor made each of the author's versions.
+SELECT
+  v.created_by_type,
+  v.created_by_id,
+  COALESCE(u.email, '') AS created_by_email,
+  COALESCE(u.name, sa.name, '') AS created_by_name,
+  COALESCE(u.picture_url, '') AS created_by_picture_url,
+  bool_and(v.client_change_id IS NOT NULL)::bool AS live
+FROM versions v
+LEFT JOIN users u
+  ON v.created_by_type = 'user' AND v.created_by_id = u.id
+-- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON v.created_by_type = 'service_account' AND v.created_by_id = sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+WHERE v.document_id = @document_id
+  AND v.number > (SELECT f.number FROM versions f WHERE f.id = @from_version_id)
+  AND v.number <= (SELECT t.number FROM versions t WHERE t.id = @to_version_id)
+GROUP BY v.created_by_type, v.created_by_id, u.email, u.name, sa.name, u.picture_url
+ORDER BY max(v.number) DESC;
 
 -- name: GetVersionBlobKey :one
 SELECT html_blob_key FROM versions WHERE id=$1;

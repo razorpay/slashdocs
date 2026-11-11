@@ -225,6 +225,9 @@ definitions:
         type: string
       id:
         type: string
+      live:
+        description: Live is set when the browser editor made the version.
+        type: boolean
       number:
         type: integer
       sha256:
@@ -541,12 +544,20 @@ definitions:
     type: object
   server.createVersionResponse:
     properties:
+      base_version_id:
+        description: BaseVersionID is the version that the new version saved on.
+        type: string
       change_summary:
         type: string
       id:
         type: string
       number:
         type: integer
+      rebased:
+        description: |-
+          Rebased is set when that version is newer than the base version of the
+          upload, so the new version also holds the changes of other writers.
+        type: boolean
       sha256:
         type: string
     type: object
@@ -578,6 +589,32 @@ definitions:
       auth:
         $ref: '#/definitions/server.discoveryAuth'
       name:
+        type: string
+    type: object
+  server.documentChangesResponse:
+    properties:
+      authors:
+        description: |-
+          Authors made the versions after from. The author of the newest version
+          comes first.
+        items:
+          $ref: '#/definitions/auth.Principal'
+        type: array
+      from_version_id:
+        type: string
+      live:
+        description: Live is set when the browser editor made every version after
+          from.
+        type: boolean
+      replacements:
+        description: |-
+          Replacements turn the HTML of the version from into the HTML of the
+          current version. They are in order, at byte offsets of the version from.
+        items:
+          $ref: '#/definitions/textedit.Replacement'
+        type: array
+      version_id:
+        description: VersionID is the current version.
         type: string
     type: object
   server.documentLinkResponse:
@@ -665,6 +702,15 @@ definitions:
         type: string
       number:
         type: integer
+      others:
+        description: |-
+          Others, set when rebased, turn the HTML that the caller holds, the
+          base version with its replacements, into the HTML of the new version:
+          the changes of the other writers. They are in order, at byte offsets
+          of the HTML that the caller holds.
+        items:
+          $ref: '#/definitions/textedit.Replacement'
+        type: array
       rebased:
         description: |-
           Rebased is set when that version is newer than the version that the
@@ -1571,6 +1617,45 @@ paths:
       summary: Remove an approver
       tags:
       - approvals
+  /v1/documents/{id}/changes:
+    get:
+      description: For the browser, which follows the document while other people
+        edit it. Gives the replacements that turn the HTML of the version from into
+        the HTML of the current version. start and end count UTF-8 bytes of the version
+        from, and end is exclusive. live is true when the browser editor made every
+        version after from. authors made those versions, and the author of the newest
+        comes first. When from is the current version, replacements and authors are
+        empty.
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Version ID that the caller has
+        in: query
+        name: from
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/server.documentChangesResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Get the changes since a version
+      tags:
+      - versions
   /v1/documents/{id}/comments:
     get:
       parameters:
@@ -2042,14 +2127,14 @@ paths:
     post:
       consumes:
       - application/json
-      description: For the browser editor. Applies replacements by position in the
+      description: 'For the browser editor. Applies replacements by position in the
         HTML of base_version_id to the current version, and saves the result as a
         new version. start and end count UTF-8 bytes, end is exclusive, and old_html
         must be the HTML from start to end of the base version. Replacements are in
-        order and do not overlap. When a newer version exists, each replacement moves
-        to where its HTML is in that version, and a replacement that the newer version
-        changed fails with edit_conflict. A retry with the same client_change_id returns
-        the version that the first attempt made.
+        order and do not overlap. When a newer version exists, the replacements merge
+        with its changes and the response has rebased set: text that both insert at
+        one point stays twice, and text that either deletes goes. A retry with the
+        same client_change_id returns the version that the first attempt made.'
       parameters:
       - description: Document ID
         in: path
@@ -2115,6 +2200,10 @@ paths:
     post:
       consumes:
       - multipart/form-data
+      description: Saves the uploaded HTML as a new version. When base_version_id
+        is an earlier version of the document, the changes from that version to the
+        upload move onto the current version, and the response has rebased set. When
+        the current version changed the same HTML, the response is version_conflict.
       parameters:
       - description: Document ID
         in: path
@@ -2140,6 +2229,14 @@ paths:
           description: Created
           schema:
             $ref: '#/definitions/server.createVersionResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "413":
+          description: Request Entity Too Large
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
       security:
       - bearerAuth: []
       - cookieAuth: []

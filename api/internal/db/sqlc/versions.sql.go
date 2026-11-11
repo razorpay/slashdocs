@@ -23,7 +23,8 @@ SELECT
   COALESCE(u.picture_url, '') AS created_by_picture_url,
   v.change_summary,
   v.sha256,
-  v.created_at
+  v.created_at,
+  (v.client_change_id IS NOT NULL)::bool AS live
 FROM versions v
 LEFT JOIN users u
   ON v.created_by_type = 'user' AND v.created_by_id = u.id
@@ -45,6 +46,7 @@ type GetVersionRow struct {
 	ChangeSummary       string
 	Sha256              string
 	CreatedAt           pgtype.Timestamptz
+	Live                bool
 }
 
 // nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
@@ -63,6 +65,7 @@ func (q *Queries) GetVersion(ctx context.Context, id string) (GetVersionRow, err
 		&i.ChangeSummary,
 		&i.Sha256,
 		&i.CreatedAt,
+		&i.Live,
 	)
 	return i, err
 }
@@ -236,6 +239,73 @@ func (q *Queries) ListUnindexedVersions(ctx context.Context, arg ListUnindexedVe
 	return items, nil
 }
 
+const listVersionAuthorsBetween = `-- name: ListVersionAuthorsBetween :many
+SELECT
+  v.created_by_type,
+  v.created_by_id,
+  COALESCE(u.email, '') AS created_by_email,
+  COALESCE(u.name, sa.name, '') AS created_by_name,
+  COALESCE(u.picture_url, '') AS created_by_picture_url,
+  bool_and(v.client_change_id IS NOT NULL)::bool AS live
+FROM versions v
+LEFT JOIN users u
+  ON v.created_by_type = 'user' AND v.created_by_id = u.id
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON v.created_by_type = 'service_account' AND v.created_by_id = sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+WHERE v.document_id = $1
+  AND v.number > (SELECT f.number FROM versions f WHERE f.id = $2)
+  AND v.number <= (SELECT t.number FROM versions t WHERE t.id = $3)
+GROUP BY v.created_by_type, v.created_by_id, u.email, u.name, sa.name, u.picture_url
+ORDER BY max(v.number) DESC
+`
+
+type ListVersionAuthorsBetweenParams struct {
+	DocumentID    string
+	FromVersionID string
+	ToVersionID   string
+}
+
+type ListVersionAuthorsBetweenRow struct {
+	CreatedByType       string
+	CreatedByID         string
+	CreatedByEmail      string
+	CreatedByName       string
+	CreatedByPictureUrl string
+	Live                bool
+}
+
+// The authors of the versions of a document after one version, up to and
+// including a later one. The author of the newest version comes first. live
+// says that the browser editor made each of the author's versions.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+func (q *Queries) ListVersionAuthorsBetween(ctx context.Context, arg ListVersionAuthorsBetweenParams) ([]ListVersionAuthorsBetweenRow, error) {
+	rows, err := q.db.Query(ctx, listVersionAuthorsBetween, arg.DocumentID, arg.FromVersionID, arg.ToVersionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListVersionAuthorsBetweenRow
+	for rows.Next() {
+		var i ListVersionAuthorsBetweenRow
+		if err := rows.Scan(
+			&i.CreatedByType,
+			&i.CreatedByID,
+			&i.CreatedByEmail,
+			&i.CreatedByName,
+			&i.CreatedByPictureUrl,
+			&i.Live,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listVersions = `-- name: ListVersions :many
 SELECT
   v.id,
@@ -248,7 +318,8 @@ SELECT
   COALESCE(u.picture_url, '') AS created_by_picture_url,
   v.change_summary,
   v.sha256,
-  v.created_at
+  v.created_at,
+  (v.client_change_id IS NOT NULL)::bool AS live
 FROM versions v
 LEFT JOIN users u
   ON v.created_by_type = 'user' AND v.created_by_id = u.id
@@ -271,6 +342,7 @@ type ListVersionsRow struct {
 	ChangeSummary       string
 	Sha256              string
 	CreatedAt           pgtype.Timestamptz
+	Live                bool
 }
 
 // nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
@@ -295,6 +367,7 @@ func (q *Queries) ListVersions(ctx context.Context, documentID string) ([]ListVe
 			&i.ChangeSummary,
 			&i.Sha256,
 			&i.CreatedAt,
+			&i.Live,
 		); err != nil {
 			return nil, err
 		}

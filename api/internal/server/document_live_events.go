@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -33,6 +34,8 @@ const (
 	maxCursorZoom          = 100
 	// A cursor chat message holds at most this many characters.
 	maxCursorMessage = 100
+	// A caret is at most this many characters into its block.
+	maxCursorCaret = 1_000_000
 	// A view's place may lie outside its element, up to this many times its size.
 	maxViewFraction       = 1000
 	liveEventWriteTimeout = 5 * time.Second
@@ -73,7 +76,8 @@ func (p presence) valid() bool {
 // the element shows than its layout size, as in a document that zooms itself.
 // V, when set, is the place at the center of the viewer's view, which
 // followers show. M, when set, is the viewer's cursor chat message. E, when
-// set, names the block that holds the viewer's caret while they edit it.
+// set, names the block that holds the viewer's caret while they edit it, and
+// C, when set, is the offset of the caret in the characters of that block.
 type cursor struct {
 	Session string        `json:"session"`
 	Version string        `json:"version"`
@@ -89,6 +93,7 @@ type cursorPoint struct {
 	V      *cursorPlace `json:"v,omitempty"`
 	M      string       `json:"m,omitempty"`
 	E      string       `json:"e,omitempty"`
+	C      *int         `json:"c,omitempty"`
 	Hidden bool         `json:"hidden,omitempty"`
 }
 
@@ -118,14 +123,15 @@ func (c cursor) valid() bool {
 		len(c.Points) == 0 || len(c.Points) > maxCursorPoints {
 		return false
 	}
-	for _, p := range c.Points {
-		place := cursorPlace{Path: p.Path, X: p.X, Y: p.Y, Z: p.Z}
-		if p.T < 0 || !place.valid(0, 1) || (p.V != nil && !p.V.valid(-maxViewFraction, maxViewFraction)) ||
-			!plainText(p.M, maxCursorMessage) || !cursorPathPattern.MatchString(p.E) {
-			return false
-		}
-	}
-	return true
+	return !slices.ContainsFunc(c.Points, func(p cursorPoint) bool { return !p.valid() })
+}
+
+func (p cursorPoint) valid() bool {
+	place := cursorPlace{Path: p.Path, X: p.X, Y: p.Y, Z: p.Z}
+	return p.T >= 0 && place.valid(0, 1) &&
+		(p.V == nil || p.V.valid(-maxViewFraction, maxViewFraction)) &&
+		plainText(p.M, maxCursorMessage) && cursorPathPattern.MatchString(p.E) &&
+		(p.C == nil || *p.C >= 0 && *p.C <= maxCursorCaret)
 }
 
 // postDocumentCursor relays pointer positions to the other viewers. The
@@ -205,13 +211,25 @@ func (h handlers) leavePresence(c *gin.Context, docID, session string) {
 }
 
 // announce tells open viewers that a write changed the document, its
-// comments or its approvals. The write already succeeded, so a failure here
-// is only logged.
+// comments or its approvals.
 func (h handlers) announce(c *gin.Context, kind string) {
+	h.announceData(c, kind, nil)
+}
+
+// announceVersion tells open viewers that a write made the version id, so
+// that a viewer who already has that version does nothing.
+func (h handlers) announceVersion(c *gin.Context, id string) {
+	data, _ := json.Marshal(map[string]string{"version_id": id})
+	h.announceData(c, repo.DocumentEventDocument, data)
+}
+
+// announceData appends the event of a write to the stream of the document.
+// The write already succeeded, so a failure here is only logged.
+func (h handlers) announceData(c *gin.Context, kind string, data json.RawMessage) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), liveEventWriteTimeout)
 	defer cancel()
 	docID := c.Param("id")
-	if err := h.deps.repository.AppendDocumentEvent(ctx, docID, kind, nil, *current(c)); err != nil {
+	if err := h.deps.repository.AppendDocumentEvent(ctx, docID, kind, data, *current(c)); err != nil {
 		slog.WarnContext(ctx, "document event announcement failed",
 			slog.String("document_id", docID),
 			slog.String("kind", kind),

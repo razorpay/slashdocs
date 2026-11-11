@@ -1,11 +1,14 @@
 package server
 
 import (
+	"net"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/razorpay/slashdocs/api/internal/auth"
 )
 
 // A bounded per-principal budget of requests per minute for notification
@@ -21,6 +24,13 @@ func activityRateLimit(perMinute int) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		p := current(c)
 		key := string(p.Type) + ":" + p.ID
+		if p.Type == auth.PrincipalAnonymous {
+			// Anonymous readers have no id, so each address has a budget. The
+			// address of the connection is used, because a caller can set the
+			// forwarding headers.
+			host, _, _ := net.SplitHostPort(c.Request.RemoteAddr)
+			key += host
+		}
 		now := time.Now()
 		mu.Lock()
 		w := windows[key]

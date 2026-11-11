@@ -24,6 +24,11 @@ type createVersionResponse struct {
 	Number        int    `json:"number"`
 	SHA256        string `json:"sha256"`
 	ChangeSummary string `json:"change_summary,omitempty"`
+	// BaseVersionID is the version that the new version saved on.
+	BaseVersionID string `json:"base_version_id"`
+	// Rebased is set when that version is newer than the base version of the
+	// upload, so the new version also holds the changes of other writers.
+	Rebased bool `json:"rebased"`
 }
 
 // versionConflictDetails names the latest version when a create hits a stale
@@ -60,9 +65,9 @@ type editFailedDetails struct {
 	CurrentVersionID string `json:"current_version_id"`
 }
 
-// editRebaseAttempts bounds how often an edit without a base version, or a
-// source edit, retries when another write lands between reading and saving
-// the current version.
+// editRebaseAttempts bounds how often an edit without a base version, a
+// source edit, or an upload on an earlier version retries when another write
+// lands between reading and saving the current version.
 const editRebaseAttempts = 3
 
 // editSourceRequest is the body of POST /v1/documents/{id}/source-edits.
@@ -89,6 +94,11 @@ type editSourceResponse struct {
 	// Rebased is set when that version is newer than the version that the
 	// replacements were made on.
 	Rebased bool `json:"rebased"`
+	// Others, set when rebased, turn the HTML that the caller holds, the
+	// base version with its replacements, into the HTML of the new version:
+	// the changes of the other writers. They are in order, at byte offsets
+	// of the HTML that the caller holds.
+	Others []textedit.Replacement `json:"others,omitempty"`
 }
 
 // replacementFailedDetails names the replacement that does not fit its base
@@ -98,11 +108,19 @@ type replacementFailedDetails struct {
 	CurrentVersionID string `json:"current_version_id"`
 }
 
-// editConflictDetails names the replacement that a newer version changed,
-// and that version.
-type editConflictDetails struct {
-	CurrentVersionID string `json:"current_version_id"`
-	Index            int    `json:"index"`
+// documentChangesResponse is the payload of GET /v1/documents/{id}/changes.
+type documentChangesResponse struct {
+	// VersionID is the current version.
+	VersionID     string `json:"version_id"`
+	FromVersionID string `json:"from_version_id"`
+	// Replacements turn the HTML of the version from into the HTML of the
+	// current version. They are in order, at byte offsets of the version from.
+	Replacements []textedit.Replacement `json:"replacements"`
+	// Live is set when the browser editor made every version after from.
+	Live bool `json:"live"`
+	// Authors made the versions after from. The author of the newest version
+	// comes first.
+	Authors []auth.Principal `json:"authors"`
 }
 
 // maxClientChangeIDBytes caps the client_change_id of a source edit.
@@ -123,8 +141,11 @@ type renderTokenResponse struct {
 // @Param id path string true "Document ID"
 // @Param base_version_id formData string true "Base version ID"
 // @Param change_summary formData string false "Change summary"
+// @Description Saves the uploaded HTML as a new version. When base_version_id is an earlier version of the document, the changes from that version to the upload move onto the current version, and the response has rebased set. When the current version changed the same HTML, the response is version_conflict.
 // @Param file formData file true "HTML file"
 // @Success 201 {object} createVersionResponse
+// @Failure 409 {object} errorEnvelope
+// @Failure 413 {object} errorEnvelope
 // @Router /v1/documents/{id}/versions [post]
 func (h handlers) createVersion(c *gin.Context) {
 	if !h.needDocRole(c, c.Param("id"), repo.RoleEditor) {
@@ -149,32 +170,77 @@ func (h handlers) createVersion(c *gin.Context) {
 			return
 		}
 	}
-	v, err := h.deps.repository.CreateVersion(ctx, docID, base, "", summary, html, *p)
-	// A conflict means the base version was stale; report the current one.
-	if errors.Is(err, repo.ErrVersionConflict) {
-		versionConflict(c, err, "base_version_id is stale")
-		return
-	}
+	v, onto, err := h.saveUpload(ctx, docID, base, summary, html, *p)
 	if err != nil {
-		internalErr(c, err)
+		h.editFailed(c, err, true)
 		return
 	}
 	incVersion("created", actorType(c))
-	h.announce(c, repo.DocumentEventDocument)
-	c.JSON(http.StatusCreated, createVersionResponse{ID: v.ID, Number: v.Number, SHA256: v.SHA256, ChangeSummary: v.ChangeSummary})
+	h.announceVersion(c, v.ID)
+	c.JSON(http.StatusCreated, createVersionResponse{ID: v.ID, Number: v.Number, SHA256: v.SHA256, ChangeSummary: v.ChangeSummary, BaseVersionID: onto, Rebased: onto != base})
+}
+
+// saveUpload saves html, which the caller made from the version base, as the
+// next version. It returns the new version and the version that it saved on.
+// When base is an earlier version of the document, the changes from base to
+// html move onto the current version. The base stays stale when the current
+// version changed the same HTML, when html changes nothing, and when base is
+// not a version of the document.
+func (h handlers) saveUpload(ctx context.Context, docID, base, summary string, html []byte, author auth.Principal) (repo.Version, string, error) {
+	r := h.deps.repository
+	v, err := r.CreateVersion(ctx, docID, base, "", summary, html, author)
+	var stale *repo.VersionConflictError
+	if !errors.As(err, &stale) {
+		return v, base, err
+	}
+	if _, err := h.versionOf(ctx, docID, base); errors.Is(err, repo.ErrNotFound) {
+		return repo.Version{}, "", stale
+	} else if err != nil {
+		return repo.Version{}, "", err
+	}
+	old, err := r.GetVersionHTML(ctx, base)
+	if err != nil {
+		return repo.Version{}, "", err
+	}
+	changes := textedit.Between(old, html)
+	for attempt := 1; ; attempt++ {
+		onto := stale.LatestVersionID
+		latest, err := r.GetVersionHTML(ctx, onto)
+		if err != nil {
+			return repo.Version{}, "", err
+		}
+		rebased, err := textedit.Replace(old, latest, changes)
+		if err != nil {
+			return repo.Version{}, "", stale
+		}
+		// Another write can land after the read. The changes then move onto
+		// that version.
+		v, err := h.saveEdited(ctx, docID, onto, "", summary, rebased, author)
+		if !errors.As(err, &stale) || attempt == editRebaseAttempts {
+			return v, onto, err
+		}
+	}
+}
+
+// versionOf returns the version id of the document docID. A version of
+// another document is not found, so that no caller reads its HTML.
+func (h handlers) versionOf(ctx context.Context, docID, id string) (repo.Version, error) {
+	v, err := h.deps.repository.GetVersion(ctx, id)
+	if err == nil && v.DocumentID != docID {
+		err = repo.ErrNotFound
+	}
+	return v, err
 }
 
 // uploadedSummary names an upload without a change summary, by what a reader
-// sees change first from base, the version that it replaces. A base that is
-// not a version of the document gets no summary: the save then reports it as
-// stale.
+// sees change first from base, the version that it was made from. A base that
+// is not a version of the document gets no summary: the save then reports it
+// as stale.
 func (h handlers) uploadedSummary(ctx context.Context, docID, base string, html []byte) (string, error) {
 	r := h.deps.repository
-	v, err := r.GetVersion(ctx, base)
-	if errors.Is(err, repo.ErrNotFound) || err == nil && v.DocumentID != docID {
+	if _, err := h.versionOf(ctx, docID, base); errors.Is(err, repo.ErrNotFound) {
 		return "", nil
-	}
-	if err != nil {
+	} else if err != nil {
 		return "", err
 	}
 	old, err := r.GetVersionHTML(ctx, base)
@@ -223,7 +289,7 @@ func (h handlers) editDocument(c *gin.Context) {
 			return
 		}
 		incVersion("edited", actorType(c))
-		h.announce(c, repo.DocumentEventDocument)
+		h.announceVersion(c, v.ID)
 		c.JSON(http.StatusCreated, editDocumentResponse{ID: v.ID, Number: v.Number, SHA256: v.SHA256, ChangeSummary: v.ChangeSummary, BaseVersionID: base, EditsApplied: len(in.Edits)})
 		return
 	}
@@ -282,7 +348,7 @@ func (h handlers) saveEdited(ctx context.Context, docID, base, clientChangeID, s
 
 // EditSource godoc
 // @Summary Edit document source by position
-// @Description For the browser editor. Applies replacements by position in the HTML of base_version_id to the current version, and saves the result as a new version. start and end count UTF-8 bytes, end is exclusive, and old_html must be the HTML from start to end of the base version. Replacements are in order and do not overlap. When a newer version exists, each replacement moves to where its HTML is in that version, and a replacement that the newer version changed fails with edit_conflict. A retry with the same client_change_id returns the version that the first attempt made.
+// @Description For the browser editor. Applies replacements by position in the HTML of base_version_id to the current version, and saves the result as a new version. start and end count UTF-8 bytes, end is exclusive, and old_html must be the HTML from start to end of the base version. Replacements are in order and do not overlap. When a newer version exists, the replacements merge with its changes and the response has rebased set: text that both insert at one point stays twice, and text that either deletes goes. A retry with the same client_change_id returns the version that the first attempt made.
 // @Tags versions
 // @Security bearerAuth
 // @Security cookieAuth
@@ -324,7 +390,7 @@ func (h handlers) editSource(c *gin.Context) {
 		}
 		if created {
 			incVersion("edited", actorType(c))
-			h.announce(c, repo.DocumentEventDocument)
+			h.announceVersion(c, out.ID)
 		}
 		c.JSON(http.StatusCreated, out)
 		return
@@ -345,7 +411,8 @@ func (h handlers) saveSourceEdits(ctx context.Context, docID string, in editSour
 	// does not apply a second time.
 	v, onto, err := r.VersionByClientChange(ctx, docID, in.ClientChangeID)
 	if err == nil {
-		return sourceEdited(v, onto, in.BaseVersionID), false, nil
+		out, err := h.sourceEdited(ctx, v, onto, in, nil, nil)
+		return out, false, err
 	}
 	if !errors.Is(err, repo.ErrNotFound) {
 		return editSourceResponse{}, false, err
@@ -353,11 +420,7 @@ func (h handlers) saveSourceEdits(ctx context.Context, docID string, in editSour
 	onto = d.CurrentVersionID
 	// The base must be a version of this document, so that the replacements
 	// are only ever matched against it.
-	baseVersion, err := r.GetVersion(ctx, in.BaseVersionID)
-	if err == nil && baseVersion.DocumentID != docID {
-		err = repo.ErrNotFound
-	}
-	if err != nil {
+	if _, err := h.versionOf(ctx, docID, in.BaseVersionID); err != nil {
 		return editSourceResponse{}, false, err
 	}
 	base, err := r.GetVersionHTML(ctx, in.BaseVersionID)
@@ -370,7 +433,7 @@ func (h handlers) saveSourceEdits(ctx context.Context, docID string, in editSour
 			return editSourceResponse{}, false, err
 		}
 	}
-	edited, err := textedit.Replace(base, latest, in.Replacements)
+	edited, err := textedit.Merge(base, latest, in.Replacements)
 	if err != nil {
 		return editSourceResponse{}, false, &editMismatchError{err: err, versionID: onto}
 	}
@@ -378,14 +441,39 @@ func (h handlers) saveSourceEdits(ctx context.Context, docID string, in editSour
 	if summary == "" {
 		summary = textedit.ReplacementSummary(base, in.Replacements)
 	}
-	v, err = h.saveEdited(ctx, docID, onto, in.ClientChangeID, summary, edited, author)
-	return sourceEdited(v, onto, in.BaseVersionID), true, err
+	if v, err = h.saveEdited(ctx, docID, onto, in.ClientChangeID, summary, edited, author); err != nil {
+		return editSourceResponse{}, true, err
+	}
+	out, err := h.sourceEdited(ctx, v, onto, in, base, edited)
+	return out, true, err
 }
 
-// sourceEdited describes v, the version that replacements made on base saved
-// when they applied to onto.
-func sourceEdited(v repo.Version, onto, base string) editSourceResponse {
-	return editSourceResponse{ID: v.ID, Number: v.Number, SHA256: v.SHA256, ChangeSummary: v.ChangeSummary, BaseVersionID: onto, Rebased: onto != base}
+// sourceEdited describes v, the version that the replacements of in saved
+// when they applied to onto. base and edited are the HTML of the base version
+// and of v. A retry of a change does not have them, so they are read here
+// when the answer names the changes of the other writers.
+func (h handlers) sourceEdited(ctx context.Context, v repo.Version, onto string, in editSourceRequest, base, edited []byte) (editSourceResponse, error) {
+	out := editSourceResponse{ID: v.ID, Number: v.Number, SHA256: v.SHA256, ChangeSummary: v.ChangeSummary, BaseVersionID: onto, Rebased: onto != in.BaseVersionID}
+	if !out.Rebased {
+		return out, nil
+	}
+	r := h.deps.repository
+	var err error
+	if base == nil {
+		if base, err = r.GetVersionHTML(ctx, in.BaseVersionID); err != nil {
+			return out, err
+		}
+		if edited, err = r.GetVersionHTML(ctx, v.ID); err != nil {
+			return out, err
+		}
+	}
+	// The HTML that the caller holds is the base with only its replacements.
+	held, err := textedit.Merge(base, base, in.Replacements)
+	if err != nil {
+		return out, &editMismatchError{err: err, versionID: onto}
+	}
+	out.Others = textedit.Between(held, edited)
+	return out, nil
 }
 
 // editFailed writes the response for an edit that saved nothing.
@@ -393,7 +481,6 @@ func (h handlers) editFailed(c *gin.Context, err error, hadBase bool) {
 	var mismatch *editMismatchError
 	var edit *textedit.Error
 	var replacement *textedit.ReplacementError
-	var overlap *textedit.ConflictError
 	var conflict *repo.VersionConflictError
 	switch {
 	case errors.As(err, &mismatch) && errors.As(err, &edit):
@@ -402,9 +489,6 @@ func (h handlers) editFailed(c *gin.Context, err error, hadBase bool) {
 	case errors.As(err, &mismatch) && errors.As(err, &replacement):
 		incVersion("edit_failed", actorType(c))
 		c.JSON(http.StatusUnprocessableEntity, errorResponse("edit_failed", mismatch.Error(), replacementFailedDetails{ReplacementError: *replacement, CurrentVersionID: mismatch.versionID}))
-	case errors.As(err, &mismatch) && errors.As(err, &overlap):
-		incVersion("edit_conflict", actorType(c))
-		c.JSON(http.StatusConflict, errorResponse("edit_conflict", mismatch.Error(), editConflictDetails{CurrentVersionID: mismatch.versionID, Index: overlap.Index}))
 	case errors.As(err, &conflict) && hadBase:
 		versionConflict(c, err, "base_version_id is stale")
 	case errors.As(err, &conflict):
@@ -477,8 +561,8 @@ func (h handlers) restoreVersion(c *gin.Context) {
 		return
 	}
 	incVersion("restored", actorType(c))
-	h.announce(c, repo.DocumentEventDocument)
-	c.JSON(http.StatusCreated, createVersionResponse{ID: v.ID, Number: v.Number, SHA256: v.SHA256, ChangeSummary: v.ChangeSummary})
+	h.announceVersion(c, v.ID)
+	c.JSON(http.StatusCreated, createVersionResponse{ID: v.ID, Number: v.Number, SHA256: v.SHA256, ChangeSummary: v.ChangeSummary, BaseVersionID: d.CurrentVersionID})
 }
 
 // restoredSummary names a restore by the entry it brings back, with the
@@ -664,6 +748,60 @@ func (h handlers) listVersions(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, listResponse[repo.Version]{Items: items})
+}
+
+// DocumentChanges godoc
+// @Summary Get the changes since a version
+// @Description For the browser, which follows the document while other people edit it. Gives the replacements that turn the HTML of the version from into the HTML of the current version. start and end count UTF-8 bytes of the version from, and end is exclusive. live is true when the browser editor made every version after from. authors made those versions, and the author of the newest comes first. When from is the current version, replacements and authors are empty.
+// @Tags versions
+// @Security bearerAuth
+// @Security cookieAuth
+// @Param id path string true "Document ID"
+// @Param from query string true "Version ID that the caller has"
+// @Success 200 {object} documentChangesResponse
+// @Failure 404 {object} errorEnvelope
+// @Failure 429 {object} errorEnvelope
+// @Router /v1/documents/{id}/changes [get]
+func (h handlers) documentChanges(c *gin.Context) {
+	docID := c.Param("id")
+	if !h.needDocRole(c, docID, repo.RoleViewer) {
+		return
+	}
+	out, err := h.changesFrom(c.Request.Context(), docID, c.Query("from"))
+	if errors.Is(err, repo.ErrNotFound) {
+		notFound(c)
+		return
+	}
+	if err != nil {
+		internalErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// changesFrom describes how the current version of the document differs
+// from the version from, which must be a version of the document.
+func (h handlers) changesFrom(ctx context.Context, docID, from string) (documentChangesResponse, error) {
+	r := h.deps.repository
+	d, err := r.GetDocument(ctx, docID)
+	if err != nil {
+		return documentChangesResponse{}, err
+	}
+	if _, err := h.versionOf(ctx, docID, from); err != nil {
+		return documentChangesResponse{}, err
+	}
+	old, err := r.GetVersionHTML(ctx, from)
+	if err != nil {
+		return documentChangesResponse{}, err
+	}
+	latest := old
+	if d.CurrentVersionID != from {
+		if latest, err = r.GetVersionHTML(ctx, d.CurrentVersionID); err != nil {
+			return documentChangesResponse{}, err
+		}
+	}
+	authors, live, err := r.VersionAuthorsBetween(ctx, docID, from, d.CurrentVersionID)
+	return documentChangesResponse{VersionID: d.CurrentVersionID, FromVersionID: from, Replacements: textedit.Between(old, latest), Live: live, Authors: authors}, err
 }
 
 // GetVersion godoc
