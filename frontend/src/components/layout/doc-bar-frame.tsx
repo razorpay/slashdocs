@@ -88,7 +88,7 @@ export function CommentsToggle({
             "pop absolute -right-1 -top-1 min-w-4 rounded-full px-1 text-[10px] font-medium leading-4 tabular-nums ring-2 ring-[var(--color-chrome)]",
             threads.unread
               ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]"
-              : "bg-[var(--color-surface-muted)] text-[var(--color-fg-muted)]",
+              : "bg-[var(--color-border)] text-[var(--color-fg)]",
           )}
         >
           {threads.open}
