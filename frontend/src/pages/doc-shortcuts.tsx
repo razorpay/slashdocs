@@ -20,10 +20,13 @@ const chord = (...keys: string[]) =>
 
 type Section = { title: string; rows: [keys: string[], label: string][] };
 
-// The keys of text that the reader can edit. They show only to editors.
+// The keys of Edit mode. They show only to editors.
 const EDITING: Section = {
   title: "Editing",
   rows: [
+    [["E"], "Edit the text"],
+    [["C"], "Stop editing, and comment"],
+    [["Esc", "Esc"], "Leave the text, then stop editing"],
     [[chord("Mod", "B")], "Bold"],
     [[chord("Mod", "I")], "Italic"],
     [[chord("Mod", "K")], "Link"],
@@ -32,7 +35,6 @@ const EDITING: Section = {
     [[chord("Mod", "Z")], "Undo"],
     [[chord("Mod", "Shift", "Z")], "Redo"],
     [[chord("Shift", "Enter")], "Line break"],
-    [["Esc"], "Leave the text"],
   ],
 };
 
@@ -80,19 +82,19 @@ export function ShortcutsDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const { editable } = useDoc();
+  const { canEdit } = useDoc();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85vh] max-w-md overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Keyboard shortcuts</DialogTitle>
           <DialogDescription>
-            In text that you can edit, the keys type. Press Esc to leave the text, then
-            use these keys.
+            While the text has the caret in Edit mode, the keys type. Press Esc to leave
+            the text, then use these keys.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-5">
-          {(editable ? [EDITING, ...SECTIONS] : SECTIONS).map((section) => (
+          {(canEdit ? [EDITING, ...SECTIONS] : SECTIONS).map((section) => (
             <section key={section.title}>
               <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-[var(--color-fg-muted)]">
                 {section.title}

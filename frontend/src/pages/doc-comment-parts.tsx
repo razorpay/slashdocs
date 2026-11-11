@@ -115,7 +115,7 @@ export function MoreMenu({
   className?: string;
 }) {
   const q = useQueryClient();
-  const { principal, editable, setPlacingPin } = useDoc();
+  const { principal, canEdit, setPlacingPin } = useDoc();
   const [confirming, setConfirming] = useState(false);
   // What takes the focus, as the edit field or the document frame, does so
   // after the menu gives back the focus, or the menu takes the focus from it
@@ -157,7 +157,7 @@ export function MoreMenu({
           <DropdownItem onSelect={() => copyLink(c.id)}>
             <Link2 className="h-4 w-4" /> Copy link
           </DropdownItem>
-          {thread && canMovePin(c, editable, principal) ? (
+          {thread && canMovePin(c, canEdit, principal) ? (
             <DropdownItem
               onSelect={() => (afterClose.current = () => setPlacingPin(c.id))}
             >

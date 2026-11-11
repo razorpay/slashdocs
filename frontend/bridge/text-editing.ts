@@ -36,6 +36,10 @@ export interface TextEditor {
   // run does an input on the selection as its shortcut does, for example
   // "formatBold" or "insertLink".
   run(type: string): void;
+  // setEditable lets the reader type in the document, or stops that while
+  // they comment. The editor keeps every change since it started, so that
+  // the next save still holds the earlier ones.
+  setEditable(on: boolean): void;
   stop(): void;
 }
 
@@ -56,6 +60,16 @@ const PLAIN_INPUT =
   /^(insertText|insertReplacementText|insertCompositionText|insertFromPaste|delete(Content|Word|SoftLine|HardLine)(Backward|Forward)|deleteByCut|historyUndo|historyRedo)$/;
 
 const STYLE_ID = "slashdocs-text-editing-style";
+const EDITING_ATTR = "data-slashdocs-text-editing";
+// The blocks of text that a pointer shows as editable.
+const BLOCKS = "p,li,h1,h2,h3,h4,h5,h6,blockquote,pre,td,th,dt,dd,figcaption";
+// While the reader edits, the page shows that its text takes the caret: an
+// I-beam, and a faint ring on the innermost block of text under the pointer
+// that the reader can change.
+const EDITING_CSS =
+  `[${EDITING_ATTR}] body{outline:none!important;caret-color:auto;cursor:text}` +
+  `[${EDITING_ATTR}] a{cursor:text!important}` +
+  `@media (hover:hover){[${EDITING_ATTR}] body :is(${BLOCKS}):hover:not(:has(:is(${BLOCKS}):hover),[contenteditable=false],[contenteditable=false] *){outline:1px solid rgba(37,99,235,.3);outline-offset:3px}}`;
 // Typing that follows within this time undoes as one step.
 const TYPING_MS = 1000;
 const JOURNAL_SIZE = 200;
@@ -331,8 +345,15 @@ export function startTextEditing(
     const r = selection(d);
     if (r) hold(blockOf(r.startContainer));
   };
+  let editing = false;
   const onKeyDown = (event: KeyboardEvent) => {
-    if (!event.isTrusted || event.altKey || !(event.metaKey || event.ctrlKey)) return;
+    if (
+      !editing ||
+      !event.isTrusted ||
+      event.altKey ||
+      !(event.metaKey || event.ctrlKey)
+    )
+      return;
     const target = elementOf(event.target as Node);
     if (!target || !body.contains(target) || target.closest("input,textarea,select"))
       return;
@@ -353,16 +374,25 @@ export function startTextEditing(
 
   const previous = body.getAttribute("contenteditable");
   const previousSpellcheck = body.getAttribute("spellcheck");
-  body.setAttribute("contenteditable", "true");
-  // Squiggles over every rendered word would bury the document.
-  body.setAttribute("spellcheck", "false");
-  d.documentElement.setAttribute("data-slashdocs-text-editing", "");
+  const setEditable = (on: boolean) => {
+    editing = on;
+    d.documentElement.toggleAttribute(EDITING_ATTR, on);
+    if (on) {
+      body.setAttribute("contenteditable", "true");
+      // Squiggles over every rendered word would bury the document.
+      body.setAttribute("spellcheck", "false");
+      return;
+    }
+    if (previous === null) body.removeAttribute("contenteditable");
+    else body.setAttribute("contenteditable", previous);
+    if (previousSpellcheck === null) body.removeAttribute("spellcheck");
+    else body.setAttribute("spellcheck", previousSpellcheck);
+  };
+  setEditable(true);
   if (!d.getElementById(STYLE_ID)) {
     const style = d.createElement("style");
     style.id = STYLE_ID;
-    style.textContent =
-      "[data-slashdocs-text-editing] body{outline:none!important;caret-color:auto}" +
-      "[data-slashdocs-text-editing] a{cursor:text!important}";
+    style.textContent = EDITING_CSS;
     (d.head || d.documentElement).appendChild(style);
   }
   observer.observe(body, {
@@ -390,6 +420,7 @@ export function startTextEditing(
       held.clear();
       return changes;
     },
+    setEditable,
     stop() {
       closeNative();
       observer.disconnect();
@@ -400,11 +431,7 @@ export function startTextEditing(
       d.removeEventListener("input", onInput, true);
       d.removeEventListener("compositionstart", onCompositionStart, true);
       d.removeEventListener("drop", onDrop, true);
-      if (previous === null) body.removeAttribute("contenteditable");
-      else body.setAttribute("contenteditable", previous);
-      if (previousSpellcheck === null) body.removeAttribute("spellcheck");
-      else body.setAttribute("spellcheck", previousSpellcheck);
-      d.documentElement.removeAttribute("data-slashdocs-text-editing");
+      setEditable(false);
       d.getElementById(STYLE_ID)?.remove();
     },
   };

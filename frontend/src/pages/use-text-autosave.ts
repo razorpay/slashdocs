@@ -128,6 +128,8 @@ export function useTextAutosave(options: {
   const noteTimer = useRef<number | undefined>(undefined);
   const burstStart = useRef(0);
   const saving = useRef(false);
+  // Called when the save on its way ends.
+  const waiting = useRef<(() => void)[]>([]);
   const again = useRef(false);
   const unsaved = useRef(false);
   const attempts = useRef(0);
@@ -456,6 +458,7 @@ export function useTextAutosave(options: {
       if (state !== "failed") unsent.current = undefined;
     } finally {
       saving.current = false;
+      for (const done of waiting.current.splice(0)) done();
       if (state) {
         unsaved.current = state !== "saved" && state !== "idle" && !load;
         setState(state);
@@ -597,7 +600,16 @@ export function useTextAutosave(options: {
     };
   }, [save]);
 
-  return { changed, drafted, scriptEditable, focused };
+  // settle saves the edits on screen at once, after the save on its way, and
+  // tells whether all of them are saved. A save that fails says why, as
+  // any save does.
+  const settle = useCallback(async (): Promise<boolean> => {
+    if (saving.current) await new Promise<void>((done) => waiting.current.push(done));
+    if (timer.current !== undefined) await save();
+    return !unsaved.current;
+  }, [save]);
+
+  return { changed, drafted, scriptEditable, focused, settle };
 }
 
 // copyAction puts text that the reader typed on the clipboard. The message

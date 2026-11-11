@@ -8,8 +8,10 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
+import { popIn } from "@/lib/motion";
 import { createPersistentStore } from "@/lib/persistent-store";
 import { useDoc, type SaveState } from "./doc-context";
 
@@ -17,9 +19,9 @@ type Status = { label: string; title: string; Icon: LucideIcon };
 
 const STATUS: Record<SaveState, Status> = {
   idle: {
-    label: "Can edit",
+    label: "Editing",
     title:
-      "Type in the document to change its words. Edits save as you type. Press Esc to use the keyboard shortcuts.",
+      "Type in the document to change its words. Edits save as you type. Done, C or Esc goes back to commenting.",
     Icon: Pencil,
   },
   unsaved: {
@@ -68,22 +70,29 @@ const ACCESS: Record<"commenter" | "viewer", Status> = {
   },
 };
 
-// EditStatus tells an editor that the document is theirs to edit, and whether
-// their edits are saved. There is no edit mode to enter: they type. Other
-// readers see what they may do. A narrow bar, short of room for the title,
-// shows only the icon of a save. A screen reader hears only that edits are
-// not saved, not each save of a pause. For a while after a save that can be
-// undone, the bar says what it changed, with Undo, where it covers no words.
+// EditStatus tells an editor in Edit mode whether their edits are saved,
+// with Done, which leaves Edit mode once they are. Other readers see what
+// they may do. A narrow bar, short of room for the title, shows only the icon
+// of a save. A screen reader hears only that edits are not saved, not each
+// save of a pause. The first time, the bar says how Edit mode works. For a
+// while after a save that can be undone, it says what the save changed, with
+// Undo, where it covers no words.
 export function EditStatus({ access }: { access?: keyof typeof ACCESS }) {
-  const { editable, saveState, saveNote, text, frameReady } = useDoc();
-  const hint = useEditHint(!!text?.focused);
-  const status = editable ? STATUS[saveState] : access && ACCESS[access];
-  if (!status) return null;
-  const { title, Icon } = status;
-  const failed = editable && Icon === AlertCircle;
+  const { canEdit, editing, setEditing, saveState, saveNote } = useDoc();
+  const hint = useEditHint(editing);
+  // Done waits while the edits on screen save.
+  const [leaving, setLeaving] = useState(false);
+  if (!canEdit) {
+    const status = access && ACCESS[access];
+    return status ? (
+      <Status {...status} failed={false} className="hidden sm:inline-flex" />
+    ) : null;
+  }
+  const status = STATUS[saveState];
+  const failed = status.Icon === AlertCircle;
   // The note of a save is news, and takes the place of the hint.
-  const note = editable && !failed ? saveNote : undefined;
-  const hinted = editable && hint && !failed && !note;
+  const note = failed ? undefined : saveNote;
+  const hinted = hint && !failed && !note;
   // A later state of a save says itself. Undo stays for its while.
   const noted = !!note && saveState === "saved";
   const label = noted ? (
@@ -94,79 +103,50 @@ export function EditStatus({ access }: { access?: keyof typeof ACCESS }) {
       </span>
     </span>
   ) : hinted ? (
-    <>
-      <span className="pointer-coarse:hidden">Type to edit. Press Esc to leave.</span>
-      <span className="hidden pointer-coarse:inline">
-        Type to edit. Tap Done to leave.
-      </span>
-    </>
+    "Editing. Changes save as you type."
   ) : (
     status.label
   );
-  if (!editable)
-    return (
-      <Status
-        label={label}
-        title={title}
-        Icon={Icon}
-        failed={failed}
-        className="hidden sm:inline-flex"
-      />
-    );
-  const fade = "transition-opacity duration-150 ease-out motion-reduce:transition-none";
   return (
-    <>
-      {/* A phone has no Esc key to leave the text, so a touch screen shows
-          Done while the text has the caret. On a narrow bar Done takes the
-          place of the status. The place keeps its width in every state, so
-          that the title does not move. It shows once the document takes
-          edits. */}
-      <span
-        aria-hidden={!frameReady || undefined}
-        className={cn(
-          "grid shrink-0 items-center justify-items-center *:col-start-1 *:row-start-1 sm:flex sm:gap-2",
-          fade,
-          !frameReady && "invisible opacity-0",
-        )}
-      >
-        <Status
-          label={label}
-          title={title}
-          Icon={Icon}
-          failed={failed}
-          live={hinted || noted}
-          className={cn(
-            "inline-flex",
-            fade,
-            // Faded, it still paints over Done, so taps go through it.
-            text?.focused &&
-              "max-sm:pointer-coarse:pointer-events-none max-sm:pointer-coarse:opacity-0",
-          )}
-        />
-        <Button
-          size="sm"
-          variant="secondary"
-          className={cn(
-            "hidden max-sm:px-2 max-sm:text-xs pointer-coarse:inline-flex",
-            fade,
-            !text?.focused && "invisible opacity-0",
-          )}
-          onClick={text?.leave}
+    <AnimatePresence initial={false}>
+      {editing ? (
+        <motion.span
+          key="editing"
+          {...popIn}
+          className="flex shrink-0 items-center gap-2"
         >
-          Done
-        </Button>
-      </span>
-      {note?.undo ? (
-        <Button
-          size="sm"
-          variant="ghost"
-          className="enter shrink-0 max-sm:px-2 max-sm:text-xs"
-          onClick={note.undo}
-        >
-          Undo
-        </Button>
+          <Status
+            {...status}
+            label={label}
+            failed={failed}
+            live={hinted || noted}
+            className="inline-flex"
+          />
+          <Button
+            size="sm"
+            busy={leaving}
+            className="shrink-0 max-sm:px-2 max-sm:text-xs"
+            onClick={async () => {
+              setLeaving(true);
+              await setEditing(false);
+              setLeaving(false);
+            }}
+          >
+            Done
+          </Button>
+          {note?.undo ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="enter shrink-0 max-sm:px-2 max-sm:text-xs"
+              onClick={note.undo}
+            >
+              Undo
+            </Button>
+          ) : null}
+        </motion.span>
       ) : null}
-    </>
+    </AnimatePresence>
   );
 }
 
@@ -174,16 +154,15 @@ const editHintSeen = createPersistentStore<boolean>("slashdocs:edit-hint-seen", 
 const HINT_MS = 8000;
 
 // useEditHint tells whether the bar shows the hint that an editor gets once,
-// the first time the text takes the caret: that they type, and how to leave
-// the text. It shows for a while in place of the status, where it covers no
-// words.
-function useEditHint(focused: boolean): boolean {
+// the first time they start Edit mode: that their changes save as they type.
+// It shows for a while in place of the status, where it covers no words.
+function useEditHint(editing: boolean): boolean {
   const [hint, setHint] = useState(false);
   useEffect(() => {
-    if (!focused || editHintSeen.read()) return;
+    if (!editing || editHintSeen.read()) return;
     editHintSeen.write(true);
     setHint(true);
-  }, [focused]);
+  }, [editing]);
   useEffect(() => {
     if (!hint) return;
     const timer = setTimeout(() => setHint(false), HINT_MS);

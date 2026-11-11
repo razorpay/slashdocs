@@ -45,6 +45,7 @@ import type {
 const FORWARDED_KEYS = new Set<string>([
   "Escape",
   "?",
+  "e",
   ...CHORD_KEYS.map((item) => item.key),
 ]);
 const VIM_KEYS = new Set(["j", "k", "g", "G"]);
@@ -92,10 +93,10 @@ export function RenderFrame({
     subscribeCursors,
     followedCursor,
     onUnfollowCursor,
-    editable,
+    editing,
+    registerTextSettle,
     setSaveState,
     setSaveNote,
-    setText,
     setFrameReady,
     stayOnVersion,
     showLatest,
@@ -234,8 +235,8 @@ export function RenderFrame({
   paintRef.current = paint;
 
   useEffect(() => {
-    if (ready) postToFrame({ type: "slashdocs:text-editing", on: editable });
-  }, [ready, editable, postToFrame]);
+    if (ready) postToFrame({ type: "slashdocs:text-editing", on: editing });
+  }, [ready, editing, postToFrame]);
 
   // The frame hands over its text changes on request.
   const textCollects = useRef(
@@ -292,6 +293,7 @@ export function RenderFrame({
     drafted: textDrafted,
     scriptEditable,
     focused: textFocused,
+    settle: settleText,
   } = useTextAutosave({
     docId,
     loaded,
@@ -328,6 +330,10 @@ export function RenderFrame({
     replaceText: (from, to) =>
       postToFrame({ type: "slashdocs:script-replace", from, to }),
   });
+  useEffect(() => {
+    registerTextSettle(settleText);
+    return () => registerTextSettle(null);
+  }, [registerTextSettle, settleText]);
   // Each load flashes what changed since the reader saw the document last,
   // after the scroll, so that the flash is where they look.
   useEffect(() => {
@@ -614,13 +620,8 @@ export function RenderFrame({
             body: agentRequestBody(anchor.quote),
           });
       }
-      if (e.data?.type === "slashdocs:text-focus") {
-        if (e.data.on === true) void textFocused();
-        setText({
-          focused: e.data.on === true,
-          leave: () => postToFrame({ type: "slashdocs:leave-text" }),
-        });
-      }
+      if (e.data?.type === "slashdocs:text-focus" && e.data.on === true)
+        void textFocused();
       if (e.data?.type === "slashdocs:text-dirty" && typeof e.data.count === "number") {
         textChanged(e.data.count);
       }
@@ -721,7 +722,6 @@ export function RenderFrame({
     setCommentPositions,
     setDocumentHeight,
     applyZoom,
-    setText,
     textChanged,
     textDrafted,
     textFocused,

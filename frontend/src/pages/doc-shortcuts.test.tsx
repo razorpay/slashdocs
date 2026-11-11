@@ -3,9 +3,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { DocProvider, type DocContextValue } from "./doc-context";
 import { ShortcutsDialog } from "./doc-shortcuts";
 
-function renderShortcuts(editable: boolean) {
+function renderShortcuts(canEdit: boolean) {
   render(
-    <DocProvider value={{ editable } as unknown as DocContextValue}>
+    <DocProvider value={{ canEdit } as unknown as DocContextValue}>
       <ShortcutsDialog open onOpenChange={() => {}} />
     </DocProvider>,
   );
@@ -24,6 +24,9 @@ describe("ShortcutsDialog", () => {
   it("lists the editing keys for an editor, as the comment chip names keys", () => {
     const dialog = renderShortcuts(true);
     expect(within(dialog).getByText("Editing")).toBeVisible();
+    expect(keysOf(dialog, "Edit the text")).toEqual(["E"]);
+    expect(keysOf(dialog, "Stop editing, and comment")).toEqual(["C"]);
+    expect(keysOf(dialog, "Leave the text, then stop editing")).toEqual(["Esc", "Esc"]);
     expect(keysOf(dialog, "Bold")).toEqual(["Ctrl+B"]);
     expect(keysOf(dialog, "Redo")).toEqual(["Ctrl+Shift+Z"]);
     expect(keysOf(dialog, "Line break")).toEqual(["Shift+Enter"]);

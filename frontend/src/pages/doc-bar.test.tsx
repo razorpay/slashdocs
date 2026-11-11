@@ -8,6 +8,7 @@ import { api } from "@/api";
 import { clearFieldDrafts } from "@/lib/field-drafts";
 import { DocBar } from "./doc-bar";
 import { EditStatus } from "./doc-edit-status";
+import { ModeSwitch } from "./doc-mode-switch";
 import { DocProvider, type DocContextValue, type SaveState } from "./doc-context";
 import type { Viewer } from "./use-document-stream";
 
@@ -44,11 +45,13 @@ const mockDocContext: DocContextValue = {
   reportViewport: vi.fn(),
   moveCursor: vi.fn(),
   subscribeCursors: () => () => {},
-  editable: false,
+  canEdit: false,
+  editing: false,
+  setEditing: vi.fn(async () => {}),
+  registerTextSettle: vi.fn(),
   saveState: "idle",
   setSaveState: vi.fn(),
   setSaveNote: vi.fn(),
-  setText: vi.fn(),
   frameReady: true,
   setFrameReady: vi.fn(),
   stayOnVersion: vi.fn(),
@@ -437,11 +440,15 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     expect(screen.queryByText("Can edit")).toBeNull();
   });
 
-  it("tells a reader who cannot edit what they may do", () => {
-    const status = (access?: "commenter" | "viewer", editable = false) => {
+  it("tells a reader who cannot edit what they may do, and an editor only in Edit mode", () => {
+    const status = (
+      access?: "commenter" | "viewer",
+      canEdit = false,
+      editing = false,
+    ) => {
       cleanup();
       render(
-        <DocProvider value={{ ...mockDocContext, editable }}>
+        <DocProvider value={{ ...mockDocContext, canEdit, editing }}>
           <EditStatus access={access} />
         </DocProvider>,
       );
@@ -449,24 +456,62 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     };
     expect(status("commenter")).toBe("Can comment");
     expect(status("viewer")).toBe("Can view");
-    expect(status("commenter", true)).toBe("Can edit");
+    expect(status("commenter", true)).toBeUndefined();
+    // The first time, Edit mode says how it works.
+    localStorage.removeItem("slashdocs:edit-hint-seen");
+    expect(status("commenter", true, true)).toBe("Editing. Changes save as you type.");
+    expect(status("commenter", true, true)).toBe("Editing");
     expect(status()).toBeUndefined();
   });
 
-  it("does not say Can edit while the document does not show, or did not load", () => {
+  it("shows the mode switch to an editor once the document shows, and no switch to others", () => {
+    const controls = (canEdit: boolean, frameReady: boolean, editing = false) => {
+      cleanup();
+      render(
+        <DocProvider value={{ ...mockDocContext, canEdit, frameReady, editing }}>
+          <ModeSwitch />
+        </DocProvider>,
+      );
+      return [
+        ...screen.queryAllByRole("radio").map((r) => r.getAttribute("aria-label")),
+        // The one button of a narrow bar.
+        ...screen.queryAllByRole("button").map((b) => b.getAttribute("aria-label")),
+      ];
+    };
+    expect(controls(true, true)).toEqual(["Comment", "Edit", "Edit"]);
+    // In Edit mode, Done takes the place of Edit on a narrow bar.
+    expect(controls(true, true, true)).toEqual(["Comment", "Edit"]);
+    expect(controls(true, false)).toEqual([]);
+    expect(controls(false, true)).toEqual([]);
+  });
+
+  it("picks a mode with a click or the arrow keys, from one tab stop", async () => {
+    const setEditing = vi.fn(async () => {});
     render(
-      <DocProvider value={{ ...mockDocContext, editable: true, frameReady: false }}>
-        <EditStatus />
+      <DocProvider value={{ ...mockDocContext, canEdit: true, setEditing }}>
+        <ModeSwitch />
       </DocProvider>,
     );
-    expect(screen.queryByRole("status")).toBeNull();
+    const comment = screen.getByRole("radio", { name: "Comment" });
+    const edit = screen.getByRole("radio", { name: "Edit" });
+    expect(comment).toBeChecked();
+    expect([comment.tabIndex, edit.tabIndex]).toEqual([0, -1]);
+    expect(edit).toHaveAttribute("aria-keyshortcuts", "E");
+    comment.focus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(setEditing).toHaveBeenLastCalledWith(true);
+    expect(edit).toHaveFocus();
+    await userEvent.click(comment);
+    expect(setEditing).toHaveBeenLastCalledWith(false);
   });
 
   it("says Saving… only while a save runs, and announces only a failed save", () => {
     const status = (saveState: SaveState) => {
       cleanup();
       render(
-        <DocProvider value={{ ...mockDocContext, editable: true, saveState }}>
+        <DocProvider
+          value={{ ...mockDocContext, canEdit: true, editing: true, saveState }}
+        >
           <EditStatus />
         </DocProvider>,
       );
@@ -486,7 +531,8 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
       <DocProvider
         value={{
           ...mockDocContext,
-          editable: true,
+          canEdit: true,
+          editing: true,
           saveState: "saved",
           saveNote: { said: "Added “three”.", undo },
         }}
@@ -501,40 +547,31 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     expect(undo).toHaveBeenCalled();
   });
 
-  it("keeps the status and Done in place in every state, with no Undo of its own", async () => {
-    const leave = vi.fn();
+  it("shows the status and Done in Edit mode, for every pointer, and Done leaves Edit mode", async () => {
+    const setEditing = vi.fn(async () => {});
     const { rerender } = render(<></>);
-    const show = (saveState: SaveState, focused: boolean) => {
+    for (const saveState of ["idle", "unsaved", "saving", "saved"] as const) {
       rerender(
         <DocProvider
           value={{
             ...mockDocContext,
-            editable: true,
+            canEdit: true,
+            editing: true,
             saveState,
-            text: { focused, leave },
+            setEditing,
           }}
         >
           <EditStatus />
         </DocProvider>,
       );
-      const done = screen.getByRole("button", { name: "Done" });
-      return [
-        screen.getByRole("status").classList.contains("hidden"),
-        done.classList.contains("invisible"),
-        screen.queryByRole("button", { name: "Undo" }),
-      ];
-    };
-    // The narrow bar shows the icon of each state, the idle one too, so the
-    // title keeps its width.
-    for (const state of ["idle", "unsaved", "saving", "saved"] as const) {
-      expect(show(state, false)).toEqual([false, true, null]);
-      expect(show(state, true)).toEqual([false, false, null]);
-      // On a phone, Done takes the place of the status, and gets its taps.
-      expect(screen.getByRole("status").className).toContain(
-        "max-sm:pointer-coarse:pointer-events-none",
+      // The narrow bar shows the icon of each state, the idle one too.
+      expect(screen.getByRole("status").classList.contains("hidden")).toBe(false);
+      expect(screen.getByRole("button", { name: "Done" }).className).not.toContain(
+        "pointer-coarse",
       );
+      expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
     }
     await userEvent.click(screen.getByRole("button", { name: "Done" }));
-    expect(leave).toHaveBeenCalled();
+    expect(setEditing).toHaveBeenCalledWith(false);
   });
 });

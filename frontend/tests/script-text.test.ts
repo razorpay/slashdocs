@@ -52,6 +52,25 @@ test("a locator counts element children from the nearest original element, witho
   expect(find(document, { at: null, path: [1] })).toBe(el("b"));
 });
 
+test("script text takes no keys and asks nothing while the reader comments, and keeps what they typed", async () => {
+  const el = render(
+    `<div ${SOURCE_ATTR}="20" contenteditable="false"><button id="t">Try it.</button><i id="u">Other</i></div>`,
+  );
+  const post = start();
+  el("t").click();
+  scriptText!.answer("script-1", true);
+  el("t").textContent = "Run it.";
+  scriptText!.setEditable(false);
+  expect(el("t").hasAttribute("contenteditable")).toBe(false);
+  el("u").click();
+  expect(post).toHaveBeenCalledTimes(1);
+  scriptText!.setEditable(true);
+  expect(el("t").getAttribute("contenteditable")).toBe("true");
+  expect(scriptText!.take()).toEqual([
+    { locator: { at: 20, path: [0] }, before: "Try it.", after: "Run it." },
+  ]);
+});
+
 test("a locator finds nothing when a script copied its original element", () => {
   render(
     `<div ${SOURCE_ATTR}="10"><i></i></div><div ${SOURCE_ATTR}="10"><i></i></div>`,

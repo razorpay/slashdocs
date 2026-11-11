@@ -79,6 +79,7 @@ import { useDoc } from "./doc-context";
 import { UploadVersionMenuItem, UploadVersionSheet } from "./doc-upload-version";
 import { useShowSaved } from "./use-show-saved";
 import { EditStatus } from "./doc-edit-status";
+import { ModeSwitch } from "./doc-mode-switch";
 import { HistoryDialog } from "./doc-history";
 import type { Viewer } from "./use-document-stream";
 
@@ -232,7 +233,10 @@ export function DocBar({
             <span className="sr-only sm:not-sr-only">Could not check your access</span>
           </LoadErrorLine>
         ) : (
-          <EditStatus access={access} />
+          <>
+            <ModeSwitch />
+            <EditStatus access={access} />
+          </>
         )
       }
     >

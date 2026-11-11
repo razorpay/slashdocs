@@ -76,10 +76,10 @@ export function anchorLabel(c: {
 // and so may an editor of the document.
 export function canMovePin(
   c: Pick<Comment, "anchor" | "author">,
-  editable: boolean,
+  canEdit: boolean,
   reader?: Principal,
 ): boolean {
-  return !!c.anchor?.point && (editable || samePrincipal(c.author, reader));
+  return !!c.anchor?.point && (canEdit || samePrincipal(c.author, reader));
 }
 
 // initialsOf gives up to two initials of a name, for a pin's face.

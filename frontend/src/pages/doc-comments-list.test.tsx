@@ -239,7 +239,7 @@ it("offers to move a moved pin to its author, in its thread", async () => {
   const ctx = {
     docId: "doc-1",
     principal: author,
-    editable: false,
+    canEdit: false,
     unanchoredComments: new Set<string>(),
     movedPins: new Set(["moved"]),
     setPlacingPin,
@@ -258,13 +258,11 @@ it("offers to move a moved pin to its author, in its thread", async () => {
   expect(setPlacingPin).toHaveBeenCalledWith("moved");
 });
 
-it.each([
-  [false, "Select text, or press C and click a spot, to start a thread."],
-  // In an editor's document, a click puts the caret in the text, where C types.
-  [true, "Select text, or press Esc, then C, and click a spot, to start a thread."],
-])("tells how to start a thread, for an editor: %s", (editable, hint) => {
-  renderList({ comments: [], editable });
-  expect(screen.getByText(hint)).toBeInTheDocument();
+it("tells how to start a thread", () => {
+  renderList({ comments: [] });
+  expect(
+    screen.getByText("Select text, or press C and click a spot, to start a thread."),
+  ).toBeInTheDocument();
 });
 
 function renderComposer() {
