@@ -74,6 +74,24 @@ it("takes the focus that was lost, so Esc reaches the thread", () => {
   expect(screen.getByRole("dialog", { name: "Comment thread" })).toHaveFocus();
 });
 
+it("moves to the next thread without closing, and cross-fades its content", async () => {
+  const next = { ...c, id: "c2", body: "And here" };
+  const view = render(
+    <Thread comments={[c, next]} unanchoredComments={new Set(["c1", "c2"])} />,
+  );
+  const dialog = screen.getByRole("dialog", { name: "Comment thread" });
+  view.rerender(
+    <Thread
+      comments={[c, next]}
+      unanchoredComments={new Set(["c1", "c2"])}
+      activeComment="c2"
+    />,
+  );
+  expect(screen.getByRole("dialog", { name: "Comment thread" })).toBe(dialog);
+  await vi.waitFor(() => expect(screen.queryByText("Look here")).toBeNull());
+  expect(screen.getByText("And here")).toBeInTheDocument();
+});
+
 it("leaves the focus in the document", () => {
   const frame = document.body.appendChild(document.createElement("iframe"));
   frame.focus();

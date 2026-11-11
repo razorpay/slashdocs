@@ -52,8 +52,8 @@ const SECTIONS: Section[] = [
   {
     title: "Reading",
     rows: [
-      [["J"], "Scroll down"],
-      [["K"], "Scroll up"],
+      [["J"], "Scroll down, in a document with no open threads"],
+      [["K"], "Scroll up, in a document with no open threads"],
       [[chord("Ctrl", "D")], "Half a page down"],
       [[chord("Ctrl", "U")], "Half a page up"],
       [["G", "G"], "Top"],
@@ -64,6 +64,9 @@ const SECTIONS: Section[] = [
     title: "Comments",
     rows: [
       [["C"], "Comment on the selected text, or on a spot you click"],
+      [["J"], "Next open thread (also N)"],
+      [["K"], "Previous open thread (also P)"],
+      [[chord("Shift", "J")], "Next unread thread"],
       [["Esc"], "Stop placing a comment"],
       [[chord("Mod", "Alt", "M")], "Comment on the text you edit"],
       [[chord("Mod", "Enter")], "Post a comment"],

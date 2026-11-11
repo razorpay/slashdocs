@@ -53,6 +53,7 @@ function renderList(over: Partial<DocContextValue> = {}, showsLatest = true) {
     principal: reader,
     unanchoredComments: new Set<string>(),
     movedPins: new Set<string>(),
+    commentPositions: new Map(),
     drafts: [],
     discardDraft: vi.fn(),
     ...over,
@@ -99,6 +100,19 @@ it("lists every thread, open and resolved, and filters them", async () => {
   // A thread mentions the reader in a reply.
   await userEvent.click(screen.getByRole("button", { name: "for you" }));
   expect(listed()).toEqual(["Thread pin"]);
+});
+
+it("lists threads in the order of the document, and marks the unread ones", () => {
+  renderList({
+    comments: [...comments.slice(0, 2), { ...comments[2], unread: true }],
+    commentPositions: new Map([
+      ["pin", { top: 10, bottom: 10 }],
+      ["open", { top: 500, bottom: 520 }],
+    ]),
+  });
+  // The resolved thread is not in the document: it comes last.
+  expect(listed()).toEqual(["Thread pin", "Thread open", "Thread resolved"]);
+  expect(screen.getAllByRole("img", { name: "Unread" })).toHaveLength(1);
 });
 
 it("names what a thread is on: its quote, or the element of its pin", () => {

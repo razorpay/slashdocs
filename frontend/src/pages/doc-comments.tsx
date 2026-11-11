@@ -19,6 +19,7 @@ import { errorMessage } from "@/lib/errors";
 import { principalLabel, samePrincipal } from "@/lib/principals";
 import { queryKeys } from "@/lib/queryKeys";
 import { anchorLabel, canMovePin } from "@/lib/comment-pins";
+import { inDocumentOrder } from "@/lib/comment-order";
 import { agentRequestBody, isAgentRequest } from "@/lib/agent-request";
 import {
   changed,
@@ -453,6 +454,7 @@ export function CommentsList({
     unanchoredComments,
     movedPins,
     activeComment,
+    commentPositions,
   } = useDoc();
   const self = useSelf(principal);
   const [filter, setFilter] = useState<ListFilter>("all");
@@ -469,10 +471,14 @@ export function CommentsList({
     (showsLatest && c.current_placement?.status === "orphaned");
   const moved = (c: Comment) =>
     movedPins.has(c.id) || (showsLatest && c.current_placement?.status === "moved");
-  const items = comments.filter((c) =>
-    filter === "for you"
-      ? mentions(c, principal)
-      : matchesCommentFilter(c.status, filter),
+  // In the order of the document, as the reader reads it.
+  const items = inDocumentOrder(
+    comments.filter((c) =>
+      filter === "for you"
+        ? mentions(c, principal)
+        : matchesCommentFilter(c.status, filter),
+    ),
+    commentPositions,
   );
   // Drafts are the reader's own words in open threads, not yet sent.
   const all = useUnsent();

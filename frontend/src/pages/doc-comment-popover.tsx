@@ -18,7 +18,7 @@ import { anchorLabel } from "@/lib/comment-pins";
 import { useLostWords } from "@/lib/comment-drafts";
 import { principalLabel } from "@/lib/principals";
 import { useIsMobile } from "@/lib/use-media-query";
-import { popIn, sheetUp } from "@/lib/motion";
+import { crossFade, popIn, sheetUp } from "@/lib/motion";
 import { useDoc } from "./doc-context";
 import { CommentComposer, CommentThread, DeletedThread } from "./doc-comments";
 import { PersonAvatar } from "./doc-comment-parts";
@@ -272,7 +272,11 @@ export function CommentPopovers({
   const lost = useLostWords(docId, activeComment);
   const deleted =
     !draft && !thread && !commentsLoading && !commentsError && lost.length > 0;
-  const placedAnchor = anchor?.id === activeComment ? anchor : undefined;
+  // A popover that goes to another thread stays where it is until the bridge
+  // reports the new anchor, and does not close meanwhile.
+  const shown = useRef(false);
+  const placedAnchor =
+    anchor?.id === activeComment || shown.current ? anchor : undefined;
   // A deleted thread stays where it was.
   const place = deleted ? placedAnchor?.last : placedAnchor;
   const rect = place?.rect ?? null;
@@ -280,11 +284,17 @@ export function CommentPopovers({
   // jump; one whose text or pin is gone floats at the top right.
   const placed = !!rect || (!!activeComment && unanchoredComments.has(activeComment));
   const clustered = cluster && comments.filter((c) => cluster.ids.includes(c.id));
+  const open = ((draft || thread) && placed) || deleted;
+  useEffect(() => {
+    shown.current = !!open;
+  });
   return (
     <AnimatePresence>
-      {((draft || thread) && placed) || deleted ? (
+      {open ? (
+        // One popover for every thread: it moves to the next one, and its
+        // content cross-fades.
         <Popover
-          key={activeComment}
+          key="thread"
           anchor={rect}
           beside={place?.beside}
           bounds={bounds}
@@ -293,17 +303,24 @@ export function CommentPopovers({
           onCover={cover}
           onClose={close}
         >
-          {draft ? (
-            <CommentComposer draft={draft} onPosted={(id) => (posted.current = id)} />
-          ) : thread ? (
-            <CommentThread
-              c={thread}
-              onClose={close}
-              focusReply={posted.current === thread.id}
-            />
-          ) : (
-            <DeletedThread id={activeComment!} texts={lost} onClose={close} />
-          )}
+          <AnimatePresence initial={false} mode="popLayout">
+            <motion.div key={activeComment} {...crossFade}>
+              {draft ? (
+                <CommentComposer
+                  draft={draft}
+                  onPosted={(id) => (posted.current = id)}
+                />
+              ) : thread ? (
+                <CommentThread
+                  c={thread}
+                  onClose={close}
+                  focusReply={posted.current === thread.id}
+                />
+              ) : (
+                <DeletedThread id={activeComment!} texts={lost} onClose={close} />
+              )}
+            </motion.div>
+          </AnimatePresence>
         </Popover>
       ) : null}
       {cluster && clustered?.length ? (
