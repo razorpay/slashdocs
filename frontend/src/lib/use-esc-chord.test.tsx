@@ -50,8 +50,9 @@ it("arms only on an Esc that nothing else uses", () => {
       new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
     );
 
-  // An open thread takes the first Esc, and C after it is the page's.
-  press("Escape");
+  // An open thread takes the first Esc, and keeps it from the page. C after
+  // it is the page's.
+  expect(press("Escape").defaultPrevented).toBe(true);
   expect(result.current.phase).toBe("idle");
   expect(press("c").defaultPrevented).toBe(false);
 

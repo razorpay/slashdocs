@@ -458,7 +458,7 @@ export function DocWorkspace({
     else setActiveComment(undefined);
   }, [fullscreen, exitFullscreen, listOpen]);
   // An Esc from anywhere stops placing a pin, or closes the open thread, or
-  // leaves Edit mode. In the text, an Esc first leaves the text.
+  // leaves Edit mode, also with the caret in the text.
   const takeEscape = useCallback(() => {
     if (placingPin) setPlacingPin(false);
     else if (activeComment) setActiveComment(undefined);

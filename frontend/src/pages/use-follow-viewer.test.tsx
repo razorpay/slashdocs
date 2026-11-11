@@ -51,4 +51,18 @@ describe("useFollowViewer", () => {
     expect(hook.result.current.followedSession).toBe("s_reviewer");
     expect(showVersion).toHaveBeenCalledWith("ver_3");
   });
+
+  it("stops following on an Esc that nothing else took", () => {
+    const { hook } = follow(() => undefined);
+    act(() => hook.result.current.followViewer(reviewer, true));
+    const esc = () =>
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    // Edit mode takes the Esc, as the Esc chord tells.
+    const taken = esc();
+    taken.preventDefault();
+    act(() => void window.dispatchEvent(taken));
+    expect(hook.result.current.followedSession).toBe("s_reviewer");
+    act(() => void window.dispatchEvent(esc()));
+    expect(hook.result.current.followedSession).toBeUndefined();
+  });
 });

@@ -45,8 +45,8 @@ export function useFollowViewer(
     ? followedCursor.session
     : undefined;
   // Following stops when the viewer leaves, when cursors are hidden, and on
-  // Esc outside the document. Inside it, the bridge stops on the reader's own
-  // scroll, click or typing.
+  // an Esc outside the document that nothing else took, as Edit mode does.
+  // Inside it, the bridge stops on the reader's own scroll, click or typing.
   const followedGone =
     !!followedSession &&
     (!cursorsShown || !viewers.some((v) => v.session === followedSession));
@@ -56,7 +56,7 @@ export function useFollowViewer(
   useEffect(() => {
     if (!followedSession) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setFollowedCursor(undefined);
+      if (e.key === "Escape" && !e.defaultPrevented) setFollowedCursor(undefined);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

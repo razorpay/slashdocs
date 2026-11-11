@@ -26,7 +26,7 @@ describe("ShortcutsDialog", () => {
     expect(within(dialog).getByText("Editing")).toBeVisible();
     expect(keysOf(dialog, "Edit the text")).toEqual(["E"]);
     expect(keysOf(dialog, "Stop editing, and comment")).toEqual(["C"]);
-    expect(keysOf(dialog, "Leave the text, then stop editing")).toEqual(["Esc", "Esc"]);
+    expect(keysOf(dialog, "Stop editing")).toEqual(["Esc"]);
     expect(keysOf(dialog, "Bold")).toEqual(["Ctrl+B"]);
     expect(keysOf(dialog, "Redo")).toEqual(["Ctrl+Shift+Z"]);
     expect(keysOf(dialog, "Line break")).toEqual(["Shift+Enter"]);
