@@ -558,7 +558,7 @@ func (s *Store) CreateVersion(ctx context.Context, documentID, baseVersionID, cl
 		return repo.Version{}, err
 	}
 	committed = true
-	return repo.Version{ID: id, Number: int(cur.NextNumber), DocumentID: documentID, CreatedBy: createdBy, ChangeSummary: changeSummary, SHA256: sum, CreatedAt: pgTimeRFC3339(createdAt)}, nil
+	return repo.Version{ID: id, Number: int(cur.NextNumber), DocumentID: documentID, CreatedBy: createdBy, ChangeSummary: changeSummary, SHA256: sum, CreatedAt: pgTimeRFC3339(createdAt), Live: clientChangeID != ""}, nil
 }
 func (s *Store) CreateComment(ctx context.Context, documentID, versionID, body string, anchor repo.Anchor, author auth.Principal, mentions []repo.CommentMention) (repo.Comment, error) {
 	body = repo.NormalizeCommentBody(body)
@@ -1238,9 +1238,21 @@ func (s *Store) ListVersions(ctx context.Context, documentID string) ([]repo.Ver
 	}
 	out := make([]repo.Version, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, repo.Version{ID: r.ID, Number: int(r.Number), DocumentID: r.DocumentID, CreatedBy: auth.Principal{Type: auth.PrincipalType(r.CreatedByType), ID: r.CreatedByID, Email: r.CreatedByEmail, Name: r.CreatedByName, PictureURL: r.CreatedByPictureUrl}, ChangeSummary: r.ChangeSummary, SHA256: r.Sha256, CreatedAt: pgTimeRFC3339(r.CreatedAt)})
+		out = append(out, repo.Version{ID: r.ID, Number: int(r.Number), DocumentID: r.DocumentID, CreatedBy: auth.Principal{Type: auth.PrincipalType(r.CreatedByType), ID: r.CreatedByID, Email: r.CreatedByEmail, Name: r.CreatedByName, PictureURL: r.CreatedByPictureUrl}, ChangeSummary: r.ChangeSummary, SHA256: r.Sha256, CreatedAt: pgTimeRFC3339(r.CreatedAt), Live: r.Live})
 	}
 	return out, nil
+}
+func (s *Store) VersionAuthorsBetween(ctx context.Context, documentID, from, to string) ([]auth.Principal, bool, error) {
+	rows, err := s.q.ListVersionAuthorsBetween(ctx, dbsqlc.ListVersionAuthorsBetweenParams{DocumentID: documentID, FromVersionID: from, ToVersionID: to})
+	if err != nil {
+		return nil, false, err
+	}
+	authors, live := make([]auth.Principal, 0, len(rows)), true
+	for _, r := range rows {
+		authors = append(authors, auth.Principal{Type: auth.PrincipalType(r.CreatedByType), ID: r.CreatedByID, Email: r.CreatedByEmail, Name: r.CreatedByName, PictureURL: r.CreatedByPictureUrl})
+		live = live && r.Live
+	}
+	return authors, live, nil
 }
 func (s *Store) GetVersion(ctx context.Context, id string) (repo.Version, error) {
 	r, err := s.q.GetVersion(ctx, id)
@@ -1250,7 +1262,7 @@ func (s *Store) GetVersion(ctx context.Context, id string) (repo.Version, error)
 	if err != nil {
 		return repo.Version{}, err
 	}
-	return repo.Version{ID: r.ID, Number: int(r.Number), DocumentID: r.DocumentID, CreatedBy: auth.Principal{Type: auth.PrincipalType(r.CreatedByType), ID: r.CreatedByID, Email: r.CreatedByEmail, Name: r.CreatedByName, PictureURL: r.CreatedByPictureUrl}, ChangeSummary: r.ChangeSummary, SHA256: r.Sha256, CreatedAt: pgTimeRFC3339(r.CreatedAt)}, nil
+	return repo.Version{ID: r.ID, Number: int(r.Number), DocumentID: r.DocumentID, CreatedBy: auth.Principal{Type: auth.PrincipalType(r.CreatedByType), ID: r.CreatedByID, Email: r.CreatedByEmail, Name: r.CreatedByName, PictureURL: r.CreatedByPictureUrl}, ChangeSummary: r.ChangeSummary, SHA256: r.Sha256, CreatedAt: pgTimeRFC3339(r.CreatedAt), Live: r.Live}, nil
 }
 func (s *Store) VersionByClientChange(ctx context.Context, documentID, clientChangeID string) (repo.Version, string, error) {
 	r, err := s.q.GetVersionByClientChange(ctx, dbsqlc.GetVersionByClientChangeParams{DocumentID: documentID, ClientChangeID: pgtype.Text{String: clientChangeID, Valid: true}})

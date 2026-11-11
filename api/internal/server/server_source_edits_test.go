@@ -5,23 +5,27 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/razorpay/slashdocs/api/internal/auth"
 	"github.com/razorpay/slashdocs/api/internal/repo"
 	"github.com/razorpay/slashdocs/api/internal/server"
+	"github.com/razorpay/slashdocs/internal/textedit"
 )
 
 const sourceFixtureHTML = "<html><body>\n<h1>Café 😀</h1>\n<p>Try it.</p>\n<p>Middle.</p>\n<p>Try it.</p>\n</body></html>"
 
 type sourceEdited struct {
-	ID            string `json:"id"`
-	Number        int    `json:"number"`
-	SHA256        string `json:"sha256"`
-	ChangeSummary string `json:"change_summary"`
-	BaseVersionID string `json:"base_version_id"`
-	Rebased       bool   `json:"rebased"`
+	ID            string                 `json:"id"`
+	Number        int                    `json:"number"`
+	SHA256        string                 `json:"sha256"`
+	ChangeSummary string                 `json:"change_summary"`
+	BaseVersionID string                 `json:"base_version_id"`
+	Rebased       bool                   `json:"rebased"`
+	Others        []textedit.Replacement `json:"others"`
 }
 
 func postSourceEdits(t *testing.T, h http.Handler, docID string, p auth.Principal, body any) (int, []byte) {
@@ -130,7 +134,50 @@ func TestEditSourceRebasesOntoANewerVersion(t *testing.T) {
 	}
 }
 
-func TestEditSourceRefusesAReplacementThatANewerVersionChanged(t *testing.T) {
+// Two people type in one word of one version. The browser sends the whole
+// word, and both changes stay.
+func TestEditSourceMergesTwoWritersInOneWord(t *testing.T) {
+	e := newTestEnv(t)
+	const html = "<html><body>fixture</body></html>"
+	save := func(p auth.Principal, change, word string) sourceEdited {
+		t.Helper()
+		status, out := postSourceEdits(t, e.h, e.doc.ID, p, map[string]any{
+			"base_version_id":  e.ver.ID,
+			"client_change_id": change,
+			"replacements":     []map[string]any{replaceAt(html, "fixture", word, 0)},
+		})
+		if status != http.StatusCreated {
+			t.Fatalf("%s: status = %d; body=%s", change, status, out)
+		}
+		var v sourceEdited
+		if err := json.Unmarshal(out, &v); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	first := save(fixtureOwner, "chg_owner", "fixtures")
+	second := save(fixtureEditor, "chg_editor", "prefixture")
+	if first.Rebased || !second.Rebased || second.BaseVersionID != first.ID || second.Number != 3 {
+		t.Fatalf("first = %+v, second = %+v", first, second)
+	}
+	if got, want := versionHTML(t, e, e.doc.ID, second.ID), "<html><body>prefixtures</body></html>"; got != want {
+		t.Fatalf("html = %q, want %q", got, want)
+	}
+	// The second writer holds "prefixture", and learns of the "s" of the first
+	// one from the answer. A save that did not merge names no other changes.
+	want := []textedit.Replacement{{Start: 22, End: 22, NewHTML: "s"}}
+	if len(first.Others) != 0 || !slices.Equal(second.Others, want) {
+		t.Fatalf("others = %+v and %+v, want none and %+v", first.Others, second.Others, want)
+	}
+	// A retry of the second save gives the same answer.
+	if again := save(fixtureEditor, "chg_editor", "prefixture"); again.ID != second.ID || !slices.Equal(again.Others, want) {
+		t.Fatalf("retry = %+v, want %+v", again, second)
+	}
+}
+
+// A replacement of text that a newer version also replaced does not fail:
+// the new text of both stays.
+func TestEditSourceMergesAReplacementThatANewerVersionChanged(t *testing.T) {
 	e := newTestEnv(t)
 	docID, verID := e.createDocument("Source", sourceFixtureHTML, fixtureOwner)
 	status, body := postEdits(t, e, docID, fixtureOwner, map[string]any{"edits": []map[string]string{
@@ -139,32 +186,20 @@ func TestEditSourceRefusesAReplacementThatANewerVersionChanged(t *testing.T) {
 	if status != http.StatusCreated {
 		t.Fatalf("agent edit status = %d; body=%s", status, body)
 	}
-	theirs := jsonField(t, body, "id")
-
-	status, body = postSourceEdits(t, e.h, docID, fixtureOwner, map[string]any{
+	out := editSource(t, e.h, docID, map[string]any{
 		"base_version_id":  verID,
-		"client_change_id": "chg_conflict",
+		"client_change_id": "chg_same_text",
 		"replacements": []map[string]any{
 			replaceAt(sourceFixtureHTML, "Try it.", "First.", 0),
 			replaceAt(sourceFixtureHTML, "Middle.", "My middle.", 0),
 		},
 	})
-	if status != http.StatusConflict {
-		t.Fatalf("status = %d; body=%s", status, body)
+	if !out.Rebased || out.BaseVersionID != jsonField(t, body, "id") {
+		t.Fatalf("response = %+v", out)
 	}
-	assertJSON(t, body, fmt.Sprintf(`{
-	  "error": {
-	    "code": "edit_conflict",
-	    "message": "replacement 1: a newer version changed the same part of the document",
-	    "details": { "current_version_id": %q, "index": 1 }
-	  }
-	}`, theirs))
-	// Nothing was saved, and the other writer's version stays the latest.
-	if n := versionCount(t, e, docID); n != 2 {
-		t.Fatalf("versions = %d, want 2", n)
-	}
-	if got := versionHTML(t, e, docID, theirs); got != strings.Replace(sourceFixtureHTML, "Middle.", "Their middle.", 1) {
-		t.Fatalf("their version changed to %q", got)
+	want := "<html><body>\n<h1>Café 😀</h1>\n<p>First.</p>\n<p>Their my middle.</p>\n<p>Try it.</p>\n</body></html>"
+	if got := versionHTML(t, e, docID, out.ID); got != want {
+		t.Fatalf("html = %q, want %q", got, want)
 	}
 }
 
@@ -185,7 +220,7 @@ func TestEditSourceRetryReturnsTheVersionItMade(t *testing.T) {
 		t.Fatalf("agent edit status = %d; body=%s", status, body)
 	}
 	again := editSource(t, e.h, docID, request)
-	if again != first || again.BaseVersionID != verID || again.Rebased {
+	if !reflect.DeepEqual(again, first) || again.BaseVersionID != verID || again.Rebased {
 		t.Fatalf("retry = %+v, want %+v", again, first)
 	}
 	if n := versionCount(t, e, docID); n != 3 {
@@ -224,7 +259,7 @@ func TestEditSourceConcurrentAttemptsMakeOneVersion(t *testing.T) {
 		server.WithAuthenticator(testPrincipalAuth{}),
 	).Handler()
 	again := editSource(t, h, docID, request)
-	if first.Number != 2 || again != first {
+	if first.Number != 2 || !reflect.DeepEqual(again, first) {
 		t.Fatalf("second attempt = %+v, want %+v", again, first)
 	}
 	if n := versionCount(t, e, docID); n != 2 {

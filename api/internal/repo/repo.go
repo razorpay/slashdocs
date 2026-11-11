@@ -324,6 +324,8 @@ type Version struct {
 	ChangeSummary string         `json:"change_summary"`
 	SHA256        string         `json:"sha256"`
 	CreatedAt     string         `json:"created_at"`
+	// Live is set when the browser editor made the version.
+	Live bool `json:"live"`
 }
 
 // VersionPreview is what a link preview shows of a version besides its
@@ -589,6 +591,11 @@ type Repository interface {
 	// when the change made no version.
 	VersionByClientChange(ctx context.Context, documentID, clientChangeID string) (Version, string, error)
 	ListVersions(ctx context.Context, documentID string) ([]Version, error)
+	// VersionAuthorsBetween returns the authors of the versions of the
+	// document after the version from, up to and including the version to.
+	// The author of the newest version comes first. live reports whether the
+	// browser editor made every one of those versions.
+	VersionAuthorsBetween(ctx context.Context, documentID, from, to string) (authors []auth.Principal, live bool, err error)
 	GetVersion(ctx context.Context, id string) (Version, error)
 	GetVersionHTML(ctx context.Context, id string) ([]byte, error)
 	// VersionPreview returns the start of a version's text, for link previews.

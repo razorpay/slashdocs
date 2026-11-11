@@ -930,6 +930,59 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/documents/{id}/changes": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "For the browser, which follows the document while other people edit it. Gives the replacements that turn the HTML of the version from into the HTML of the current version. start and end count UTF-8 bytes of the version from, and end is exclusive. live is true when the browser editor made every version after from. authors made those versions, and the author of the newest comes first. When from is the current version, replacements and authors are empty.",
+                "tags": [
+                    "versions"
+                ],
+                "summary": "Get the changes since a version",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Version ID that the caller has",
+                        "name": "from",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server.documentChangesResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/documents/{id}/comments": {
             "get": {
                 "security": [
@@ -1667,7 +1720,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "For the browser editor. Applies replacements by position in the HTML of base_version_id to the current version, and saves the result as a new version. start and end count UTF-8 bytes, end is exclusive, and old_html must be the HTML from start to end of the base version. Replacements are in order and do not overlap. When a newer version exists, each replacement moves to where its HTML is in that version, and a replacement that the newer version changed fails with edit_conflict. A retry with the same client_change_id returns the version that the first attempt made.",
+                "description": "For the browser editor. Applies replacements by position in the HTML of base_version_id to the current version, and saves the result as a new version. start and end count UTF-8 bytes, end is exclusive, and old_html must be the HTML from start to end of the base version. Replacements are in order and do not overlap. When a newer version exists, the replacements merge with its changes and the response has rebased set: text that both insert at one point stays twice, and text that either deletes goes. A retry with the same client_change_id returns the version that the first attempt made.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1774,6 +1827,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
+                "description": "Saves the uploaded HTML as a new version. When base_version_id is an earlier version of the document, the changes from that version to the upload move onto the current version, and the response has rebased set. When the current version changed the same HTML, the response is version_conflict.",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -1815,6 +1869,18 @@ const docTemplate = `{
                         "description": "Created",
                         "schema": {
                             "$ref": "#/definitions/server.createVersionResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "413": {
+                        "description": "Request Entity Too Large",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
                         }
                     }
                 }
@@ -2828,6 +2894,10 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
+                "live": {
+                    "description": "Live is set when the browser editor made the version.",
+                    "type": "boolean"
+                },
                 "number": {
                     "type": "integer"
                 },
@@ -3293,6 +3363,10 @@ const docTemplate = `{
         "server.createVersionResponse": {
             "type": "object",
             "properties": {
+                "base_version_id": {
+                    "description": "BaseVersionID is the version that the new version saved on.",
+                    "type": "string"
+                },
                 "change_summary": {
                     "type": "string"
                 },
@@ -3301,6 +3375,10 @@ const docTemplate = `{
                 },
                 "number": {
                     "type": "integer"
+                },
+                "rebased": {
+                    "description": "Rebased is set when that version is newer than the base version of the\nupload, so the new version also holds the changes of other writers.",
+                    "type": "boolean"
                 },
                 "sha256": {
                     "type": "string"
@@ -3350,6 +3428,36 @@ const docTemplate = `{
                     "$ref": "#/definitions/server.discoveryAuth"
                 },
                 "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "server.documentChangesResponse": {
+            "type": "object",
+            "properties": {
+                "authors": {
+                    "description": "Authors made the versions after from. The author of the newest version\ncomes first.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/auth.Principal"
+                    }
+                },
+                "from_version_id": {
+                    "type": "string"
+                },
+                "live": {
+                    "description": "Live is set when the browser editor made every version after from.",
+                    "type": "boolean"
+                },
+                "replacements": {
+                    "description": "Replacements turn the HTML of the version from into the HTML of the\ncurrent version. They are in order, at byte offsets of the version from.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/textedit.Replacement"
+                    }
+                },
+                "version_id": {
+                    "description": "VersionID is the current version.",
                     "type": "string"
                 }
             }
@@ -3468,6 +3576,13 @@ const docTemplate = `{
                 },
                 "number": {
                     "type": "integer"
+                },
+                "others": {
+                    "description": "Others, set when rebased, turn the HTML that the caller holds, the\nbase version with its replacements, into the HTML of the new version:\nthe changes of the other writers. They are in order, at byte offsets\nof the HTML that the caller holds.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/textedit.Replacement"
+                    }
                 },
                 "rebased": {
                     "description": "Rebased is set when that version is newer than the version that the\nreplacements were made on.",
