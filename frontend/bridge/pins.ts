@@ -54,6 +54,8 @@ export type Pin = {
   color: string;
   // The reader did not read the thread.
   unread: boolean;
+  // The reader resolved the thread, which goes out.
+  leaving: boolean;
 };
 export type PinRect = { left: number; top: number; width: number; height: number };
 
@@ -195,6 +197,7 @@ export function parsePins(value: unknown): Pin[] {
       draft: p.draft === true,
       movable: p.movable === true,
       unread: p.unread === true,
+      leaving: p.leaving === true,
       color:
         typeof p.color === "string" && /^#[0-9a-f]{3,8}$/i.test(p.color) ? p.color : "",
     });
@@ -445,6 +448,10 @@ const CSS = `
 @media (prefers-reduced-motion:reduce){.sd-pin,.sd-cluster{transition:none}.sd-pin[data-bump]::after,.sd-pin[data-bump]>i{animation:sd-dot-in 100ms both}}
 @keyframes sd-pin-in{from{opacity:0;scale:.9}}
 @keyframes sd-pin-bump{50%{scale:1.12}}
+.sd-pin[data-leaving]{animation:sd-pin-out 150ms cubic-bezier(.23,1,.32,1) forwards;pointer-events:none}
+@media (prefers-reduced-motion:reduce){.sd-pin[data-leaving]{animation:sd-fade-out 100ms forwards}}
+@keyframes sd-pin-out{to{opacity:0;scale:.8}}
+@keyframes sd-fade-out{to{opacity:0}}
 @keyframes sd-dot-in{from{opacity:0}}
 .sd-pins u{position:absolute;inset:0;border-radius:inherit;box-shadow:0 0 0 2px #2563eb;pointer-events:none}
 .sd-place-hint{position:fixed;left:50%;top:12px;z-index:2147483646;translate:-50% 0;padding:6px 12px;border-radius:999px;background:#18181b;color:#fff;font:500 12px/1.4 system-ui,-apple-system,sans-serif;white-space:nowrap;box-shadow:${SHADOW};pointer-events:none}
@@ -784,6 +791,7 @@ export function createPinLayer(host: PinHost) {
               pin.replies,
               pin.draft,
               pin.unread,
+              pin.leaving,
               pin.id === active,
               !el,
             ].join(":"),
@@ -839,6 +847,7 @@ export function createPinLayer(host: PinHost) {
     if (moved) b.dataset.moved = "";
     if (fresh) b.dataset.new = "";
     if (pin.unread) b.dataset.unread = "";
+    if (pin.leaving) b.dataset.leaving = "";
     // A reply came to a closed thread since the last pins.
     if (bumps.delete(pin.id)) b.dataset.bump = "";
     if (pin.color) b.style.setProperty("--c", pin.color);

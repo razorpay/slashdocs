@@ -668,37 +668,41 @@ export function ResolveButton({
   className?: string;
 }) {
   const q = useQueryClient();
-  const { signIn } = useDoc();
+  const { signIn, resolveThread } = useDoc();
   const resolved = c.status === COMMENT_STATUS.resolved;
-  const status = useMutation({
-    mutationFn: (next: string) => api.patchComment(docId, c.id, { status: next }),
+  // The check draws as the thread starts to leave.
+  const [resolving, setResolving] = useState(false);
+  const reopen = useMutation({
+    mutationFn: () => api.patchComment(docId, c.id, { status: COMMENT_STATUS.open }),
     onSuccess: () => q.invalidateQueries({ queryKey: queryKeys.comments(docId) }),
     onError: (e) => toast.error(errorMessage(e, "Could not update comment")),
   });
   const toggle = (event: MouseEvent) => {
     event.stopPropagation();
     if (signIn) return signIn();
-    status.mutate(resolved ? COMMENT_STATUS.open : COMMENT_STATUS.resolved);
+    if (resolved) return reopen.mutate();
+    setResolving(true);
+    resolveThread(c.id);
   };
   return (
     <Button
       variant="ghost"
       size="icon"
       aria-label={resolved ? "Reopen comment" : "Resolve comment"}
-      disabled={status.isPending}
+      disabled={reopen.isPending || resolving}
       onClick={toggle}
       className={cn(
         "h-8 w-8 shrink-0",
         resolved
           ? muted
-          : "text-emerald-600 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/40",
+          : "text-emerald-600 hover:bg-emerald-50 disabled:opacity-100 dark:text-emerald-400 dark:hover:bg-emerald-950/40",
         className,
       )}
     >
       {resolved ? (
         <RotateCcw className="h-4 w-4" />
       ) : (
-        <CheckCircle2 className="h-4 w-4" />
+        <CheckCircle2 className={cn("h-4 w-4", resolving && "check-draw")} />
       )}
     </Button>
   );

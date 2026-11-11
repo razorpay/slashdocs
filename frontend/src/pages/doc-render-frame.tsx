@@ -102,6 +102,7 @@ export function RenderFrame({
     setFrameReady,
     stayOnVersion,
     showLatest,
+    leaving,
   } = useDoc();
   const cursorsShown = cursorsShownStore.useStore();
   const versionRef = useRef(version);
@@ -182,12 +183,13 @@ export function RenderFrame({
           quote: c.selected_text || c.anchor?.quote,
           anchor: c.anchor,
           unread: c.unread,
+          leaving: c.id === leaving,
         })),
       ...drafts
         .filter((d) => !d.anchor?.point)
         .map(({ id, quote, anchor }) => ({ id, quote, anchor })),
     ],
-    [comments, activeComment, drafts],
+    [comments, activeComment, drafts, leaving],
   );
 
   useDocumentExport(ref, frameOrigin, ready, registerDocumentPrinter);

@@ -25,6 +25,7 @@ const mockDocContext: DocContextValue = {
   discardDraft: vi.fn(),
   setActiveComment: vi.fn(),
   jumpToComment: vi.fn(),
+  resolveThread: vi.fn(),
   readThread: vi.fn(),
   unanchoredComments: new Set(),
   setUnanchoredComments: vi.fn(),

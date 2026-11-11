@@ -63,6 +63,7 @@ export function useCommentPins(
     setMovedPins,
     placingPin,
     setPlacingPin,
+    leaving,
   } = useDoc();
   const q = useQueryClient();
 
@@ -80,6 +81,7 @@ export function useCommentPins(
                 initials: initialsOf(principalLabel(c.author)),
                 replies: c.replies?.length ?? 0,
                 unread: !!c.unread,
+                leaving: c.id === leaving,
                 movable: canMovePin(c, canEdit, principal),
                 color: principalColor(c.author),
               },
@@ -100,7 +102,7 @@ export function useCommentPins(
           : [],
       ),
     ],
-    [comments, drafts, version, activeComment, canEdit, principal],
+    [comments, drafts, version, activeComment, canEdit, principal, leaving],
   );
   useEffect(() => {
     if (ready) postToFrame({ type: "slashdocs:pins", pins, active: activeComment });
