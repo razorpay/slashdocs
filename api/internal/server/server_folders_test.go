@@ -605,3 +605,26 @@ func TestGetDocumentCanMove(t *testing.T) {
 		t.Errorf("can_move = %v for the editor and %v for the owner, want false and true", canMove(other), canMove(owner))
 	}
 }
+
+// A document search does not show the folder of a result when the caller
+// cannot see that folder.
+func TestDocumentSearchHidesUnseenParentFolder(t *testing.T) {
+	e := newTestEnv(t)
+	owner := map[string]string{"X-Test-Principal": principalHeader(fixtureOwner), "Content-Type": "application/json"}
+	folderID := createFolder(t, e, `{"title":"Secret folder"}`, owner["X-Test-Principal"])
+	docID, _ := e.createDocument("Quarterly zebra", "<p>x</p>", fixtureOwner)
+	assertStatus(t, do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/documents", `{"document_id":"`+docID+`"}`, owner), http.StatusOK)
+	assertStatus(t, do(t, e.h, http.MethodPost, "/v1/documents/"+docID+"/grants", `{"address":"`+fixtureStranger.Email+`","role":"viewer"}`, owner), http.StatusCreated)
+
+	search := func(headers map[string]string) string {
+		rr := do(t, e.h, http.MethodGet, "/v1/documents?q=zebra", "", headers)
+		assertStatus(t, rr, http.StatusOK)
+		return rr.Body.String()
+	}
+	if body := search(map[string]string{"X-Test-Principal": principalHeader(fixtureStranger)}); !strings.Contains(body, docID) || strings.Contains(body, "Secret folder") {
+		t.Errorf("stranger search = %s, want the document without its folder", body)
+	}
+	if body := search(owner); !strings.Contains(body, "Secret folder") {
+		t.Errorf("owner search = %s, want the folder", body)
+	}
+}

@@ -29,7 +29,11 @@ import {
 import { DocumentSearchInput } from "@/components/browse/document-search-input";
 import { FeaturedItems } from "@/components/browse/featured-items";
 import { sortEntries } from "@/components/browse/sort-entries";
-import { hasDocumentSearchOperators, searchTokens } from "@/lib/search-query";
+import {
+  folderSearchText,
+  hasDocumentSearchOperators,
+  searchTokens,
+} from "@/lib/search-query";
 import {
   DndContext,
   PointerSensor,
@@ -83,7 +87,8 @@ export function DocumentsPage() {
   const structuredSearch = hasDocumentSearchOperators(debouncedQ);
   const rootFolders = useQuery({
     queryKey: [...queryKeys.folders(), debouncedQ],
-    queryFn: () => api.listFolders(undefined, undefined, debouncedQ || undefined),
+    queryFn: () =>
+      api.listFolders(undefined, undefined, folderSearchText(debouncedQ) || undefined),
     placeholderData: (prev) => prev,
     enabled: !structuredSearch,
     // The page shows the error.

@@ -75,6 +75,7 @@ func documentListCmd(g *globals, out io.Writer) *cobra.Command {
 			"Modifiers narrow the results:\n" +
 			"  \"exact phrase\"       Match the words together\n" +
 			"  -word                Exclude documents that contain the word\n" +
+			"  title:<word>         Match the word in the title only (title:\"a phrase\" for a phrase)\n" +
 			"  from:<person>        The owner: an email, the name before the @, or me\n" +
 			"  in:<folder>          A folder, or any folder above the document\n" +
 			"  label:<a,b>          Require every label\n" +
@@ -90,6 +91,7 @@ func documentListCmd(g *globals, out io.Writer) *cobra.Command {
 			"A list shows 25 documents. Use --limit for up to 100, and --offset to see the next documents.\n\n" +
 			"With --local, the query finds each word in the title or the path of a document, and modifiers are not available.",
 		Example: "  slashdocs docs list 'incident from:alice@example.com label:api,review in:\"Product Specs\"'\n" +
+			"  slashdocs docs list 'title:\"rollout plan\"'\n" +
 			"  slashdocs docs list --query 'rollout -draft from:me after:last week'",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

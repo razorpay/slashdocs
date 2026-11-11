@@ -2,6 +2,7 @@
 // meaning of a query; these helpers only find, mark, and replace its tokens.
 
 export const SEARCH_MODIFIERS = [
+  { key: "title", hint: "Documents with a word in the title" },
   { key: "from", hint: "Documents from a person" },
   { key: "in", hint: "Documents in a folder" },
   { key: "before", hint: "Updated before a date" },
@@ -90,10 +91,20 @@ export function searchTokenAt(query: string, cursor: number): SearchToken {
 
 // Reports whether the query is more than plain words. The folder results on
 // the documents page match plain words only.
+// title: does not count, because folder titles match its words too: see
+// folderSearchText.
 export function hasDocumentSearchOperators(query: string): boolean {
   return searchTokens(query).some(
-    (t) => t.key || t.text.startsWith('"') || /^-./.test(t.text),
+    (t) => (t.key && t.key !== "title") || t.text.startsWith('"') || /^-./.test(t.text),
   );
+}
+
+// folderSearchText is the text that finds folders for a query: the words of
+// title: modifiers are plain words there.
+export function folderSearchText(query: string): string {
+  return searchTokens(query)
+    .map((t) => (t.key === "title" ? t.value : t.text))
+    .join(" ");
 }
 
 export function replaceSearchToken(

@@ -244,6 +244,7 @@ type Page struct {
 // fields do not filter.
 type DocumentSearch struct {
 	Terms         []string // Every term is in the title or the text.
+	TitleTerms    []string // Every term is in the title.
 	ExcludedTerms []string // No term is in the title or the text.
 	Owners        []string // The owner's ID, email, or email name is one of these.
 	Folders       []string // A folder that holds the document has one of these titles or IDs.

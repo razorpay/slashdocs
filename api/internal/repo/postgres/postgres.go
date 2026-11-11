@@ -881,11 +881,13 @@ func (s *Store) ListDocuments(ctx context.Context, p auth.Principal, page repo.P
 	return out, more, err
 }
 func (s *Store) SearchDocuments(ctx context.Context, p auth.Principal, search repo.DocumentSearch, includeOrgWide bool, page repo.Page) ([]repo.Document, bool, error) {
+	queries := searchQueries(search)
 	rows, err := s.q.SearchDocuments(ctx, dbsqlc.SearchDocumentsParams{
-		MatchQuery:     tsquery(search.Terms, " & "),
-		WordsQuery:     tsqueryWords(search.Terms),
-		ExcludeQuery:   tsquery(search.ExcludedTerms, " | "),
-		RankQuery:      tsquery(search.Terms, " | "),
+		MatchQuery:     queries.match,
+		WordsQuery:     queries.words,
+		ExcludeQuery:   queries.exclude,
+		RankQuery:      queries.rank,
+		SnippetQuery:   queries.snippet,
 		Owners:         search.Owners,
 		Folders:        search.Folders,
 		Labels:         search.Labels,

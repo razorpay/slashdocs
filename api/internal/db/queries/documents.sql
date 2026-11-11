@@ -116,7 +116,8 @@ WITH search AS NOT MATERIALIZED (
   -- which raises a notice on every call.
   SELECT to_tsquery('english', NULLIF((SELECT @match_query::text), '')) AS match,
          to_tsquery('english', NULLIF((SELECT @words_query::text), '')) AS words,
-         to_tsquery('english', NULLIF((SELECT @exclude_query::text), '')) AS exclude
+         to_tsquery('english', NULLIF((SELECT @exclude_query::text), '')) AS exclude,
+         to_tsquery('english', NULLIF((SELECT @snippet_query::text), '')) AS snippet
 ),
 -- MATERIALIZED, so that the rank query is parsed once, not for every match.
 ranking AS MATERIALIZED (
@@ -223,8 +224,9 @@ SELECT d.id, d.title, d.current_version_id, d.owner_type, d.owner_id,
        COALESCE(pf.id,'') AS parent_folder_id,
        COALESCE(pf.title,'') AS parent_folder_title,
        d.updated_at,
-       CASE WHEN numnode(search.match) > 0 AND cv.search_vector @@ search.match
-         THEN ts_headline('english', cv.search_text, search.match,
+       -- The snippet shows the words of the text, so title terms are not in it.
+       CASE WHEN numnode(search.snippet) > 0 AND cv.search_vector @@ search.snippet
+         THEN ts_headline('english', cv.search_text, search.snippet,
            'MaxFragments=1,MaxWords=24,MinWords=12,StartSel="'||chr(2)||'",StopSel="'||chr(3)||'"')
          ELSE '' END::text AS snippet
 FROM matches m
