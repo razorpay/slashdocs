@@ -8,6 +8,7 @@ export type CommentStatus = (typeof COMMENT_STATUS)[keyof typeof COMMENT_STATUS]
 export const COMMENT_FILTERS = ["all", "open", "resolved"] as const;
 export type CommentFilter = (typeof COMMENT_FILTERS)[number];
 export const COMMENT_FILTER_ALL: CommentFilter = "all";
+export const DEFAULT_COMMENT_FILTER: CommentFilter = "open";
 
 export function matchesCommentFilter(status: string, filter: CommentFilter): boolean {
   if (filter === COMMENT_FILTER_ALL) return true;

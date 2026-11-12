@@ -5,7 +5,6 @@ on:
   push:
     branches:
       - master
-      - dev
   workflow_dispatch:
 
 permissions:
@@ -182,12 +181,12 @@ jobs:
     runs-on: ubuntu-latest
     needs: test
     env:
-      # Each commit on master or dev is published as razorpay/slashdocs:<branch>
-      # and :sha-<commit>. Pull requests only build. Only a stable release tag
+      # Each commit on master is published as razorpay/slashdocs:master and
+      # :sha-<commit>. Pull requests only build. Only a stable release tag
       # moves :latest, in release.yml.
-      PUBLISH: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/dev') }}
-      # Master images sign their CLIs, as releases do. Pull requests and dev
-      # run code that nobody reviewed yet, so they never get the private key.
+      PUBLISH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      # Published images sign their CLIs, as releases do. Pull requests run
+      # code that nobody reviewed yet, so they never get the private key.
       SLASHDOCS_CLI_SIGNING_PRIVATE_KEY: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && secrets.SLASHDOCS_CLI_SIGNING_PRIVATE_KEY || '' }}
     steps:
       - name: Checkout
@@ -197,19 +196,16 @@ jobs:
           fetch-depth: 0
 
       # A build is the next patch after the latest stable tag, as a pre-release
-      # of its branch that counts the commits since that tag, for example
-      # v0.2.1-master.12. Each build of a branch thus ranks above the one before
-      # it and below the next release, so CLIs update in order. The branch name
-      # is also the image tag, with each character that a tag cannot hold as -.
+      # that counts the commits since that tag, for example v0.2.1-master.12.
+      # Each master build thus ranks above the one before it and below the
+      # next release, so CLIs update in order.
       - name: Version
         id: version
         run: |
           tag=$(git tag --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
           IFS=. read -r major minor patch <<<"${tag:-v0.0.0}"
           count=$(git rev-list --count "${tag:+$tag..}HEAD")
-          channel=${GITHUB_REF_NAME//[^a-zA-Z0-9.-]/-}
-          echo "channel=${channel}" >>"$GITHUB_OUTPUT"
-          echo "version=${major}.${minor}.$((patch + 1))-${channel}.${count}" >>"$GITHUB_OUTPUT"
+          echo "version=${major}.${minor}.$((patch + 1))-master.${count}" >>"$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -231,7 +227,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: ${{ env.PUBLISH == 'true' }}
           tags: |
-            razorpay/slashdocs:${{ steps.version.outputs.channel }}
+            razorpay/slashdocs:master
             razorpay/slashdocs:sha-${{ github.sha }}
           build-args: |
             SLASHDOCS_VERSION=${{ steps.version.outputs.version }}

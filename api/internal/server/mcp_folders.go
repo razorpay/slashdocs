@@ -206,7 +206,6 @@ func registerMCPFolderMembershipTools(server *mcpserver.MCPServer, api mcpAPIAda
 
 	server.AddTool(mcp.NewTool("move_document_to_root", mutationOptions(true, true,
 		mcp.WithDescription("Move a document out of its current folder to the workspace root."), mcpFolderID(), mcpDocumentID(),
-		mcp.WithBoolean("acknowledge_access_loss", mcp.Description("Confirm that moving to the workspace root may remove your edit access.")),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		folder, invalid := mcpRequired(request, "folder_id")
 		if invalid != nil {
@@ -216,10 +215,6 @@ func registerMCPFolderMembershipTools(server *mcpserver.MCPServer, api mcpAPIAda
 		if invalid != nil {
 			return invalid, nil
 		}
-		path := "/v1/folders/" + folder + "/documents/" + document
-		if request.GetBool("acknowledge_access_loss", false) {
-			path += "?acknowledge_access_loss=true"
-		}
-		return api.delete(ctx, path, mcpParams("id", folder, "doc_id", document), api.handlers.moveDocToRoot)
+		return api.delete(ctx, "/v1/folders/"+folder+"/documents/"+document, mcpParams("id", folder, "doc_id", document), api.handlers.moveDocToRoot)
 	})
 }

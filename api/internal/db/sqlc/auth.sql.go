@@ -45,6 +45,29 @@ func (q *Queries) GetSignedInUserByEmail(ctx context.Context, email string) (Get
 	return i, err
 }
 
+const getUserByEmail = `-- name: GetUserByEmail :one
+SELECT id,email,name,picture_url FROM users WHERE email=$1
+`
+
+type GetUserByEmailRow struct {
+	ID         string
+	Email      string
+	Name       string
+	PictureUrl string
+}
+
+func (q *Queries) GetUserByEmail(ctx context.Context, email string) (GetUserByEmailRow, error) {
+	row := q.db.QueryRow(ctx, getUserByEmail, email)
+	var i GetUserByEmailRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Name,
+		&i.PictureUrl,
+	)
+	return i, err
+}
+
 const getUserByGoogleSub = `-- name: GetUserByGoogleSub :one
 SELECT id,email,name,picture_url FROM users WHERE google_sub=$1
 `

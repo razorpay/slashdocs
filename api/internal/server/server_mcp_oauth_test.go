@@ -429,7 +429,7 @@ func TestMCPOAuthCodeExchangeIsBoundAndOneTime(t *testing.T) {
 
 // The authorization_code exchange must issue a rotating refresh token so MCP
 // clients can renew the access token without re-prompting the user when it
-// expires (the bug reported for the slashdocs MCP server: signed in
+// expires (the bug reported for the SlashDocs MCP server: signed in
 // at 2:05 PM, asked to re-auth by 3:07 PM, while the CLI stays signed in).
 func TestMCPRefreshTokenGrantRotatesAndIsBound(t *testing.T) {
 	e := newMCPOAuthTestEnv(t)

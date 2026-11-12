@@ -65,7 +65,7 @@ export function DocumentSearchInput({
   const folders = useQuery({
     queryKey: [...queryKeys.folders(), lookupText],
     queryFn: () => api.listFolders(undefined, undefined, lookupText),
-    enabled: lookup.key === "in" && lookupText.length >= 2,
+    enabled: lookup.key === "in" && lookupText.length >= 1,
     staleTime: 30_000,
   });
 
