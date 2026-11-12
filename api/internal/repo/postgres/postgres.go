@@ -27,6 +27,7 @@ const htmlContentType = "text/html; charset=utf-8"
 
 type Store struct {
 	notificationsEnabled bool
+	approvalEventOrigin  string
 	db                   *pgxpool.Pool
 	q                    *dbsqlc.Queries
 	blobs                blob.Store
@@ -508,24 +509,7 @@ func clearGrantedAccessRequests(ctx context.Context, tx pgx.Tx, resourceType, re
 	return err
 }
 
-// keepsApprovals decides whether a new version carries the base version's
-// approved decisions forward: when the publisher asked for it, or when nothing
-// changed (the same bytes as the base version).
-func keepsApprovals(ctx context.Context, q *dbsqlc.Queries, baseVersionID, newSHA256 string, asked bool) (bool, error) {
-	if asked {
-		return true, nil
-	}
-	base, err := q.GetVersion(ctx, baseVersionID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return base.Sha256 == newSHA256, nil
-}
-
-func (s *Store) CreateVersion(ctx context.Context, documentID, baseVersionID, changeSummary string, html []byte, createdBy auth.Principal, keepApprovals bool) (repo.Version, error) {
+func (s *Store) CreateVersion(ctx context.Context, documentID, baseVersionID, changeSummary string, html []byte, createdBy auth.Principal) (repo.Version, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return repo.Version{}, err
@@ -561,27 +545,17 @@ func (s *Store) CreateVersion(ctx context.Context, documentID, baseVersionID, ch
 	if err := q.UpdateDocumentCurrentVersion(ctx, dbsqlc.UpdateDocumentCurrentVersionParams{CurrentVersionID: pgtype.Text{String: id, Valid: true}, ID: documentID}); err != nil {
 		return repo.Version{}, err
 	}
-	// A change of content is a new thing to approve, so every approver decides
-	// again. Approvals follow the document only when the publisher asks to keep
-	// them, or when nothing changed (the same bytes as the base version);
-	// approvers who requested changes (or never decided) start pending on the
-	// new version either way.
-	carried := 0
-	keep, err := keepsApprovals(ctx, q, baseVersionID, sum, keepApprovals)
-	if err != nil {
+	if err := s.removeAuthorApprovers(ctx, q, documentID, createdBy); err != nil {
 		return repo.Version{}, err
 	}
-	if keep {
-		carried, err = carryForwardApprovals(ctx, q, documentID, baseVersionID, id, createdBy)
-		if err != nil {
-			return repo.Version{}, err
-		}
+	if err := s.recordApprovalEvent(ctx, q, approvalEvent{documentID: documentID, kind: repo.ApprovalEventVersionCreated, actor: createdBy}); err != nil {
+		return repo.Version{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return repo.Version{}, err
 	}
 	committed = true
-	return repo.Version{ID: id, Number: int(cur.NextNumber), DocumentID: documentID, CreatedBy: createdBy, ChangeSummary: changeSummary, SHA256: sum, CarriedApprovals: carried, CreatedAt: pgTimeRFC3339(createdAt)}, nil
+	return repo.Version{ID: id, Number: int(cur.NextNumber), DocumentID: documentID, CreatedBy: createdBy, ChangeSummary: changeSummary, SHA256: sum, CreatedAt: pgTimeRFC3339(createdAt)}, nil
 }
 func (s *Store) CreateComment(ctx context.Context, documentID, versionID, body string, anchor repo.Anchor, author auth.Principal, mentions []repo.CommentMention) (repo.Comment, error) {
 	body = repo.NormalizeCommentBody(body)
@@ -1218,7 +1192,8 @@ func (s *Store) DeleteGrant(ctx context.Context, resourceID, grantID string, del
 	if err != nil {
 		return err
 	}
-	revoked, err := s.q.WithTx(tx).RevokeResourceGrant(ctx, dbsqlc.RevokeResourceGrantParams{GrantID: grantID, ResourceID: resourceID})
+	q := s.q.WithTx(tx)
+	revoked, err := q.RevokeResourceGrant(ctx, dbsqlc.RevokeResourceGrantParams{GrantID: grantID, ResourceID: resourceID})
 	if err != nil {
 		return err
 	}
@@ -1230,6 +1205,9 @@ func (s *Store) DeleteGrant(ctx context.Context, resourceID, grantID string, del
 		return err
 	}
 	if err := s.enqueueDocumentAccessChanges(ctx, tx, resourceID, accessNotificationSource(existing.Principal), deletedBy, before, after); err != nil {
+		return err
+	}
+	if err := s.removeApproversWithoutAccess(ctx, q, resourceID, deletedBy); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

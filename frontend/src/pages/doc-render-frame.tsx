@@ -7,7 +7,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type Anchor } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { matchesCommentFilter } from "@/lib/constants";
@@ -17,6 +17,7 @@ import { cursorsShownStore, parseCursorSpot } from "@/lib/live-cursors";
 import { useDocumentExport } from "./use-document-export";
 import { useDoc } from "./doc-context";
 import { useBridgeHost } from "./use-bridge-host";
+import { useTextAutosave } from "./use-text-autosave";
 import type { TextEditResult } from "./doc-context";
 
 const FORWARDED_KEYS = new Set<string>([
@@ -52,24 +53,46 @@ export function RenderFrame() {
     moveCursor,
     subscribeCursors,
     followedCursor,
-    textEditing,
-    setTextEditCount,
-    registerTextEditCollector,
+    editable,
+    setSaveState,
+    stayOnVersion,
+    showLatest,
   } = useDoc();
   const cursorsShown = cursorsShownStore.useStore();
   const versionRef = useRef(version);
   versionRef.current = version;
   const location = useLocation();
+  const q = useQueryClient();
+
+  // Versions saved from the frame are already on screen, so moving to one
+  // keeps the frame on the version it loaded: the editor keeps its caret and
+  // scroll. Leaving them loads the frame again, as does a reload.
+  const [kept, setKept] = useState<{ loaded: string; saved: string[] }>();
+  const [reloads, setReloads] = useState(0);
+  const frameVersion = kept?.saved.includes(version) ? kept.loaded : version;
+  const previousVersion = useRef(version);
+  useEffect(() => {
+    const moved = previousVersion.current !== version;
+    previousVersion.current = version;
+    if (!moved || !kept || kept.saved.includes(version)) return;
+    setKept(undefined);
+    // The frame holds edits on top of the version it loaded.
+    if (version === kept.loaded) setReloads((n) => n + 1);
+  }, [kept, version]);
+  const loaded = useMemo(
+    () => ({ version: frameVersion, load: reloads }),
+    [frameVersion, reloads],
+  );
 
   const token = useQuery({
-    queryKey: queryKeys.render(docId, version),
-    queryFn: () => api.renderToken(docId, version),
+    queryKey: queryKeys.render(docId, frameVersion),
+    queryFn: () => api.renderToken(docId, frameVersion),
     staleTime: 4 * 60_000,
-    enabled: !!version,
+    enabled: !!frameVersion,
   });
   const { ref, frameSrc, frameOrigin, ready, postToFrame, deliverKV } = useBridgeHost(
     docId,
-    token.data?.url,
+    token.data?.url && reloadURL(token.data.url, reloads),
     signIn,
   );
   // Paint results from a frame that is navigating away (its WindowProxy
@@ -127,46 +150,68 @@ export function RenderFrame() {
   }, [location.hash, ready, postToFrame]);
 
   const paint = useCallback(() => {
-    // Highlights split the text the reader is editing; they come back after.
-    if (!ready || textEditing) return;
+    if (!ready) return;
     postToFrame({
       type: "slashdocs:paint",
       comments: paintPayload,
       active: activeComment,
     });
-  }, [ready, textEditing, paintPayload, activeComment, postToFrame]);
+  }, [ready, paintPayload, activeComment, postToFrame]);
   const paintRef = useRef(paint);
   paintRef.current = paint;
 
   useEffect(() => {
-    if (ready) postToFrame({ type: "slashdocs:text-editing", on: textEditing });
-  }, [ready, textEditing, postToFrame]);
+    if (ready) postToFrame({ type: "slashdocs:text-editing", on: editable });
+  }, [ready, editable, postToFrame]);
 
-  // Text edits are collected from the frame on request, when the reader saves.
+  // The frame hands over a burst of text changes on request.
   const textCollects = useRef(new Map<string, (result: TextEditResult) => void>());
-  useEffect(() => {
-    if (!ready) return;
-    const pending = textCollects.current;
-    registerTextEditCollector(
-      () =>
-        new Promise<TextEditResult>((resolve, reject) => {
-          const requestId = `text-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-          const timer = window.setTimeout(() => {
-            pending.delete(requestId);
-            reject(new Error("The document did not report its changes."));
-          }, 5000);
-          pending.set(requestId, (result) => {
-            window.clearTimeout(timer);
-            resolve(result);
-          });
-          postToFrame({ type: "slashdocs:text-collect", requestId });
-        }),
-    );
-    return () => {
-      registerTextEditCollector(null);
-      pending.clear();
-    };
-  }, [ready, postToFrame, registerTextEditCollector]);
+  const takeTextEdits = useCallback(
+    () =>
+      new Promise<TextEditResult>((resolve, reject) => {
+        const requestId = `text-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const timer = window.setTimeout(() => {
+          textCollects.current.delete(requestId);
+          reject(new Error("The document did not report its changes."));
+        }, 5000);
+        textCollects.current.set(requestId, (result) => {
+          window.clearTimeout(timer);
+          resolve(result);
+        });
+        postToFrame({ type: "slashdocs:text-collect", requestId });
+      }),
+    [postToFrame],
+  );
+  const textChanged = useTextAutosave({
+    docId,
+    loaded,
+    take: takeTextEdits,
+    setState: setSaveState,
+    // A clean save holds what is on screen, so the editor stays on it rather
+    // than on the latest, which may hold changes from elsewhere.
+    onSaved: (saved, clean) => {
+      if (clean) {
+        setKept((k) => ({
+          loaded: k?.loaded ?? frameVersion,
+          saved: [...(k?.saved ?? []), saved],
+        }));
+        stayOnVersion(saved);
+      } else stayOnVersion();
+      for (const queryKey of [
+        queryKeys.document(docId),
+        queryKeys.versions(docId),
+        queryKeys.approvalsAll(docId),
+        queryKeys.documents(),
+      ]) {
+        q.invalidateQueries({ queryKey });
+      }
+    },
+    reload: () => {
+      showLatest();
+      setKept(undefined);
+      setReloads((n) => n + 1);
+    },
+  });
 
   // Vim scrolling works whether focus is inside the rendered document or on
   // the surrounding viewer chrome. The bridge handles the actual scroll so
@@ -374,8 +419,8 @@ export function RenderFrame() {
       if (e.data?.type === "slashdocs:document-click") {
         handleRenderedDocumentClick();
       }
-      // The document reloaded in place, as it does when editing is
-      // cancelled: it has no highlights until it is painted again.
+      // The document reloaded itself in place: it has no highlights until it
+      // is painted again.
       if (e.data?.type === "slashdocs:ready" && readyRef.current) {
         paintRef.current();
       }
@@ -388,11 +433,11 @@ export function RenderFrame() {
         resolve?.(parseTextEditResult(e.data));
       }
       if (e.data?.type === "slashdocs:text-dirty" && typeof e.data.count === "number") {
-        setTextEditCount(Math.max(0, Math.min(1_000_000, Math.floor(e.data.count))));
+        textChanged(e.data.count);
       }
       if (e.data?.type === "slashdocs:text-refused") {
         toast.info(
-          "Only words can be edited here. To add paragraphs or change layout, upload a new version.",
+          "Only words can change here. To add paragraphs or change the layout, upload the document again.",
           { id: "text-refused" },
         );
       }
@@ -499,7 +544,7 @@ export function RenderFrame() {
     setCommentViewport,
     syncCommentRail,
     applyZoom,
-    setTextEditCount,
+    textChanged,
   ]);
 
   // The page holds the event stream; the bridge host forwards its KV changes.
@@ -590,6 +635,13 @@ export function RenderFrame() {
       )}
     </div>
   );
+}
+
+// reloadURL makes a render URL that loads the frame again, as the same URL
+// would not.
+function reloadURL(url: string, reloads: number): string {
+  if (!reloads) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}slashdocs_reload=${reloads}`;
 }
 
 // parseTextEditResult reads a text-changes message. The frame hosts untrusted

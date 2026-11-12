@@ -26,6 +26,10 @@ export type CommentViewport = {
 // What the rendered document reports when asked for its text edits.
 export type TextEditResult = { changes: TextChange[]; unsupported: boolean };
 
+// Where the editor's typing is: none yet, waiting for a pause, being saved,
+// saved, or failed and waiting to try again.
+export type SaveState = "idle" | "unsaved" | "saving" | "saved" | "failed";
+
 export type DocContextValue = {
   docId: string;
   version: string;
@@ -68,14 +72,17 @@ export type DocContextValue = {
   // The cursor of the viewer the reader asked to go to. Each request is a new
   // object, so the same viewer can be followed again.
   followedCursor?: { session: string };
-  // Text editing makes the words of the rendered document editable.
-  textEditing: boolean;
-  setTextEditing: (on: boolean) => void;
-  // The number of changed passages, reported by the rendered document.
-  textEditCount: number;
-  setTextEditCount: (count: number) => void;
-  registerTextEditCollector: (collect: (() => Promise<TextEditResult>) | null) => void;
-  collectTextEdits: () => Promise<TextEditResult>;
+  // An editor edits the words of the rendered document in place, and the
+  // edits save as they pause.
+  editable: boolean;
+  saveState: SaveState;
+  setSaveState: (state: SaveState) => void;
+  // Keeps the reader on the version on screen when the document changes
+  // under them, as when edits land on top of someone else's, or on a given
+  // version that holds what is on screen.
+  stayOnVersion: (version?: string) => void;
+  // Shows the latest version again.
+  showLatest: () => void;
 };
 
 const DocContext = createContext<DocContextValue | null>(null);

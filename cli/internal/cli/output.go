@@ -17,7 +17,7 @@ var displayFields = []string{
 	"id", "document_id", "title", "name", "email", "type", "role",
 	"enabled", "effective_enabled", "text", "level", "effective_role", "status", "disabled", "current_version_id", "number",
 	"sha256", "token", "selected_text", "body", "url", "decision",
-	"approval_status", "version_number", "carried_from_version_id", "note",
+	"approval_status", "version_number", "note",
 }
 
 // render writes b to out, honoring --quiet and --json. It is the single output

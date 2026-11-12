@@ -9,16 +9,36 @@ import (
 )
 
 type Approval struct {
-	ID                   string
-	DocumentID           string
-	VersionID            string
-	ApproverType         string
-	ApproverID           string
-	Decision             string
-	DecidedAt            pgtype.Timestamptz
-	CarriedFromVersionID pgtype.Text
-	RevokedAt            pgtype.Timestamptz
-	Note                 string
+	ID           string
+	DocumentID   string
+	VersionID    string
+	Sha256       string
+	ApproverType string
+	ApproverID   string
+	Decision     string
+	Note         string
+	DecidedAt    pgtype.Timestamptz
+	RevokedAt    pgtype.Timestamptz
+}
+
+type ApprovalEventOutbox struct {
+	ID          string
+	Payload     []byte
+	Attempts    int32
+	AvailableAt pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+}
+
+type ApprovalNotificationOutbox struct {
+	DocumentID        string
+	ApproverType      string
+	ApproverID        string
+	Reason            string
+	RecipientID       string
+	Attempts          int32
+	AvailableAt       pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	FinishedProviders []string
 }
 
 type ApprovalRequest struct {

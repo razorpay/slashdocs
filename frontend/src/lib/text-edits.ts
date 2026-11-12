@@ -149,11 +149,12 @@ function inBody(source: string, old: string, replacement: string): TextEdit | nu
 }
 
 // buildEdits maps every change to an edit. Each edit is matched against the
-// source as the edits before it left it, as the server applies them.
+// source as the edits before it left it, as the server applies them. It also
+// returns that source with every edit applied.
 export function buildEdits(
   source: string,
   changes: TextChange[],
-): { edits: TextEdit[]; unmatched: UnmatchedChange[] } {
+): { edits: TextEdit[]; unmatched: UnmatchedChange[]; source: string } {
   const edits: TextEdit[] = [];
   const unmatched: UnmatchedChange[] = [];
   let current = source;
@@ -172,5 +173,5 @@ export function buildEdits(
       current.slice(at + edit.old_string.length);
     edits.push(edit);
   }
-  return { edits, unmatched };
+  return { edits, unmatched, source: current };
 }

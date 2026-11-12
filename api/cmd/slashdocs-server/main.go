@@ -118,6 +118,7 @@ func run() error {
 	workerCtx, cancelWorkers := context.WithCancel(ctx)
 	var workers sync.WaitGroup
 	workers.Go(func() { srv.RunCommentNotifications(workerCtx) })
+	workers.Go(func() { srv.RunApprovalWebhooks(workerCtx) })
 	workers.Go(func() {
 		indexSearch(workerCtx, "versions", store.IndexVersions)
 		indexSearch(workerCtx, "documents", store.IndexDocuments)
@@ -296,6 +297,10 @@ func newApplicationServer(ctx context.Context, store *pgrepo.Store, blobs blob.S
 	if err != nil {
 		return nil, err
 	}
+	approvalWebhook, err := loadApprovalWebhook()
+	if err != nil {
+		return nil, err
+	}
 	senders, err := loadNotificationSenders(os.Getenv)
 	if err != nil {
 		return nil, err
@@ -321,6 +326,10 @@ func newApplicationServer(ctx context.Context, store *pgrepo.Store, blobs blob.S
 	}
 	if slackLinkPreviews != nil {
 		options = append(options, slackLinkPreviews)
+	}
+	if approvalWebhook != nil {
+		store.EnableApprovalEvents(origins.appOrigin)
+		options = append(options, server.WithApprovalWebhook(*approvalWebhook))
 	}
 	return server.New(server.Config{
 		Environment:               server.EnvProduction,

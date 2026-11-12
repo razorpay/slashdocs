@@ -171,6 +171,31 @@ kvEvents:
 If your only database route is PgBouncer in transaction-pooling mode, set
 `kvEvents.mode: poll` and leave the listener URL unset.
 
+## Approval events
+
+Set `approvalWebhook` to post approval events (an approver asked, removed,
+approving, rejecting, revoking, and new versions of documents with approvers)
+to an external system such as a task tracker. Both values are stored in the
+chart-managed Secret:
+
+```yaml
+approvalWebhook:
+  url: https://tracker.example.com/hooks/slashdocs
+  secret: "<at least 32 random bytes>"
+```
+
+Or keep them in a pre-created Secret:
+
+```yaml
+approvalWebhook:
+  existingSecret: slashdocs-approval-webhook
+  urlKey: SLASHDOCS_APPROVAL_WEBHOOK_URL
+  secretKey: SLASHDOCS_APPROVAL_WEBHOOK_SECRET
+```
+
+See [`docs/self-hosting.md`](../../docs/self-hosting.md#approval-events) for
+the payload and the signature.
+
 ## Existing secrets
 
 You can keep secrets outside Helm values:

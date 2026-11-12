@@ -59,7 +59,10 @@ format:
 If the user is iterating on an existing slashdocs document, push a new version
 instead of creating a duplicate. Use the CLI help to find the current push/update
 syntax and include a short summary of what changed. Write one change per line;
-the version history shows a multi-line summary as a list.
+the document's history shows a multi-line summary as a list. People with the
+editor role also change the text in the browser, and their edits save as they
+type, so pull or read the HTML again before you edit a document that people
+work on.
 
 For changes to existing text, such as a fixed number, a reworded sentence, or
 a few addressed comments, use `slashdocs docs edit` (MCP: `edit_document`)

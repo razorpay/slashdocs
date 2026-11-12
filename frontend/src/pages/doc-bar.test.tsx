@@ -38,6 +38,11 @@ const mockDocContext: DocContextValue = {
   reportViewport: vi.fn(),
   moveCursor: vi.fn(),
   subscribeCursors: () => () => {},
+  editable: false,
+  saveState: "idle",
+  setSaveState: vi.fn(),
+  stayOnVersion: vi.fn(),
+  showLatest: vi.fn(),
 };
 
 function renderDocBar(labelsEnabled = true) {
@@ -84,6 +89,8 @@ function renderDocBar(labelsEnabled = true) {
             docId="doc_1"
             current="v_1"
             latest="v_2"
+            previewing={false}
+            canChangeContent
             versions={[
               {
                 id: "v_1",
@@ -100,6 +107,7 @@ function renderDocBar(labelsEnabled = true) {
             ]}
             labels={["payments", "runbook"]}
             onSelectVersion={onSelectVersion}
+            onShowLatest={vi.fn()}
             viewers={[]}
             onFollowViewer={vi.fn()}
             commentsOpen={false}
@@ -122,7 +130,7 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     vi.unstubAllGlobals();
   });
 
-  it("opens version history dialog from the More menu", async () => {
+  it("opens the history from the More menu", async () => {
     const user = userEvent.setup();
     const { onSelectVersion } = renderDocBar();
 
@@ -130,7 +138,7 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     await user.click(moreButton);
 
     const historyMenuItem = await screen.findByRole("menuitem", {
-      name: /Version history/i,
+      name: /^History$/,
     });
     expect(historyMenuItem).toBeInTheDocument();
     expect(historyMenuItem).toHaveClass("sm:hidden");
@@ -138,14 +146,13 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     await user.click(historyMenuItem);
 
     const dialogTitle = await screen.findByRole("heading", {
-      name: "Version history",
+      name: "History",
     });
     expect(dialogTitle).toBeInTheDocument();
 
     expect(screen.getByText("Second version")).toBeInTheDocument();
 
-    const v2Button = screen.getByRole("button", { name: /Version 2/i });
-    await user.click(v2Button);
+    await user.click(screen.getByRole("button", { name: /Second version/ }));
     expect(onSelectVersion).toHaveBeenCalledWith("v_2");
   });
 
@@ -190,7 +197,7 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByRole("menuitem", { name: /Version history/i }),
+        screen.getByRole("menuitem", { name: /^History$/ }),
       ).toBeInTheDocument();
     });
 

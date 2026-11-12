@@ -34,7 +34,7 @@ func approversCmd(g *globals, out io.Writer) *cobra.Command {
 				body["principal"] = parsePrincipal(principal)
 				target = principal
 			default:
-				return errors.New("pass --to <email-or-bot-address>")
+				return usageError{errors.New("pass --to <email-or-bot-address>")}
 			}
 			return action(g, out, func(c *Client) ([]byte, error) {
 				return c.doJSON("POST", apiPath("/v1/documents/%s/approvers", args[0]), body)
@@ -61,7 +61,7 @@ func approvalsCmd(g *globals, out io.Writer) *cobra.Command {
 	list := &cobra.Command{
 		Use:   "list <doc_id>",
 		Short: "Show decisions and the aggregate approval status",
-		Args: cobra.ExactArgs(1),
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path := apiPath("/v1/documents/%s/approvals", args[0])
 			if ver != "" {
@@ -103,7 +103,7 @@ func resolveApprovalVersion(g *globals, cl *Client, docID, explicit string) (str
 	return v, nil
 }
 
-// decisionCmd builds the approve / request-changes verbs, which submit a
+// decisionCmd builds the approve / reject verbs, which submit a
 // decision on the current (or given) version.
 func decisionCmd(g *globals, out io.Writer, use, short, decision, did string) *cobra.Command {
 	var ver string
@@ -111,9 +111,9 @@ func decisionCmd(g *globals, out io.Writer, use, short, decision, did string) *c
 	cmd := &cobra.Command{
 		Use:   use + " <doc_id>",
 		Short: short,
-		Args: cobra.ExactArgs(1),
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// The server decides whether the request says enough: a note, or
+			// The server decides whether a rejection says enough: a note, or
 			// open comments of yours on the document.
 			cl, err := client(g)
 			if err != nil {
@@ -139,8 +139,8 @@ func decisionCmd(g *globals, out io.Writer, use, short, decision, did string) *c
 	}
 	cmd.Flags().StringVar(&ver, "version", "", "version ID (defaults to the current version)")
 	noteHelp := "note explaining the decision"
-	if decision == "changes_requested" {
-		noteHelp = "note explaining what needs to change (required unless you have open comments on the document)"
+	if decision == "rejected" {
+		noteHelp = "reason saying what needs to change (required unless you have open comments on the document)"
 	}
 	cmd.Flags().StringVar(&note, "note", "", noteHelp)
 	return cmd
@@ -151,7 +151,7 @@ func revokeApprovalCmd(g *globals, out io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "revoke-approval <doc_id>",
 		Short: "Revoke your decision on a version (back to pending)",
-		Args: cobra.ExactArgs(1),
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cl, err := client(g)
 			if err != nil {

@@ -92,12 +92,13 @@ func TestMCPApprovalToolsAskFollowUpAndTakeBack(t *testing.T) {
 	}
 }
 
-func TestMCPUpdateDocumentCanKeepApprovals(t *testing.T) {
+func TestMCPUpdateDocumentApprovalsFollowContent(t *testing.T) {
 	e := newMCPOAuthTestEnv(t)
 	ownerToken := auth.NewMCPAccessToken(fixtureUser.ID, e.resource, oauthTestSigningMaterial, time.Minute)
 
+	const approvedHTML = "<html><body>one</body></html>"
 	created := mustMCPObject(t, assertMCPToolOK(t, callMCPToolHTTP(t, e, ownerToken, "create_document", map[string]any{
-		"title": "MCP keep approvals", "html": "<html><body>one</body></html>",
+		"title": "MCP approvals follow content", "html": approvedHTML,
 	}), "current_version_id"))
 	docID := requiredMCPString(t, created, "id")
 	versionID := requiredMCPString(t, created, "current_version_id")
@@ -116,19 +117,18 @@ func TestMCPUpdateDocumentCanKeepApprovals(t *testing.T) {
 		t.Fatalf("status = %q, want approved", status)
 	}
 
-	kept := mustMCPObject(t, assertMCPToolOK(t, callMCPToolHTTP(t, e, ownerToken, "update_document", map[string]any{
-		"document_id": docID, "base_version_id": versionID, "html": "<html><body>two</body></html>",
-		"change_summary": "kept", "keep_approvals": true,
-	}), "kept"))
-	if status, decisions := approvalsListed(t, e, ownerToken, docID); status != repo.DecisionApproved || decisions[fixtureOwner.Email] != repo.DecisionApproved {
-		t.Fatalf("with keep_approvals: status = %q, decisions = %v; want the approval carried forward", status, decisions)
+	changed := mustMCPObject(t, assertMCPToolOK(t, callMCPToolHTTP(t, e, ownerToken, "update_document", map[string]any{
+		"document_id": docID, "base_version_id": versionID, "html": "<html><body>two</body></html>", "change_summary": "change",
+	}), "change"))
+	if status, decisions := approvalsListed(t, e, ownerToken, docID); status != repo.StatusPending || decisions[fixtureOwner.Email] != repo.StatusPending {
+		t.Fatalf("after a change: status = %q, decisions = %v; want every approval reset", status, decisions)
 	}
 
+	// Reverting to the approved content brings the approval back.
 	assertMCPToolOK(t, callMCPToolHTTP(t, e, ownerToken, "update_document", map[string]any{
-		"document_id": docID, "base_version_id": requiredMCPString(t, kept, "id"), "html": "<html><body>three</body></html>",
-		"change_summary": "reset",
-	}), "reset")
-	if status, decisions := approvalsListed(t, e, ownerToken, docID); status != repo.StatusPending || decisions[fixtureOwner.Email] != repo.StatusPending {
-		t.Fatalf("without keep_approvals: status = %q, decisions = %v; want every approval reset", status, decisions)
+		"document_id": docID, "base_version_id": requiredMCPString(t, changed, "id"), "html": approvedHTML, "change_summary": "revert",
+	}), "revert")
+	if status, decisions := approvalsListed(t, e, ownerToken, docID); status != repo.DecisionApproved || decisions[fixtureOwner.Email] != repo.DecisionApproved {
+		t.Fatalf("after a revert: status = %q, decisions = %v; want the approval back", status, decisions)
 	}
 }

@@ -68,11 +68,12 @@ function installFetch(options: FetchOptions = {}, posted: PostedDecision[] = [])
         if (!found) return jsonResponse({ version_id: asked, summary: {}, items: [] });
         return jsonResponse({
           version_id: asked,
+          version_number: Number(asked.replace("ver_", "")),
           status: found.status,
           summary: {
             total: found.total,
             approved: found.approved,
-            changes_requested: 0,
+            rejected: 0,
             pending: found.total - found.approved,
           },
           items: found.items ?? [],
@@ -94,6 +95,7 @@ function renderDialog(
     approved?: number;
     total?: number;
     isOwner?: boolean;
+    defaultOpen?: boolean;
   },
   viewedVersion = "ver_2",
   comments: unknown[] = [],
@@ -118,6 +120,7 @@ function renderDialog(
           approved={props.approved}
           total={props.total}
           isOwner={props.isOwner ?? false}
+          defaultOpen={props.defaultOpen}
         />
       </DocProvider>
     </QueryClientProvider>,
@@ -144,23 +147,40 @@ describe("ApprovalsDialog", () => {
 
   it("leads with the blocker when someone rejected", async () => {
     installFetch();
-    renderDialog({ status: "changes_requested", approved: 1, total: 3 });
+    renderDialog({ status: "rejected", approved: 1, total: 3 });
     expect(await screen.findByText("Rejected · 1 of 3 approved")).toBeTruthy();
   });
 
-  it("shows the version the status is for in the dialog", async () => {
+  it("opens on load for a link from a notification", async () => {
     installFetch({
       approvalsByVersion: {
-        ver_2: { status: "approved", approved: 1, total: 1 },
+        ver_2: { status: "pending", approved: 0, total: 1 },
       },
     });
-    renderDialog({ status: "approved", approved: 1, total: 1 });
-    await userEvent.click(
-      await screen.findByRole("button", { name: /Open approvals/ }),
-    );
-    // The chip already carries the count, so the header says which version.
-    expect(await screen.findByText("On this version")).toBeTruthy();
+    renderDialog({ status: "pending", approved: 0, total: 1, defaultOpen: true });
+    expect(await screen.findByRole("dialog", { name: "Approvals" })).toBeTruthy();
   });
+
+  it.each([
+    ["ver_2", "On the current document"],
+    ["ver_1", "On an earlier version"],
+  ])(
+    "says whether the status of %s is for the current document",
+    async (viewed, label) => {
+      installFetch({
+        approvalsByVersion: {
+          [viewed]: { status: "approved", approved: 1, total: 1 },
+        },
+      });
+      renderDialog({ status: "approved", approved: 1, total: 1 }, viewed);
+      await userEvent.click(
+        await screen.findByRole("button", { name: /Open approvals/ }),
+      );
+      // The chip already carries the count, so the header says which content,
+      // without version numbers.
+      expect(await screen.findByText(label)).toBeTruthy();
+    },
+  );
 
   it("gives the owner a way in when no approvers are assigned yet", async () => {
     installFetch();
@@ -186,14 +206,21 @@ describe("ApprovalsDialog", () => {
     expect(screen.queryByText("Request approval")).toBeNull();
   });
 
-  it("tells an approver who created a version that they cannot approve", async () => {
+  it("shows a pending approver what they decided before the latest edits", async () => {
+    const reviewer: Principal = { type: "user", id: "rev", email: "rev@example.com" };
     installFetch({
       approvalsByVersion: {
         ver_2: {
           status: "pending",
           approved: 0,
           total: 1,
-          items: [{ approver: OWNER, decision: null, created_version: true }],
+          items: [
+            {
+              approver: reviewer,
+              decision: null,
+              earlier: { decision: "approved", decided_at: "2026-10-30T10:00:00Z" },
+            },
+          ],
         },
       },
     });
@@ -202,19 +229,14 @@ describe("ApprovalsDialog", () => {
       await screen.findByRole("button", { name: /Open approvals/ }),
     );
 
-    expect(
-      await screen.findByText(/You created a version of this document/),
-    ).toBeTruthy();
-    // No decision controls for someone who cannot decide.
-    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
+    expect(await screen.findByText(/approved before the latest edits/)).toBeTruthy();
   });
 
   it("scopes the chip to the version on screen, not the latest one", async () => {
     installFetch({
       currentVersionID: "ver_3",
       approvalsByVersion: {
-        ver_2: { status: "changes_requested", approved: 0, total: 1 },
+        ver_2: { status: "rejected", approved: 0, total: 1 },
       },
     });
     // The document's current version (v3) is approved, but v2 is on screen.
@@ -284,7 +306,7 @@ describe("the approver's review actions", () => {
 
     await userEvent.click(within(dialog).getByRole("button", { name: "Reject" }));
     await waitFor(() => expect(posted).toHaveLength(1));
-    expect(posted[0]).toEqual({ version_id: "ver_2", decision: "changes_requested" });
+    expect(posted[0]).toEqual({ version_id: "ver_2", decision: "rejected" });
   });
 
   it("needs a reason when the reviewer has no open comments", async () => {
@@ -356,14 +378,14 @@ describe("the approver's review actions", () => {
     installFetch({
       approvalsByVersion: {
         ver_2: {
-          status: "changes_requested",
+          status: "rejected",
           approved: 0,
           total: 1,
           items: [
             {
               id: "apv_1",
               approver: OWNER,
-              decision: "changes_requested",
+              decision: "rejected",
               comments_open: 0,
               comments_total: 2,
             },
@@ -371,7 +393,7 @@ describe("the approver's review actions", () => {
         },
       },
     });
-    renderDialog({ status: "changes_requested", approved: 0, total: 1 });
+    renderDialog({ status: "rejected", approved: 0, total: 1 });
     await openApprovals();
 
     expect(await screen.findByText("0 open of 2 comments")).toBeTruthy();

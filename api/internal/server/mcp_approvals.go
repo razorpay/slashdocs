@@ -11,7 +11,8 @@ import (
 
 // registerMCPApprovalTools adds the owner's side of approvals: ask someone to approve a document, see who was asked
 // and where it stands, and take a request back. Deciding (approve, reject, revoke) is deliberately not here: an approval vouches
-// for a version, so it is made by the approver through the UI, the CLI or the API, not by an agent on their behalf.
+// for the content the approver read, so it is made by the approver through the UI, the CLI or the API, not by an agent on
+// their behalf.
 // Each tool calls the same handler as the REST route, so every rule (owner only, viewer access, creators cannot be
 // approvers) applies unchanged.
 func registerMCPApprovalTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
@@ -43,7 +44,7 @@ func registerMCPApprovalTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 	})
 
 	server.AddTool(mcp.NewTool("request_document_approval", mutationOptions(false, false,
-		mcp.WithDescription("Ask a person or bot to approve a document. Owner only. The approver needs at least viewer access (use share_document first) and must not have created a version of the document. Nothing notifies them: tell them yourself."),
+		mcp.WithDescription("Ask a person or bot to approve a document. Owner only. The approver needs at least viewer access (use share_document first) and must not have created a version of the document (a bot counts as its owner). When Slack notifications are configured, the approver gets a message."),
 		mcpDocumentID(),
 		mcp.WithString("address", mcp.Required(), mcp.Description("User email or bot address.")),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

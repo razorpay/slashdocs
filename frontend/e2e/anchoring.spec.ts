@@ -248,7 +248,12 @@ test("comments on a selection with C and lists every shortcut with ?", async ({
     title,
     documentHTML(title, "<p>Keys beat clicks.</p>"),
   );
-  await page.goto(`/app/d/${document.id}`);
+  // An earlier version from the history does not change, so C comments.
+  await slashdocs.pushVersion(
+    document.id,
+    documentHTML(title, "<p>Keys beat clicks, again.</p>"),
+  );
+  await page.goto(`/app/d/${document.id}?version=${document.current_version_id}`);
   const doc = renderedDocument(page);
   // A mouse selection focuses the document. selectText alone does not.
   await doc.locator("p").click();
@@ -259,7 +264,21 @@ test("comments on a selection with C and lists every shortcut with ?", async ({
   await expect(composer).toHaveValue("");
   await page.getByRole("button", { name: "Cancel comment" }).click();
 
-  await doc.locator("h1").click();
+  // The owner edits the current document, so in its text C types and Ctrl
+  // or Cmd with Alt and M comments.
+  await page.goto(`/app/d/${document.id}`);
+  await expect(doc.locator("body")).toHaveAttribute("contenteditable", "true");
+  await doc.locator("p").click();
+  await doc.locator("p").selectText();
+  await page.keyboard.press("ControlOrMeta+Alt+m");
+  await expect(composer).toBeFocused();
+  await page.getByRole("button", { name: "Cancel comment" }).click();
+  await expect(doc.locator("p")).toHaveText("Keys beat clicks, again.");
+
+  // Outside the text, ? lists every shortcut.
+  await page.evaluate(() =>
+    (window.document.activeElement as HTMLElement | null)?.blur(),
+  );
   await page.keyboard.press("?");
   const dialog = page.getByRole("dialog", { name: "Keyboard shortcuts" });
   await expect(dialog.getByText("Comment on the selected text")).toBeVisible();
@@ -278,7 +297,12 @@ test("holding j scrolls faster than tapping it and stops on release", async ({
   await page.goto(`/app/d/${document.id}`);
   const doc = renderedDocument(page);
   const scrollY = () => doc.locator("html").evaluate(() => window.scrollY);
-  await doc.locator("p").click();
+  await expect(doc.locator("p")).toBeVisible();
+  // The owner edits the document, so in its text j types. Outside it, j
+  // scrolls.
+  await page.evaluate(() =>
+    (window.document.activeElement as HTMLElement | null)?.blur(),
+  );
 
   // A key repeats about every 33 ms while it is held.
   await page.keyboard.down("j");
