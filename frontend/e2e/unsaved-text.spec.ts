@@ -1,15 +1,18 @@
-import { type FrameLocator, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
 import {
   expect,
+  latestSource,
   notSaved,
   openEditable,
+  renderedDocument,
   startEditing,
   test,
   uniqueName,
 } from "./fixtures";
 
-// What happens to an editor's words when a save cannot go: they stay on
-// screen and in storage until the editor copies or discards them.
+// What happens to an editor's words when they cannot reach the server: they
+// stay on screen and in storage, under a "Not saved" bar with Retry, until
+// the editor copies or discards them.
 
 const HTML = `<!doctype html>
 <html>
@@ -27,12 +30,6 @@ const HTML = `<!doctype html>
     </script>
   </body>
 </html>`;
-
-function renderedDocument(page: Page): FrameLocator {
-  return page
-    .frameLocator('iframe[title="Rendered document"]')
-    .frameLocator("iframe#slashdocs-doc");
-}
 
 // typeOver selects target in an element of the rendered document, and types
 // text in its place.
@@ -65,16 +62,6 @@ function nextSave(page: Page) {
     (response) =>
       response.request().method() === "POST" && response.url().endsWith("/ops"),
   );
-}
-
-async function latestSource(page: Page, id: string): Promise<string> {
-  const document = await page.request.get(`/v1/documents/${id}`);
-  const { current_version_id } = (await document.json()) as {
-    current_version_id: string;
-  };
-  return (
-    await page.request.get(`/v1/documents/${id}/versions/${current_version_id}/html`)
-  ).text();
 }
 
 async function copied(page: Page, text: string) {

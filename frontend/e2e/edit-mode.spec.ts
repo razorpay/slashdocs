@@ -1,9 +1,12 @@
-import { type FrameLocator, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
 import {
+  bridge,
   expect,
+  latestSource,
   notSaved,
   openEditable,
   openHistory,
+  renderedDocument,
   reviewerOn,
   startEditing,
   test,
@@ -13,14 +16,6 @@ import {
 // Each document opens in Comment mode. An editor starts Edit mode with E or
 // Edit in the bar, and leaves it with C, Done or one Esc, once their edits
 // are saved. The edits of one sitting in Edit mode are one History entry.
-
-function bridge(page: Page): FrameLocator {
-  return page.frameLocator('iframe[title="Rendered document"]');
-}
-
-function renderedDocument(page: Page): FrameLocator {
-  return bridge(page).frameLocator("iframe#slashdocs-doc");
-}
 
 // A script that changes the page all the time, as a live chart does.
 function documentHTML(title: string) {
@@ -46,15 +41,6 @@ const editingText = (page: Page) =>
     "contenteditable",
     "true",
   );
-// The live document on the server.
-async function latestSource(page: Page, id: string): Promise<string> {
-  const { current_version_id } = await (
-    await page.request.get(`/v1/documents/${id}`)
-  ).json();
-  return (
-    await page.request.get(`/v1/documents/${id}/versions/${current_version_id}/html`)
-  ).text();
-}
 // The entries of the open History, the newest first.
 const historyEntries = (page: Page) =>
   page

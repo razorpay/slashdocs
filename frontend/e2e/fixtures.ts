@@ -4,7 +4,9 @@ import {
   type APIRequestContext,
   type APIResponse,
   type Browser,
+  type FrameLocator,
   type Page,
+  type Route,
 } from "@playwright/test";
 import { fileURLToPath } from "node:url";
 
@@ -28,7 +30,7 @@ const ONBOARDING_STATE = {
   },
 };
 
-export async function installAppStorage(page: Page) {
+async function installAppStorage(page: Page) {
   await page.addInitScript(
     ({ appOrigin, onboarding }) => {
       if (window.location.origin !== appOrigin) return;
@@ -39,16 +41,25 @@ export async function installAppStorage(page: Page) {
   );
 }
 
+// bridge is the window of the app in the document frame. It draws the pins,
+// the cursors and the hints over the document.
+export function bridge(page: Page): FrameLocator {
+  return page.frameLocator('iframe[title="Rendered document"]');
+}
+
+// renderedDocument is the document itself, in the bridge.
+export function renderedDocument(page: Page): FrameLocator {
+  return bridge(page).frameLocator("iframe#slashdocs-doc");
+}
+
 // startEditing turns on Edit mode with Edit in the document bar, as each
 // document opens in Comment mode, and waits until its text takes edits.
 export async function startEditing(page: Page) {
   await page.getByRole("button", { name: "Edit", exact: true }).click();
-  await expect(
-    page
-      .frameLocator('iframe[title="Rendered document"]')
-      .frameLocator("iframe#slashdocs-doc")
-      .locator("body"),
-  ).toHaveAttribute("contenteditable", "true");
+  await expect(renderedDocument(page).locator("body")).toHaveAttribute(
+    "contenteditable",
+    "true",
+  );
 }
 
 // notSaved is the chip that shows edits that did not save, with Retry. It
@@ -66,6 +77,88 @@ export async function openHistory(page: Page) {
 export async function openEditable(page: Page, id: string) {
   await page.goto(`/app/d/${id}`);
   await startEditing(page);
+}
+
+// latestSource gives the live document on the server.
+export async function latestSource(page: Page, id: string): Promise<string> {
+  const document = await page.request.get(`/v1/documents/${id}`);
+  const { current_version_id } = (await document.json()) as DocumentRecord;
+  return (
+    await page.request.get(`/v1/documents/${id}/versions/${current_version_id}/html`)
+  ).text();
+}
+
+// apiPost posts data to an API path as the person of page, and makes sure
+// that the server takes it.
+export async function apiPost(page: Page, path: string, data: object) {
+  const response = await page.request.post(path, {
+    headers: { Origin: APP_ORIGIN },
+    data,
+  });
+  expect(response.ok(), `${path}: ${await response.text()}`).toBeTruthy();
+  return response.json();
+}
+
+// hold keeps each request to a path until the test calls the returned
+// release, and then gives the response.
+export async function hold(page: Page, url: string, method: string, response?: object) {
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => (release = resolve));
+  await page.route(url, async (route: Route) => {
+    if (route.request().method() !== method) return route.fallback();
+    await released;
+    await (response ? route.fulfill(response) : route.continue());
+  });
+  return release;
+}
+
+// goInApp moves the app to a path without a reload, as a link does.
+export async function goInApp(page: Page, path: string) {
+  await page.evaluate((to) => {
+    history.pushState({}, "", to);
+    dispatchEvent(new PopStateEvent("popstate"));
+  }, path);
+  await expect(page).toHaveURL(new RegExp(`${path}$`));
+}
+
+export type Box = { x: number; y: number; width: number; height: number };
+
+// overlaps tells whether two boxes share some area.
+export const overlaps = (a: Box, b: Box) =>
+  a.x < b.x + b.width &&
+  b.x < a.x + a.width &&
+  a.y < b.y + b.height &&
+  b.y < a.y + a.height;
+
+// toastsOver tells whether a toast covers box, in the app.
+export async function toastsOver(page: Page, box: Box): Promise<boolean> {
+  const toasts = await page.locator("[data-sonner-toast]").all();
+  for (const toast of toasts) {
+    const at = await toast.boundingBox();
+    if (at && overlaps(at, box)) return true;
+  }
+  return false;
+}
+
+export const QUICK = "The quick brown fox jumps over the lazy dog.";
+
+// paragraphsHTML gives a document of numbered paragraphs, from p0, in a
+// centered column with page margins at both sides.
+export function paragraphsHTML(
+  title: string,
+  { paragraphs = 30, width = 480, margin = 40 } = {},
+) {
+  const numbered = Array.from(
+    { length: paragraphs },
+    (_, i) => `<p id="p${i}">Paragraph ${i}. ${QUICK} ${QUICK}</p>`,
+  ).join("");
+  return `<!doctype html>
+<html>
+  <head><meta charset="utf-8"><title>${title}</title>
+    <style>body{max-width:${width}px;margin:${margin}px auto;padding:0 16px;font:16px/1.5 sans-serif}h1{margin-top:12px}</style>
+  </head>
+  <body><h1 id="top">${title}</h1>${numbered}</body>
+</html>`;
 }
 
 // signedOutPage opens a page in a new browser context without a session.
@@ -239,6 +332,28 @@ export class SlashdocsAPI {
         data: { principal: { type: "anyone" }, role },
       }),
       `share ${id} with anyone`,
+    );
+  }
+
+  async share(id: string, address: string, role: "viewer" | "commenter" | "editor") {
+    await responseJSON(
+      await this.request.post(`/v1/documents/${id}/grants`, {
+        headers: this.writeHeaders(),
+        data: { address, role },
+      }),
+      `share ${id} with ${address}`,
+    );
+  }
+
+  // addApprover gives a person view access, and adds them as an approver.
+  async addApprover(id: string, address: string) {
+    await this.share(id, address, "viewer");
+    await responseJSON(
+      await this.request.post(`/v1/documents/${id}/approvers`, {
+        headers: this.writeHeaders(),
+        data: { address },
+      }),
+      `add approver ${address} to ${id}`,
     );
   }
 

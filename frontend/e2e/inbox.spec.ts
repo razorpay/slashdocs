@@ -1,5 +1,5 @@
 import { type Page } from "@playwright/test";
-import { APP_ORIGIN, expect, reviewerOn, test, uniqueName } from "./fixtures";
+import { apiPost, APP_ORIGIN, expect, reviewerOn, test, uniqueName } from "./fixtures";
 
 // The inbox in the header holds what waits on the reader: documents to
 // approve and threads with a message that they did not read. Each one leaves
@@ -8,15 +8,6 @@ import { APP_ORIGIN, expect, reviewerOn, test, uniqueName } from "./fixtures";
 const html = (title: string) => `<!doctype html>
 <html><head><meta charset="utf-8"><title>${title}</title></head>
 <body><h1>${title}</h1><p>The rollout starts with 1% of merchants.</p></body></html>`;
-
-async function post(page: Page, path: string, data: object) {
-  const response = await page.request.post(path, {
-    headers: { Origin: APP_ORIGIN },
-    data,
-  });
-  expect(response.ok(), `${path}: ${await response.text()}`).toBeTruthy();
-  return response.json();
-}
 
 async function openInbox(page: Page) {
   await page.goto("/app/documents");
@@ -57,9 +48,13 @@ test("a reply to the reader's thread waits in the inbox until the reader reads i
     quote: "1% of merchants",
   });
   const reviewer = await reviewerOn(browser, "/app/documents");
-  await post(reviewer, `/v1/documents/${document.id}/comments/${thread.id}/replies`, {
-    body: "It limits the risk.",
-  });
+  await apiPost(
+    reviewer,
+    `/v1/documents/${document.id}/comments/${thread.id}/replies`,
+    {
+      body: "It limits the risk.",
+    },
+  );
   await reviewer.context().close();
 
   await openInbox(page);
@@ -79,26 +74,19 @@ test("a reply to the reader's thread waits in the inbox until the reader reads i
 });
 
 test("a document to approve waits in the inbox of the approver until they decide", async ({
-  page,
   browser,
   slashdocs,
 }) => {
   const title = uniqueName("Inbox approval");
   const document = await slashdocs.createDocument(title, html(title));
-  await post(page, `/v1/documents/${document.id}/grants`, {
-    address: "reviewer@example.com",
-    role: "viewer",
-  });
-  await post(page, `/v1/documents/${document.id}/approvers`, {
-    address: "reviewer@example.com",
-  });
+  await slashdocs.addApprover(document.id, "reviewer@example.com");
 
   const reviewer = await reviewerOn(browser, "/app/documents");
   await openInbox(reviewer);
   await reviewer.getByRole("menuitem", { name: new RegExp(title) }).click();
   await expect(reviewer).toHaveURL(`${APP_ORIGIN}/app/d/${document.id}?approvals=1`);
 
-  await post(reviewer, `/v1/documents/${document.id}/approvals`, {
+  await apiPost(reviewer, `/v1/documents/${document.id}/approvals`, {
     version_id: document.current_version_id,
     decision: "approved",
   });

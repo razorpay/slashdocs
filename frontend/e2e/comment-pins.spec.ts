@@ -1,14 +1,13 @@
 import { type FrameLocator, type Page } from "@playwright/test";
-import { expect, reviewerOn, startEditing, test, uniqueName } from "./fixtures";
-
-// The bridge window draws the pins over the document frame.
-function bridge(page: Page): FrameLocator {
-  return page.frameLocator('iframe[title="Rendered document"]');
-}
-
-function renderedDocument(page: Page): FrameLocator {
-  return bridge(page).frameLocator("iframe#slashdocs-doc");
-}
+import {
+  bridge,
+  expect,
+  renderedDocument,
+  reviewerOn,
+  startEditing,
+  test,
+  uniqueName,
+} from "./fixtures";
 
 function documentHTML(title: string) {
   return `<!doctype html>

@@ -1,11 +1,23 @@
 import { type Page } from "@playwright/test";
-import { APP_ORIGIN, expect, test, uniqueName } from "./fixtures";
+import {
+  APP_ORIGIN,
+  bridge,
+  expect,
+  paragraphsHTML,
+  renderedDocument,
+  test,
+  uniqueName,
+} from "./fixtures";
+
+// Each control works from the keyboard: the arrow keys move in a list, a
+// grid or a set of tabs, Escape closes the inner layer only, and the focus
+// goes back to the control that opened a layer.
 
 function documentHTML(title: string) {
   return `<!doctype html>
 <html>
   <head><meta charset="utf-8"><title>${title}</title></head>
-  <body><h1>${title}</h1><p>Write the notes.</p></body>
+  <body><h1>${title}</h1><p id="notes">Write the notes.</p></body>
 </html>`;
 }
 
@@ -18,8 +30,8 @@ const focused = (page: Page) =>
 // People that the users search finds, so that the test needs no real accounts.
 const PEOPLE = {
   items: [
-    { type: "user", id: "usr_r10_ann", email: "ann.r10@example.com", name: "Ann R10" },
-    { type: "user", id: "usr_r10_bo", email: "bo.r10@example.com", name: "Bo R10" },
+    { type: "user", id: "usr_ann", email: "ann.keyes@example.com", name: "Ann Keyes" },
+    { type: "user", id: "usr_bo", email: "bo.keyes@example.com", name: "Bo Keyes" },
   ],
 };
 
@@ -99,7 +111,7 @@ test("the recipient list in Share takes Down, Up, Enter and Escape, and the dial
   page,
   slashdocs,
 }) => {
-  const title = uniqueName("Keys share r10");
+  const title = uniqueName("Keys share");
   const doc = await slashdocs.createDocument(title, documentHTML(title));
   await page.route("**/v1/users?q=*", (route) => route.fulfill({ json: PEOPLE }));
   await page.goto(`/app/d/${doc.id}`);
@@ -107,7 +119,7 @@ test("the recipient list in Share takes Down, Up, Enter and Escape, and the dial
   const dialog = page.getByRole("dialog");
   const field = dialog.getByRole("combobox", { name: "Person or bot" });
   await field.click();
-  await field.pressSequentially("r10");
+  await field.pressSequentially("keyes");
   await expect(field).toHaveAttribute("aria-expanded", "true");
   const active = () =>
     field.evaluate(
@@ -115,19 +127,19 @@ test("the recipient list in Share takes Down, Up, Enter and Escape, and the dial
         document.getElementById(el.getAttribute("aria-activedescendant") || "")
           ?.textContent,
     );
-  await expect.poll(active).toContain("Ann R10");
+  await expect.poll(active).toContain("Ann Keyes");
   await page.keyboard.press("ArrowDown");
-  await expect.poll(active).toContain("Bo R10");
+  await expect.poll(active).toContain("Bo Keyes");
   await page.keyboard.press("ArrowDown");
-  await expect.poll(active).toContain("Bo R10");
+  await expect.poll(active).toContain("Bo Keyes");
   await page.keyboard.press("ArrowUp");
-  await expect.poll(active).toContain("Ann R10");
+  await expect.poll(active).toContain("Ann Keyes");
   await page.keyboard.press("Escape");
   await expect(field).toHaveAttribute("aria-expanded", "false");
   await expect(dialog).toBeVisible();
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Enter");
-  await expect(field).toHaveValue("ann.r10@example.com");
+  await expect(field).toHaveValue("ann.keyes@example.com");
   await expect(dialog).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
@@ -137,9 +149,9 @@ test("a failed mention search says so and keeps the words, and Retry finds the p
   page,
   slashdocs,
 }) => {
-  const title = uniqueName("Keys mention r10");
+  const title = uniqueName("Keys mention");
   const document = await slashdocs.createDocument(title, documentHTML(title));
-  const comment = await slashdocs.createComment(document.id, "R10 mention", {
+  const comment = await slashdocs.createComment(document.id, "Mention", {
     quote: "Write the notes.",
   });
   let fail = true;
@@ -152,16 +164,16 @@ test("a failed mention search says so and keeps the words, and Retry finds the p
   const thread = page.getByRole("dialog", { name: "Comment thread" });
   const reply = thread.getByPlaceholder("Reply…");
   await reply.click();
-  await reply.pressSequentially("Ask @r1");
+  await reply.pressSequentially("Ask @ke");
   await expect(
     thread.getByText("Could not search people. Your words stay."),
   ).toBeVisible();
-  await expect(reply).toHaveValue("Ask @r1");
+  await expect(reply).toHaveValue("Ask @ke");
 
   fail = false;
   await thread.getByRole("button", { name: "Retry" }).click();
   await expect(reply).toBeFocused();
-  const option = page.getByRole("option", { name: /Bo R10/ });
+  const option = page.getByRole("option", { name: /Bo Keyes/ });
   await expect(option).toBeVisible();
   await page.keyboard.press("ArrowDown");
   await expect(option).toHaveAttribute("aria-selected", "true");
@@ -169,16 +181,16 @@ test("a failed mention search says so and keeps the words, and Retry finds the p
   await page.keyboard.press("Escape");
   await expect(option).toBeHidden();
   await expect(thread).toBeVisible();
-  await expect(reply).toHaveValue("Ask @r1");
+  await expect(reply).toHaveValue("Ask @ke");
 });
 
 test("the reaction picker moves as a 3x3 grid, and Escape gives the focus back", async ({
   page,
   slashdocs,
 }) => {
-  const title = uniqueName("Keys react r10");
+  const title = uniqueName("Keys react");
   const document = await slashdocs.createDocument(title, documentHTML(title));
-  const comment = await slashdocs.createComment(document.id, "R10 react", {
+  const comment = await slashdocs.createComment(document.id, "React", {
     quote: "Write the notes.",
   });
   // A thread shows its reactions, with Add reaction, once it has one.
@@ -224,7 +236,7 @@ test("a dialog that a menu item opened gives the focus back to the menu button",
   page,
   slashdocs,
 }) => {
-  const title = uniqueName("Keys focus r10");
+  const title = uniqueName("Keys focus");
   const document = await slashdocs.createDocument(title, documentHTML(title));
   await page.goto(`/app/d/${document.id}`);
   const more = page.getByRole("button", { name: "More", exact: true });
@@ -246,4 +258,67 @@ test("a dialog that a menu item opened gives the focus back to the menu button",
     await expect(dialog).toBeHidden();
     await expect(more, item).toBeFocused();
   }
+});
+
+for (const viewport of [
+  { width: 390, height: 844 },
+  { width: 1280, height: 800 },
+]) {
+  test(`at ${viewport.width}px, Esc in a reply gives the focus back to Comments`, async ({
+    page,
+    slashdocs,
+  }) => {
+    await page.setViewportSize(viewport);
+    const title = uniqueName("Thread focus");
+    const document = await slashdocs.createDocument(title, documentHTML(title));
+    await slashdocs.createComment(document.id, "Which notes?", {
+      quote: "Write the notes.",
+    });
+    await page.goto(`/app/d/${document.id}`);
+    await expect(renderedDocument(page).locator("#notes")).toBeVisible();
+
+    const comments = page.getByRole("button", { name: "Comments", exact: true });
+    await comments.click();
+    const row = page
+      .getByRole("dialog", { name: "Comments" })
+      .getByRole("button")
+      .filter({ hasText: "Which notes?" });
+    await row.focus();
+    await page.keyboard.press("Enter");
+    const thread = page.getByRole("dialog", { name: "Comment thread" });
+    await thread.getByPlaceholder("Reply…").fill("Half a reply");
+    await page.keyboard.press("Escape");
+    await expect(thread).toBeHidden();
+    await expect(comments).toBeFocused();
+  });
+}
+
+test("Esc on a composer placed from the keyboard gives the focus back", async ({
+  page,
+  slashdocs,
+}) => {
+  const title = uniqueName("Focus back");
+  const document = await slashdocs.createDocument(
+    title,
+    paragraphsHTML(title, { paragraphs: 4, width: 640 }),
+  );
+  await page.goto(`/app/d/${document.id}`);
+  await expect(renderedDocument(page).locator("#p3")).toBeAttached();
+  await page.getByRole("button", { name: "Comments", exact: true }).click();
+  const spot = page.getByRole("button", { name: "Comment on a spot" });
+  await spot.focus();
+  await page.keyboard.press("Enter");
+  await expect(bridge(page).getByText(/^Click a spot/)).toBeVisible();
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Enter");
+  const field = page
+    .getByRole("dialog", { name: "New comment" })
+    .getByPlaceholder("Add a comment…");
+  await expect(field).toBeFocused();
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(500);
+  // The placement closed the list, so the focus goes to its button.
+  await expect(
+    page.getByRole("button", { name: "Comments", exact: true }),
+  ).toBeFocused();
 });
