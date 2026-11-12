@@ -34,7 +34,7 @@ type commentPlacementResponse struct {
 	Confidence  float64     `json:"confidence"`
 }
 
-// commentMentionResponse identifies a principal and the exact visible label in
+// commentMentionPrincipalResponse identifies a principal and the exact visible label in
 // the comment body. Offset and length are UTF-16 code units so browser clients
 // can use them directly with JavaScript string slicing.
 type commentMentionPrincipalResponse struct {

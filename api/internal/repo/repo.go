@@ -203,8 +203,8 @@ type Approval struct {
 	SHA256        string         `json:"sha256"`
 	Approver      auth.Principal `json:"approver"`
 	Decision      string         `json:"decision"`
-	// Note is the reviewer's explanation. Optional; a rejection without one
-	// needs open comments by the reviewer instead.
+	// Note is the reviewer's explanation. It is optional, but a rejection
+	// without one needs open comments by the reviewer instead.
 	Note      string `json:"note,omitempty"`
 	DecidedAt string `json:"decided_at,omitempty"`
 }
@@ -629,8 +629,8 @@ type CommentUpdate struct {
 	Body     *string
 	Status   string
 	Mentions *[]CommentMention
-	// Anchor moves a point comment, or follows the text of a text comment.
-	// Callers validate it.
+	// Anchor moves a point comment. Callers validate it. A text comment
+	// follows its text through MoveAnchors, not through an update.
 	Anchor *Anchor
 	// BaseBody, when set, is the body that the edit started from. The update
 	// fails with ErrConflict when the body is no longer this.
@@ -883,8 +883,8 @@ type Repository interface {
 	DeletePin(ctx context.Context, principal auth.Principal, resourceType, resourceID string) error
 	ListHiddenFeaturedItems(ctx context.Context, principal auth.Principal) ([]string, error)
 	HideFeaturedItem(ctx context.Context, principal auth.Principal, resourceID string) error
-	// CreateApprovalRequest assigns an approver; ErrConflict when already
-	// assigned. It seals no version.
+	// CreateApprovalRequest assigns an approver. It returns ErrConflict when
+	// the approver is already assigned. It seals no version.
 	// DeleteApprovalRequest removes the assignment and revokes all of that
 	// approver's decisions on the document.
 	CreateApprovalRequest(ctx context.Context, documentID string, approver, requestedBy auth.Principal) (ApprovalRequest, error)
@@ -895,17 +895,18 @@ type Repository interface {
 	// caller shows: it returns a *VersionConflictError when it is not the
 	// seq of the live document. With no seq, the decision is on the live
 	// document. It returns ErrEditing while the version is open and another
-	// person typed a moment ago. A
-	// decision on an open version that the seal removes, because it holds
-	// the text of the version before, is for that version.
-	// CreateOrUpdateApproval upserts the approver's decision on the content of
-	// a version. The bool reports whether a new decision row was created
-	// (false = replaced). ErrNotFound when the version is not part of the
-	// document; a *VersionConflictError when the document's content changed
-	// since that version; ErrForbidden when they are not an assigned approver.
+	// person typed a moment ago. A decision on an open version that the
+	// seal removes, because it holds the text of the version before, is for
+	// that version.
+	// It upserts the approver's decision on the content of a version. The
+	// bool reports whether it made a new decision row (false = replaced). It
+	// returns ErrNotFound when the version is not part of the document, a
+	// *VersionConflictError when the content of the document changed since
+	// that version, and ErrForbidden when the caller is not an assigned
+	// approver.
 	CreateOrUpdateApproval(ctx context.Context, documentID, versionID string, seq *int64, decision, note string, approver auth.Principal) (Approval, bool, error)
-	// DeleteApproval revokes the approver's own decision; ErrForbidden when the
-	// decision belongs to someone else.
+	// DeleteApproval revokes the approver's own decision. It returns
+	// ErrForbidden when the decision belongs to someone else.
 	DeleteApproval(ctx context.Context, documentID, approvalID string, approver auth.Principal) error
 	// ListApprovals returns the active decisions on the given content.
 	ListApprovals(ctx context.Context, documentID, sha256 string) ([]Approval, error)

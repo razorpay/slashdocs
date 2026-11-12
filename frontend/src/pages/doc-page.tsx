@@ -242,7 +242,7 @@ export function DocumentPage() {
     if (queryVersion && queryVersion === latest) showVersion();
   }, [queryVersion, latest, showVersion]);
 
-  // A change that waits for the reader, as the frame scored it. The banner
+  // A change that waits for the reader, as the frame measured it. The banner
   // for it also shows when the page stays behind for another reason, as
   // when the frame cannot follow.
   const [update, setUpdate] = useState<DocUpdate>();
@@ -305,9 +305,9 @@ export function DocumentPage() {
       hear(event);
       setEvent(event);
       learn(event.seq, event.version_id);
-      // The people are done. That changes no seq and no version id, but the
-      // entry of the history and the approvals that count, with the state
-      // of the approval in the document.
+      // The server sealed the version. That changes no seq and no version id,
+      // but the entry of the history and the approvals that count, with the
+      // state of the approval in the document.
       if (event.sealed) refreshLists();
       // The person who restored has their own toast, with Undo.
       const by = event.restored ? event.updated_by : undefined;

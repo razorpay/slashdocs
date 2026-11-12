@@ -45,8 +45,8 @@ export function HistoryDialog({
 }) {
   const versions = useVersions(docId);
   // The people and the line of the newest version change while people
-  // type, with no event for each one, so the History reads the versions
-  // again when it opens.
+  // type. The page does not read the versions again for each operation, so
+  // the History reads them again when it opens.
   const q = useQueryClient();
   useEffect(() => {
     if (open) void q.invalidateQueries({ queryKey: queryKeys.versions(docId) });

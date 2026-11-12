@@ -645,7 +645,7 @@ function pinOn(point: Record<string, unknown>) {
 test("a margin pin stays wholly in the page in view on each side, at 390 pixels", () => {
   document.body.innerHTML = '<main><p id="steps">Steps</p></main>';
   layout();
-  // The page is 6px wider than the viewport, as Sol saw it.
+  // The page is 6px wider than the viewport, as in the report of the bug.
   pageSize(372, 600);
   Object.defineProperty(document.documentElement, "clientWidth", {
     value: 366,
