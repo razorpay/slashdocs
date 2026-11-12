@@ -345,6 +345,7 @@ func (s *Server) routes(deps dependencies) {
 	presenceLimit := activityRateLimit(60)
 	cursorLimit := activityRateLimit(1200)
 	authed.GET("/me", h.me)
+	authed.GET("/me/inbox", h.inbox)
 	authed.GET("/users", h.searchUsers)
 	authed.GET("/google-groups", h.searchGoogleGroups)
 	authed.GET("/auth/cli/credentials", h.listCLICredentials)

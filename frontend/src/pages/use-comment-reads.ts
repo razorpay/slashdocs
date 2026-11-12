@@ -33,8 +33,12 @@ export function useCommentReads(
       queryKeys.comments(docId),
       (data) => data && { ...data, items: markedRead(data.items, reading) },
     );
-    // A failed mark leaves the thread unread on the next load.
-    api.markCommentRead(docId, reading).catch(() => {});
+    // A failed mark leaves the thread unread on the next load. A mark takes
+    // the thread out of the inbox.
+    api
+      .markCommentRead(docId, reading)
+      .then(() => q.invalidateQueries({ queryKey: queryKeys.inbox() }))
+      .catch(() => {});
   }, [reading, items, docId, q]);
   return { comments, readThread };
 }
