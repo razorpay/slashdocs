@@ -6,7 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/razorpay/aidocs/api/internal/testdb"
+	"github.com/razorpay/slashdocs/api/internal/testdb"
 )
 
 // TestDatabasesAreMigratedAndIsolated verifies that each New call yields its

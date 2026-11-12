@@ -36,7 +36,7 @@ func (a DBAuthenticator) Authenticate(r *http.Request) (*Principal, error) {
 		return &p, nil
 	}
 	if a.SessionSecret != "" {
-		if ck, err := r.Cookie("aidocs_session"); err == nil {
+		if ck, err := r.Cookie("slashdocs_session"); err == nil {
 			uid, ok := (SessionCodec{Secret: []byte(a.SessionSecret)}).VerifySession(ck.Value)
 			if ok {
 				p, err := a.Resolver.ResolveUser(r.Context(), uid)

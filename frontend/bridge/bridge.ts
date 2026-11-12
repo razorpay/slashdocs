@@ -1,3 +1,7 @@
+import { textLinkAnchor } from "./text-link.ts";
+import { renderedTextFromRange } from "./anchoring/rendered-text.ts";
+import { snapshotForPrint } from "./document-export.ts";
+import { dispatchPublicEvent, PUBLIC_NAMES } from "./public-names.ts";
 import type { RenderedTextWithBrPositions } from "./anchoring/rendered-text.ts";
 import { renderedTextOf } from "./anchoring/rendered-text.ts";
 import { describeAnchor, resolveAnchor } from "./anchoring/index.ts";
@@ -9,9 +13,12 @@ import {
   highlightRange,
   refreshSVGRects,
 } from "./highlight.ts";
+import { createCursorLayer, trackPointer } from "./cursors.ts";
+import { CHORD_KEYS } from "../src/lib/esc-chord.ts";
 import {
   reduceVimScroll,
-  vimLineScrollDistance,
+  VIM_GLIDE_PX_PER_MS,
+  VIM_LINE_PX,
   type VimScrollAction,
 } from "../src/lib/vim-scroll.ts";
 
@@ -59,7 +66,9 @@ type GitHubFunction = (input: {
 }) => Promise<unknown>;
 type GitHubConnectFunction = () => void;
 
-interface AidocsPublicAPI {
+interface SlashdocsPublicAPI {
+  print?: () => void;
+  download?: (input: { blob: Blob; filename: string }) => Promise<void>;
   kv?: Record<string, KVFunction>;
   github?: {
     getRawContent: GitHubFunction;
@@ -72,16 +81,20 @@ interface AidocsPublicAPI {
 
 declare global {
   interface Window {
-    __AIDOCS_APP_ORIGIN__?: string;
-    __aidocsKVHandlers?: KVHandlers;
-    __aidocsKVQueue?: QueuedKVOperation[];
-    __aidocsGitHubQueue?: Array<{
+    __SLASHDOCS_APP_ORIGIN__?: string;
+    // Set by the wrapper before the document loads and kept current by the
+    // bridge, so a document that reloads itself reads the live theme.
+    __slashdocsTheme?: string;
+    __slashdocsKVHandlers?: KVHandlers;
+    __slashdocsKVQueue?: QueuedKVOperation[];
+    __slashdocsGitHubQueue?: Array<{
       input: Parameters<GitHubFunction>[0];
       resolve(value: unknown): void;
       reject(error: unknown): void;
     }>;
-    __aidocsGitHubConnectQueued?: boolean;
-    aidocs?: AidocsPublicAPI;
+    __slashdocsGitHubConnectQueued?: boolean;
+    slashdocs?: SlashdocsPublicAPI;
+    aidocs?: SlashdocsPublicAPI;
     CustomEvent: typeof CustomEvent;
   }
 }
@@ -96,8 +109,9 @@ interface PaintItem {
 type Theme = "dark" | "light";
 
 (function bridge(): void {
-  const appOrigin = window.__AIDOCS_APP_ORIGIN__ || "*";
-  const frame = document.getElementById("aidocs-doc") as HTMLIFrameElement;
+  const appOrigin = window.__SLASHDOCS_APP_ORIGIN__ || "*";
+  const frame = document.getElementById("slashdocs-doc") as HTMLIFrameElement;
+  const cursors = createCursorLayer(doc);
   let kvRequestID = 0;
   const kvPending: Record<string, KVPendingRequest> = {};
   let githubRequestID = 0;
@@ -184,7 +198,7 @@ type Theme = "dark" | "light";
 
   function kvPatchFromSet(key: unknown, value: unknown): KVPatch {
     if (value === undefined) {
-      throw new TypeError("aidocs.kv.set requires a JSON value");
+      throw new TypeError("slashdocs.kv.set requires a JSON value");
     }
     const patch = emptyKVPatch();
     const k = String(key);
@@ -201,7 +215,7 @@ type Theme = "dark" | "light";
 
   function kvPatchFromObject(object: unknown): KVPatch {
     if (!object || typeof object !== "object" || Array.isArray(object)) {
-      throw new TypeError("aidocs.kv.patch requires an object");
+      throw new TypeError("slashdocs.kv.patch requires an object");
     }
     const patch = emptyKVPatch();
     Object.keys(object).forEach((key) => {
@@ -389,7 +403,7 @@ type Theme = "dark" | "light";
       };
       parent.postMessage(
         Object.assign(
-          { type: "aidocs:kv-request", requestId, operation },
+          { type: "slashdocs:kv-request", requestId, operation },
           payload || {},
         ),
         targetOrigin(),
@@ -400,7 +414,7 @@ type Theme = "dark" | "light";
   function githubRawContent(input: Parameters<GitHubFunction>[0]): Promise<unknown> {
     if (!input || typeof input !== "object") {
       return Promise.reject(
-        new TypeError("aidocs.github.getRawContent requires an input object"),
+        new TypeError("slashdocs.github.getRawContent requires an input object"),
       );
     }
     const payload = {
@@ -429,14 +443,14 @@ type Theme = "dark" | "light";
         },
       };
       parent.postMessage(
-        { type: "aidocs:github-request", requestId, operation: "raw", ...payload },
+        { type: "slashdocs:github-request", requestId, operation: "raw", ...payload },
         targetOrigin(),
       );
     });
   }
 
   function githubConnect(): void {
-    parent.postMessage({ type: "aidocs:github-connect" }, targetOrigin());
+    parent.postMessage({ type: "slashdocs:github-connect" }, targetOrigin());
   }
 
   function emitKVChange(detail: unknown): void {
@@ -446,7 +460,8 @@ type Theme = "dark" | "light";
       const ev = new w.CustomEvent("kvchange", { detail });
       w.dispatchEvent(ev);
     } catch (e) {}
-    const handlers = (w.__aidocsKVHandlers && w.__aidocsKVHandlers.kvchange) || [];
+    const handlers =
+      (w.__slashdocsKVHandlers && w.__slashdocsKVHandlers.kvchange) || [];
     handlers.slice().forEach((handler) => {
       try {
         handler(detail);
@@ -458,16 +473,55 @@ type Theme = "dark" | "light";
     });
   }
 
-  function installAidocsAPI(): void {
+  let printPreparing = false;
+  const exportPending = new Map<string, { resolve: () => void; reject: () => void }>();
+  let exportID = 0;
+  function requestPrint(): void {
+    parent.postMessage({ type: "slashdocs:print-request" }, targetOrigin());
+  }
+  function requestDownload(input: { blob: Blob; filename: string }): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const requestId = `export-${++exportID}`;
+      const timer = setTimeout(() => {
+        exportPending.delete(requestId);
+        reject(new Error("Download request timed out."));
+      }, 5000);
+      exportPending.set(requestId, {
+        resolve: () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        reject: () => {
+          clearTimeout(timer);
+          reject(
+            new Error(
+              "Download needs a click, a valid filename, and a file no larger than 20 MB. Please try again.",
+            ),
+          );
+        },
+      });
+      parent.postMessage(
+        {
+          type: "slashdocs:download-request",
+          requestId,
+          blob: input.blob,
+          filename: input.filename,
+        },
+        targetOrigin(),
+      );
+    });
+  }
+
+  function installSlashdocsAPI(): void {
     const w = innerWindow();
     if (!w) return;
-    const existing: AidocsPublicAPI =
-      w.aidocs && typeof w.aidocs === "object" ? w.aidocs : {};
+    const existing: SlashdocsPublicAPI =
+      w.slashdocs && typeof w.slashdocs === "object" ? w.slashdocs : {};
     const handlers =
-      w.__aidocsKVHandlers && w.__aidocsKVHandlers.kvchange
-        ? w.__aidocsKVHandlers
+      w.__slashdocsKVHandlers && w.__slashdocsKVHandlers.kvchange
+        ? w.__slashdocsKVHandlers
         : { kvchange: [] };
-    w.__aidocsKVHandlers = handlers;
+    w.__slashdocsKVHandlers = handlers;
 
     function off(event: string, handler: KVChangeHandler): void {
       if (event !== "kvchange") return;
@@ -503,6 +557,9 @@ type Theme = "dark" | "light";
         return kvRedo();
       },
     };
+    existing.print = requestPrint;
+    existing.download = requestDownload;
+    w.print = requestPrint;
     existing.kv = kv;
     existing.github = {
       getRawContent: githubRawContent,
@@ -511,25 +568,25 @@ type Theme = "dark" | "light";
     existing.on = on;
     existing.off = off;
     try {
-      w.aidocs = existing;
+      for (const name of PUBLIC_NAMES) w[name] = existing;
     } catch (e) {}
 
-    const githubQueued = w.__aidocsGitHubQueue || [];
-    w.__aidocsGitHubQueue = [];
+    const githubQueued = w.__slashdocsGitHubQueue || [];
+    w.__slashdocsGitHubQueue = [];
     githubQueued.forEach((entry) => {
       githubRawContent(entry.input).then(entry.resolve, entry.reject);
     });
-    if (w.__aidocsGitHubConnectQueued) {
-      w.__aidocsGitHubConnectQueued = false;
+    if (w.__slashdocsGitHubConnectQueued) {
+      w.__slashdocsGitHubConnectQueued = false;
       githubConnect();
     }
 
-    const queued = w.__aidocsKVQueue || [];
-    w.__aidocsKVQueue = [];
+    const queued = w.__slashdocsKVQueue || [];
+    w.__slashdocsKVQueue = [];
     queued.forEach((entry) => {
       const fn = kv[entry && entry.op];
       if (!fn) {
-        entry.reject && entry.reject(new Error("unknown aidocs KV operation"));
+        entry.reject && entry.reject(new Error("unknown slashdocs KV operation"));
         return;
       }
       Promise.resolve()
@@ -553,11 +610,11 @@ type Theme = "dark" | "light";
 
   function injectStyles(): void {
     const d = doc();
-    if (!d || d.getElementById("aidocs-highlight-style")) return;
+    if (!d || d.getElementById("slashdocs-highlight-style")) return;
     const s = d.createElement("style");
-    s.id = "aidocs-highlight-style";
+    s.id = "slashdocs-highlight-style";
     s.textContent =
-      ".aidocs-mark{background:#fef08a!important;color:#111827!important;-webkit-text-fill-color:#111827!important;box-decoration-break:clone;-webkit-box-decoration-break:clone;border-radius:2px;box-shadow:0 0 0 1px rgba(202,138,4,.55);cursor:pointer;transition:background-color .15s,box-shadow .15s}.aidocs-mark-active{background:#fde047!important;box-shadow:0 0 0 2px rgba(202,138,4,.95)}.aidocs-svg-mark-text{fill:#111827!important;-webkit-text-fill-color:#111827!important;cursor:pointer}.aidocs-svg-mark-rect{fill:#fef08a;stroke:#ca8a04;stroke-width:1;rx:3;ry:3;pointer-events:auto;opacity:.72}.aidocs-svg-mark-rect.aidocs-mark-active{fill:#fde047;stroke-width:2;opacity:.84}@media print{.aidocs-mark{background:transparent!important;box-shadow:none!important;-webkit-text-fill-color:inherit!important;color:inherit!important}.aidocs-svg-mark-rect{display:none!important}.aidocs-svg-mark-text{fill:inherit!important;-webkit-text-fill-color:inherit!important}}";
+      ".slashdocs-mark{background:#fef3c7!important;color:#111827!important;-webkit-text-fill-color:#111827!important;box-decoration-break:clone;-webkit-box-decoration-break:clone;border-radius:2px 2px 0 0;box-shadow:inset 0 -2px 0 #fbbf24;cursor:pointer;transition:background-color .15s,box-shadow .15s}.slashdocs-mark-active{background:#fde68a!important;box-shadow:inset 0 -2px 0 #f59e0b}.slashdocs-svg-mark-text{fill:#111827!important;-webkit-text-fill-color:#111827!important;cursor:pointer}.slashdocs-svg-mark-rect{fill:#fef3c7;stroke:#fbbf24;stroke-width:1;rx:3;ry:3;pointer-events:auto;opacity:.8}.slashdocs-svg-mark-rect.slashdocs-mark-active{fill:#fde68a;stroke:#f59e0b;stroke-width:2;opacity:.9}@media print{.slashdocs-mark{background:transparent!important;box-shadow:none!important;-webkit-text-fill-color:inherit!important;color:inherit!important}.slashdocs-svg-mark-rect{display:none!important}.slashdocs-svg-mark-text{fill:inherit!important;-webkit-text-fill-color:inherit!important}}";
     (d.head || d.documentElement).appendChild(s);
   }
 
@@ -589,7 +646,7 @@ type Theme = "dark" | "light";
   // edge-triggered card scroll on the sidebar side.
   let revealedActive: string | null = null;
   // Selection restored after a repaint, kept briefly so the resulting
-  // selectionchange does not re-emit aidocs:selection (which would re-open
+  // selectionchange does not re-emit slashdocs:selection (which would re-open
   // the comment composer the user may have dismissed).
   let restoredSelection: Range | null = null;
   let restoredSelectionExpiry = 0;
@@ -672,10 +729,10 @@ type Theme = "dark" | "light";
   function applyActiveOnly(d: Document, active: string | null, scroll: boolean): void {
     let scrollTarget: Element | null = null;
     d.querySelectorAll(
-      "mark.aidocs-mark,.aidocs-svg-mark-rect,.aidocs-svg-mark-text",
+      "mark.slashdocs-mark,.slashdocs-svg-mark-rect,.slashdocs-svg-mark-text",
     ).forEach((el) => {
       const isActive = !!active && (el as HTMLElement).dataset.cid === active;
-      el.classList.toggle("aidocs-mark-active", isActive);
+      el.classList.toggle("slashdocs-mark-active", isActive);
       if (isActive && !scrollTarget) scrollTarget = el;
     });
     if (scroll && scrollTarget) {
@@ -698,11 +755,59 @@ type Theme = "dark" | "light";
     if (!d) return;
     parent.postMessage(
       {
-        type: "aidocs:comment-scroll",
+        type: "slashdocs:comment-scroll",
         scrollTop: d.defaultView?.scrollY || d.documentElement.scrollTop || 0,
       },
       targetOrigin(),
     );
+  }
+
+  // Report a short passage in the middle of the viewport, so other viewers
+  // can follow this reader. Debounced: one scroll fires many events.
+  const VIEWPORT_QUOTE_LENGTH = 64;
+  let viewportTimer: ReturnType<typeof setTimeout> | undefined;
+  function scheduleViewport(): void {
+    clearTimeout(viewportTimer);
+    viewportTimer = setTimeout(postViewport, 300);
+  }
+
+  function postViewport(): void {
+    const d = doc();
+    const view = d?.defaultView;
+    if (!d?.body || !view) return;
+    parent.postMessage(
+      { type: "slashdocs:viewport", anchor: viewportAnchor(d, view) },
+      targetOrigin(),
+    );
+  }
+
+  // Probe points from the middle of the viewport outward for text. Text
+  // navigation centers the anchor, so a follower sees what this reader sees.
+  // Caret hit-testing costs the same on any document size, unlike a tree walk.
+  function viewportAnchor(d: Document, view: Window): CommentAnchor | null {
+    for (const y of [0.5, 0.4, 0.6, 0.3, 0.7]) {
+      for (const x of [0.5, 0.25, 0.75]) {
+        const range = caretRange(d, view.innerWidth * x, view.innerHeight * y);
+        const node = range?.startContainer;
+        const text = node?.nodeType === Node.TEXT_NODE ? node.nodeValue || "" : "";
+        if (!range || !node || !text.trim()) continue;
+        const start = text.lastIndexOf(" ", range.startOffset) + 1;
+        range.setStart(node, start);
+        range.setEnd(node, Math.min(text.length, start + VIEWPORT_QUOTE_LENGTH));
+        const anchor = describeAnchor(d.body, range);
+        if (anchor) return anchor;
+      }
+    }
+    return null;
+  }
+
+  function caretRange(d: Document, x: number, y: number): Range | null {
+    if (!d.caretPositionFromPoint) return d.caretRangeFromPoint(x, y);
+    const position = d.caretPositionFromPoint(x, y);
+    if (!position) return null;
+    const range = d.createRange();
+    range.setStart(position.offsetNode, position.offset);
+    return range;
   }
 
   function postCommentPositions(): void {
@@ -723,7 +828,7 @@ type Theme = "dark" | "light";
       const escaped = CSS.escape(id);
       const marks = Array.from(
         d.querySelectorAll(
-          `mark.aidocs-mark[data-cid="${escaped}"],.aidocs-svg-mark-text[data-cid="${escaped}"],.aidocs-svg-mark-rect[data-cid="${escaped}"]`,
+          `mark.slashdocs-mark[data-cid="${escaped}"],.slashdocs-svg-mark-text[data-cid="${escaped}"],.slashdocs-svg-mark-rect[data-cid="${escaped}"]`,
         ),
       );
       let top = Number.POSITIVE_INFINITY;
@@ -740,7 +845,7 @@ type Theme = "dark" | "light";
     }
     parent.postMessage(
       {
-        type: "aidocs:comment-positions",
+        type: "slashdocs:comment-positions",
         positions,
         scrollTop,
         scrollHeight,
@@ -766,10 +871,10 @@ type Theme = "dark" | "light";
     if (!expected) return false;
     const cid = CSS.escape(id);
     let text = "";
-    d.querySelectorAll('mark.aidocs-mark[data-cid="' + cid + '"]').forEach((m) => {
+    d.querySelectorAll('mark.slashdocs-mark[data-cid="' + cid + '"]').forEach((m) => {
       text += m.textContent || "";
     });
-    d.querySelectorAll('.aidocs-svg-mark-text[data-cid="' + cid + '"]').forEach(
+    d.querySelectorAll('.slashdocs-svg-mark-text[data-cid="' + cid + '"]').forEach(
       (el) => {
         text += el.textContent || "";
       },
@@ -867,7 +972,7 @@ type Theme = "dark" | "light";
       resumeMutationObserver();
     }
     parent.postMessage(
-      { type: "aidocs:paint-result", results: lastPaintResults },
+      { type: "slashdocs:paint-result", results: lastPaintResults },
       targetOrigin(),
     );
     scheduleCommentPositions();
@@ -893,6 +998,7 @@ type Theme = "dark" | "light";
     if (mutationObserver) mutationObserver.disconnect();
     mutationObserver = new MutationObserver(() => {
       prepareHeadings(d);
+      scheduleTextNavigation();
       scheduleMutationScan();
       scheduleCommentPositions();
     });
@@ -921,7 +1027,7 @@ type Theme = "dark" | "light";
       revealedActive = activeID;
       applyActiveOnly(d, activeID, reveal);
       parent.postMessage(
-        { type: "aidocs:paint-result", results: lastPaintResults },
+        { type: "slashdocs:paint-result", results: lastPaintResults },
         targetOrigin(),
       );
       scheduleCommentPositions();
@@ -973,7 +1079,7 @@ type Theme = "dark" | "light";
     }
     // Post even when the inner document is unavailable so the parent never
     // keeps stale "highlight not found" state.
-    parent.postMessage({ type: "aidocs:paint-result", results }, targetOrigin());
+    parent.postMessage({ type: "slashdocs:paint-result", results }, targetOrigin());
     scheduleCommentPositions();
   }
 
@@ -981,10 +1087,13 @@ type Theme = "dark" | "light";
     const m = (e.target &&
       (e.target as Element).closest &&
       (e.target as Element).closest(
-        "mark.aidocs-mark,.aidocs-svg-mark-text,.aidocs-svg-mark-rect",
+        "mark.slashdocs-mark,.slashdocs-svg-mark-text,.slashdocs-svg-mark-rect",
       )) as HTMLElement | null;
     if (!m || !m.dataset.cid) return;
-    parent.postMessage({ type: "aidocs:activate", id: m.dataset.cid }, targetOrigin());
+    parent.postMessage(
+      { type: "slashdocs:activate", id: m.dataset.cid },
+      targetOrigin(),
+    );
   }
 
   function cssString(s: unknown): string {
@@ -1039,7 +1148,7 @@ type Theme = "dark" | "light";
           d.defaultView!.history.replaceState(null, "", href);
         } catch (err) {}
         parent.postMessage(
-          { type: "aidocs:heading", id: decodeURIComponent(href.slice(1)) },
+          { type: "slashdocs:heading", id: t.id || href.slice(1) },
           targetOrigin(),
         );
       }
@@ -1073,9 +1182,16 @@ type Theme = "dark" | "light";
   }
 
   let curTheme: Theme | null = null;
+  // The theme last announced to the current document. A document that reloads
+  // itself on a theme change (a common way to re-render a diagram) would
+  // reload forever if every load were announced. So the load right after an
+  // announcement counts as that reload and is skipped. Every other load is
+  // announced, because documents that only listen for the event need it.
+  let announcedTheme: Theme | null = null;
+  let reloadExpected = false;
   function initialTheme(): Theme | null {
     try {
-      const t = new URLSearchParams(location.search).get("aidocs_theme");
+      const t = new URLSearchParams(location.search).get("slashdocs_theme");
       return t === "dark" || t === "light" ? t : null;
     } catch (e) {
       return null;
@@ -1085,13 +1201,19 @@ type Theme = "dark" | "light";
   function applyTheme(t: unknown): void {
     if (t !== "dark" && t !== "light") return;
     curTheme = t;
+    // The prelude in the document reads this before its own scripts run, and
+    // a document that reloads itself reads it again on the way back.
+    window.__slashdocsTheme = t;
     const d = doc();
     if (!d || !d.documentElement) return;
-    d.documentElement.setAttribute("data-aidocs-theme", t);
+    for (const name of PUBLIC_NAMES) {
+      d.documentElement.setAttribute(`data-${name}-theme`, t);
+    }
+    if (d !== setupDoc || announcedTheme === t) return;
+    announcedTheme = t;
+    reloadExpected = true;
     try {
-      d.defaultView!.dispatchEvent(
-        new CustomEvent("aidocs:theme", { detail: { theme: t } }),
-      );
+      dispatchPublicEvent(d.defaultView!, "theme", { detail: { theme: t } });
     } catch (e) {}
   }
 
@@ -1114,11 +1236,82 @@ type Theme = "dark" | "light";
     return range.collapsed ? null : range;
   }
 
+  function labelIcon(button: HTMLButtonElement, label: string): void {
+    button.dataset.slashdocsTooltip = label;
+    const align = () => {
+      const rect = button.getBoundingClientRect();
+      const width = button.ownerDocument.defaultView!.innerWidth;
+      button.style.setProperty(
+        "--slashdocs-tip-enter-y",
+        rect.top < 48 ? "-3px" : "3px",
+      );
+      button.style.setProperty(
+        "--slashdocs-tip-top",
+        rect.top < 48 ? "calc(100% + 6px)" : "auto",
+      );
+      button.style.setProperty(
+        "--slashdocs-tip-bottom",
+        rect.top < 48 ? "auto" : "calc(100% + 6px)",
+      );
+      button.style.setProperty(
+        "--slashdocs-tip-left",
+        rect.left < 120 ? "0%" : rect.right > width - 120 ? "100%" : "50%",
+      );
+      button.style.setProperty(
+        "--slashdocs-tip-shift",
+        rect.left < 120 ? "0%" : rect.right > width - 120 ? "-100%" : "-50%",
+      );
+    };
+    button.addEventListener("pointerenter", align);
+    button.addEventListener("focus", align);
+    const d = button.ownerDocument;
+    if (!d.getElementById("slashdocs-icon-tooltip-style")) {
+      const style = d.createElement("style");
+      style.id = "slashdocs-icon-tooltip-style";
+      style.textContent = `
+        [data-slashdocs-tooltip]::after{all:initial!important;content:attr(data-slashdocs-tooltip)!important;position:absolute!important;z-index:2147483647!important;top:var(--slashdocs-tip-top,auto)!important;bottom:var(--slashdocs-tip-bottom,calc(100% + 6px))!important;left:var(--slashdocs-tip-left,50%)!important;transform:translate(var(--slashdocs-tip-shift,-50%),var(--slashdocs-tip-enter-y,3px))!important;width:max-content!important;max-width:min(220px,calc(100vw - 16px))!important;box-sizing:border-box!important;padding:6px 10px!important;border-radius:6px!important;background:#18181b!important;color:#fff!important;font:500 12px/1.4 system-ui,sans-serif!important;white-space:normal!important;text-align:center!important;box-shadow:0 2px 8px #0003!important;pointer-events:none!important;visibility:hidden!important;opacity:0!important;transition:opacity .1s ease-out,transform .14s ease-out,visibility 0s linear .1s!important}
+        [data-slashdocs-tooltip]:hover::after,[data-slashdocs-tooltip]:focus-visible::after{visibility:visible!important;opacity:1!important;transform:translate(var(--slashdocs-tip-shift,-50%),0)!important;transition:opacity .14s ease-out .5s,transform .14s ease-out .5s,visibility 0s linear .5s!important}
+        [data-slashdocs-tooltip]:focus-visible::after{transition-delay:0s!important}
+        @media(prefers-reduced-motion:reduce){[data-slashdocs-tooltip]::after{transition-duration:0s!important;transform:translateX(var(--slashdocs-tip-shift,-50%))!important}}
+        @media print{[data-slashdocs-tooltip]::after{display:none!important}}`;
+      d.head.appendChild(style);
+    }
+  }
+
+  let selectionAction: HTMLDivElement | null = null;
+  let actionRange: Range | null = null;
+  let selectionDismissed = false;
+
+  function dismissSelectionAction(): void {
+    selectionAction?.remove();
+    selectionAction = null;
+    selectionDismissed = true;
+  }
+
+  function commitSelection(range: Range): void {
+    const d = doc();
+    if (!d?.body) return;
+    const anchor = describeAnchor(d.body, range);
+    if (!anchor) return;
+    const rect = range.getBoundingClientRect();
+    const scrollTop = d.defaultView?.scrollY || d.documentElement.scrollTop || 0;
+    dismissSelectionAction();
+    parent.postMessage(
+      { type: "slashdocs:selection", anchor, top: rect.top + scrollTop },
+      targetOrigin(),
+    );
+  }
+
   function selection(): void {
     const d = doc();
     if (!d || !d.body) return;
     const range = selectedRange(d.getSelection());
-    if (!range) return;
+    if (!range || isTextEditingTarget(d.activeElement)) {
+      dismissSelectionAction();
+      actionRange = null;
+      return;
+    }
+    if (selectionGestureActive) return;
     // A selection this bridge just restored after a repaint is not a new
     // user gesture: re-emitting it would re-open the comment composer.
     if (restoredSelection && Date.now() < restoredSelectionExpiry) {
@@ -1134,17 +1327,94 @@ type Theme = "dark" | "light";
       }
     }
     restoredSelection = null;
-    const anchor = describeAnchor(d.body, range);
-    if (!anchor) return;
+    let unchanged = false;
+    try {
+      unchanged =
+        !!actionRange &&
+        range.compareBoundaryPoints(Range.START_TO_START, actionRange) === 0 &&
+        range.compareBoundaryPoints(Range.END_TO_END, actionRange) === 0;
+    } catch {
+      /* The document replaced the previously selected nodes. */
+    }
+    if (!unchanged) selectionDismissed = false;
+    actionRange = range.cloneRange();
+    if (selectionDismissed) return;
+    if (!selectionAction?.isConnected) {
+      selectionAction = d.createElement("div");
+      selectionAction.className = "slashdocs-selection-action";
+      selectionAction.setAttribute("role", "group");
+      selectionAction.setAttribute("aria-label", "Selected text actions");
+      selectionAction.addEventListener("mousedown", (e) => e.preventDefault());
+      selectionAction.addEventListener("click", (e) => e.stopPropagation());
+      const addAction = (
+        label: string,
+        title: string,
+        path: string,
+        click: () => void,
+      ) => {
+        const button = d.createElement("button");
+        button.type = "button";
+        button.setAttribute("aria-label", label);
+        labelIcon(button, title);
+        const svg = d.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("viewBox", "0 0 24 24");
+        svg.setAttribute("aria-hidden", "true");
+        const shape = d.createElementNS("http://www.w3.org/2000/svg", "path");
+        shape.setAttribute("d", path);
+        svg.appendChild(shape);
+        button.appendChild(svg);
+        button.addEventListener("click", click);
+        selectionAction!.appendChild(button);
+        return button;
+      };
+      addAction(
+        "Comment on selected text",
+        "Comment (C)",
+        "M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9H13a8.48 8.48 0 0 1 8 8v.5Z",
+        () => {
+          if (actionRange) commitSelection(actionRange);
+        },
+      );
+      addAction(
+        "Copy link to selected text",
+        "Copy link to text",
+        "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71",
+        () => {
+          if (!actionRange) return;
+          const anchor = describeAnchor(d.body, actionRange);
+          parent.postMessage({ type: "slashdocs:copy-text", anchor }, targetOrigin());
+        },
+      );
+      if (!d.getElementById("slashdocs-selection-style")) {
+        const style = d.createElement("style");
+        style.id = "slashdocs-selection-style";
+        style.textContent = `
+          .slashdocs-selection-action{all:initial!important;position:fixed!important;z-index:2147483647!important;display:flex!important;padding:2px!important;border-radius:10px!important;background:#fff!important;color:#52525b!important;box-shadow:0 0 0 1px #0001,0 4px 16px #0002!important}
+          .slashdocs-selection-action button{all:initial!important;position:relative!important;box-sizing:border-box!important;display:flex!important;align-items:center!important;justify-content:center!important;width:40px!important;height:40px!important;border-radius:8px!important;color:inherit!important;cursor:pointer!important;transition:background-color .15s,transform .15s!important}
+          .slashdocs-selection-action button:hover{background:#f4f4f5!important;color:#18181b!important}
+          .slashdocs-selection-action button:active{transform:scale(.96)!important}
+          .slashdocs-selection-action button:focus-visible{outline:2px solid #6366f1!important;outline-offset:-2px!important}
+          .slashdocs-selection-action svg{all:initial!important;color:inherit!important;width:17px!important;height:17px!important;fill:none!important;stroke:currentColor!important;stroke-width:1.8!important;stroke-linecap:round!important;stroke-linejoin:round!important;pointer-events:none!important}
+          .slashdocs-selection-action path{fill:none!important;stroke:inherit!important;stroke-width:inherit!important}
+          [data-slashdocs-theme=dark] .slashdocs-selection-action{background:#27272a!important;color:#d4d4d8!important;box-shadow:0 0 0 1px #fff2,0 4px 16px #0004!important}
+          [data-slashdocs-theme=dark] .slashdocs-selection-action button:hover{background:#3f3f46!important;color:#fff!important}
+          @media(prefers-reduced-motion:reduce){.slashdocs-selection-action button{transition:none!important}}
+          @media print{.slashdocs-selection-action,.slashdocs-text-flash{display:none!important}}`;
+        d.head.appendChild(style);
+      }
+      d.body.appendChild(selectionAction);
+    }
     const rect = range.getBoundingClientRect();
-    const scrollTop = d.defaultView?.scrollY || d.documentElement.scrollTop || 0;
-    parent.postMessage(
-      {
-        type: "aidocs:selection",
-        anchor,
-        top: Number.isFinite(rect.top) ? rect.top + scrollTop : undefined,
-      },
-      targetOrigin(),
+    const view = d.defaultView!;
+    selectionAction.style.setProperty(
+      "left",
+      `${Math.max(8, Math.min(rect.right - 84, view.innerWidth - 92))}px`,
+      "important",
+    );
+    selectionAction.style.setProperty(
+      "top",
+      `${Math.max(8, rect.bottom + 8 + 44 < view.innerHeight ? rect.bottom + 8 : rect.top - 52)}px`,
+      "important",
     );
   }
 
@@ -1199,33 +1469,191 @@ type Theme = "dark" | "light";
   curTheme = initialTheme();
   let setupDoc: Document | null = null;
 
+  let pendingHeading = "";
+  let headingFlash: Animation | undefined;
   function prepareHeadings(d: Document): void {
-    const used: Record<string, number> = {};
+    const used = new Set(Array.from(d.querySelectorAll("[id]")).map((el) => el.id));
+    if (!d.getElementById("slashdocs-heading-link-style")) {
+      const style = d.createElement("style");
+      style.id = "slashdocs-heading-link-style";
+      style.textContent = `.slashdocs-heading-link{position:relative!important;display:inline-flex!important;vertical-align:middle;width:40px;height:40px;margin:0 0 0 4px;padding:0;align-items:center;justify-content:center;border:0;border-radius:6px;background:transparent;color:inherit;font:20px sans-serif;opacity:0;cursor:pointer;transition:opacity .15s}.slashdocs-heading-link::before{content:"#"}h1:hover>.slashdocs-heading-link,h2:hover>.slashdocs-heading-link,h3:hover>.slashdocs-heading-link,h4:hover>.slashdocs-heading-link,h5:hover>.slashdocs-heading-link,h6:hover>.slashdocs-heading-link,.slashdocs-heading-link:focus-visible{opacity:.65}.slashdocs-heading-link:focus-visible{outline:2px solid currentColor}@media(pointer:coarse){.slashdocs-heading-link{opacity:.5}}@media print{.slashdocs-heading-link{display:none!important}}`;
+      d.head.appendChild(style);
+    }
     Array.from(d.querySelectorAll("h1,h2,h3,h4,h5,h6")).forEach((heading) => {
-      const base =
-        heading.id ||
-        (heading.textContent || "section")
-          .trim()
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, "-")
-          .replace(/^-+|-+$/g, "") ||
-        "section";
-      const count = used[base] || 0;
-      used[base] = count + 1;
-      if (!heading.id) heading.id = count ? `${base}-${count + 1}` : base;
+      if (!heading.id) {
+        const base =
+          (heading.textContent || "section")
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-+|-+$/g, "") || "section";
+        let id = base;
+        for (let suffix = 2; used.has(id); suffix++) id = `${base}-${suffix}`;
+        heading.id = id;
+        used.add(id);
+      }
+      if (!heading.querySelector(":scope > .slashdocs-heading-link")) {
+        const button = d.createElement("button");
+        button.type = "button";
+        button.className = "slashdocs-heading-link";
+        button.setAttribute(
+          "aria-label",
+          `Copy link to ${heading.textContent?.trim() || "heading"}`,
+        );
+        labelIcon(button, "Copy link to heading");
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          parent.postMessage(
+            { type: "slashdocs:copy-heading", id: heading.id },
+            targetOrigin(),
+          );
+        });
+        heading.appendChild(button);
+      }
     });
+    if (pendingHeading) navigateHeading(pendingHeading);
   }
 
   function navigateHeading(id: string): void {
+    pendingText = null;
+    textVisibilityObserver?.disconnect();
+    clearTimeout(textNoticeTimer);
+    pendingHeading = id;
     const d = doc();
     if (!d || !id) return;
     const target = d.getElementById(id);
-    if (target) target.scrollIntoView({ block: "start" });
+    if (!target) return;
+    for (let el = target.parentElement; el; el = el.parentElement) {
+      if (el.tagName === "DETAILS") (el as HTMLDetailsElement).open = true;
+    }
+    if (!(target as HTMLElement).getClientRects().length) return;
+    pendingHeading = "";
+    target.scrollIntoView({ block: "start", behavior: "instant" });
+    headingFlash?.cancel();
+    const highlight = { backgroundColor: "rgba(129, 140, 248, 0.25)" };
+    const resting = {
+      backgroundColor: d.defaultView!.getComputedStyle(target).backgroundColor,
+    };
+    const reducedMotion = d.defaultView!.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    // A single arrival cue, with no layout changes or persistent author styles.
+    headingFlash = target.animate(
+      [highlight, { ...highlight, offset: 0.25 }, resting],
+      { duration: 1400, easing: reducedMotion ? "steps(1, end)" : "ease-out" },
+    );
   }
+  let textVisibilityObserver: MutationObserver | undefined;
+  function scheduleTextNavigation(): void {
+    if (pendingText && !textRetryTimer) {
+      textRetryTimer = setTimeout(() => {
+        textRetryTimer = undefined;
+        tryNavigateText();
+      }, 200);
+    }
+  }
+
+  let textFlashStarted = 0;
+  let pendingText: CommentAnchor | null = null;
+  let textRetryTimer: ReturnType<typeof setTimeout> | undefined;
+  let textNoticeTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function navigateText(value: unknown): void {
+    pendingHeading = "";
+    pendingText = textLinkAnchor(value);
+    textVisibilityObserver?.disconnect();
+    clearTimeout(textNoticeTimer);
+    doc()
+      ?.querySelectorAll(".slashdocs-text-flash")
+      .forEach((el) => el.remove());
+    if (!pendingText) return;
+    tryNavigateText();
+    if (pendingText) {
+      // Attribute-only tab/panel reveals do not trigger the comment text observer.
+      textVisibilityObserver = new MutationObserver(scheduleTextNavigation);
+      const root = doc()?.documentElement;
+      if (root)
+        textVisibilityObserver.observe(root, {
+          subtree: true,
+          attributes: true,
+          attributeFilter: ["hidden", "class", "style", "open"],
+        });
+      textNoticeTimer = setTimeout(() => {
+        if (pendingText)
+          parent.postMessage({ type: "slashdocs:text-unavailable" }, targetOrigin());
+      }, 2000);
+    }
+  }
+
+  function tryNavigateText(): void {
+    const d = doc();
+    if (!pendingText || !d?.body) return;
+    // Deep links must target the quoted text, never an approximate replacement.
+    const rendered = renderedTextOf(d.body);
+    if (!rendered.text.includes(pendingText.quote!)) return;
+    const range = resolveAnchor(d.body, pendingText, () => rendered);
+    if (!range || renderedTextFromRange(range) !== pendingText.quote) return;
+    const start =
+      range.startContainer.nodeType === 1
+        ? (range.startContainer as Element)
+        : range.startContainer.parentElement;
+    for (let el = start; el; el = el.parentElement) {
+      if (el.tagName === "DETAILS") (el as HTMLDetailsElement).open = true;
+    }
+    if (!Array.from(range.getClientRects()).some((r) => r.width && r.height)) return;
+    pendingText = null;
+    textVisibilityObserver?.disconnect();
+    clearTimeout(textNoticeTimer);
+    // Center the first line of the text, not its block: a long paragraph
+    // would otherwise put the text far from where a followed reader sees it.
+    start?.scrollIntoView({ block: "center", behavior: "instant" });
+    const line = Array.from(range.getClientRects()).find((r) => r.width && r.height)!;
+    d.defaultView!.scrollBy({
+      top: line.top + line.height / 2 - d.defaultView!.innerHeight / 2,
+      behavior: "instant",
+    });
+    textFlashStarted = Date.now();
+    const reducedMotion = d.defaultView!.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    // Non-interactive overlays avoid splitting text nodes or disturbing comments.
+    Array.from(range.getClientRects())
+      .slice(0, 200)
+      .forEach((r) => {
+        if (!r.width || !r.height) return;
+        const flash = d.createElement("span");
+        flash.className = "slashdocs-text-flash";
+        flash.setAttribute("aria-hidden", "true");
+        // Keep opacity animatable: an important `all` reset overrides animation values.
+        flash.style.cssText = `all:initial;position:fixed!important;pointer-events:none!important;z-index:2147483646!important;left:${r.left}px!important;top:${r.top}px!important;width:${r.width}px!important;height:${r.height}px!important;background:rgba(56,189,248,.32)!important;box-shadow:0 0 0 1px rgba(14,165,233,.65)!important;border-radius:3px!important`;
+        d.body.appendChild(flash);
+        const animation = flash.animate(
+          reducedMotion
+            ? [{ opacity: 1 }, { opacity: 1, offset: 0.85 }, { opacity: 0 }]
+            : [
+                { opacity: 0.2 },
+                { opacity: 1, offset: 0.12 },
+                { opacity: 0.25, offset: 0.25 },
+                { opacity: 1, offset: 0.38 },
+                { opacity: 1, offset: 0.72 },
+                { opacity: 0 },
+              ],
+          { duration: 2200, easing: reducedMotion ? "steps(1, end)" : "ease-in-out" },
+        );
+        animation.onfinish = () => flash.remove();
+      });
+  }
+
   function setupFrame(): void {
     const d = doc();
     if (!d || !d.documentElement || !d.body || setupDoc === d) return;
     setupDoc = d;
+    pendingText = null;
+    textVisibilityObserver?.disconnect();
+    clearTimeout(textRetryTimer);
+    textRetryTimer = undefined;
+    clearTimeout(textNoticeTimer);
     // A freshly loaded document has no highlights; the parent repaints after
     // the ready signal below. Dropping the previous document's payload — and
     // any repaint already scheduled for it — keeps its comments from being
@@ -1243,9 +1671,27 @@ type Theme = "dark" | "light";
     observeMutations(d);
     resetKVHistory();
     injectStyles();
-    installAidocsAPI();
+    installSlashdocsAPI();
+    dismissSelectionAction();
+    actionRange = null;
+    selectionDismissed = false;
+    d.defaultView?.addEventListener(
+      "scroll",
+      () => {
+        if (Date.now() - textFlashStarted > 100)
+          d.querySelectorAll(".slashdocs-text-flash").forEach((el) => el.remove());
+      },
+      { passive: true },
+    );
+    d.defaultView?.addEventListener("scroll", dismissSelectionAction, {
+      passive: true,
+    });
     prepareHeadings(d);
     prepareLinks();
+    // The prelude already stamped the current theme on a reload, so only
+    // other loads get it announced.
+    announcedTheme = reloadExpected ? curTheme : null;
+    reloadExpected = false;
     applyTheme(curTheme);
     // Track the selection gesture so mutation repairs never run mid-drag
     // (they would make the browser stop rendering the native selection).
@@ -1301,38 +1747,71 @@ type Theme = "dark" | "light";
       if (selTimer) clearTimeout(selTimer);
       selTimer = setTimeout(selection, 350);
     });
-    const chordKeys = ["t", "f", "c", "h"];
+    const chordKeys: string[] = CHORD_KEYS.map((item) => item.key);
     let chordArmedAt = 0;
     let vimGArmed = false;
     let vimGTimer = 0;
+    let glide = 0;
+    const stopGlide = () => {
+      d.defaultView?.cancelAnimationFrame(glide);
+      glide = 0;
+    };
+    d.addEventListener("keyup", stopGlide);
+    d.defaultView?.addEventListener("blur", stopGlide);
     const runVimScroll = (action: VimScrollAction, repeat = false) => {
       const view = d.defaultView;
       if (!view) return;
-      if (action === "line-down")
-        view.scrollBy({
-          top: vimLineScrollDistance(repeat),
-          behavior: repeat ? "instant" : "auto",
-        });
-      else if (action === "line-up")
-        view.scrollBy({
-          top: -vimLineScrollDistance(repeat),
-          behavior: repeat ? "instant" : "auto",
-        });
-      else if (action === "half-page-down")
-        view.scrollBy({ top: Math.max(160, view.innerHeight * 0.5), behavior: "auto" });
+      const reducedMotion = view.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const behavior = reducedMotion ? "instant" : "smooth";
+      if (action === "line-down" || action === "line-up") {
+        const direction = action === "line-down" ? 1 : -1;
+        if (!repeat || reducedMotion) {
+          stopGlide();
+          view.scrollBy({ top: direction * VIM_LINE_PX, behavior });
+          return;
+        }
+        // Each key repeat would restart a smooth scroll from rest, which is
+        // slower than taps. A held key moves the page every frame instead.
+        if (glide) return;
+        let last = view.performance.now();
+        const step = (now: number) => {
+          view.scrollBy(0, direction * VIM_GLIDE_PX_PER_MS * (now - last));
+          last = now;
+          glide = view.requestAnimationFrame(step);
+        };
+        glide = view.requestAnimationFrame(step);
+      } else if (action === "half-page-down")
+        view.scrollBy({ top: Math.max(160, view.innerHeight * 0.5), behavior });
       else if (action === "half-page-up")
         view.scrollBy({
           top: -Math.max(160, view.innerHeight * 0.5),
-          behavior: "auto",
+          behavior,
         });
-      else if (action === "top") view.scrollTo({ top: 0, behavior: "auto" });
+      else if (action === "top") view.scrollTo({ top: 0, behavior });
       else
         view.scrollTo({
           top: d.documentElement.scrollHeight,
-          behavior: "auto",
+          behavior,
         });
     };
     d.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") dismissSelectionAction();
+      const modified = ev.metaKey || ev.ctrlKey || ev.altKey;
+      // C comments on the selected text, as in Figma. Esc then C still
+      // toggles the comments panel.
+      if (
+        ev.key === "c" &&
+        !modified &&
+        !chordArmedAt &&
+        !isTextEditingTarget(ev.target)
+      ) {
+        const range = selectedRange(d.getSelection());
+        if (range) {
+          ev.preventDefault();
+          commitSelection(range);
+          return;
+        }
+      }
       const target = ev.target as Element | null;
       const textEditing = !!target?.closest?.(
         'input,textarea,select,[contenteditable="true"]',
@@ -1345,17 +1824,22 @@ type Theme = "dark" | "light";
         return;
       }
 
-      const modified = ev.metaKey || ev.ctrlKey || ev.altKey;
       if (ev.key === "Escape") {
         chordArmedAt = modified ? 0 : Date.now();
-        parent.postMessage({ type: "aidocs:keydown", key: "Escape" }, targetOrigin());
+        parent.postMessage(
+          { type: "slashdocs:keydown", key: "Escape" },
+          targetOrigin(),
+        );
       } else if (chordArmedAt) {
         const withinWindow = Date.now() - chordArmedAt <= 800;
         chordArmedAt = 0;
         const key = ev.key.toLowerCase();
         if (withinWindow && !modified && chordKeys.includes(key)) {
-          parent.postMessage({ type: "aidocs:keydown", key }, targetOrigin());
+          parent.postMessage({ type: "slashdocs:keydown", key }, targetOrigin());
         }
+      }
+      if (ev.key === "?" && !modified) {
+        parent.postMessage({ type: "slashdocs:keydown", key: "?" }, targetOrigin());
       }
 
       const vim = reduceVimScroll(
@@ -1389,7 +1873,7 @@ type Theme = "dark" | "light";
         ev.preventDefault();
         parent.postMessage(
           {
-            type: "aidocs:zoom",
+            type: "slashdocs:zoom",
             deltaY: ev.deltaY,
             clientX: ev.clientX,
             clientY: ev.clientY,
@@ -1401,11 +1885,24 @@ type Theme = "dark" | "light";
     );
     d.addEventListener("click", activate);
     d.addEventListener("click", handleLinkClick);
+    d.addEventListener(
+      "click",
+      () => parent.postMessage({ type: "slashdocs:document-click" }, targetOrigin()),
+      true,
+    );
     d.defaultView?.addEventListener("scroll", postCommentScroll, {
       passive: true,
     });
     d.defaultView?.addEventListener("resize", scheduleCommentPositions);
-    parent.postMessage({ type: "aidocs:ready" }, targetOrigin());
+    // Capture scrolls of nested containers too, not only the window.
+    d.addEventListener("scroll", scheduleViewport, { capture: true, passive: true });
+    d.addEventListener("scroll", cursors.refresh, { capture: true, passive: true });
+    d.defaultView?.addEventListener("resize", cursors.refresh);
+    trackPointer(d, (spot) =>
+      parent.postMessage({ type: "slashdocs:pointer", spot }, targetOrigin()),
+    );
+    parent.postMessage({ type: "slashdocs:ready" }, targetOrigin());
+    scheduleViewport();
     hydrateKV();
   }
 
@@ -1418,9 +1915,52 @@ type Theme = "dark" | "light";
   window.addEventListener("message", (e) => {
     if (!e.data) return;
     if (!isParentMessage(e)) return;
-    if (e.data.type === "aidocs:paint") paint(e.data.comments, e.data.active);
-    else if (e.data.type === "aidocs:theme") applyTheme(e.data.theme);
-    else if (e.data.type === "aidocs:kv-response") {
+    if (
+      e.data.type === "slashdocs:print-snapshot" &&
+      typeof e.data.requestId === "string"
+    ) {
+      const d = doc();
+      if (!d || printPreparing) return;
+      printPreparing = true;
+      void snapshotForPrint(d)
+        .then((html) => {
+          parent.postMessage(
+            {
+              type: "slashdocs:print-snapshot-result",
+              requestId: e.data.requestId,
+              html,
+              title: d.title,
+            },
+            targetOrigin(),
+          );
+        })
+        .catch(() => {
+          parent.postMessage(
+            { type: "slashdocs:print-snapshot-result", requestId: e.data.requestId },
+            targetOrigin(),
+          );
+        });
+      return;
+    }
+    if (e.data.type === "slashdocs:print-finished") {
+      printPreparing = false;
+      const view = innerWindow();
+      if (view) {
+        view.dispatchEvent(new Event("afterprint"));
+        dispatchPublicEvent(view, "afterprint");
+      }
+      return;
+    }
+    if (e.data.type === "slashdocs:export-response") {
+      const pending = exportPending.get(e.data.requestId);
+      exportPending.delete(e.data.requestId);
+      if (e.data.ok === true) pending?.resolve();
+      else pending?.reject();
+      return;
+    }
+    if (e.data.type === "slashdocs:paint") paint(e.data.comments, e.data.active);
+    else if (e.data.type === "slashdocs:theme") applyTheme(e.data.theme);
+    else if (e.data.type === "slashdocs:kv-response") {
       const requestId = String(e.data.requestId || "");
       const pending = kvPending[requestId];
       if (!pending) return;
@@ -1430,7 +1970,7 @@ type Theme = "dark" | "light";
         pending.reject(
           new Error((e.data.error && e.data.error.message) || "KV request failed"),
         );
-    } else if (e.data.type === "aidocs:github-response") {
+    } else if (e.data.type === "slashdocs:github-response") {
       const requestId = String(e.data.requestId || "");
       const pending = githubPending[requestId];
       if (!pending) return;
@@ -1440,12 +1980,14 @@ type Theme = "dark" | "light";
         pending.reject(
           new Error((e.data.error && e.data.error.message) || "GitHub request failed"),
         );
-    } else if (e.data.type === "aidocs:navigate-heading") {
+    } else if (e.data.type === "slashdocs:navigate-text") {
+      navigateText(e.data.anchor);
+    } else if (e.data.type === "slashdocs:navigate-heading") {
       navigateHeading(String(e.data.id || ""));
-    } else if (e.data.type === "aidocs:request-comment-positions") {
+    } else if (e.data.type === "slashdocs:request-comment-positions") {
       scheduleCommentPositions();
     } else if (
-      e.data.type === "aidocs:scroll-to" &&
+      e.data.type === "slashdocs:scroll-to" &&
       typeof e.data.top === "number" &&
       Number.isFinite(e.data.top)
     ) {
@@ -1453,12 +1995,12 @@ type Theme = "dark" | "light";
         top: Math.max(0, e.data.top),
         behavior: "instant",
       });
-    } else if (e.data.type === "aidocs:vim-key") {
+    } else if (e.data.type === "slashdocs:vim-key") {
       const d = doc();
       const KeyboardEventCtor = d?.defaultView?.KeyboardEvent;
       if (!d || !KeyboardEventCtor) return;
       d.dispatchEvent(
-        new KeyboardEventCtor("keydown", {
+        new KeyboardEventCtor(e.data.up === true ? "keyup" : "keydown", {
           key: String(e.data.key || ""),
           ctrlKey: e.data.ctrlKey === true,
           metaKey: e.data.metaKey === true,
@@ -1466,8 +2008,14 @@ type Theme = "dark" | "light";
           repeat: e.data.repeat === true,
         }),
       );
-    } else if (e.data.type === "aidocs:kv-event") {
+    } else if (e.data.type === "slashdocs:kv-event") {
       emitKVChange(e.data.detail || {});
+    } else if (e.data.type === "slashdocs:cursor") {
+      cursors.receive(e.data.cursor);
+    } else if (e.data.type === "slashdocs:clear-cursors") {
+      cursors.clear();
+    } else if (e.data.type === "slashdocs:follow-cursor") {
+      cursors.follow(String(e.data.session || ""));
     }
   });
 })();

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end smoke test for the docker-compose stack.
 #
-#   scripts/e2e.sh        reset and boot an isolated aidocs-e2e compose stack;
+#   scripts/e2e.sh        reset and boot an isolated slashdocs-e2e compose stack;
 #                         exercise login, documents, comments, sharing,
 #                         folders, rendering, and SSE; exits non-zero on the
 #                         first failure. The stack is left running.
@@ -11,9 +11,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-aidocs-e2e}"
-APP="http://localhost:8080"          # AIDOCS_APP_ORIGIN in docker-compose.yml
-RENDER="http://127.0.0.1:8080"       # AIDOCS_RENDER_ORIGIN (same listener, distinct origin)
+export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-slashdocs-e2e}"
+APP="http://localhost:8080"          # SLASHDOCS_APP_ORIGIN in docker-compose.yml
+RENDER="http://127.0.0.1:8080"       # SLASHDOCS_RENDER_ORIGIN (same listener, distinct origin)
 DEX="http://localhost:5556"
 DEV_USER="admin@example.com"         # static Dex user from dev/dex-config.yaml
 DEV_PASSWORD="password"
@@ -59,11 +59,15 @@ api() { curl -sS --fail-with-body "$@"; }
 # the dedicated E2E project is reset; normal developer compose state is left
 # untouched.
 docker compose down -v --remove-orphans >/dev/null 2>&1 || true
-if [[ -n "${AIDOCS_IMAGE:-}" ]]; then
-  # CI already built and tagged the image; never rebuild it inside compose.
-  docker compose up -d --no-build
+if [[ -n "${SLASHDOCS_IMAGE:-}" ]]; then
+  # CI already built and tagged the image, so never rebuild it. --pull missing
+  # pulls only the images that are absent (Postgres, versitygw, Dex), and keeps
+  # the pull_policy of slashdocs from pulling this local-only tag.
+  docker compose up -d --no-build --pull missing
 else
-  docker compose up -d --build
+  # Test this checkout, tagged locally so it never replaces the published
+  # razorpay/slashdocs:latest that a plain `docker compose up` runs.
+  SLASHDOCS_IMAGE=slashdocs-e2e:local docker compose up -d --build
 fi
 
 for i in $(seq 1 120); do
@@ -80,7 +84,7 @@ LOGIN_URL="$(curl -sS -L -c "$JAR" -b "$JAR" -o "$TMP/login.html" -w '%{url_effe
 [[ "$LOGIN_URL" == "$DEX"/* ]] || fail "login redirect (landed on $LOGIN_URL, expected Dex)"
 
 # Dex's local connector serves a plain HTML form; POST the static credentials
-# to its action URL and follow the redirects back through the aidocs callback.
+# to its action URL and follow the redirects back through the slashdocs callback.
 # (sed both extracts and HTML-unescapes; bash's ${var//&amp;/&} is unsafe here
 # because bash 5.2 expands & in the replacement to the matched text.)
 ACTION="$(grep -o 'action="[^"]*"' "$TMP/login.html" | head -1 \
@@ -108,7 +112,7 @@ pass "service account created ($SA_ID)"
 KEY="$(api -b "$JAR" -H 'Content-Type: application/json' -H "Origin: $APP" \
   -d '{"name":"e2e-key"}' "$APP/v1/service-accounts/$SA_ID/keys")"
 SA_TOKEN="$(jsonget token <<<"$KEY")"
-[[ "$SA_TOKEN" == aidocs_sa_* ]] || fail "service account key create ($KEY)"
+[[ "$SA_TOKEN" == slashdocs_sa_* ]] || fail "service account key create ($KEY)"
 pass "service account key created"
 
 USERS="$(api -b "$JAR" "$APP/v1/users?q=admin")"
@@ -124,9 +128,9 @@ pass "config listed"
 
 # --- CLI: push / pull / version documents as the service account ------------
 
-go build -o "$TMP/aidocs" ./cli
-export XDG_CONFIG_HOME="$TMP/xdg" AIDOCS_NO_BROWSER=1
-cli() { "$TMP/aidocs" --server "$APP" --token "$SA_TOKEN" --json "$@"; }
+go build -o "$TMP/slashdocs" ./cli
+export XDG_CONFIG_HOME="$TMP/xdg" SLASHDOCS_NO_BROWSER=1
+cli() { "$TMP/slashdocs" --server "$APP" --token "$SA_TOKEN" --json "$@"; }
 pass "CLI built"
 
 PNG="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
@@ -178,7 +182,7 @@ print(json.dumps({
 }))
 ' "$V2" "$DEV_USER_ID")"
 CMT_RESPONSE="$(api -H "Authorization: Bearer $SA_TOKEN" \
-  -H 'Content-Type: application/vnd.aidocs.comment-mentions+json' \
+  -H 'Content-Type: application/vnd.slashdocs.comment-mentions+json' \
   -d "$CMT_PAYLOAD" "$APP/v1/documents/$DOC/comments")"
 CMT="$(jsonget id <<<"$CMT_RESPONSE")"
 [[ "$CMT" == cmt_* ]] || fail "structured comment create ($CMT_RESPONSE)"
@@ -206,7 +210,7 @@ assert c["mentions"][0]["principal"]["id"] == sys.argv[2]
 assert c["mentions"][0]["offset"] == 8 and c["mentions"][0]["length"] == 18
 ' "$CMT" "$DEV_USER_ID" <<<"$CMT_LIST" || fail "structured comment list ($CMT_LIST)"
 
-COMMENTS_HUMAN="$("$TMP/aidocs" --server "$APP" --token "$SA_TOKEN" docs comments list "$DOC")"
+COMMENTS_HUMAN="$("$TMP/slashdocs" --server "$APP" --token "$SA_TOKEN" docs comments list "$DOC")"
 grep -Fq "mentions=@$DEV_USER_LABEL" <<<"$COMMENTS_HUMAN" \
   || fail "CLI mention annotation ($COMMENTS_HUMAN)"
 pass "structured comment round-tripped cleanly ($CMT)"

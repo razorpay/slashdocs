@@ -1,12 +1,14 @@
 import { useTitle } from "@/lib/use-title";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useOnboarding, autoMarkFirstDoc } from "@/lib/onboarding";
+import { useOnboarding, autoMarkFirstDoc, onboardingProgress } from "@/lib/onboarding";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { errorMessage } from "@/lib/errors";
 import { MoreHorizontal, Plus, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Page } from "@/components/layout/page";
+import { beat } from "@/lib/enter";
 import { Skeleton, EmptyState } from "@/components/ui/misc";
 import { Dropdown, DropdownContent, DropdownTrigger } from "@/components/ui/dropdown";
 import { api, docID, docTitle, type Folder, type FolderEntry } from "@/api";
@@ -18,8 +20,12 @@ import { UnifiedGrid } from "@/components/browse/unified-grid";
 import { UnifiedTable } from "@/components/browse/unified-table";
 import { ViewModeToggle } from "@/components/browse/view-mode-toggle";
 import { AccessWarningDialog, NewFolderDialog } from "@/components/browse/dialogs";
-import { UploadBackupItem } from "@/components/browse/upload-backup";
+import {
+  UploadBackupDialog,
+  UploadBackupMenuItem,
+} from "@/components/browse/upload-backup";
 import { DocumentSearchInput } from "@/components/browse/document-search-input";
+import { FeaturedItems } from "@/components/browse/featured-items";
 import { hasDocumentSearchOperators } from "@/lib/search-query";
 import {
   DndContext,
@@ -58,7 +64,7 @@ export function DocumentsPage() {
   const { state: onb } = useOnboarding();
   const nav = useNavigate();
   useEffect(() => {
-    if (onb.status === "active" && !onb.steps.cli_installed && !onb.steps.cli_authed) {
+    if (onb.status === "active" && onboardingProgress(onb).done === 0) {
       nav("/app/start", { replace: true });
     }
   }, [onb, nav]);
@@ -78,35 +84,46 @@ export function DocumentsPage() {
     [pins.data],
   );
 
-  // Merge folders and documents into a single list sorted by pinned status, last activity, then alphabetically
-  const merged = useMemo(() => {
-    const folderItems: FolderEntry[] = folderEntries.map((e) => ({
-      type: "folder" as const,
-      folder: e.folder,
-      last_active: e.last_active,
-    }));
-    const docItems: FolderEntry[] = documents.map((d) => ({
-      type: "document" as const,
-      document: d,
-      last_active: d.updated_at,
-    }));
-    return [...folderItems, ...docItems].sort((a, b) => {
-      const ap = pinnedIds.has(a.folder?.id || docID(a.document!));
-      const bp = pinnedIds.has(b.folder?.id || docID(b.document!));
-      if (ap !== bp) return ap ? -1 : 1;
-      const ta = a.last_active || "";
-      const tb = b.last_active || "";
-      if (ta && tb) return tb.localeCompare(ta);
-      if (tb) return 1;
-      if (ta) return -1;
-      const na = (a.folder?.title || a.document?.title || "").toLowerCase();
-      const nb = (b.folder?.title || b.document?.title || "").toLowerCase();
-      return na.localeCompare(nb);
-    });
-  }, [folderEntries, documents, pinnedIds]);
+  const entries = useMemo<FolderEntry[]>(
+    () => [
+      ...folderEntries.map((e) => ({
+        type: "folder" as const,
+        folder: e.folder,
+        last_active: e.last_active,
+      })),
+      ...documents.map((d) => ({
+        type: "document" as const,
+        document: d,
+        last_active: d.updated_at,
+      })),
+    ],
+    [folderEntries, documents],
+  );
+
+  // Browsing sorts by pinned status, last activity, then title. Search
+  // results keep the server's order: documents with the words in the title
+  // first, then the latest.
+  const merged = useMemo(
+    () =>
+      [...entries].sort((a, b) => {
+        const ap = pinnedIds.has(a.folder?.id || docID(a.document!));
+        const bp = pinnedIds.has(b.folder?.id || docID(b.document!));
+        if (ap !== bp) return ap ? -1 : 1;
+        const ta = a.last_active || "";
+        const tb = b.last_active || "";
+        if (ta && tb) return tb.localeCompare(ta);
+        if (tb) return 1;
+        if (ta) return -1;
+        const na = (a.folder?.title || a.document?.title || "").toLowerCase();
+        const nb = (b.folder?.title || b.document?.title || "").toLowerCase();
+        return na.localeCompare(nb);
+      }),
+    [entries, pinnedIds],
+  );
 
   const viewMode = viewModeStore.useStore();
   const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
   const qc = useQueryClient();
 
   // Drag and drop
@@ -135,8 +152,7 @@ export function DocumentsPage() {
       qc.invalidateQueries({ queryKey: queryKeys.foldersAll() });
       qc.invalidateQueries({ queryKey: queryKeys.documents() });
       const warning = (data as Record<string, unknown>)?.permission_warning as
-        | { message?: string }
-        | undefined;
+        { message?: string } | undefined;
       if (warning?.message) {
         setAccessWarning(warning.message);
       } else {
@@ -173,30 +189,47 @@ export function DocumentsPage() {
 
   if (docs.isLoading) {
     return (
-      <div className="mx-auto max-w-6xl px-6 py-10">
-        <Skeleton className="mb-3 h-9 w-48" />
+      <Page backdrop={false}>
+        <Skeleton className="mx-auto mb-8 mt-16 h-14 max-w-2xl rounded-[18px]" />
         <Skeleton className="h-64 w-full" />
-      </div>
+      </Page>
     );
   }
   const searching = debouncedQ.length > 0;
   const empty = !searching && documents.length === 0 && folders.length === 0;
 
+  const name = (me.data?.user || me.data?.principal)?.name?.split(" ")[0];
+
   return (
-    <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-10">
-      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Documents</h1>
-          <p className="mt-1 text-sm text-[var(--color-fg-muted)]">
-            Documents your agents have published.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
+    <Page backdrop="halo">
+      <section className="pb-12 pt-8 text-center md:pb-16 md:pt-16">
+        <p className="enter text-lg text-[var(--color-fg-muted)]">
+          {name ? `Hi, ${name}` : "Welcome back"}
+        </p>
+        <h1
+          className="enter mt-2 text-[32px] font-normal leading-tight tracking-[-0.02em] md:text-[44px]"
+          style={beat(1)}
+        >
+          What did your agents publish?
+        </h1>
+        <div className="enter mx-auto mt-8 max-w-2xl" style={beat(2)}>
           <DocumentSearchInput value={q} onChange={setQ} />
+        </div>
+      </section>
+      <div
+        className="enter mb-4 flex items-center justify-between gap-2"
+        style={beat(3)}
+      >
+        <h2 className="text-base font-semibold">
+          {searching ? "Results" : "Documents"}
+        </h2>
+        <div className="flex items-center gap-2">
           <ViewModeToggle />
           <Button
             variant="outline"
             size="md"
+            aria-label="New folder"
+            tooltip="New folder"
             onClick={() => setNewFolderOpen(true)}
             className="shrink-0 px-3 sm:px-4"
           >
@@ -215,11 +248,13 @@ export function DocumentsPage() {
               </Button>
             </DropdownTrigger>
             <DropdownContent>
-              <UploadBackupItem />
+              <UploadBackupMenuItem onSelect={() => setUploadOpen(true)} />
             </DropdownContent>
           </Dropdown>
         </div>
       </div>
+
+      {!searching && <FeaturedItems />}
 
       {docs.error ? (
         <EmptyState
@@ -230,11 +265,18 @@ export function DocumentsPage() {
         <EmptyDocs />
       ) : searching ? (
         documents.length === 0 && folders.length === 0 ? (
-          <EmptyState title="No matches" description={`Nothing matches "${q}".`} />
+          <EmptyState
+            title="No matches"
+            description={`We read every page of every document. "${q}" is not on any of them.`}
+          />
         ) : viewMode === "list" ? (
-          <UnifiedTable entries={merged} principal={me.data?.principal} />
+          <UnifiedTable
+            entries={entries}
+            principal={me.data?.principal}
+            pinnedIds={pinnedIds}
+          />
         ) : (
-          <UnifiedGrid entries={merged} />
+          <UnifiedGrid entries={entries} pinnedIds={pinnedIds} />
         )
       ) : (
         <DndContext
@@ -256,26 +298,27 @@ export function DocumentsPage() {
       )}
 
       <NewFolderDialog open={newFolderOpen} onOpenChange={setNewFolderOpen} />
+      <UploadBackupDialog open={uploadOpen} onOpenChange={setUploadOpen} />
 
       <AccessWarningDialog
         warning={accessWarning}
         onClose={() => setAccessWarning(null)}
       />
-    </div>
+    </Page>
   );
 }
 
 function EmptyDocs() {
   return (
     <div className="mx-auto max-w-xl space-y-4">
-      <div className="rounded-[14px] border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
+      <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
         <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-md bg-[var(--color-accent-muted)] text-[var(--color-accent)]">
           <Sparkles className="h-5 w-5" />
         </div>
         <h3 className="text-base font-semibold">Set up your agent</h3>
         <p className="mt-1 text-sm text-[var(--color-fg-muted)]">
           Documents are published by your AI agent. Walk through the three-step setup so
-          it knows how to use aidocs.
+          it knows how to use slashdocs.
         </p>
         <div className="mt-4">
           <Button asChild>

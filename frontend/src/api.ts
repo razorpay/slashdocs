@@ -24,6 +24,8 @@ export type Document = {
   parent_folder?: { id: string; title: string };
   updated_at?: string;
   labels?: string[];
+  // Search results only: the matching text. U+0002 and U+0003 surround each match.
+  snippet?: string;
 };
 export type ServerConfig = {
   deployment: "public" | "org";
@@ -31,6 +33,7 @@ export type ServerConfig = {
   everyone_label: string;
   provider_name: string;
   google_groups_enabled: boolean;
+  labels_enabled: boolean;
 };
 export type GoogleGroup = { id: string; email: string; name: string };
 export type Version = {
@@ -63,6 +66,27 @@ export type Anchor = {
   start_offset?: number;
   end_offset?: number;
 };
+// REACTION_EMOJI is the closed set the server accepts. Values are stable ASCII
+// slugs rather than literal emoji, so each client picks its own glyph.
+export const REACTION_EMOJI = [
+  "+1",
+  "-1",
+  "laugh",
+  "hooray",
+  "confused",
+  "heart",
+  "rocket",
+  "eyes",
+  "plus",
+] as const;
+export type ReactionEmoji = (typeof REACTION_EMOJI)[number];
+export type CommentReaction = {
+  emoji: string;
+  count: number;
+  reacted: boolean;
+  // Optional when reading from a server that predates reactor identities.
+  reactors?: Principal[];
+};
 export type Comment = {
   id: string;
   body: string;
@@ -75,6 +99,8 @@ export type Comment = {
   // Optional only for rolling-upgrade reads from an older server. New servers
   // always return an array, including when it is empty.
   mentions?: CommentMention[];
+  // Optional for the same reason as mentions.
+  reactions?: CommentReaction[];
   anchor?: Anchor;
   replies?: Comment[];
   current_placement?: {
@@ -82,6 +108,9 @@ export type Comment = {
     confidence: number;
     matched_text: string;
   };
+  created_at?: string;
+  resolved_at?: string;
+  edited?: boolean;
 };
 export type CommentPatch = {
   body?: string;
@@ -89,7 +118,7 @@ export type CommentPatch = {
   mentions?: CommentMention[];
 };
 
-const COMMENT_MENTIONS_MEDIA_TYPE = "application/vnd.aidocs.comment-mentions+json";
+const COMMENT_MENTIONS_MEDIA_TYPE = "application/vnd.slashdocs.comment-mentions+json";
 export type Grant = {
   id: string;
   principal?: Principal;
@@ -112,6 +141,14 @@ export type FolderEntry = {
   folder?: Folder;
   document?: Document;
   last_active?: string;
+};
+// FeaturedSection is a titled row of server-configured documents and folders.
+// Users cannot hide the items of a permanent section.
+export type FeaturedSection = {
+  title: string;
+  description?: string;
+  permanent: boolean;
+  items: FolderEntry[];
 };
 export type Pin = {
   resource_type: "document" | "folder";
@@ -145,6 +182,30 @@ export type DocumentKVEvent = {
   changes: DocumentKVChange[];
   updated_at?: string;
   updated_by?: Principal;
+  // Stream events other than KV changes set kind; presence and cursor events
+  // carry data.
+  kind?: "kv" | "document" | "comments" | "presence" | "cursor";
+  data?: unknown;
+};
+// A viewer's place in a document, published on the document event stream.
+export type DocumentPresence = {
+  session: string;
+  version?: string;
+  anchor?: Partial<Anchor>;
+  left?: boolean;
+  picture_url?: string;
+};
+// A place in a rendered document: the element at a path of child indexes
+// under the body, and fractions of the width and height of that element.
+export type CursorSpot = { path: string; x: number; y: number };
+// A pointer position at time t, in milliseconds on the sender's clock. A
+// hidden point means that the pointer left the document.
+export type CursorPoint = CursorSpot & { t: number; hidden?: boolean };
+// A batch of pointer positions from one viewer session.
+export type DocumentCursor = {
+  session: string;
+  version: string;
+  points: CursorPoint[];
 };
 export type AccessSource = {
   resource_type: string;
@@ -157,6 +218,10 @@ export type EffectiveAccessItem = {
   principal: Principal;
   effective_role: string;
   sources: AccessSource[];
+};
+export type AccessRequest = {
+  requester: Principal;
+  requested_at: string;
 };
 export type ServiceAccount = {
   id: string;
@@ -219,7 +284,20 @@ function mentionPayload(mentions: CommentMention[]) {
   }));
 }
 
+export type NotificationPreferences = { enabled: boolean; effective_enabled: boolean };
+const notificationPath = (docId?: string) =>
+  docId
+    ? `/v1/documents/${encodeURIComponent(docId)}/notifications`
+    : "/v1/me/notifications";
+
 export const api = {
+  notificationPreferences: (docId?: string) =>
+    request<NotificationPreferences>(notificationPath(docId)),
+  setNotificationPreferences: (enabled: boolean, docId?: string) =>
+    request<NotificationPreferences>(notificationPath(docId), {
+      method: "PUT",
+      body: JSON.stringify({ enabled }),
+    }),
   me: () =>
     request<{
       principal: Principal;
@@ -228,13 +306,26 @@ export const api = {
     }>("/v1/me"),
   loginURL: (redirect: string = location.pathname + location.search) =>
     `/v1/auth/google/start?mode=web&redirect=${encodeURIComponent(redirect)}`,
+  logout: () => request<void>("/v1/auth/logout", { method: "POST" }),
   listDocuments: (q?: string) => {
     const params = new URLSearchParams();
-    if (q) params.set("q", q);
+    if (q) {
+      params.set("q", q);
+      // Date modifiers such as on:today use the searcher's days.
+      params.set("tz", Intl.DateTimeFormat().resolvedOptions().timeZone);
+    }
     const qs = params.toString();
     return request<{ items: Document[] }>(`/v1/documents${qs ? `?${qs}` : ""}`);
   },
   getDocument: (id: string) => request<Document>(`/v1/documents/${id}`),
+  requestDocumentAccess: (id: string) =>
+    request<{ status: "sent" }>(
+      `/v1/documents/${encodeURIComponent(id)}/access-requests`,
+      {
+        method: "POST",
+        body: JSON.stringify({}),
+      },
+    ),
   getConfig: () => request<ServerConfig>("/v1/config"),
   searchUsers: (q: string) =>
     request<{ items: UserPrincipal[] }>(`/v1/users?q=${encodeURIComponent(q)}`),
@@ -301,6 +392,25 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(patch),
     }),
+  postDocumentPresence: (doc: string, presence: DocumentPresence) =>
+    request<void>(`/v1/documents/${doc}/presence`, {
+      method: "POST",
+      body: JSON.stringify(presence),
+    }),
+  postDocumentCursor: (doc: string, cursor: DocumentCursor) =>
+    request<void>(`/v1/documents/${doc}/cursor`, {
+      method: "POST",
+      body: JSON.stringify(cursor),
+    }),
+  // emoji stays a string: the only caller forwards a slug the server sent, and
+  // narrowing it here would need a cast that asserts what the wire does not
+  // guarantee. Values authored in this client come from REACTION_EMOJI, which
+  // is already the literal union.
+  setCommentReaction: (doc: string, comment: string, emoji: string, reacted: boolean) =>
+    request<void>(
+      `/v1/documents/${doc}/comments/${comment}/reactions/${encodeURIComponent(emoji)}`,
+      { method: reacted ? "PUT" : "DELETE" },
+    ),
   listComments: (doc: string, version?: string) =>
     request<{ items: Comment[] }>(
       `/v1/documents/${doc}/comments${version ? `?version_id=${encodeURIComponent(version)}` : ""}`,
@@ -497,14 +607,14 @@ export const api = {
     request<{
       items: EffectiveAccessItem[];
       current_role: string;
-      canonical_owner: boolean;
     }>(`/v1/folders/${id}/access`),
   documentAccess: (id: string) =>
     request<{
       items: EffectiveAccessItem[];
       current_role: string;
-      canonical_owner: boolean;
     }>(`/v1/documents/${id}/access`),
+  documentAccessRequests: (id: string) =>
+    request<{ items: AccessRequest[] }>(`/v1/documents/${id}/access-requests`),
   // Pins
   listPins: () => request<{ items: Pin[] }>("/v1/pins"),
   putPin: (resourceType: string, resourceId: string) =>
@@ -513,6 +623,10 @@ export const api = {
     request<void>(`/v1/pins/${resourceType}/${resourceId}`, {
       method: "DELETE",
     }),
+  // Featured items: documents and folders that the server shows to each user.
+  listFeatured: () => request<{ items: FeaturedSection[] }>("/v1/featured"),
+  hideFeatured: (resourceId: string) =>
+    request<void>(`/v1/featured/${resourceId}`, { method: "DELETE" }),
 };
 
 export const docID = (d: Partial<Document>) => d.id || "";

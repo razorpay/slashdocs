@@ -3,8 +3,8 @@ package server
 import (
 	"strings"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
-	"github.com/razorpay/aidocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
 // principalResponse renders a principal with its optional identity fields.
@@ -62,15 +62,29 @@ type commentResponse struct {
 	Body               string                    `json:"body"`
 	Status             string                    `json:"status"`
 	CreatedOnVersionID string                    `json:"created_on_version_id"`
+	CreatedAt          string                    `json:"created_at,omitempty"`
+	ResolvedAt         string                    `json:"resolved_at,omitempty"`
+	Edited             bool                      `json:"edited,omitempty"`
 	ParentCommentID    string                    `json:"parent_comment_id,omitempty"`
 	Mentions           []commentMentionResponse  `json:"mentions"`
+	Reactions          []commentReactionResponse `json:"reactions"`
 	SelectedText       string                    `json:"selected_text,omitempty"`
 	Anchor             *repo.Anchor              `json:"anchor,omitempty"`
 	CurrentPlacement   *commentPlacementResponse `json:"current_placement,omitempty"`
 	Replies            *[]commentResponse        `json:"replies,omitempty"`
 }
 
-func commentsJSON(items []repo.Comment, placementVersionID string, placementHTML []byte) []commentResponse {
+// commentReactionResponse is one emoji group on a comment. Reacted reports
+// whether the principal making the request is among the reactors, which is why
+// rendering a comment needs a viewer.
+type commentReactionResponse struct {
+	Emoji    string              `json:"emoji"`
+	Count    int                 `json:"count"`
+	Reacted  bool                `json:"reacted"`
+	Reactors []principalResponse `json:"reactors"`
+}
+
+func commentsJSON(items []repo.Comment, placementVersionID string, placementHTML []byte, viewer auth.Principal) []commentResponse {
 	// Stringify the version body once for all placement checks below.
 	haystack := string(placementHTML)
 	roots := make([]repo.Comment, 0, len(items))
@@ -98,7 +112,7 @@ func commentsJSON(items []repo.Comment, placementVersionID string, placementHTML
 	}
 	out := make([]commentResponse, 0, len(roots))
 	for _, cm := range roots {
-		out = append(out, commentJSON(cm, placementVersionID, haystack))
+		out = append(out, commentJSON(cm, placementVersionID, haystack, viewer))
 	}
 	return out
 }
@@ -126,8 +140,8 @@ func principalJSON(p auth.Principal) principalResponse {
 	return principalResponse{Type: p.Type, ID: p.ID, Email: p.Email, Name: p.Name, PictureURL: p.PictureURL}
 }
 
-func commentJSON(cm repo.Comment, placementVersionID, placementHTML string) commentResponse {
-	out := commentBaseJSON(cm)
+func commentJSON(cm repo.Comment, placementVersionID, placementHTML string, viewer auth.Principal) commentResponse {
+	out := commentBaseJSON(cm, viewer)
 	if cm.ParentCommentID == "" {
 		if placementVersionID == "" {
 			placementVersionID = cm.VersionID
@@ -141,22 +155,26 @@ func commentJSON(cm repo.Comment, placementVersionID, placementHTML string) comm
 			Confidence:  confidence,
 		}
 		if cm.Replies != nil {
-			replies := commentsReplyJSON(cm.Replies)
+			replies := commentsReplyJSON(cm.Replies, viewer)
 			out.Replies = &replies
 		}
 	}
 	return out
 }
 
-func commentBaseJSON(cm repo.Comment) commentResponse {
+func commentBaseJSON(cm repo.Comment, viewer auth.Principal) commentResponse {
 	out := commentResponse{
 		ID:                 cm.ID,
 		Author:             principalJSON(cm.Author),
 		Body:               cm.Body,
 		Status:             cm.Status,
 		CreatedOnVersionID: cm.VersionID,
+		CreatedAt:          cm.CreatedAt,
+		ResolvedAt:         cm.ResolvedAt,
+		Edited:             cm.Edited,
 		ParentCommentID:    cm.ParentCommentID,
 		Mentions:           commentMentionsJSON(cm.Mentions),
+		Reactions:          commentReactionsJSON(cm.Reactions, viewer),
 	}
 	if cm.SelectedText != "" {
 		out.SelectedText = cm.SelectedText
@@ -184,10 +202,37 @@ func commentMentionsJSON(items []repo.CommentMention) []commentMentionResponse {
 	return out
 }
 
-func commentsReplyJSON(items []repo.Comment) []commentResponse {
+// commentReactionsJSON groups raw reaction rows into per-emoji counts and
+// marks the ones the viewer joined. The repository returns rows in
+// first-reaction order, so accumulating into a slice keyed by a side index
+// preserves that order; ranging a map here would reshuffle the groups on every
+// request.
+func commentReactionsJSON(items []repo.CommentReaction, viewer auth.Principal) []commentReactionResponse {
+	out := make([]commentReactionResponse, 0, len(items))
+	at := make(map[string]int, len(items))
+	for _, reaction := range items {
+		i, ok := at[reaction.Emoji]
+		if !ok {
+			i = len(out)
+			at[reaction.Emoji] = i
+			out = append(out, commentReactionResponse{Emoji: reaction.Emoji})
+		}
+		out[i].Count++
+		out[i].Reactors = append(out[i].Reactors, principalJSON(reaction.Principal))
+		// Compare type as well as id: principal ids are only unique within a
+		// principal type, so id alone would conflate a user with a service
+		// account that happens to share it.
+		if reaction.Principal.Type == viewer.Type && reaction.Principal.ID == viewer.ID {
+			out[i].Reacted = true
+		}
+	}
+	return out
+}
+
+func commentsReplyJSON(items []repo.Comment, viewer auth.Principal) []commentResponse {
 	out := make([]commentResponse, 0, len(items))
 	for _, cm := range items {
-		out = append(out, commentBaseJSON(cm))
+		out = append(out, commentBaseJSON(cm, viewer))
 	}
 	return out
 }

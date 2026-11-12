@@ -50,7 +50,7 @@ SELECT DISTINCT d.id,d.title,d.current_version_id,d.owner_type,d.owner_id,
 FROM documents d
 JOIN document_labels dl ON dl.document_id=d.id AND dl.label=$1::text
 LEFT JOIN users u ON d.owner_type='user' AND u.id=d.owner_id
-LEFT JOIN service_accounts sa ON d.owner_type='service_account' AND sa.id=d.owner_id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts sa ON d.owner_type='service_account' AND sa.id=d.owner_id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE d.parent_folder_id IS NULL AND (
   (d.owner_type=$2::text AND d.owner_id=$3::text)
   OR EXISTS (

@@ -9,8 +9,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
-	"github.com/razorpay/aidocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/internal/render"
 )
 
 // createVersionResponse is the payload of POST /v1/documents/{id}/versions.
@@ -52,7 +53,7 @@ func (h handlers) createVersion(c *gin.Context) {
 	p := current(c)
 	html, err := readMultipartFile(c, "file")
 	if errors.Is(err, errPayloadTooLarge) {
-		c.JSON(http.StatusRequestEntityTooLarge, errorResponse("payload_too_large", "HTML file exceeds 10 MiB", nil))
+		c.JSON(http.StatusRequestEntityTooLarge, errorResponse("payload_too_large", "HTML file exceeds 50 MiB", nil))
 		return
 	}
 	if err != nil {
@@ -76,6 +77,7 @@ func (h handlers) createVersion(c *gin.Context) {
 		return
 	}
 	incVersion("created", actorType(c))
+	h.announce(c, repo.DocumentEventDocument)
 	c.JSON(http.StatusCreated, createVersionResponse{ID: v.ID, Number: v.Number, SHA256: v.SHA256, ChangeSummary: v.ChangeSummary})
 }
 
@@ -100,7 +102,7 @@ func (h handlers) createRenderToken(c *gin.Context) {
 	if h.deps.renderOrigin == "" || sameHTTPOrigin(h.deps.appOrigin, h.deps.renderOrigin) {
 		//nolint:gosec // G124: Secure is conditional so explicit local HTTP development remains usable.
 		http.SetCookie(c.Writer, &http.Cookie{
-			Name:     "aidocs_render_token",
+			Name:     "slashdocs_render_token",
 			Value:    token,
 			Path:     renderPath,
 			HttpOnly: true,
@@ -175,7 +177,7 @@ func (h handlers) renderVersion(c *gin.Context) {
 	docID, vid := c.Param("id"), c.Param("version_id")
 	token := c.Query("token")
 	if token == "" {
-		if cookie, err := c.Request.Cookie("aidocs_render_token"); err == nil {
+		if cookie, err := c.Request.Cookie("slashdocs_render_token"); err == nil {
 			token = cookie.Value
 		}
 	}
@@ -199,12 +201,12 @@ func (h handlers) renderVersion(c *gin.Context) {
 	if appOrigin == "" {
 		appOrigin = "'self'"
 	}
-	c.Header("Content-Security-Policy", "default-src 'none'; img-src * data: blob:; media-src * data: blob:; font-src * data: blob:; style-src * 'unsafe-inline'; script-src * 'unsafe-inline' 'unsafe-eval'; connect-src *; frame-src *; worker-src * blob:; object-src 'none'; frame-ancestors "+appOrigin)
+	c.Header("Content-Security-Policy", render.CSP(appOrigin))
 	c.Header("Referrer-Policy", "no-referrer")
 	c.Header("X-Content-Type-Options", "nosniff")
 	observeHTML("render", len(b))
 	incRender("rendered", "success")
-	c.Data(http.StatusOK, "text/html; charset=utf-8", renderWrapperHTML(b, appOrigin))
+	c.Data(http.StatusOK, "text/html; charset=utf-8", render.Wrap(b, appOrigin))
 }
 
 func secureRenderCookie(c *gin.Context, appOrigin string) bool {
@@ -299,6 +301,6 @@ func (h handlers) getVersionHTML(c *gin.Context) {
 	incVersion("html_downloaded", actorType(c))
 	c.Header("Content-Security-Policy", "sandbox; default-src 'none'")
 	c.Header("X-Content-Type-Options", "nosniff")
-	c.Header("Content-Disposition", `attachment; filename="aidocs-`+v.ID+`.html"`)
+	c.Header("Content-Disposition", `attachment; filename="slashdocs-`+v.ID+`.html"`)
 	c.Data(http.StatusOK, "text/html; charset=utf-8", b)
 }

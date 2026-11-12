@@ -1,5 +1,4 @@
-import assert from "node:assert/strict";
-import test from "node:test";
+import { assert, test } from "vitest";
 
 import { matchQuote } from "../bridge/anchoring/match-quote.ts";
 import {
@@ -8,7 +7,7 @@ import {
 } from "../bridge/anchoring/rendered-text.ts";
 
 test("matchQuote returns null for an empty quote", () => {
-  assert.equal(matchQuote("some document text", ""), null);
+  assert.strictEqual(matchQuote("some document text", ""), null);
 });
 
 test("matchQuote finds a unique exact match with score 1 and correct offsets", () => {
@@ -16,10 +15,10 @@ test("matchQuote finds a unique exact match with score 1 and correct offsets", (
   const match = matchQuote(text, "this is a test");
 
   assert.ok(match);
-  assert.equal(match.start, text.indexOf("this is a test"));
-  assert.equal(match.end, match.start + "this is a test".length);
-  assert.equal(text.slice(match.start, match.end), "this is a test");
-  assert.equal(match.score, 1);
+  assert.strictEqual(match.start, text.indexOf("this is a test"));
+  assert.strictEqual(match.end, match.start + "this is a test".length);
+  assert.strictEqual(text.slice(match.start, match.end), "this is a test");
+  assert.strictEqual(match.score, 1);
 });
 
 test("matchQuote finds a fuzzy match for a quote with typos, scoring below 1", () => {
@@ -41,7 +40,7 @@ test("matchQuote returns null when the quote is nowhere near the text", () => {
   // The search allows up to quote.length / 2 errors; every substring of the
   // text is more than 4 edits away from this 8-character quote.
   const text = "aaaa aaaa aaaa aaaa aaaa";
-  assert.equal(matchQuote(text, "zzzzzzzz"), null);
+  assert.strictEqual(matchQuote(text, "zzzzzzzz"), null);
 });
 
 test("matchQuote uses prefix/suffix context to pick between duplicate occurrences", () => {
@@ -58,8 +57,8 @@ test("matchQuote uses prefix/suffix context to pick between duplicate occurrence
   });
 
   assert.ok(match);
-  assert.equal(match.start, second);
-  assert.equal(match.end, second + quote.length);
+  assert.strictEqual(match.start, second);
+  assert.strictEqual(match.end, second + quote.length);
 
   // Sanity: context for the first occurrence selects the first one.
   const firstMatch = matchQuote(text, quote, {
@@ -67,7 +66,7 @@ test("matchQuote uses prefix/suffix context to pick between duplicate occurrence
     suffix: " Middle text",
   });
   assert.ok(firstMatch);
-  assert.equal(firstMatch.start, first);
+  assert.strictEqual(firstMatch.start, first);
 });
 
 test("matchQuote uses the position hint to break ties between identical occurrences", () => {
@@ -82,47 +81,47 @@ test("matchQuote uses the position hint to break ties between identical occurren
 
   const nearSecond = matchQuote(text, quote, { hint: second });
   assert.ok(nearSecond);
-  assert.equal(nearSecond.start, second);
-  assert.equal(nearSecond.end, second + quote.length);
+  assert.strictEqual(nearSecond.start, second);
+  assert.strictEqual(nearSecond.end, second + quote.length);
 
   const nearFirst = matchQuote(text, quote, { hint: first });
   assert.ok(nearFirst);
-  assert.equal(nearFirst.start, first);
+  assert.strictEqual(nearFirst.start, first);
 });
 
 test("renderedOffsetToRaw is identity when there are no <br> positions", () => {
-  assert.equal(renderedOffsetToRaw([], 0), 0);
-  assert.equal(renderedOffsetToRaw([], 7), 7);
+  assert.strictEqual(renderedOffsetToRaw([], 0), 0);
+  assert.strictEqual(renderedOffsetToRaw([], 7), 7);
 });
 
 test("renderedOffsetToRaw leaves offsets at or before a <br> untouched", () => {
   const brs = [5, 10, 20];
-  assert.equal(renderedOffsetToRaw(brs, 0), 0);
-  assert.equal(renderedOffsetToRaw(brs, 3), 3);
+  assert.strictEqual(renderedOffsetToRaw(brs, 0), 0);
+  assert.strictEqual(renderedOffsetToRaw(brs, 3), 3);
   // Offset 5 points at the synthesized space itself, before any raw
   // characters were skipped.
-  assert.equal(renderedOffsetToRaw(brs, 5), 5);
+  assert.strictEqual(renderedOffsetToRaw(brs, 5), 5);
 });
 
 test("renderedOffsetToRaw subtracts one character per preceding <br>", () => {
   const brs = [5, 10, 20];
   // Just past the first synthesized space.
-  assert.equal(renderedOffsetToRaw(brs, 6), 5);
+  assert.strictEqual(renderedOffsetToRaw(brs, 6), 5);
   // At the second br: only the first one precedes it.
-  assert.equal(renderedOffsetToRaw(brs, 10), 9);
+  assert.strictEqual(renderedOffsetToRaw(brs, 10), 9);
   // Past the second br.
-  assert.equal(renderedOffsetToRaw(brs, 11), 9);
+  assert.strictEqual(renderedOffsetToRaw(brs, 11), 9);
   // Past all three brs.
-  assert.equal(renderedOffsetToRaw(brs, 25), 22);
+  assert.strictEqual(renderedOffsetToRaw(brs, 25), 22);
 });
 
 test("renderedOffsetToRaw handles consecutive <br> elements", () => {
   // Two adjacent <br>s produce back-to-back synthesized spaces.
   const brs = [4, 5];
-  assert.equal(renderedOffsetToRaw(brs, 4), 4);
-  assert.equal(renderedOffsetToRaw(brs, 5), 4);
-  assert.equal(renderedOffsetToRaw(brs, 6), 4);
-  assert.equal(renderedOffsetToRaw(brs, 9), 7);
+  assert.strictEqual(renderedOffsetToRaw(brs, 4), 4);
+  assert.strictEqual(renderedOffsetToRaw(brs, 5), 4);
+  assert.strictEqual(renderedOffsetToRaw(brs, 6), 4);
+  assert.strictEqual(renderedOffsetToRaw(brs, 9), 7);
 });
 
 test("renderedOffsetToRaw inverts rawOffsetToRendered for every raw offset", () => {
@@ -132,7 +131,7 @@ test("renderedOffsetToRaw inverts rawOffsetToRendered for every raw offset", () 
   for (const brPositions of [[], [5, 10, 20], [4, 5], [0]]) {
     for (let raw = 0; raw <= 25; raw++) {
       const rendered = rawOffsetToRendered(brPositions, raw);
-      assert.equal(
+      assert.strictEqual(
         renderedOffsetToRaw(brPositions, rendered),
         raw,
         `round-trip failed for raw=${raw} brs=[${brPositions}]`,

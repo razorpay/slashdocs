@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/auth"
 )
 
 func validateCommentMentions(body string, mentions []CommentMention) ([]CommentMention, error) {

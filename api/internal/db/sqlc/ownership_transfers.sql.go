@@ -15,7 +15,7 @@ UPDATE ownership_transfers SET status='accepted',accepted_at=now() WHERE id=$1 A
 RETURNING id
 `
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) AcceptOwnershipTransfer(ctx context.Context, id string) (string, error) {
 	row := q.db.QueryRow(ctx, acceptOwnershipTransfer, id)
 	var id_2 string
@@ -53,8 +53,8 @@ type GetOwnershipTransferForUpdateRow struct {
 	Status           string
 }
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) GetOwnershipTransferForUpdate(ctx context.Context, id string) (GetOwnershipTransferForUpdateRow, error) {
 	row := q.db.QueryRow(ctx, getOwnershipTransferForUpdate, id)
 	var i GetOwnershipTransferForUpdateRow
@@ -79,7 +79,7 @@ type InsertOwnershipTransferParams struct {
 	ToUserID         string
 }
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) InsertOwnershipTransfer(ctx context.Context, arg InsertOwnershipTransferParams) error {
 	_, err := q.db.Exec(ctx, insertOwnershipTransfer,
 		arg.ID,
@@ -103,8 +103,8 @@ type ListOwnershipTransfersRow struct {
 	Status           string
 }
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) ListOwnershipTransfers(ctx context.Context, fromUserID string) ([]ListOwnershipTransfersRow, error) {
 	rows, err := q.db.Query(ctx, listOwnershipTransfers, fromUserID)
 	if err != nil {
@@ -141,8 +141,8 @@ type UpdateServiceAccountOwnerParams struct {
 	ID          string
 }
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) UpdateServiceAccountOwner(ctx context.Context, arg UpdateServiceAccountOwnerParams) error {
 	_, err := q.db.Exec(ctx, updateServiceAccountOwner, arg.OwnerUserID, arg.ID)
 	return err

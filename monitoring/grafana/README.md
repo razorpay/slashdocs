@@ -1,9 +1,9 @@
-# aidocs Grafana dashboard
+# slashdocs Grafana dashboard
 
-This directory contains a portable Prometheus/Grafana dashboard for aidocs app and business metrics.
+This directory contains a portable Prometheus/Grafana dashboard for slashdocs app and business metrics.
 
-- `aidocs-dashboard.libsonnet` is the Grafonnet source of truth.
-- `aidocs-dashboard.json` is the rendered dashboard for direct Grafana import or provisioning.
+- `slashdocs-dashboard.libsonnet` is the Grafonnet source of truth.
+- `slashdocs-dashboard.json` is the rendered dashboard for direct Grafana import or provisioning.
 - `jsonnetfile.json` and `jsonnetfile.lock.json` pin Grafonnet dependencies.
 - `vendor/` is intentionally ignored; regenerate it with `jb install`.
 
@@ -25,6 +25,6 @@ The dashboard uses a datasource variable named `DS_PROMETHEUS`, so it should wor
 
 For Google Group sharing, alert on sustained request outcomes
 `permission_denied` (Google 401/403) or `quota`, refresh failures, and elevated
-`aidocs_google_group_authorization_failures_total`. All group metrics use only
+`slashdocs_google_group_authorization_failures_total`. All group metrics use only
 operation/event/outcome labels; never add user emails, group emails, or group
 IDs as labels.

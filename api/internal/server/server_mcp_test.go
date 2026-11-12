@@ -3,19 +3,23 @@ package server_test
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
-	"github.com/razorpay/aidocs/api/internal/repo"
-	"github.com/razorpay/aidocs/api/internal/server"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/server"
 )
 
 var expectedMCPTools = []string{
@@ -36,6 +40,7 @@ var expectedMCPTools = []string{
 	"get_server_config",
 	"list_comments",
 	"list_document_access",
+	"list_document_access_requests",
 	"list_document_versions",
 	"list_documents",
 	"list_folder_access",
@@ -48,10 +53,12 @@ var expectedMCPTools = []string{
 	"move_document_to_folder",
 	"move_document_to_root",
 	"move_folder",
+	"react_comment",
 	"rename_document",
 	"rename_folder",
 	"reopen_comment",
 	"reply_comment",
+	"request_document_access",
 	"resolve_comment",
 	"revoke_document_grant",
 	"revoke_folder_grant",
@@ -59,6 +66,7 @@ var expectedMCPTools = []string{
 	"search_folders",
 	"share_document",
 	"share_folder",
+	"unreact_comment",
 	"update_comment",
 	"update_document",
 	"update_document_grant",
@@ -74,9 +82,9 @@ func TestMCPStreamableHTTPInitializeListAndCall(t *testing.T) {
 	initialize := mcpPost(t, e, token, "", map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "initialize",
 		"params": map[string]any{
-			"protocolVersion": mcp.LATEST_PROTOCOL_VERSION,
+			"protocolVersion": mcp.LATEST_LEGACY_PROTOCOL_VERSION,
 			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "aidocs-test", "version": "1"},
+			"clientInfo":      map[string]any{"name": "slashdocs-test", "version": "1"},
 		},
 	})
 	assertStatus(t, initialize, http.StatusOK)
@@ -95,10 +103,11 @@ func TestMCPStreamableHTTPInitializeListAndCall(t *testing.T) {
 			ServerInfo struct {
 				Name string `json:"name"`
 			} `json:"serverInfo"`
+			Instructions string `json:"instructions"`
 		} `json:"result"`
 	}
 	decodeMCPResponse(t, initialize, &initialized)
-	if initialized.Result.ProtocolVersion != mcp.LATEST_PROTOCOL_VERSION || initialized.Result.ServerInfo.Name != "aidocs" || initialized.Result.Capabilities.Tools == nil {
+	if initialized.Result.ProtocolVersion != mcp.LATEST_LEGACY_PROTOCOL_VERSION || initialized.Result.ServerInfo.Name != "slashdocs" || initialized.Result.Capabilities.Tools == nil || !strings.Contains(initialized.Result.Instructions, "formerly named aidocs") {
 		t.Fatalf("initialize result = %#v", initialized.Result)
 	}
 
@@ -191,7 +200,7 @@ func TestMCPAuthenticationInfrastructureFailureIsServerError(t *testing.T) {
 	body := marshalMCP(t, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "initialize",
 		"params": map[string]any{
-			"protocolVersion": mcp.LATEST_PROTOCOL_VERSION,
+			"protocolVersion": mcp.LATEST_LEGACY_PROTOCOL_VERSION,
 			"capabilities":    map[string]any{},
 			"clientInfo":      map[string]any{"name": "auth-failure-test", "version": "1"},
 		},
@@ -213,7 +222,7 @@ func TestMCPHTTPTransportSecurityAndMalformedInput(t *testing.T) {
 	initializeBody := marshalMCP(t, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "initialize",
 		"params": map[string]any{
-			"protocolVersion": mcp.LATEST_PROTOCOL_VERSION,
+			"protocolVersion": mcp.LATEST_LEGACY_PROTOCOL_VERSION,
 			"capabilities":    map[string]any{},
 			"clientInfo":      map[string]any{"name": "security-test", "version": "1"},
 		},
@@ -231,7 +240,7 @@ func TestMCPHTTPTransportSecurityAndMalformedInput(t *testing.T) {
 	})
 
 	t.Run("CLI bearer is rejected", func(t *testing.T) {
-		cliToken, cliHash, err := auth.NewBearerToken("aidocs_cli_")
+		cliToken, cliHash, err := auth.NewBearerToken("slashdocs_cli_")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -267,11 +276,11 @@ func TestMCPHTTPTransportSecurityAndMalformedInput(t *testing.T) {
 
 	t.Run("oversized body is rejected before the MCP library", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader("{}"))
-		req.ContentLength = (64 << 20) + 1
+		req.ContentLength = (301 << 20) + 1
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Accept", "application/json, text/event-stream")
-		req.Header.Set("Mcp-Protocol-Version", mcp.LATEST_PROTOCOL_VERSION)
+		req.Header.Set("Mcp-Protocol-Version", mcp.LATEST_LEGACY_PROTOCOL_VERSION)
 		rr := httptest.NewRecorder()
 		e.h.ServeHTTP(rr, req)
 		assertStatus(t, rr, http.StatusRequestEntityTooLarge)
@@ -294,10 +303,67 @@ func TestMCPHTTPTransportSecurityAndMalformedInput(t *testing.T) {
 		assertStatus(t, rr, http.StatusBadRequest)
 	})
 
+	t.Run("newer protocol version is answered with the supported versions", func(t *testing.T) {
+		rr := statelessMCPRequest(t, e, token, "tools/list", "2099-01-01")
+		assertStatus(t, rr, http.StatusBadRequest)
+		var response struct {
+			Error struct {
+				Code int `json:"code"`
+				Data struct {
+					Supported []string `json:"supported"`
+				} `json:"data"`
+			} `json:"error"`
+		}
+		decodeMCPResponse(t, rr, &response)
+		if response.Error.Code != -32022 || !slices.Contains(response.Error.Data.Supported, mcp.ProtocolVersion20260728) ||
+			!slices.Contains(response.Error.Data.Supported, mcp.ProtocolVersion20251125) {
+			t.Fatalf("unsupported version response = %s", rr.Body.String())
+		}
+	})
+
 	t.Run("POST requires an MCP Accept header", func(t *testing.T) {
 		rr := rawMCPRequest(t, e, http.MethodPost, token, "", initializeBody, "application/json", false)
 		assertStatus(t, rr, http.StatusBadRequest)
 	})
+}
+
+func TestMCPServesStatelessAndHandshakeClients(t *testing.T) {
+	e := newMCPOAuthTestEnv(t)
+	token := auth.NewMCPAccessToken(fixtureUser.ID, e.resource, oauthTestSigningMaterial, time.Minute)
+
+	tools := map[string]map[string]string{}
+	for _, version := range []string{mcp.ProtocolVersion20260728, mcp.ProtocolVersion20251125} {
+		c, initialized := connectMCPClient(t, e, token, version)
+		if c.ProtocolVersion() != version || !strings.Contains(initialized.Instructions, "formerly named aidocs") {
+			t.Fatalf("%s: protocol = %q, instructions = %q", version, c.ProtocolVersion(), initialized.Instructions)
+		}
+		listed, err := c.ListTools(t.Context(), mcp.ListToolsRequest{})
+		if err != nil {
+			t.Fatalf("%s: list tools: %v", version, err)
+		}
+		tools[version] = map[string]string{}
+		for _, tool := range listed.Tools {
+			tools[version][tool.Name] = marshalMCP(t, tool.InputSchema)
+		}
+		result, err := c.CallTool(t.Context(), mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "whoami"}})
+		if err != nil || result.IsError {
+			t.Fatalf("%s: whoami = %+v, %v", version, result, err)
+		}
+	}
+	if !maps.Equal(tools[mcp.ProtocolVersion20260728], tools[mcp.ProtocolVersion20251125]) {
+		t.Fatalf("tools differ between protocol versions: %v", tools)
+	}
+}
+
+func TestMCPCreateDocumentAboveSDKDefaultBodyLimit(t *testing.T) {
+	e := newMCPOAuthTestEnv(t)
+	token := auth.NewMCPAccessToken(fixtureUser.ID, e.resource, oauthTestSigningMaterial, time.Minute)
+
+	// mcp-go rejects bodies over 4 MiB unless the server raises its limit.
+	html := "<html><body>" + strings.Repeat("x", 5<<20) + "</body></html>"
+	assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "create_document", map[string]any{
+		"title": "Large document", "html": html,
+	}), "current_version_id")
 }
 
 func TestMCPDocumentAndFolderToolParity(t *testing.T) {
@@ -539,6 +605,32 @@ func TestMCPToolPermissionsAndConcurrentVersionConflict(t *testing.T) {
 	}
 }
 
+func TestMCPCommentAuthorNeedsCurrentDocumentAccess(t *testing.T) {
+	e := newMCPOAuthTestEnv(t)
+	ctx := context.Background()
+	doc, version, err := e.store.CreateDocument(ctx, fixtureOwner, "private", []byte("<p>test</p>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := e.store.CreateGrant(ctx, "document", doc.ID, fixtureUser, repo.RoleCommenter, fixtureOwner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	comment, err := e.store.CreateComment(ctx, doc.ID, version.ID, "original", repo.Anchor{Quote: "test"}, fixtureUser, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.DeleteGrant(ctx, doc.ID, grant.ID, fixtureOwner); err != nil {
+		t.Fatal(err)
+	}
+	token := auth.NewMCPAccessToken(fixtureUser.ID, e.resource, oauthTestSigningMaterial, time.Minute)
+	for _, tool := range []string{"update_comment", "delete_comment", "resolve_comment", "reopen_comment", "reply_comment"} {
+		assertMCPToolError(t, callMCPToolHTTP(t, e, token, tool, map[string]any{
+			"document_id": doc.ID, "comment_id": comment.ID, "body": "changed",
+		}), "forbidden")
+	}
+}
+
 type mcpToolHTTPResult struct {
 	IsError bool
 	Text    string
@@ -611,7 +703,7 @@ func mcpPost(t *testing.T, e *mcpOAuthTestEnv, token, origin string, value any) 
 
 func rawMCPRequest(t *testing.T, e *mcpOAuthTestEnv, method, token, origin, body, contentType string, accept bool) *httptest.ResponseRecorder {
 	t.Helper()
-	return rawMCPRequestWithProtocol(t, e, method, token, origin, body, contentType, accept, mcp.LATEST_PROTOCOL_VERSION)
+	return rawMCPRequestWithProtocol(t, e, method, token, origin, body, contentType, accept, mcp.LATEST_LEGACY_PROTOCOL_VERSION)
 }
 
 func rawMCPRequestWithProtocol(t *testing.T, e *mcpOAuthTestEnv, method, token, origin, body, contentType string, accept bool, protocolVersion string) *httptest.ResponseRecorder {
@@ -649,6 +741,49 @@ func decodeMCPResponse(t *testing.T, rr *httptest.ResponseRecorder, target any) 
 	if err := json.Unmarshal(rr.Body.Bytes(), target); err != nil {
 		t.Fatalf("decode MCP response: %v; body=%s", err, rr.Body.String())
 	}
+}
+
+// statelessMCPRequest sends one request in the 2026-07-28 shape: version and
+// method in headers, and version and capabilities in params._meta.
+func statelessMCPRequest(t *testing.T, e *mcpOAuthTestEnv, token, method, version string) *httptest.ResponseRecorder {
+	t.Helper()
+	params := map[string]any{"_meta": map[string]any{
+		mcp.MetaKeyProtocolVersion:    version,
+		mcp.MetaKeyClientCapabilities: map[string]any{},
+	}}
+	return do(t, e.h, http.MethodPost, "/mcp", marshalMCP(t, map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": method, "params": params,
+	}), map[string]string{
+		"Authorization":        "Bearer " + token,
+		"Content-Type":         "application/json",
+		"Accept":               "application/json, text/event-stream",
+		"Mcp-Protocol-Version": version,
+		"Mcp-Method":           method,
+	})
+}
+
+// connectMCPClient connects mcp-go's client over HTTP, preferring version.
+func connectMCPClient(t *testing.T, e *mcpOAuthTestEnv, token, version string) (*client.Client, *mcp.InitializeResult) {
+	t.Helper()
+	srv := httptest.NewServer(e.h)
+	t.Cleanup(srv.Close)
+	tr, err := transport.NewStreamableHTTP(srv.URL+"/mcp",
+		transport.WithHTTPHeaders(map[string]string{"Authorization": "Bearer " + token}))
+	if err != nil {
+		t.Fatalf("new transport: %v", err)
+	}
+	c := client.NewClient(tr, client.WithProtocolVersion(version))
+	t.Cleanup(func() { _ = c.Close() })
+	if err := c.Start(t.Context()); err != nil {
+		t.Fatalf("start client: %v", err)
+	}
+	initialized, err := c.Initialize(t.Context(), mcp.InitializeRequest{Params: mcp.InitializeParams{
+		ClientInfo: mcp.Implementation{Name: "slashdocs-test", Version: "1"},
+	}})
+	if err != nil {
+		t.Fatalf("initialize %s: %v", version, err)
+	}
+	return c, initialized
 }
 
 // The server applies its configured default sharing at create; the MCP result
@@ -736,7 +871,7 @@ func TestMCPGuidelinesProgressiveDisclosure(t *testing.T) {
 
 	theme := assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "get_authoring_guidelines", map[string]any{
 		"section": "rendering theme",
-	}), "aidocs guidelines: rendering theme")
+	}), "slashdocs guidelines: rendering theme")
 	if !strings.Contains(theme.Text, "get_authoring_guidelines") {
 		t.Errorf("section page is missing the tool-call translation footer: %s", theme.Text)
 	}
@@ -744,15 +879,15 @@ func TestMCPGuidelinesProgressiveDisclosure(t *testing.T) {
 	// Aliases from the CLI resolve identically.
 	assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "get_authoring_guidelines", map[string]any{
 		"section": "theme",
-	}), "aidocs guidelines: rendering theme")
+	}), "slashdocs guidelines: rendering theme")
 	assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "get_authoring_guidelines", map[string]any{
 		"section": "github",
-	}), "window.aidocs.github.getRawContent")
+	}), "window.slashdocs.github.getRawContent")
 
 	all := assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "get_authoring_guidelines", map[string]any{
 		"section": "all",
-	}), "aidocs guidelines: core")
-	for _, want := range []string{"aidocs guidelines: rendering theme", "aidocs guidelines: interactivity github", "aidocs guidelines: review"} {
+	}), "slashdocs guidelines: core")
+	for _, want := range []string{"slashdocs guidelines: rendering theme", "slashdocs guidelines: interactivity github", "slashdocs guidelines: review"} {
 		if !strings.Contains(all.Text, want) {
 			t.Errorf("guidelines all is missing %q", want)
 		}

@@ -4,10 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/auth"
 )
 
 func TestCreateServiceAccountStartsWithoutDocumentGrants(t *testing.T) {
@@ -115,4 +116,67 @@ func TestAcceptDeclinedOwnershipTransferIsRejected(t *testing.T) {
 	assertJSON(t, rr.Body.Bytes(), `{
 	  "error": { "code": "invalid_transfer_state", "message": "transfer is not pending" }
 	}`)
+}
+
+func TestPatchServiceAccountName(t *testing.T) {
+	e := newTestEnv(t)
+	create := func(label string) string {
+		rr := do(t, e.h, http.MethodPost, "/v1/service-accounts", `{"label":"`+label+`","domain":"custom.test.bot"}`, map[string]string{
+			"Content-Type":     "application/json",
+			"X-Test-Principal": principalHeader(fixtureUser),
+		})
+		assertStatus(t, rr, http.StatusCreated)
+		return jsonField(t, rr.Body.Bytes(), "id")
+	}
+	create("taken-bot")
+	saID := create("my-bot")
+	patch := func(name string) *httptest.ResponseRecorder {
+		return do(t, e.h, http.MethodPatch, "/v1/service-accounts/"+saID, fmt.Sprintf(`{"name":%q}`, name), map[string]string{
+			"Content-Type":     "application/json",
+			"X-Test-Principal": principalHeader(fixtureUser),
+		})
+	}
+
+	for _, name := range []string{"taken-bot", "taken-bot@custom.test.bot"} {
+		rr := patch(name)
+		assertStatus(t, rr, http.StatusConflict)
+		assertJSON(t, rr.Body.Bytes(), `{
+		  "error": { "code": "address_taken", "message": "Someone already uses taken-bot@custom.test.bot. Try a different address." }
+		}`)
+	}
+	for _, tc := range []struct{ name, want string }{
+		{"renamed-bot", "renamed-bot@custom.test.bot"},
+		{"new-bot@other.domain.bot", "new-bot@other.domain.bot"},
+	} {
+		rr := patch(tc.name)
+		assertStatus(t, rr, http.StatusOK)
+		if got := jsonField(t, rr.Body.Bytes(), "name"); got != tc.want {
+			t.Fatalf("rename to %q: name = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+	for _, tc := range []struct{ name, message string }{
+		{"Not A Valid Label", "Use letters, numbers, and hyphens for the bot's name."},
+		{"has_underscore", "Use letters, numbers, and hyphens for the bot's name."},
+		{"-start@custom.test.bot", "Use letters, numbers, and hyphens for the bot's name."},
+		{"admin@example.com", "Addresses must end in .bot."},
+		{"bot@notbot", "Addresses must end in .bot."},
+	} {
+		rr := patch(tc.name)
+		assertStatus(t, rr, http.StatusBadRequest)
+		assertJSON(t, rr.Body.Bytes(), fmt.Sprintf(`{"error": {"code": "bad_request", "message": %q}}`, tc.message))
+	}
+}
+
+// The web app sends the current name with every enable or disable, also a
+// name from before names were .bot addresses.
+func TestPatchServiceAccountKeepsCurrentName(t *testing.T) {
+	e := newTestEnv(t)
+	rr := do(t, e.h, http.MethodPatch, "/v1/service-accounts/"+e.sa.ID, `{"name":"fixture","disabled":true}`, map[string]string{
+		"Content-Type":     "application/json",
+		"X-Test-Principal": principalHeader(fixtureOwner),
+	})
+	assertStatus(t, rr, http.StatusOK)
+	if got := jsonField(t, rr.Body.Bytes(), "name"); got != "fixture" {
+		t.Fatalf("name = %q, want fixture", got)
+	}
 }

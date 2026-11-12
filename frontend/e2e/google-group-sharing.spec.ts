@@ -162,7 +162,7 @@ function accessItems(state: WorkspaceState, resource: "document" | "folder") {
 async function installFakeWorkspace(page: Page, state: WorkspaceState) {
   await page.addInitScript(() => {
     localStorage.setItem(
-      "aidocs.onboarding",
+      "slashdocs.onboarding",
       JSON.stringify({
         status: "skipped",
         steps: {
@@ -177,7 +177,7 @@ async function installFakeWorkspace(page: Page, state: WorkspaceState) {
   await page.route("**/fake-render**", (route) =>
     route.fulfill({
       contentType: "text/html",
-      body: "<!doctype html><title>Rendered group plan</title><p>Visible document content</p>",
+      body: '<!doctype html><title>Rendered group plan</title><body style="min-height:5000px"><p>Visible document content</p><script>document.addEventListener("click",()=>parent.postMessage({type:"slashdocs:document-click"},location.origin))</script></body>',
     }),
   );
   await page.route("**/v1/**", async (route) => {
@@ -280,14 +280,12 @@ async function installFakeWorkspace(page: Page, state: WorkspaceState) {
     if (path === "/v1/documents/doc_1/access") {
       return json(route, {
         current_role: documentRole(state),
-        canonical_owner: state.actor === "owner",
         items: accessItems(state, "document"),
       });
     }
     if (path === "/v1/folders/fld_1/access") {
       return json(route, {
         current_role: folderRole(state),
-        canonical_owner: state.actor === "owner",
         items: accessItems(state, "folder"),
       });
     }
@@ -323,20 +321,19 @@ async function installFakeWorkspace(page: Page, state: WorkspaceState) {
 
 async function shareWithPlatformGroup(page: Page) {
   await page.getByRole("button", { name: "Share" }).click();
-  await page.getByRole("tab", { name: "Google Groups" }).click();
-  await page.getByPlaceholder("Search group name or email").fill("platform");
-  await page
+  const shareSheet = page.getByRole("dialog", { name: /^Share (document|folder)$/ });
+  await shareSheet.getByRole("tab", { name: "Google Groups" }).click();
+  await shareSheet.getByPlaceholder("Search group name or email").fill("platform");
+  await shareSheet
     .locator("button")
     .filter({ hasText: "Platform" })
     .filter({ hasText: "platform@example.com" })
     .click();
-  await page.getByRole("button", { name: "Share", exact: true }).click();
+  await shareSheet.getByRole("button", { name: "Share", exact: true }).click();
   await expect(page.getByText("Access granted.")).toBeVisible();
 }
 
-test("canonical owner shares a document and folder with a verified group", async ({
-  page,
-}) => {
+test("owner shares a document and folder with a verified group", async ({ page }) => {
   const state = newState();
   await installFakeWorkspace(page, state);
 
@@ -353,6 +350,45 @@ test("canonical owner shares a document and folder with a verified group", async
   await expect(page.getByText("Shared Folder", { exact: true }).first()).toBeVisible();
   await shareWithPlatformGroup(page);
   await expect.poll(() => state.folderGroupRole).toBe("commenter");
+});
+
+test("keeps the sandboxed document scrollable while sharing is open", async ({
+  page,
+}) => {
+  const state = newState();
+  await installFakeWorkspace(page, state);
+
+  await page.goto("/app/d/doc_1");
+  const frame = page.locator('iframe[title="Rendered document"]');
+  const rendered = page.frameLocator('iframe[title="Rendered document"]');
+  await expect(rendered.getByText("Visible document content")).toBeVisible();
+  await frame.focus();
+  await page.getByRole("button", { name: "Share", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Share document" })).toBeVisible();
+
+  expect(
+    await page.evaluate(() => globalThis.document.activeElement?.getAttribute("title")),
+  ).toBe("Rendered document");
+  expect(
+    await page.evaluate(() =>
+      globalThis.document.body.hasAttribute("data-scroll-locked"),
+    ),
+  ).toBe(false);
+  const box = await frame.boundingBox();
+  expect(box).not.toBeNull();
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await page.mouse.wheel(0, 600);
+  await expect
+    .poll(() =>
+      rendered
+        .locator("html")
+        .evaluate((html) => html.ownerDocument.defaultView?.scrollY ?? 0),
+    )
+    .toBeGreaterThan(0);
+  await expect(page.getByRole("dialog", { name: "Share document" })).toBeVisible();
+
+  await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await expect(page.getByRole("dialog", { name: "Share document" })).toBeHidden();
 });
 
 test("direct and nested members discover and open group-shared resources", async ({
@@ -439,15 +475,16 @@ test("existing user and service-account sharing remains available", async ({
   await page.goto("/app/d/doc_1");
   await page.getByRole("button", { name: "Share" }).click();
 
-  const input = page.getByPlaceholder(/user@org\.example/);
+  const shareSheet = page.getByRole("dialog", { name: "Share document" });
+  const input = shareSheet.getByPlaceholder(/user@org\.example/);
   await input.fill("alice");
-  await page.getByRole("button", { name: /Alice/ }).click();
-  await page.getByRole("button", { name: "Share", exact: true }).click();
+  await shareSheet.getByRole("button", { name: /Alice/ }).click();
+  await shareSheet.getByRole("button", { name: "Share", exact: true }).click();
   await expect.poll(() => state.directShares).toContain("alice@example.com");
   await expect(input).toHaveValue("");
 
   await input.fill("report-creator@brave.otter.bot");
-  await page.getByRole("button", { name: "Share", exact: true }).click();
+  await shareSheet.getByRole("button", { name: "Share", exact: true }).click();
   await expect
     .poll(() => state.directShares)
     .toContain("report-creator@brave.otter.bot");

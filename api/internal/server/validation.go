@@ -12,7 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"golang.org/x/net/idna"
 
-	"github.com/razorpay/aidocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
 var roleRank = map[repo.Role]int{repo.RoleViewer: 1, repo.RoleCommenter: 2, repo.RoleEditor: 3, repo.RoleOwner: 4}
@@ -67,7 +67,7 @@ func requireJSON(c *gin.Context) bool {
 
 func requireCommentJSON(c *gin.Context) bool {
 	mediaType, _, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
-	if err == nil && (strings.EqualFold(mediaType, "application/json") || strings.EqualFold(mediaType, commentMentionsMediaType)) {
+	if err == nil && (strings.EqualFold(mediaType, "application/json") || isCommentMentionsMediaType(mediaType)) {
 		return true
 	}
 	c.JSON(http.StatusUnsupportedMediaType, errorResponse("unsupported_media_type", "content-type must be application/json or "+commentMentionsMediaType, nil))
@@ -76,11 +76,15 @@ func requireCommentJSON(c *gin.Context) bool {
 
 func requireStructuredCommentMediaType(c *gin.Context) bool {
 	mediaType, _, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
-	if err == nil && strings.EqualFold(mediaType, commentMentionsMediaType) {
+	if err == nil && isCommentMentionsMediaType(mediaType) {
 		return true
 	}
 	c.JSON(http.StatusUnsupportedMediaType, errorResponse("unsupported_media_type", "structured comment mentions require content-type "+commentMentionsMediaType, nil))
 	return false
+}
+
+func isCommentMentionsMediaType(mediaType string) bool {
+	return strings.EqualFold(mediaType, commentMentionsMediaType) || strings.EqualFold(mediaType, legacyCommentMentionsMediaType)
 }
 
 func requestHasBody(c *gin.Context) bool {

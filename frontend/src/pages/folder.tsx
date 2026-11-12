@@ -13,6 +13,7 @@ import {
   Share2,
   Trash2,
 } from "lucide-react";
+import { Page } from "@/components/layout/page";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Center, Skeleton, EmptyState } from "@/components/ui/misc";
@@ -51,6 +52,8 @@ import { UnifiedGrid } from "@/components/browse/unified-grid";
 import { UnifiedTable } from "@/components/browse/unified-table";
 import { ViewModeToggle } from "@/components/browse/view-mode-toggle";
 import { AccessWarningDialog, NewFolderDialog } from "@/components/browse/dialogs";
+import { useBridgeHost } from "./use-bridge-host";
+import { useDocumentEvents } from "./use-document-stream";
 import {
   DndContext,
   PointerSensor,
@@ -163,8 +166,7 @@ export function FolderPage() {
       qc.invalidateQueries({ queryKey: queryKeys.documents() });
       qc.invalidateQueries({ queryKey: queryKeys.pins() });
       const warning = (data as Record<string, unknown>)?.permission_warning as
-        | { message?: string }
-        | undefined;
+        { message?: string } | undefined;
       if (warning?.message) {
         setAccessWarning(warning.message);
       } else {
@@ -176,10 +178,10 @@ export function FolderPage() {
 
   if (folder.isLoading || contents.isLoading) {
     return (
-      <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-10">
+      <Page backdrop={false}>
         <Skeleton className="mb-3 h-9 w-48" />
         <Skeleton className="h-64 w-full" />
-      </div>
+      </Page>
     );
   }
   if (folder.error || contents.error) {
@@ -236,9 +238,9 @@ export function FolderPage() {
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
     >
-      <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-10">
+      <Page>
         {/* Breadcrumbs */}
-        <nav className="mb-4 flex items-center gap-1 text-sm text-[var(--color-fg-muted)]">
+        <nav className="mb-4 flex min-w-0 items-center gap-1 overflow-x-auto whitespace-nowrap text-sm text-[var(--color-fg-muted)]">
           <DroppableBreadcrumb
             dropId="drop:__root__"
             to="/app/documents"
@@ -246,7 +248,7 @@ export function FolderPage() {
             isDragging={!!activeDrag}
           />
           {breadcrumbs.map((b) => (
-            <span key={b.id} className="flex items-center gap-1">
+            <span key={b.id} className="flex shrink-0 items-center gap-1">
               <ChevronRight className="h-3 w-3" />
               <DroppableBreadcrumb
                 dropId={`drop:${b.id}`}
@@ -257,15 +259,17 @@ export function FolderPage() {
             </span>
           ))}
           <ChevronRight className="h-3 w-3" />
-          <span className="font-medium text-[var(--color-fg)]">{f.title}</span>
+          <span className="shrink-0 font-medium text-[var(--color-fg)]">{f.title}</span>
         </nav>
 
         {/* Header */}
-        <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-3">
-            <FolderIcon className="h-6 w-6 shrink-0 text-[var(--color-accent)]" />
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md bg-[var(--color-accent-muted)] text-[var(--color-accent)]">
+              <FolderIcon className="h-5 w-5" />
+            </span>
             <div className="min-w-0">
-              <h1 className="truncate text-2xl font-semibold tracking-tight">
+              <h1 className="enter truncate text-xl font-semibold tracking-[-0.01em] md:text-2xl">
                 {f.title}
               </h1>
               <p className="truncate text-sm text-[var(--color-fg-muted)]">
@@ -279,6 +283,8 @@ export function FolderPage() {
               variant="outline"
               size="md"
               onClick={() => setNewFolderOpen(true)}
+              aria-label="New folder"
+              tooltip="New folder"
               className="shrink-0 px-3 sm:px-4"
             >
               <Plus className="h-3.5 w-3.5 sm:mr-1.5" />
@@ -286,7 +292,13 @@ export function FolderPage() {
             </Button>
             <Sheet>
               <SheetTrigger asChild>
-                <Button variant="outline" size="sm" className="shrink-0 px-2.5 sm:px-3">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  aria-label="Share folder"
+                  tooltip="Share folder"
+                  className="shrink-0 px-2.5 sm:px-3"
+                >
                   <Share2 className="h-3.5 w-3.5 sm:mr-1.5" />
                   <span className="hidden sm:inline">Share</span>
                 </Button>
@@ -295,12 +307,11 @@ export function FolderPage() {
                 resourceType="folder"
                 resourceId={id}
                 canManageAccess={canManageAccess}
-                isCanonicalOwner={isOwner}
               />
             </Sheet>
             <Dropdown>
               <DropdownTrigger asChild>
-                <Button variant="ghost" size="icon">
+                <Button variant="ghost" size="icon" aria-label="More folder actions">
                   <MoreHorizontal className="h-4 w-4" />
                 </Button>
               </DropdownTrigger>
@@ -407,7 +418,7 @@ export function FolderPage() {
           warning={accessWarning}
           onClose={() => setAccessWarning(null)}
         />
-      </div>
+      </Page>
       <BrowseDragOverlay activeDrag={activeDrag} viewMode={viewMode} />
     </DndContext>
   );
@@ -424,6 +435,10 @@ function FolderReadme({
     enabled: !!document.current_version_id,
     staleTime: 4 * 60_000,
   });
+  // The README is a full document: it follows the theme and reads and
+  // writes its KV state, live, like on the document page.
+  const bridge = useBridgeHost(document.id, token.data?.url);
+  useDocumentEvents(document.id, { kv: bridge.deliverKV });
   return (
     <section className="mt-8 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
       <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-3">
@@ -435,10 +450,11 @@ function FolderReadme({
           <Link to={`/app/d/${document.id}`}>Open document</Link>
         </Button>
       </div>
-      {token.data?.url ? (
+      {bridge.frameSrc ? (
         <iframe
+          ref={bridge.ref}
           title="Folder README"
-          src={token.data.url}
+          src={bridge.frameSrc}
           className="h-[min(70vh,760px)] w-full border-0"
           sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
         />

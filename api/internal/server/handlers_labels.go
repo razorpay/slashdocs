@@ -7,12 +7,17 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/razorpay/aidocs/api/internal/repo"
+
+	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
 var labelPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,47}$`)
 
 func (h handlers) listDocumentLabels(c *gin.Context) {
+	if !h.deps.labelsEnabled {
+		featureDisabled(c, "Document labels are temporarily disabled")
+		return
+	}
 	if !h.needDocRole(c, c.Param("id"), repo.RoleViewer) {
 		return
 	}
@@ -25,6 +30,10 @@ func (h handlers) listDocumentLabels(c *gin.Context) {
 }
 
 func (h handlers) replaceDocumentLabels(c *gin.Context) {
+	if !h.deps.labelsEnabled {
+		featureDisabled(c, "Document labels are temporarily disabled")
+		return
+	}
 	if !h.needDocRole(c, c.Param("id"), repo.RoleEditor) {
 		return
 	}

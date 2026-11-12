@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ComponentPropsWithoutRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { errorMessage } from "@/lib/errors";
@@ -35,7 +35,6 @@ type PendingChange = {
   source: AccessSource;
   action: "update" | "revoke";
   newRole?: string;
-  kind?: "inherited" | "owner_group";
 };
 
 export function ShareSheet({
@@ -43,13 +42,17 @@ export function ShareSheet({
   resourceType = "document",
   resourceId,
   canManageAccess = true,
-  isCanonicalOwner = false,
+  onOpenAutoFocus,
+  onInteractOutside,
 }: {
   docId?: string;
   resourceType?: "document" | "folder";
   resourceId?: string;
   canManageAccess?: boolean;
-  isCanonicalOwner?: boolean;
+  onOpenAutoFocus?: ComponentPropsWithoutRef<typeof SheetContent>["onOpenAutoFocus"];
+  onInteractOutside?: ComponentPropsWithoutRef<
+    typeof SheetContent
+  >["onInteractOutside"];
 }) {
   const id = resourceId || docId || "";
   const isFolder = resourceType === "folder";
@@ -60,6 +63,11 @@ export function ShareSheet({
   const access = useQuery({
     queryKey: accessKey,
     queryFn: () => (isFolder ? api.folderAccess(id) : api.documentAccess(id)),
+  });
+  const accessRequests = useQuery({
+    queryKey: queryKeys.documentAccessRequests(id),
+    queryFn: () => api.documentAccessRequests(id),
+    enabled: !isFolder && canManageAccess,
   });
   const config = useQuery({
     queryKey: queryKeys.config(),
@@ -127,7 +135,9 @@ export function ShareSheet({
 
   const invalidateAccess = () => {
     q.invalidateQueries({ queryKey: accessKey });
+    q.invalidateQueries({ queryKey: queryKeys.documentAccessRequests(id) });
     q.invalidateQueries({ queryKey: queryKeys.folderAccessAll() });
+    q.invalidateQueries({ queryKey: queryKeys.userSearchAll() });
   };
 
   const m = useMutation({
@@ -261,14 +271,13 @@ export function ShareSheet({
       item.principal?.id ||
       "this principal";
     if (nextValue === "revoke") {
-      setPendingChange({ label, source: src, action: "revoke", kind: "inherited" });
+      setPendingChange({ label, source: src, action: "revoke" });
     } else {
       setPendingChange({
         label,
         source: src,
         action: "update",
         newRole: nextValue,
-        kind: "inherited",
       });
     }
   };
@@ -282,7 +291,6 @@ export function ShareSheet({
         label,
         source: anyoneInheritedSource,
         action: "revoke",
-        kind: "inherited",
       });
     } else {
       setPendingChange({
@@ -290,18 +298,21 @@ export function ShareSheet({
         source: anyoneInheritedSource,
         action: "update",
         newRole: nextValue,
-        kind: "inherited",
       });
     }
   };
 
   const everyoneLabel = config.data?.everyone_label || "Everyone on this server";
-  const userPlaceholder =
-    config.data?.deployment === "public" ? "user@gmail.com" : "user@org.example";
+  const isPublic = config.data?.deployment === "public";
+  const userPlaceholder = isPublic ? "user@gmail.com" : "user@org.example";
   const resourceLabel = isFolder ? "folder" : "document";
 
   return (
-    <SheetContent aria-describedby={undefined}>
+    <SheetContent
+      aria-describedby={undefined}
+      onOpenAutoFocus={onOpenAutoFocus}
+      onInteractOutside={onInteractOutside}
+    >
       <SheetHeader>
         <SheetTitle>Share {resourceLabel}</SheetTitle>
       </SheetHeader>
@@ -313,23 +324,12 @@ export function ShareSheet({
               {pendingChange.label}?
             </p>
             <p className="text-xs text-[var(--color-fg-muted)]">
-              {pendingChange.kind === "owner_group" ? (
-                <>
-                  Owner-level Google Group access can only be changed by the canonical
-                  owner. This does not transfer canonical ownership.
-                </>
-              ) : (
-                <>
-                  This access is inherited from{" "}
-                  <span className="font-medium">
-                    {pendingChange.source.resource_title}
-                  </span>
-                  .
-                  {pendingChange.action === "revoke"
-                    ? " Removing it will affect everyone who accesses items through that folder."
-                    : " Changing it will affect everyone who accesses items through that folder."}
-                </>
-              )}
+              This access is inherited from{" "}
+              <span className="font-medium">{pendingChange.source.resource_title}</span>
+              .
+              {pendingChange.action === "revoke"
+                ? " Removing it will affect everyone who accesses items through that folder."
+                : " Changing it will affect everyone who accesses items through that folder."}
             </p>
             <div className="flex gap-2">
               <Button
@@ -345,12 +345,8 @@ export function ShareSheet({
                 onClick={confirmPending}
               >
                 {pendingChange.action === "revoke"
-                  ? pendingChange.kind === "owner_group"
-                    ? "Remove owner access"
-                    : "Remove from folder"
-                  : pendingChange.kind === "owner_group"
-                    ? "Change owner access"
-                    : "Change on folder"}
+                  ? "Remove from folder"
+                  : "Change on folder"}
               </Button>
             </div>
           </div>
@@ -368,7 +364,7 @@ export function ShareSheet({
                   </p>
                   <p className="mt-1 text-xs leading-5 text-[var(--color-fg-muted)]">
                     You can see who has access and copy the link, but you need at least
-                    commenter access to change sharing.
+                    editor access to change sharing.
                   </p>
                 </div>
               </div>
@@ -401,7 +397,6 @@ export function ShareSheet({
                         setShareMode("people");
                         setAddress("");
                         setSelectedGroup(null);
-                        if (role === "owner") setRole(DEFAULT_ROLE);
                       }}
                     >
                       People and bots
@@ -440,7 +435,9 @@ export function ShareSheet({
                   <p className="mt-1.5 text-[11px] text-[var(--color-fg-muted)]">
                     {shareMode === "groups"
                       ? "Select a server-verified organization group before sharing."
-                      : "Search existing aidocs users by email, or add a bot by its address."}
+                      : isPublic
+                        ? "Enter a full email, or add a bot by its address. People you share with appear as you type."
+                        : "Search existing slashdocs users by email, or add a bot by its address."}
                   </p>
                   {shareMode === "groups" && selectedGroup ? (
                     <div className="mt-2 flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
@@ -512,8 +509,9 @@ export function ShareSheet({
                     !debouncedAddress.includes(BOT_DOMAIN_SUFFIX) &&
                     !userSearch.isFetching ? (
                     <div className="mt-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-2 text-xs text-[var(--color-fg-muted)]">
-                      No matching aidocs users. They need to sign in once before you can
-                      share with them.
+                      {isPublic
+                        ? "None of your contacts match. Enter a full email to share with someone else. They need to sign in once first."
+                        : "No matching slashdocs users. They need to sign in once before you can share with them."}
                     </div>
                   ) : null}
                 </div>
@@ -521,16 +519,13 @@ export function ShareSheet({
                   value={role}
                   onChange={(e) => setRole(e.target.value)}
                   aria-label="Access role"
-                  className="h-9 w-full rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm disabled:cursor-not-allowed"
+                  className="h-9 w-full rounded-sm border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm disabled:cursor-not-allowed"
                 >
                   {ROLES.map((r) => (
                     <option key={r.value} value={r.value}>
                       {r.label}
                     </option>
                   ))}
-                  {shareMode === "groups" && isCanonicalOwner ? (
-                    <option value="owner">Owner</option>
-                  ) : null}
                 </select>
                 <Button
                   className="w-full"
@@ -546,6 +541,52 @@ export function ShareSheet({
                 </Button>
               </fieldset>
             </form>
+            {accessRequests.data?.items.length ? (
+              <div className="mt-6">
+                <h4 className="mb-2 text-xs font-medium uppercase tracking-wider text-[var(--color-fg-muted)]">
+                  Requests for access
+                </h4>
+                <div className="space-y-1">
+                  {accessRequests.data.items.map(({ requester }) => {
+                    // A bot has no email. Its name is its address.
+                    const requesterAddress = requester.email || requester.name || "";
+                    return (
+                      <div
+                        key={requester.type + ":" + requester.id}
+                        className="flex items-center justify-between gap-3 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm"
+                      >
+                        <div className="min-w-0">
+                          <div className="truncate font-medium">
+                            {requester.name || requester.email || requester.id}
+                            {requester.type === "service_account" ? " (bot)" : ""}
+                          </div>
+                          {requester.name && requester.email ? (
+                            <div className="truncate text-xs text-[var(--color-fg-muted)]">
+                              {requester.email}
+                            </div>
+                          ) : null}
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="shrink-0"
+                          disabled={!requesterAddress}
+                          aria-label={`Share with ${requesterAddress}`}
+                          onClick={() => {
+                            setShareMode("people");
+                            setSelectedGroup(null);
+                            setAddress(requesterAddress);
+                          }}
+                        >
+                          Share
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
             <div className="mt-6">
               <h4 className="mb-2 text-xs font-medium uppercase tracking-wider text-[var(--color-fg-muted)]">
                 People and groups with access
@@ -571,16 +612,13 @@ export function ShareSheet({
                   namedItems.map((item) => {
                     const grantId = directGrantId(item);
                     const src = inheritedSource(item);
-                    const direct = item.sources.find(
-                      (source) => source.resource_id === id,
-                    );
                     const inherited = !!src;
                     const isGroup = item.principal.type === "google_group";
-                    const canonicalOwner =
-                      item.effective_role === "owner" &&
-                      !item.sources.some((source) => source.grant_id) &&
-                      !isGroup;
-                    const ownerGroup = isGroup && item.effective_role === "owner";
+                    const isOwner = item.effective_role === "owner";
+                    const principalLabel =
+                      item.principal.name ||
+                      item.principal.email ||
+                      (isOwner ? "Owner" : item.principal.id);
                     return (
                       <div
                         key={item.principal.type + ":" + item.principal.id}
@@ -591,9 +629,7 @@ export function ShareSheet({
                             {isGroup ? (
                               <UsersRound className="h-3.5 w-3.5 shrink-0" />
                             ) : null}
-                            {item.principal?.name ||
-                              item.principal?.email ||
-                              item.principal?.id}
+                            {principalLabel}
                             {item.principal?.type === "service_account" ? " (bot)" : ""}
                           </div>
                           {item.principal?.name && item.principal?.email ? (
@@ -602,18 +638,16 @@ export function ShareSheet({
                             </div>
                           ) : null}
                           <div className="truncate text-[11px] text-[var(--color-fg-muted)]">
-                            {canonicalOwner
-                              ? "Canonical owner"
+                            {isOwner
+                              ? "Owner"
                               : inherited && src
                                 ? `Inherited from ${src.resource_title}`
                                 : isGroup
-                                  ? ownerGroup
-                                    ? "Google Group co-owner · direct access"
-                                    : "Google Group · direct access"
+                                  ? "Google Group · direct access"
                                   : "Direct access"}
                           </div>
                         </div>
-                        {canonicalOwner ? (
+                        {isOwner ? (
                           <span className="text-xs font-medium text-[var(--color-fg-muted)]">
                             Owner
                           </span>
@@ -622,7 +656,6 @@ export function ShareSheet({
                             value={item.effective_role}
                             disabled={
                               !canManageAccess ||
-                              (ownerGroup && !isCanonicalOwner) ||
                               updateGrant.isPending ||
                               revokeGrant.isPending ||
                               updateDirectGrant.isPending ||
@@ -630,23 +663,6 @@ export function ShareSheet({
                             }
                             onChange={(e) => {
                               const next = e.target.value;
-                              if (
-                                isGroup &&
-                                direct?.grant_id &&
-                                (ownerGroup || next === "owner")
-                              ) {
-                                setPendingChange({
-                                  label:
-                                    item.principal.name ||
-                                    item.principal.email ||
-                                    item.principal.id,
-                                  source: direct,
-                                  action: next === "revoke" ? "revoke" : "update",
-                                  newRole: next === "revoke" ? undefined : next,
-                                  kind: "owner_group",
-                                });
-                                return;
-                              }
                               const inheritedRole = src?.role;
                               const reducingBelowInherited =
                                 inheritedRole &&
@@ -663,16 +679,13 @@ export function ShareSheet({
                               }
                             }}
                             aria-label="Access role"
-                            className="h-8 shrink-0 rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)] px-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                            className="h-8 shrink-0 rounded-sm border border-[var(--color-border)] bg-[var(--color-surface)] px-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             {ROLES.map((r) => (
                               <option key={r.value} value={r.value}>
                                 {r.label}
                               </option>
                             ))}
-                            {isGroup && (isCanonicalOwner || ownerGroup) ? (
-                              <option value="owner">Owner</option>
-                            ) : null}
                             <option value="revoke">Remove access</option>
                           </select>
                         )}
@@ -704,7 +717,7 @@ export function ShareSheet({
                     }
                   }}
                   aria-label="General access role"
-                  className="h-8 rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)] px-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                  className="h-8 rounded-sm border border-[var(--color-border)] bg-[var(--color-surface)] px-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <option value={GENERAL_ACCESS_NONE}>No access</option>
                   {ROLES.map((r) => (

@@ -1,9 +1,9 @@
 package cli
 
 import (
+	"bufio"
 	"context"
-	// Enable the go:embed directive for the login page below.
-	_ "embed"
+	_ "embed" // Enable the go:embed directive for the login page below.
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,7 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -27,42 +27,72 @@ type callbackResult struct {
 }
 
 func loginCallbackHandler(state string, resultCh chan<- callbackResult) http.Handler {
-	fail := func(w http.ResponseWriter, status int, detail, sendErr string) {
-		writeLoginPage(w, status, false, detail)
-		select {
-		case resultCh <- callbackResult{err: errors.New(sendErr)}:
-		default:
-		}
-	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// Only /callback carries the OAuth result; anything else (favicon,
 		// stray reloads after completion) gets a friendly page.
 		if r.URL.Path != "/callback" {
-			writeLoginPage(w, http.StatusOK, true, "You can close this tab and return to your terminal.")
+			writeLoginPage(w, http.StatusOK, true, loginDoneDetail)
 			return
 		}
-		q := r.URL.Query()
-		if q.Get("state") != state {
-			fail(w, http.StatusBadRequest, "The login request could not be verified. Please run the command again.", "login callback returned an unexpected state value")
-			return
+		res, detail := loginCallback(r.URL.Query(), state)
+		status := http.StatusOK
+		if res.err != nil {
+			status = http.StatusBadRequest
 		}
-		if callbackErr := q.Get("error"); callbackErr != "" {
-			fail(w, http.StatusBadRequest, "The identity provider reported an error: "+callbackErr, "login failed: "+callbackErr)
-			return
-		}
-		code := q.Get("code")
-		if code == "" {
-			fail(w, http.StatusBadRequest, "No authorization code was returned. Please run the command again.", "login callback did not include an authorization code")
-			return
-		}
-		writeLoginPage(w, http.StatusOK, true, "You can close this tab and return to your terminal.")
-		select {
-		case resultCh <- callbackResult{code: code}:
-		default:
-		}
+		writeLoginPage(w, status, res.err == nil, detail)
+		sendCallbackResult(resultCh, res)
 	})
 	return mux
+}
+
+const loginDoneDetail = "You can close this tab and return to your terminal."
+
+// loginCallback reads the OAuth result from a callback query. detail is the
+// text for the browser page.
+func loginCallback(q url.Values, state string) (res callbackResult, detail string) {
+	switch {
+	case q.Get("state") != state:
+		return callbackResult{err: errors.New("login callback returned an unexpected state value")}, "The login request could not be verified. Please run the command again."
+	case q.Get("error") != "":
+		return callbackResult{err: errors.New("login failed: " + q.Get("error"))}, "The identity provider reported an error: " + q.Get("error")
+	case q.Get("code") == "":
+		return callbackResult{err: errors.New("login callback did not include an authorization code")}, "No authorization code was returned. Please run the command again."
+	}
+	return callbackResult{code: q.Get("code")}, loginDoneDetail
+}
+
+// readPastedCallback finishes a login whose browser runs on another machine,
+// for example over SSH, where the redirect to this machine's loopback listener
+// fails. The user pastes the callback URL that the browser could not open. It
+// must be a /callback URL with this login's state (the login URL carries the
+// same state), and its code is useless without the PKCE verifier that never
+// leaves this process.
+func readPastedCallback(in io.Reader, errOut io.Writer, state string, resultCh chan<- callbackResult) {
+	lines := bufio.NewScanner(in)
+	for lines.Scan() {
+		line := strings.TrimSpace(lines.Text())
+		if line == "" {
+			continue
+		}
+		u, err := url.Parse(line)
+		if err != nil || u.Path != "/callback" || u.Query().Get("state") != state {
+			// Do not echo the input: it can hold an authorization code.
+			_, _ = fmt.Fprintln(errOut, "That is not the callback URL of this login. Paste the full http://127.0.0.1 URL from the browser address bar.")
+			continue
+		}
+		res, _ := loginCallback(u.Query(), state)
+		sendCallbackResult(resultCh, res)
+		return
+	}
+}
+
+// sendCallbackResult keeps the first result; the login waits for only one.
+func sendCallbackResult(resultCh chan<- callbackResult, res callbackResult) {
+	select {
+	case resultCh <- res:
+	default:
+	}
 }
 
 func startLoginCallbackServer(ln net.Listener, state string, resultCh chan<- callbackResult) (*http.Server, <-chan error) {
@@ -79,10 +109,25 @@ func startLoginCallbackServer(ln net.Listener, state string, resultCh chan<- cal
 	return srv, serveErrCh
 }
 
+// waitForLoginCode returns the authorization code of the first login callback.
+func waitForLoginCode(ctx context.Context, resultCh <-chan callbackResult, serveErrCh <-chan error) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, loginTimeout)
+	defer cancel()
+	select {
+	case res := <-resultCh:
+		return res.code, res.err
+	case err := <-serveErrCh:
+		return "", fmt.Errorf("serve login callback: %w", err)
+	case <-ctx.Done():
+		return "", fmt.Errorf("timed out waiting for login callback after %s; run slashdocs auth login again", loginTimeout)
+	}
+}
+
 func loginCmd(g *globals, out io.Writer) *cobra.Command {
 	var name string
-	cmd := &cobra.Command{Use: "login [server]", Short: "Log in through an aidocs server", Example: "  aidocs auth login aidocs.example.com\n  aidocs auth login   # reuses the active context's server", RunE: func(cmd *cobra.Command, args []string) error {
-		srv := first(g.server, os.Getenv("AIDOCS_SERVER"))
+	var noBrowser bool
+	cmd := &cobra.Command{Use: "login [server]", Short: "Log in through a slashdocs server", Example: "  slashdocs auth login slashdocs.example.com\n  slashdocs auth login   # reuses the active context's server", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		srv := first(g.server, env("SLASHDOCS_SERVER"))
 		if len(args) > 0 {
 			srv = args[0]
 		}
@@ -95,7 +140,10 @@ func loginCmd(g *globals, out io.Writer) *cobra.Command {
 		if srv == "" {
 			return usageError{errNoServer}
 		}
-		srv = normalizeServer(srv)
+		srv, err := serverURL(srv)
+		if err != nil {
+			return err
+		}
 		verifier := randomToken(32)
 		challenge := pkceChallenge(verifier)
 		state := randomToken(18)
@@ -114,24 +162,16 @@ func loginCmd(g *globals, out io.Writer) *cobra.Command {
 			_ = srvHTTP.Shutdown(sdCtx)
 		}()
 		loginURL := srv + "/v1/auth/google/start?mode=cli&state=" + url.QueryEscape(state) + "&cli_redirect=" + url.QueryEscape(redirect) + "&code_challenge=" + url.QueryEscape(challenge)
-		if err := message(out, g, "Opening "+loginURL); err != nil {
-			return err
+		// The URL is progress, not the result, so it goes to stderr.
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Log in at "+loginURL+"\nIf the browser runs on another machine, paste here the http://127.0.0.1 URL that it fails to open.")
+		if !noBrowser {
+			openBrowser(loginURL)
 		}
-		openBrowser(loginURL)
+		go readPastedCallback(cmd.InOrStdin(), cmd.ErrOrStderr(), state, resultCh)
 
-		ctx, cancel := context.WithTimeout(cmd.Context(), loginTimeout)
-		defer cancel()
-		var code string
-		select {
-		case res := <-resultCh:
-			if res.err != nil {
-				return res.err
-			}
-			code = res.code
-		case err := <-serveErrCh:
-			return fmt.Errorf("serve login callback: %w", err)
-		case <-ctx.Done():
-			return fmt.Errorf("timed out waiting for login callback after %s; run aidocs auth login again", loginTimeout)
+		code, err := waitForLoginCode(cmd.Context(), resultCh, serveErrCh)
+		if err != nil {
+			return err
 		}
 
 		cl := &Client{Base: srv, HTTP: apiHTTPClient}
@@ -159,6 +199,7 @@ func loginCmd(g *globals, out io.Writer) *cobra.Command {
 		return confirm(out, g, "Logged in to "+srv+".")
 	}}
 	cmd.Flags().StringVar(&name, "name", "", "credential name")
+	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "print the login URL without opening a browser")
 	return cmd
 }
 
@@ -230,7 +271,7 @@ var loginPageHTML string
 
 var loginPageTmpl = template.Must(template.New("login").Parse(loginPageHTML))
 
-// writeLoginPage serves the OAuth callback tab, styled to match the aidocs web
+// writeLoginPage serves the OAuth callback tab, styled to match the slashdocs web
 // theme. The page lives in login_page.html (embedded); tone is selected by a
 // body class so no markup or styles are injected.
 func writeLoginPage(w http.ResponseWriter, status int, ok bool, detail string) {

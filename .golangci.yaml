@@ -77,7 +77,7 @@ formatters:
       sections:
         - standard
         - default
-        - prefix(github.com/razorpay/aidocs)
+        - prefix(github.com/razorpay/slashdocs)
       custom-order: true
   exclusions:
     generated: strict

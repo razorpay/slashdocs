@@ -1,13 +1,14 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
-	"github.com/razorpay/aidocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
 type commentMentionPrincipalType string
@@ -62,11 +63,11 @@ type patchCommentRequest struct {
 
 // CreateComment godoc
 // @Summary Create comment
-// @Description Requests with non-empty mentions must use Content-Type application/vnd.aidocs.comment-mentions+json so mixed-version deployments fail closed instead of dropping metadata.
+// @Description Requests with non-empty mentions must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed instead of dropping metadata.
 // @Tags comments
 // @Security bearerAuth
 // @Security cookieAuth
-// @Accept json,application/vnd.aidocs.comment-mentions+json
+// @Accept json,application/vnd.slashdocs.comment-mentions+json
 // @Param id path string true "Document ID"
 // @Param comment body createCommentRequest true "Comment body, anchor, and structured mentions"
 // @Success 201 {object} commentResponse
@@ -103,7 +104,8 @@ func (h handlers) createComment(c *gin.Context) {
 		return
 	}
 	incComment("created", cm.Status, actorType(c))
-	c.JSON(http.StatusCreated, commentJSON(cm, cm.VersionID, ""))
+	h.announce(c, repo.DocumentEventComments)
+	c.JSON(http.StatusCreated, commentJSON(cm, cm.VersionID, "", *p))
 }
 
 // ListComments godoc
@@ -137,16 +139,16 @@ func (h handlers) listComments(c *gin.Context) {
 	if placementVersionID != "" {
 		placementHTML, _ = h.deps.repository.GetVersionHTML(c.Request.Context(), placementVersionID)
 	}
-	c.JSON(http.StatusOK, listResponse[commentResponse]{Items: commentsJSON(items, placementVersionID, placementHTML)})
+	c.JSON(http.StatusOK, listResponse[commentResponse]{Items: commentsJSON(items, placementVersionID, placementHTML, *current(c))})
 }
 
 // CreateCommentReply godoc
 // @Summary Create comment reply
-// @Description Requests with non-empty mentions must use Content-Type application/vnd.aidocs.comment-mentions+json so mixed-version deployments fail closed instead of dropping metadata.
+// @Description Requests with non-empty mentions must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed instead of dropping metadata.
 // @Tags comments
 // @Security bearerAuth
 // @Security cookieAuth
-// @Accept json,application/vnd.aidocs.comment-mentions+json
+// @Accept json,application/vnd.slashdocs.comment-mentions+json
 // @Param id path string true "Document ID"
 // @Param comment_id path string true "Parent Comment ID"
 // @Param reply body createCommentReplyRequest true "Reply body and structured mentions"
@@ -183,16 +185,17 @@ func (h handlers) createCommentReply(c *gin.Context) {
 		return
 	}
 	incComment("created", cm.Status, actorType(c))
-	c.JSON(http.StatusCreated, commentJSON(cm, "", ""))
+	h.announce(c, repo.DocumentEventComments)
+	c.JSON(http.StatusCreated, commentJSON(cm, "", "", *current(c)))
 }
 
 // PatchComment godoc
 // @Summary Update comment
-// @Description Any request containing the mentions key, including an empty array, must use Content-Type application/vnd.aidocs.comment-mentions+json so mixed-version deployments fail closed.
+// @Description Any request containing the mentions key, including an empty array, must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed.
 // @Tags comments
 // @Security bearerAuth
 // @Security cookieAuth
-// @Accept json,application/vnd.aidocs.comment-mentions+json
+// @Accept json,application/vnd.slashdocs.comment-mentions+json
 // @Param id path string true "Document ID"
 // @Param comment_id path string true "Comment ID"
 // @Param update body patchCommentRequest true "Fields to update; omitted mentions are preserved unless the body changes"
@@ -235,7 +238,8 @@ func (h handlers) patchComment(c *gin.Context) {
 		event = "reopened"
 	}
 	incComment(event, cm.Status, actorType(c))
-	c.JSON(http.StatusOK, commentJSON(cm, cm.VersionID, ""))
+	h.announce(c, repo.DocumentEventComments)
+	c.JSON(http.StatusOK, commentJSON(cm, cm.VersionID, "", *current(c)))
 }
 
 func normalizePatchCommentRequest(in *patchCommentRequest) string {
@@ -314,25 +318,138 @@ func (h handlers) deleteComment(c *gin.Context) {
 		return
 	}
 	incComment("deleted", labelUnknown, actorType(c))
+	h.announce(c, repo.DocumentEventComments)
 	c.Status(http.StatusNoContent)
 }
 
-func (h handlers) canDeleteComment(c *gin.Context, docID, commentID string) bool {
-	p := current(c)
+// allowedCommentReactions is the closed set of reaction slugs. Values are
+// stable ASCII identifiers rather than literal emoji so they survive URLs,
+// logs, and font differences, and each client picks its own glyph.
+//
+// This check is load-bearing rather than cosmetic: the MCP adapter passes tool
+// arguments straight to c.Param without a router match, so nothing else stands
+// between an agent-supplied value and the database.
+var allowedCommentReactions = map[string]bool{
+	"+1": true, "-1": true, "laugh": true, "hooray": true,
+	"confused": true, "heart": true, "rocket": true, "eyes": true,
+	"plus": true,
+}
+
+// commentInDocument loads a comment and confirms it belongs to docID. Callers
+// must check the document role first; a missing comment and a comment in
+// another document deliberately share one 404 so the response cannot be used
+// to probe for comment IDs outside the document the caller named.
+func (h handlers) commentInDocument(c *gin.Context, docID, commentID string) bool {
+	cm, err := h.deps.repository.GetComment(c.Request.Context(), commentID)
+	if err != nil && !errors.Is(err, repo.ErrNotFound) {
+		internalErr(c, err)
+		return false
+	}
+	if err != nil || cm.DocumentID != docID {
+		c.JSON(http.StatusNotFound, errorResponse("not_found", "comment not found in document", nil))
+		return false
+	}
+	return true
+}
+
+// PutCommentReaction godoc
+// @Summary Add comment reaction
+// @Description Adds the caller's reaction to a comment or reply. Repeating the same reaction is a no-op.
+// @Tags comments
+// @Security bearerAuth
+// @Security cookieAuth
+// @Param id path string true "Document ID"
+// @Param comment_id path string true "Comment ID"
+// @Param emoji path string true "Reaction slug" Enums(+1, -1, laugh, hooray, confused, heart, rocket, eyes, plus)
+// @Success 204
+// @Router /v1/documents/{id}/comments/{comment_id}/reactions/{emoji} [put]
+func (h handlers) putCommentReaction(c *gin.Context) {
+	h.writeCommentReaction(c, h.deps.repository.PutCommentReaction)
+}
+
+// DeleteCommentReaction godoc
+// @Summary Remove comment reaction
+// @Description Removes the caller's reaction from a comment or reply. Removing an absent reaction is a no-op.
+// @Tags comments
+// @Security bearerAuth
+// @Security cookieAuth
+// @Param id path string true "Document ID"
+// @Param comment_id path string true "Comment ID"
+// @Param emoji path string true "Reaction slug" Enums(+1, -1, laugh, hooray, confused, heart, rocket, eyes, plus)
+// @Success 204
+// @Router /v1/documents/{id}/comments/{comment_id}/reactions/{emoji} [delete]
+func (h handlers) deleteCommentReaction(c *gin.Context) {
+	h.writeCommentReaction(c, h.deps.repository.DeleteCommentReaction)
+}
+
+// reactionWrite is the shape both reaction mutations share, so each handler
+// names the repository method it means instead of passing a flag for the
+// helper to branch on.
+type reactionWrite func(ctx context.Context, commentID string, principal auth.Principal, emoji string) error
+
+// writeCommentReaction backs both reaction verbs. Both are idempotent, so both
+// answer 204 whether or not the row already existed.
+func (h handlers) writeCommentReaction(c *gin.Context, write reactionWrite) {
+	docID, commentID := c.Param("id"), c.Param("comment_id")
+	emoji := c.Param("emoji")
+	if !allowedCommentReactions[emoji] {
+		badRequest(c, "unsupported reaction")
+		return
+	}
+	// Role before comment lookup: needDocRole authorizes the document in the
+	// URL but says nothing about which document the comment belongs to, so the
+	// membership check below is what actually confines the write.
+	if !h.needDocRole(c, docID, repo.RoleCommenter) {
+		return
+	}
+	if !h.commentInDocument(c, docID, commentID) {
+		return
+	}
+	if err := write(c.Request.Context(), commentID, *current(c), emoji); err != nil {
+		internalErr(c, err)
+		return
+	}
+	h.announce(c, repo.DocumentEventComments)
+	c.Status(http.StatusNoContent)
+}
+
+// loadCommentInDocument fetches a comment and confirms it belongs to docID,
+// answering the client on every failure path.
+//
+// Distinct from commentInDocument above, which the reaction handlers use: this
+// one runs before any document-role check, so it reports a missing comment as
+// 403 and a cross-document one as 404. That split is only safe because the
+// caller has not yet established the caller's access, and it is why the two
+// helpers are not merged.
+func (h handlers) loadCommentInDocument(c *gin.Context, docID, commentID string) (repo.Comment, bool) {
 	cm, err := h.deps.repository.GetComment(c.Request.Context(), commentID)
 	if err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
 			forbidden(c, "comment access required")
-			return false
+			return repo.Comment{}, false
 		}
 		internalErr(c, err)
-		return false
+		return repo.Comment{}, false
 	}
 	if cm.DocumentID != docID {
 		c.JSON(http.StatusNotFound, errorResponse("not_found", "comment not found in document", nil))
+		return repo.Comment{}, false
+	}
+	return cm, true
+}
+
+// authoredBy reports whether the principal wrote the comment. Principal ids are
+// only unique within a type, so both fields must match.
+func authoredBy(cm repo.Comment, p auth.Principal) bool {
+	return cm.Author.Type == p.Type && cm.Author.ID == p.ID
+}
+
+func (h handlers) canDeleteComment(c *gin.Context, docID, commentID string) bool {
+	cm, ok := h.loadCommentInDocument(c, docID, commentID)
+	if !ok || !h.needDocRole(c, docID, repo.RoleCommenter) {
 		return false
 	}
-	if cm.Author.Type == p.Type && cm.Author.ID == p.ID {
+	if authoredBy(cm, *current(c)) {
 		return true
 	}
 	forbidden(c, "only the comment author can delete this comment")
@@ -340,21 +457,12 @@ func (h handlers) canDeleteComment(c *gin.Context, docID, commentID string) bool
 }
 
 func (h handlers) canMutateComment(c *gin.Context, docID, commentID string) bool {
+	cm, ok := h.loadCommentInDocument(c, docID, commentID)
+	if !ok || !h.needDocRole(c, docID, repo.RoleCommenter) {
+		return false
+	}
 	p := current(c)
-	cm, err := h.deps.repository.GetComment(c.Request.Context(), commentID)
-	if err != nil {
-		if errors.Is(err, repo.ErrNotFound) {
-			forbidden(c, "comment access required")
-			return false
-		}
-		internalErr(c, err)
-		return false
-	}
-	if cm.DocumentID != docID {
-		c.JSON(http.StatusNotFound, errorResponse("not_found", "comment not found in document", nil))
-		return false
-	}
-	if cm.Author.Type == p.Type && cm.Author.ID == p.ID {
+	if authoredBy(cm, *p) {
 		return true
 	}
 	role, err := h.deps.repository.RoleForDocument(c.Request.Context(), *p, cm.DocumentID)

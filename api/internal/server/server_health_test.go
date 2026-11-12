@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
-	"github.com/razorpay/aidocs/api/internal/repo"
-	"github.com/razorpay/aidocs/api/internal/server"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/server"
 )
 
 func TestLiveness(t *testing.T) {
@@ -48,13 +49,17 @@ func TestReadiness(t *testing.T) {
 }
 
 func TestDiscovery(t *testing.T) {
-	rr := do(t, newTestEnv(t).h, http.MethodGet, "/.well-known/aidocs.json", "", nil)
-	assertStatus(t, rr, http.StatusOK)
-	assertJSON(t, rr.Body.Bytes(), `{
-	  "name": "aidocs",
-	  "api_version": "v1",
-	  "auth": { "modes": ["web", "cli", "mcp"] }
-	}`)
+	h := newTestEnv(t).h
+	// The aidocs path serves clients released before the rename.
+	for _, path := range []string{"/.well-known/slashdocs.json", "/.well-known/aidocs.json"} {
+		rr := do(t, h, http.MethodGet, path, "", nil)
+		assertStatus(t, rr, http.StatusOK)
+		assertJSON(t, rr.Body.Bytes(), `{
+		  "name": "slashdocs",
+		  "api_version": "v1",
+		  "auth": { "modes": ["web", "cli", "mcp"] }
+		}`)
+	}
 }
 
 func TestMetricsEndpoint(t *testing.T) {
@@ -63,7 +68,7 @@ func TestMetricsEndpoint(t *testing.T) {
 	rr := do(t, server.MetricsHandler(), http.MethodGet, "/metrics", "", nil)
 	assertStatus(t, rr, http.StatusOK)
 	body := rr.Body.String()
-	for _, want := range []string{"aidocs_http_requests_total", "aidocs_auth_attempts_total", "go_goroutines"} {
+	for _, want := range []string{"slashdocs_http_requests_total", "slashdocs_auth_attempts_total", "go_goroutines"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("metrics response missing %q\n%s", want, body)
 		}
@@ -72,9 +77,9 @@ func TestMetricsEndpoint(t *testing.T) {
 
 func TestAuthFailureMetricIncrements(t *testing.T) {
 	h := newTestEnv(t).h
-	before := scrapeMetric(t, "aidocs_auth_attempts_total", map[string]string{"kind": "request", "outcome": "failure"})
+	before := scrapeMetric(t, "slashdocs_auth_attempts_total", map[string]string{"kind": "request", "outcome": "failure"})
 	_ = do(t, h, http.MethodGet, "/v1/me", "", nil)
-	after := scrapeMetric(t, "aidocs_auth_attempts_total", map[string]string{"kind": "request", "outcome": "failure"})
+	after := scrapeMetric(t, "slashdocs_auth_attempts_total", map[string]string{"kind": "request", "outcome": "failure"})
 	if after != before+1 {
 		t.Fatalf("auth failure counter = %v, want %v", after, before+1)
 	}
@@ -82,16 +87,16 @@ func TestAuthFailureMetricIncrements(t *testing.T) {
 
 func TestDocumentCreateMetricsIncrement(t *testing.T) {
 	e := newTestEnv(t)
-	docBefore := scrapeMetric(t, "aidocs_document_events_total", map[string]string{"event": "created", "actor_type": "user"})
-	verBefore := scrapeMetric(t, "aidocs_version_events_total", map[string]string{"event": "created_initial", "actor_type": "user"})
+	docBefore := scrapeMetric(t, "slashdocs_document_events_total", map[string]string{"event": "created", "actor_type": "user"})
+	verBefore := scrapeMetric(t, "slashdocs_version_events_total", map[string]string{"event": "created_initial", "actor_type": "user"})
 	body, contentType := multipartBody(t, map[string]string{"title": "Metrics doc"}, "file", "doc.html", "<html><body>metrics</body></html>")
 	rr := doRaw(t, e.h, http.MethodPost, "/v1/documents", body, map[string]string{
 		"Content-Type":     contentType,
 		"X-Test-Principal": principalHeader(fixtureUser),
 	})
 	assertStatus(t, rr, http.StatusCreated)
-	docAfter := scrapeMetric(t, "aidocs_document_events_total", map[string]string{"event": "created", "actor_type": "user"})
-	verAfter := scrapeMetric(t, "aidocs_version_events_total", map[string]string{"event": "created_initial", "actor_type": "user"})
+	docAfter := scrapeMetric(t, "slashdocs_document_events_total", map[string]string{"event": "created", "actor_type": "user"})
+	verAfter := scrapeMetric(t, "slashdocs_version_events_total", map[string]string{"event": "created_initial", "actor_type": "user"})
 	if docAfter != docBefore+1 {
 		t.Fatalf("document create counter = %v, want %v", docAfter, docBefore+1)
 	}
@@ -102,8 +107,9 @@ func TestDocumentCreateMetricsIncrement(t *testing.T) {
 
 func TestAPIDocsRoutes(t *testing.T) {
 	h := newTestEnv(t).h
+	authedHeaders := map[string]string{"X-Test-Principal": principalHeader(fixtureUser)}
 
-	openapi := do(t, h, http.MethodGet, "/openapi.json", "", nil)
+	openapi := do(t, h, http.MethodGet, "/openapi.json", "", authedHeaders)
 	assertStatus(t, openapi, http.StatusOK)
 	var spec map[string]any
 	if err := json.Unmarshal(openapi.Body.Bytes(), &spec); err != nil {
@@ -147,10 +153,36 @@ func TestAPIDocsRoutes(t *testing.T) {
 		t.Fatalf("openapi mention principal enum = %#v, want [user service_account]", mentionPrincipalType["enum"])
 	}
 
-	docs := do(t, h, http.MethodGet, "/api-docs", "", nil)
+	docs := do(t, h, http.MethodGet, "/api-docs", "", authedHeaders)
 	assertStatus(t, docs, http.StatusFound)
 	if loc := docs.Header().Get("Location"); loc != "/api-docs/index.html" {
 		t.Fatalf("Location = %q, want /api-docs/index.html", loc)
+	}
+}
+
+func TestAPIDocsRequireAuth(t *testing.T) {
+	h := newTestEnv(t).h
+	// An unauthenticated browser request must be redirected to the login page
+	// with a redirect back to the originally requested docs path, so that a
+	// user is routed to the docs after signing in.
+	for _, path := range []string{"/api-docs/index.html", "/openapi.json", "/api-docs"} {
+		rr := do(t, h, http.MethodGet, path, "", map[string]string{"Accept": "text/html"})
+		assertStatus(t, rr, http.StatusFound)
+		loc := rr.Header().Get("Location")
+		if !strings.HasPrefix(loc, "/v1/auth/google/start?mode=web&redirect=") {
+			t.Fatalf("%s: login Location = %q, want /v1/auth/google/start?...", path, loc)
+		}
+		redirectQuery := loc[len("/v1/auth/google/start?mode=web&redirect="):]
+		redirect, err := url.QueryUnescape(redirectQuery)
+		if err != nil || redirect != path {
+			t.Fatalf("%s: redirect back = %q, want %q", path, redirect, path)
+		}
+	}
+
+	// An unauthenticated non-browser (API/CLI) request receives 401.
+	for _, path := range []string{"/openapi.json", "/api-docs/index.html"} {
+		rr := do(t, h, http.MethodGet, path, "", nil)
+		assertStatus(t, rr, http.StatusUnauthorized)
 	}
 }
 
@@ -163,7 +195,8 @@ func TestConfigReportsDeploymentWording(t *testing.T) {
 	  "everyone_label": "Anyone with the link",
 	  "provider_name": "SSO",
 	  "default_doc_permission": "private",
-	  "google_groups_enabled": false
+	  "google_groups_enabled": false,
+	  "labels_enabled": true
 	}`)
 
 	org := newConfiguredTestEnv(t, server.Config{Environment: "test", Deployment: "org", OrgName: "Acme", OIDCProviderName: "Google", DefaultDocPermission: repo.RoleCommenter})
@@ -175,14 +208,33 @@ func TestConfigReportsDeploymentWording(t *testing.T) {
 	  "everyone_label": "Anyone in Acme",
 	  "provider_name": "Google",
 	  "default_doc_permission": "commenter",
-	  "google_groups_enabled": false
+	  "google_groups_enabled": false,
+	  "labels_enabled": true
 	}`)
+}
+
+func TestConfigReportsTemporarilyDisabledDocumentFeatures(t *testing.T) {
+	e := newConfiguredTestEnv(t, server.Config{
+		Environment:   "test",
+		DisableLabels: true,
+	})
+	rr := do(t, e.h, http.MethodGet, "/v1/config", "", nil)
+	assertStatus(t, rr, http.StatusOK)
+	var cfg struct {
+		LabelsEnabled bool `json:"labels_enabled"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LabelsEnabled {
+		t.Fatalf("config did not disable document features: %s", rr.Body.String())
+	}
 }
 
 func TestFrontendFallbackServesEmbeddedIndex(t *testing.T) {
 	rr := do(t, newTestEnv(t).h, http.MethodGet, "/docs/some_doc", "", nil)
 	assertStatus(t, rr, http.StatusOK)
-	if !strings.Contains(rr.Body.String(), "<title>aidocs</title>") || !strings.Contains(rr.Body.String(), "id=\"root\"") {
+	if !strings.Contains(rr.Body.String(), "<title>slashdocs</title>") || !strings.Contains(rr.Body.String(), "id=\"root\"") {
 		t.Fatalf("body = %q, want embedded frontend", rr.Body.String())
 	}
 }

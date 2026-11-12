@@ -18,10 +18,10 @@ SELECT f.id, f.title, f.owner_type, f.owner_id,
        COALESCE(u.email,'') AS owner_email
 FROM folders f
 LEFT JOIN users u ON f.owner_type='user' AND f.owner_id=u.id
--- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-  -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
-  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+-- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE f.id= @id;
 
 -- name: ListFolderAncestors :many
@@ -33,7 +33,7 @@ WITH RECURSIVE anc(id, title, parent, depth) AS (
   UNION ALL
   SELECT f.id, f.title, COALESCE(f.parent_folder_id,''), a.depth+1
   FROM folders f JOIN anc a ON f.id=a.parent
-  WHERE a.parent != '' AND a.depth < 10
+  WHERE a.parent != '' AND a.depth < sqlc.arg(max_depth)::int
 )
 SELECT id, title FROM anc ORDER BY depth DESC;
 
@@ -84,13 +84,35 @@ UPDATE folders SET parent_folder_id=NULLIF(@parent_folder_id::text,''), updated_
 SELECT EXISTS(SELECT 1 FROM folders f WHERE f.id = @folder_id)::bool AS folder_exists,
        EXISTS(SELECT 1 FROM folders f WHERE f.id = @folder_id AND f.owner_type = @owner_type AND f.owner_id = @owner_id)::bool AS is_owner;
 
--- name: DeleteFolderSubtree :execrows
+-- name: ListFolderSubtreeOrphans :many
+-- The folders that other principals own directly inside the folders that
+-- DeleteFolderSubtree removes. Like Google Drive, a folder delete keeps them.
 WITH RECURSIVE d(id, depth) AS (
   SELECT @folder_id::text, 1
   UNION ALL
-  SELECT f.id, d.depth+1 FROM folders f JOIN d ON f.parent_folder_id=d.id WHERE d.depth < 64
+  SELECT f.id, d.depth+1 FROM folders f JOIN d ON f.parent_folder_id=d.id
+  WHERE d.depth < 64 AND f.owner_type= @owner_type AND f.owner_id= @owner_id
+)
+SELECT f.id, f.title, f.owner_type, f.owner_id
+FROM folders f JOIN d ON f.parent_folder_id=d.id
+WHERE NOT (f.owner_type= @owner_type AND f.owner_id= @owner_id);
+
+-- name: DeleteFolderSubtree :execrows
+-- Deletes the folder and every folder below it that the same principal owns.
+-- The walk stops at folders that other principals own.
+WITH RECURSIVE d(id, depth) AS (
+  SELECT @folder_id::text, 1
+  UNION ALL
+  SELECT f.id, d.depth+1 FROM folders f JOIN d ON f.parent_folder_id=d.id
+  WHERE d.depth < 64 AND f.owner_type= @owner_type AND f.owner_id= @owner_id
 )
 DELETE FROM folders WHERE id IN (SELECT id FROM d);
+
+-- name: RootFolderTitleTaken :one
+SELECT EXISTS(
+  SELECT 1 FROM folders
+  WHERE parent_folder_id IS NULL AND owner_type= @owner_type AND owner_id= @owner_id AND lower(title)=lower(@title)
+)::bool;
 
 -- name: FindRootFoldersByTitle :many
 -- Resolves the first segment of a folder path: root folders with the given
@@ -100,10 +122,10 @@ SELECT f.id, f.title, f.owner_type, f.owner_id,
        COALESCE(u.name,sa.name,'') AS owner_name, COALESCE(u.email,'') AS owner_email
 FROM folders f
 LEFT JOIN users u ON f.owner_type='user' AND f.owner_id=u.id
--- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-  -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
-  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+-- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE COALESCE(f.parent_folder_id,'')=''
   AND lower(f.title)=lower(@title)
   AND (
@@ -140,10 +162,10 @@ SELECT f.id, f.title, f.owner_type, f.owner_id,
        COALESCE(we.last_opened_at, f.created_at)::timestamptz AS last_active
 FROM folders f
 LEFT JOIN users u ON f.owner_type='user' AND f.owner_id=u.id
--- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-  -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
-  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+-- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 LEFT JOIN folder_workspace_entries we ON we.folder_id=f.id AND we.principal_type= @principal_type AND we.principal_id= @principal_id
 WHERE (
   COALESCE(f.parent_folder_id,'')=''
@@ -218,10 +240,10 @@ SELECT f.id, f.title, f.owner_type, f.owner_id,
        COALESCE(u.name,sa.name,'') AS owner_name, COALESCE(u.email,'') AS owner_email
 FROM folders f
 LEFT JOIN users u ON f.owner_type='user' AND f.owner_id=u.id
--- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-  -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
-  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+-- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE COALESCE(f.parent_folder_id,'')= @parent_folder_id::text
 ORDER BY f.title
 LIMIT 51;
@@ -244,10 +266,10 @@ SELECT DISTINCT f.id, f.title, f.owner_type, f.owner_id,
 FROM folders f
 JOIN accessible a ON f.id = a.id
 LEFT JOIN users u ON f.owner_type='user' AND f.owner_id=u.id
--- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-  -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
-  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+-- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE f.title ILIKE '%' || @query::text || '%'
 ORDER BY f.title
 LIMIT @row_limit;

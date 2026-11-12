@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/auth"
 )
 
 func TestDocumentLabelsReplaceAndFilter(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/auth"
 )
 
 type resolver struct {
@@ -30,7 +30,7 @@ func (r resolver) ResolveUser(ctx context.Context, id string) (auth.Principal, e
 }
 
 func TestDBAuthenticatorBearerToken(t *testing.T) {
-	tok, hash, err := auth.NewBearerToken("aidocs_cli_")
+	tok, hash, err := auth.NewBearerToken("slashdocs_cli_")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestDBAuthenticatorPropagatesResolverFailures(t *testing.T) {
 
 	req = httptest.NewRequest("GET", "/", nil)
 	req.AddCookie(&http.Cookie{
-		Name:     "aidocs_session",
+		Name:     "slashdocs_session",
 		Value:    (auth.SessionCodec{Secret: []byte("s")}).Sign("usr_1"),
 		Secure:   true,
 		HttpOnly: true,
@@ -110,7 +110,7 @@ func TestDBAuthenticatorSignedSession(t *testing.T) {
 	a := auth.DBAuthenticator{Resolver: resolver{p: auth.Principal{Type: auth.PrincipalUser, ID: "usr_1"}}, SessionSecret: secret}
 	req := httptest.NewRequest("GET", "/", nil)
 	req.AddCookie(&http.Cookie{
-		Name:     "aidocs_session",
+		Name:     "slashdocs_session",
 		Value:    cookie,
 		Secure:   true,
 		HttpOnly: true,

@@ -1,10 +1,10 @@
-# Google Group sharing for aidocs
+# Google Group sharing for slashdocs
 
 Status: Proposed
 
 ## Summary
 
-Extend the existing aidocs ACL model with a `google_group` principal so that
+Extend the existing slashdocs ACL model with a `google_group` principal so that
 documents and folders can be shared with verified, organization-owned Google
 Groups.
 
@@ -20,10 +20,8 @@ The first release will:
 - Enable group sharing only for `org` deployments and groups owned by the
   configured Google Workspace customer.
 - Provide group autocomplete in the web UI and explicit `--group` CLI syntax.
-- Allow owner-level group grants while retaining the creator as the canonical
-  owner.
-- Allow only the canonical owner to create, promote, demote, or revoke an
-  owner-level group grant.
+- Give groups the `viewer`, `commenter`, or `editor` role. The owner of a
+  resource is always one principal, never a group.
 - Avoid sending sharing or notification emails as part of this capability.
 - Target deployments with up to 1,000 daily active users.
 
@@ -79,7 +77,7 @@ Add a case-insensitive unique index on canonical email.
 
 | Column | Purpose |
 | --- | --- |
-| `user_id` | aidocs user receiving derived group access. |
+| `user_id` | slashdocs user receiving derived group access. |
 | `group_id` | Referenced immutable Google Group ID. |
 | `synced_at` | Time this membership was observed. |
 
@@ -90,7 +88,7 @@ user and group records.
 
 | Column | Purpose |
 | --- | --- |
-| `user_id` | aidocs user whose membership was refreshed. |
+| `user_id` | slashdocs user whose membership was refreshed. |
 | `last_attempt_at` | Most recent refresh attempt. |
 | `last_success_at` | Most recent complete, successful snapshot. |
 | `last_error_code` | Low-cardinality failure category for diagnostics. |
@@ -112,7 +110,7 @@ status. These fields must never appear in API responses or logs.
 
 After normal cookie or bearer authentication:
 
-1. Skip group resolution for aidocs service accounts.
+1. Skip group resolution for slashdocs service accounts.
 2. Read the user's shared membership snapshot from Postgres.
 3. Attach the cached group IDs when `last_success_at` is less than one minute
    old.
@@ -151,27 +149,23 @@ grants, and the `anyone` principal.
 
 ## Ownership semantics
 
-Google Groups may receive `viewer`, `commenter`, `editor`, or `owner` roles.
+Google Groups may receive `viewer`, `commenter`, or `editor` roles. No grant
+gives `owner`. The owner of a document or folder is the one principal in its
+`owner_type` and `owner_id` columns, as in Google Drive.
 
-An `owner` Google Group grant provides owner-level co-access. It does not
-replace the canonical owner stored on the document or folder. Group-derived
-co-owners may perform normal owner operations, including deletion and managing
-non-owner grants.
+An earlier version let the owner grant `owner` to a group. Folder inheritance
+then let an editor take ownership of another user's document: the editor gave
+owner on their own folder to a group that they were in, and moved the document
+into that folder. Migration `00031_single_owner` changes those grants to
+`editor`, and a check constraint keeps `owner` out of `resource_grants`.
 
-Owner-level grant invariants:
+Moves and deletes also follow Google Drive:
 
-- Only the canonical owner may create an owner-level group grant.
-- Only the canonical owner may promote a group to owner.
-- Only the canonical owner may demote or revoke an existing owner-level group
-  grant.
-- Group-derived co-owners cannot alter owner-level grants.
-- Owner-level grants remain unsupported for individual users and aidocs
-  service accounts.
-- The canonical owner continues to appear separately in effective-access and
-  UI representations.
-
-These rules need explicit comments near the authorization checks because they
-are security invariants rather than ordinary role validation.
+- To move a document, you need editor on the document, on the destination
+  folder, and on the folder that it leaves. The owner needs no role on the
+  folder that it leaves, so no one can trap a document away from its owner.
+- A folder delete removes only the folders that the deleting owner owns.
+  Folders that other users own move to the root of their owner.
 
 ## Public API
 
@@ -188,7 +182,7 @@ Response:
   "items": [
     {
       "id": "groups/012345",
-      "email": "tech-infra-common-platforms@razorpay.com",
+      "email": "platform-team@example.com",
       "name": "Common Platform"
     }
   ]
@@ -209,7 +203,7 @@ Extend the existing document and folder grant request:
 {
   "principal": {
     "type": "google_group",
-    "email": "tech-infra-common-platforms@razorpay.com"
+    "email": "platform-team@example.com"
   },
   "role": "commenter"
 }
@@ -227,12 +221,12 @@ payloads remain compatible.
 Add mutually exclusive group syntax for documents and folders:
 
 ```bash
-aidocs docs grants add <doc_id> \
-  --group tech-infra-common-platforms@razorpay.com \
+slashdocs docs grants add <doc_id> \
+  --group platform-team@example.com \
   --role commenter
 
-aidocs folders grants add <folder_id> \
-  --group tech-infra-common-platforms@razorpay.com \
+slashdocs folders grants add <folder_id> \
+  --group platform-team@example.com \
   --role viewer
 ```
 
@@ -252,9 +246,6 @@ Google Group mode will:
 - Debounce autocomplete through `/v1/google-groups`.
 - Require selection of a server-verified result.
 - Display a group icon, display name, and canonical email.
-- Include `owner` in the role selector only when the current user is the
-  canonical resource owner.
-- Clearly distinguish the canonical owner from group co-owners.
 - Display direct and inherited group access sources.
 - Preserve confirmation flows when changing or revoking inherited access.
 - Surface `group_membership_unavailable` as a temporary dependency problem,
@@ -269,7 +260,7 @@ Add the following server settings:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `AIDOCS_GOOGLE_GROUPS_ENABLED` | `false` | Enables the capability. |
+| `SLASHDOCS_GOOGLE_GROUPS_ENABLED` | `false` | Enables the capability. |
 | `GOOGLE_GROUPS_CUSTOMER_ID` | none | Workspace customer ID beginning with `C`. |
 | `GOOGLE_GROUPS_ADMIN_EMAIL` | none | Delegated administrator subject. |
 | `GOOGLE_GROUPS_CREDENTIALS_FILE` | none | Mounted service-account JSON file. |
@@ -278,7 +269,7 @@ Add the following server settings:
 
 When enabled, startup must:
 
-- Require `AIDOCS_DEPLOYMENT=org`.
+- Require `SLASHDOCS_DEPLOYMENT=org`.
 - Validate all group settings.
 - Validate that the credential file is present and readable.
 - Fail startup for malformed or incomplete configuration.
@@ -302,7 +293,6 @@ tokens must not be written to logs or returned through configuration APIs.
 - Concurrent refresh coalescing.
 - External-customer, malformed, and deleted group rejection.
 - Group role merging and highest-role precedence.
-- Owner-group creation, promotion, demotion, and revocation authorization.
 - Service accounts never receiving Google-derived memberships.
 - Credentials, tokens, user emails, and group membership lists not leaking into
   errors, logs, or metrics.
@@ -320,7 +310,6 @@ Add a Postgres service to CI and cover:
 - Empty membership snapshots removing previous access.
 - Group renames preserving authorization through the immutable ID.
 - Effective-access output for direct and inherited group sources.
-- Owner-group permissions without canonical-owner replacement.
 - Existing user, service-account, and `anyone` behavior remaining unchanged.
 
 ### API and CLI tests
@@ -333,7 +322,6 @@ Add a Postgres service to CI and cover:
 - Direct exact-resource access remaining usable during Google failure.
 - Aggregate workspace and search endpoints failing instead of returning partial
   data.
-- Canonical-owner-only owner-grant operations.
 - CLI `--group` payload, human output, JSON output, and mutual-exclusion errors.
 - Backward compatibility for existing API and CLI callers.
 
@@ -344,15 +332,14 @@ Introduce Vitest and React Testing Library for:
 - People/group mode switching.
 - Debounced group search and verified selection.
 - Empty, loading, and dependency-error states.
-- Group roles and conditional owner visibility.
+- Group roles.
 - Direct versus inherited group display.
-- Owner-grant confirmation and authorization errors.
 
 ### Browser tests
 
 Introduce Playwright with a fake Google directory and verify:
 
-- A canonical owner shares a document and folder with a group.
+- An owner shares a document and folder with a group.
 - Direct and nested members discover and open the resource.
 - Removed members lose access after cache expiry.
 - Folder inheritance works.
@@ -398,7 +385,7 @@ non-destructive.
 
 ## Acceptance criteria
 
-- A canonical owner can share documents and folders with a verified,
+- An owner can share documents and folders with a verified,
   organization-owned Google Group.
 - Direct and nested group members receive the assigned role and inherited
   folder access.
@@ -407,9 +394,6 @@ non-destructive.
 - Stale membership is never used for authorization.
 - Google failures produce explicit temporary errors without breaking
   independently sufficient exact-resource access.
-- Group owner grants provide owner-level co-access without changing canonical
-  ownership.
-- Only the canonical owner can manage owner-level group grants.
 - Existing sharing behavior remains backward compatible.
 - No email is sent when sharing with a group.
 
@@ -421,8 +405,6 @@ invariants, particularly:
 - Why ACLs store immutable Google Group IDs instead of email addresses.
 - Why stale memberships are retained for diagnostics but ignored for access.
 - Why group membership fields on a principal are internal-only.
-- Why group owner access does not replace canonical ownership.
-- Why only canonical owners may alter owner-level group grants.
 
 Update the self-hosting guide, Helm chart documentation, CLI help, generated
 OpenAPI specification, and operator runbooks alongside the implementation.

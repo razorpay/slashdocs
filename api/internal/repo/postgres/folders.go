@@ -3,15 +3,16 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
-	dbsqlc "github.com/razorpay/aidocs/api/internal/db/sqlc"
-	"github.com/razorpay/aidocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	dbsqlc "github.com/razorpay/slashdocs/api/internal/db/sqlc"
+	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
 // folderTreeLockID keys the advisory lock that serializes folder-structure
@@ -19,10 +20,10 @@ import (
 // expressed as database constraints, so every transaction that reshapes the
 // tree takes this transaction-scoped lock first (see AcquireFolderTreeLock in
 // queries/folders.sql).
-const folderTreeLockID int64 = 0x6169646f63735f66 // "aidocs_f"
+const folderTreeLockID int64 = 0x6169646f63735f66 // "slashdocs_f"
 
 // folderMaxDepth is the deepest folder nesting the product allows.
-const folderMaxDepth = 5
+const folderMaxDepth = 15
 
 // grantRankRole maps the numeric role rank computed by ListFolderAccessChain
 // (owner=4, editor=3, commenter=2, viewer=1, none=0) back to a repo.Role.
@@ -145,7 +146,10 @@ func (s *Store) getFolder(ctx context.Context, q *dbsqlc.Queries, id string) (re
 		Owner:          auth.Principal{Type: auth.PrincipalType(r.OwnerType), ID: r.OwnerID, Name: r.OwnerName, Email: r.OwnerEmail},
 	}
 	if f.ParentFolderID != "" {
-		anc, err := q.ListFolderAncestors(ctx, f.ParentFolderID)
+		anc, err := q.ListFolderAncestors(ctx, dbsqlc.ListFolderAncestorsParams{
+			FolderID: f.ParentFolderID,
+			MaxDepth: folderMaxDepth,
+		})
 		if err != nil {
 			return repo.Folder{}, err
 		}
@@ -259,7 +263,16 @@ func (s *Store) DeleteFolder(ctx context.Context, id string, p auth.Principal) e
 	if !own.IsOwner {
 		return repo.ErrForbidden
 	}
-	deleted, err := q.DeleteFolderSubtree(ctx, id)
+	orphans, err := q.ListFolderSubtreeOrphans(ctx, dbsqlc.ListFolderSubtreeOrphansParams{FolderID: id, OwnerType: string(p.Type), OwnerID: p.ID})
+	if err != nil {
+		return err
+	}
+	for _, o := range orphans {
+		if err := moveOrphanToRoot(ctx, q, o); err != nil {
+			return err
+		}
+	}
+	deleted, err := q.DeleteFolderSubtree(ctx, dbsqlc.DeleteFolderSubtreeParams{FolderID: id, OwnerType: string(p.Type), OwnerID: p.ID})
 	if err != nil {
 		return err
 	}
@@ -267,6 +280,23 @@ func (s *Store) DeleteFolder(ctx context.Context, id string, p auth.Principal) e
 		return repo.ErrNotFound
 	}
 	return tx.Commit(ctx)
+}
+
+// moveOrphanToRoot moves a folder that a folder delete keeps to its owner's
+// root. Root titles are unique for each owner, so it adds " (2)", " (3)", and
+// so on to the title when the owner already has a root folder with that title.
+func moveOrphanToRoot(ctx context.Context, q *dbsqlc.Queries, o dbsqlc.ListFolderSubtreeOrphansRow) error {
+	title := o.Title
+	for n := 2; ; n++ {
+		taken, err := q.RootFolderTitleTaken(ctx, dbsqlc.RootFolderTitleTakenParams{OwnerType: o.OwnerType, OwnerID: o.OwnerID, Title: title})
+		if err != nil {
+			return err
+		}
+		if !taken {
+			return q.UpdateFolderTitleAndParent(ctx, dbsqlc.UpdateFolderTitleAndParentParams{ID: o.ID, Title: title})
+		}
+		title = fmt.Sprintf("%s (%d)", o.Title, n)
+	}
 }
 
 func (s *Store) ListFolder(ctx context.Context, p auth.Principal, folderID, path string) ([]repo.FolderEntry, bool, *repo.Folder, error) {

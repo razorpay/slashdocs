@@ -6,7 +6,7 @@ export const queryKeys = {
   documents: () => ["documents"] as const,
   document: (id: string) => ["document", id] as const,
   versions: (doc: string) => ["versions", doc] as const,
-  render: (version: string) => ["render", version] as const,
+  render: (docId: string, version: string) => ["render", docId, version] as const,
   comments: (doc: string) => ["comments", doc] as const,
   serviceAccounts: () => ["service-accounts"] as const,
   serviceAccountKeys: (id: string) => ["service-account-keys", id] as const,
@@ -19,6 +19,10 @@ export const queryKeys = {
   folderAccessAll: () => ["folder-access"] as const,
   folderAccess: (id: string) => ["folder-access", id] as const,
   documentAccess: (id: string) => ["document-access", id] as const,
+  documentAccessRequests: (id: string) => ["document-access-requests", id] as const,
   pins: () => ["pins"] as const,
+  featured: () => ["featured"] as const,
+  // Prefix key matching every people search. Grants change who is a contact.
+  userSearchAll: () => ["users", "search"] as const,
   userSearch: (query: string) => ["users", "search", query] as const,
 };

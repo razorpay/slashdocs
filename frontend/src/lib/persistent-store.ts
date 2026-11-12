@@ -8,7 +8,7 @@ export function createPersistentStore<T>(
   initial: T,
   deserialize: (parsed: unknown) => T = (p) => p as T,
 ) {
-  const event = `aidocs:persist:${key}`;
+  const event = `slashdocs:persist:${key}`;
 
   // Cache the parsed snapshot so useSyncExternalStore sees a stable reference
   // between renders unless the stored string actually changes.

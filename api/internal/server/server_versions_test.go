@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
-	"github.com/razorpay/aidocs/api/internal/server"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/server"
 )
 
 func TestViewerCannotUploadVersion(t *testing.T) {
@@ -72,8 +72,8 @@ func TestRenderCSPAllowsConfiguredAppOrigin(t *testing.T) {
 	}
 	if cookies := tokRR.Result().Cookies(); len(cookies) == 0 {
 		t.Fatalf("render token response did not set a cookie")
-	} else if cookies[0].Name != "aidocs_render_token" || !cookies[0].HttpOnly {
-		t.Fatalf("render token cookie = %#v, want HttpOnly aidocs_render_token", cookies[0])
+	} else if cookies[0].Name != "slashdocs_render_token" || !cookies[0].HttpOnly {
+		t.Fatalf("render token cookie = %#v, want HttpOnly slashdocs_render_token", cookies[0])
 	}
 
 	rr := doRaw(t, e.h, http.MethodGet, tok.URL, nil, map[string]string{
@@ -140,8 +140,8 @@ func TestRenderRouteReturnsWrapperNotRawHTML(t *testing.T) {
 	rr := do(t, e.h, http.MethodGet, "/v/"+docID+"/"+verID+"?token="+tok.Token, "", nil)
 	assertStatus(t, rr, http.StatusOK)
 	wrapperBody := rr.Body.String()
-	if !strings.Contains(wrapperBody, `<iframe id="aidocs-doc"`) ||
-		!strings.Contains(wrapperBody, "aidocs-bootstrap") ||
+	if !strings.Contains(wrapperBody, `<iframe id="slashdocs-doc"`) ||
+		!strings.Contains(wrapperBody, "slashdocs-bootstrap") ||
 		!strings.Contains(wrapperBody, "&lt;html&gt;") ||
 		!strings.Contains(wrapperBody, "&lt;/html&gt;") {
 		t.Fatalf("body = %q, want render wrapper with escaped srcdoc", rr.Body.String())

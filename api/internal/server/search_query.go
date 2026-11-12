@@ -3,242 +3,183 @@ package server
 import (
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
+	"time"
+	_ "time/tzdata" // Searchers send IANA time zones, and the image has no zoneinfo.
 	"unicode"
 
-	"github.com/razorpay/aidocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/repo"
 )
+
+// Document search follows Slack's search language. Every word must appear in
+// the title or the text, "quoted text" matches its words in order, and -word
+// excludes documents that contain the word. Modifiers filter the results:
+//
+//	from:<person>    the owner: an email, the name before the @, or me
+//	in:<folder>      a folder title or ID, or a folder above it
+//	label:<name>     a label; every label is required
+//	before:<date>    updated before the date
+//	after:<date>     updated after the date
+//	on:<date>        updated on the date
+//	during:<date>    the same as on:
+//
+// Repeated from: and in: modifiers match any of their values. A date can be a
+// phrase, as in after:last week: search_dates.go tells which words it can
+// have. As in Slack, a modifier without a usable value has no effect, so a
+// partly typed query never fails.
 
 const (
 	maxSearchQueryBytes = 512
-	maxSearchValueBytes = 128
-	maxSearchLabels     = 10
+	maxSearchValues     = 10
 )
 
 var errInvalidSearch = errors.New("invalid search query")
 
-// parseDocumentSearch turns the user-facing search language into validated
-// regex patterns consumed by the repository. Literal values are escaped and
-// therefore remain substring searches. /pattern/ values opt into the small
-// regex surface supported by both Go's RE2 validator and PostgreSQL ARE.
-func parseDocumentSearch(raw string) (repo.DocumentSearch, error) {
-	raw = strings.TrimSpace(raw)
+// searchAliases keeps the earlier author: and labels: names working.
+var searchAliases = map[string]string{"author": "from", "labels": "label"}
+
+func parseDocumentSearch(raw string, me auth.Principal, now time.Time) (repo.DocumentSearch, error) {
 	if len(raw) > maxSearchQueryBytes {
 		return repo.DocumentSearch{}, fmt.Errorf("%w: query is too long", errInvalidSearch)
 	}
-	tokens, err := searchTokens(raw)
-	if err != nil {
-		return repo.DocumentSearch{}, err
-	}
-
 	var out repo.DocumentSearch
-	text := make([]string, 0, len(tokens))
-	for _, token := range tokens {
-		key, value, structured := strings.Cut(token, ":")
-		key = strings.ToLower(key)
-		if !structured || (key != "author" && key != "labels" && key != "in") {
-			text = append(text, token)
+	tokens := searchTokens(raw)
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		text := strings.ToLower(token.text)
+		if token.phrase {
+			out.Terms = append(out.Terms, text)
 			continue
 		}
-		if value == "" {
-			return repo.DocumentSearch{}, fmt.Errorf("%w: %s: needs a value", errInvalidSearch, key)
+		if len(text) > 1 && text[0] == '-' {
+			out.ExcludedTerms = append(out.ExcludedTerms, text[1:])
+			continue
 		}
-		if err := applySearchModifier(&out, key, value); err != nil {
-			return repo.DocumentSearch{}, err
+		key, value, hasKey := strings.Cut(text, ":")
+		if alias, ok := searchAliases[key]; ok {
+			key = alias
+		}
+		if hasKey && dateModifiers[key] {
+			i += applyDateModifier(&out, key, value, tokens[i+1:], now)
+			continue
+		}
+		if !hasKey || !applySearchModifier(&out, key, value, me, now) {
+			out.Terms = append(out.Terms, text)
 		}
 	}
-	if len(text) > 0 {
-		out.TitlePattern, err = searchPattern(strings.Join(text, " "))
-		if err != nil {
-			return repo.DocumentSearch{}, fmt.Errorf("title: %w", err)
+	for _, values := range [][]string{out.Terms, out.ExcludedTerms, out.Owners, out.Folders, out.Labels} {
+		if len(values) > maxSearchValues {
+			return repo.DocumentSearch{}, fmt.Errorf("%w: use at most %d of each search term", errInvalidSearch, maxSearchValues)
 		}
 	}
 	return out, nil
 }
 
-func applySearchModifier(out *repo.DocumentSearch, key, value string) error {
+// applySearchModifier reports false when key is not a modifier, so the token
+// stays title text. Values are lowercase.
+func applySearchModifier(out *repo.DocumentSearch, key, value string, me auth.Principal, now time.Time) bool {
+	value = strings.TrimSpace(value)
 	switch key {
-	case "author":
-		if out.AuthorPattern != "" {
-			return fmt.Errorf("%w: author: may only be used once", errInvalidSearch)
+	case "from":
+		value = strings.TrimPrefix(value, "@")
+		if value == "me" {
+			value = strings.ToLower(me.ID)
 		}
-		pattern, err := searchModifierPattern(value)
-		if err != nil {
-			return fmt.Errorf("author: %w", err)
-		}
-		out.AuthorPattern = pattern
+		out.Owners = appendNonEmpty(out.Owners, value)
 	case "in":
-		if out.FolderPattern != "" {
-			return fmt.Errorf("%w: in: may only be used once", errInvalidSearch)
+		out.Folders = appendNonEmpty(out.Folders, strings.TrimPrefix(value, "#"))
+	case "label":
+		for _, label := range strings.Split(value, ",") {
+			out.Labels = appendNonEmpty(out.Labels, strings.TrimSpace(label))
 		}
-		pattern, err := searchModifierPattern(value)
-		if err != nil {
-			return fmt.Errorf("in: %w", err)
-		}
-		out.FolderPattern = pattern
-	case "labels":
-		values, err := splitSearchLabels(value)
-		if err != nil {
-			return err
-		}
-		if len(out.LabelPatterns)+len(values) > maxSearchLabels {
-			return fmt.Errorf("%w: at most %d labels are allowed", errInvalidSearch, maxSearchLabels)
-		}
-		for _, label := range values {
-			pattern, err := searchModifierPattern(label)
-			if err != nil {
-				return fmt.Errorf("labels: %w", err)
-			}
-			out.LabelPatterns = append(out.LabelPatterns, pattern)
-		}
+	default:
+		return false
 	}
-	return nil
+	return true
 }
 
-// searchTokens is a deliberately small shell-like lexer. Quotes preserve
-// whitespace and backslash escapes the next character.
-func searchTokens(raw string) ([]string, error) {
-	var tokens []string
+var dateModifiers = map[string]bool{"before": true, "after": true, "on": true, "during": true}
+
+// applyDateModifier reads the longest date that starts with value and goes
+// on into the next words, as in after:last week. It returns the number of
+// next words that the date used. Words that are not part of the date stay
+// search terms.
+func applyDateModifier(out *repo.DocumentSearch, key, value string, next []searchToken, now time.Time) (used int) {
+	words := []string{value}
+	for _, token := range next {
+		word := strings.ToLower(token.text)
+		if token.phrase || !isDateWord(word) {
+			break
+		}
+		words = append(words, word)
+	}
+	for n := len(words); n > 0; n-- {
+		start, end, ok := searchPeriod(strings.Join(words[:n], " "), now)
+		if !ok {
+			continue
+		}
+		switch key {
+		case "before":
+			narrowUpdated(out, time.Time{}, start)
+		case "after":
+			narrowUpdated(out, end, time.Time{})
+		default:
+			narrowUpdated(out, start, end)
+		}
+		return n - 1
+	}
+	return 0
+}
+
+// narrowUpdated limits results to documents updated in [since, before). A
+// zero bound leaves that side open. Date modifiers combine with AND.
+func narrowUpdated(out *repo.DocumentSearch, since, before time.Time) {
+	if since.After(out.UpdatedSince) {
+		out.UpdatedSince = since
+	}
+	if !before.IsZero() && (out.UpdatedBefore.IsZero() || before.Before(out.UpdatedBefore)) {
+		out.UpdatedBefore = before
+	}
+}
+
+func appendNonEmpty(values []string, value string) []string {
+	if value == "" {
+		return values
+	}
+	return append(values, value)
+}
+
+type searchToken struct {
+	text   string
+	phrase bool // The token started with a quote, so it is literal title text.
+}
+
+// searchTokens splits on whitespace outside double quotes and removes the
+// quotes. A missing closing quote ends at the end of the query, because the
+// searcher is often still typing.
+func searchTokens(raw string) []searchToken {
+	var tokens []searchToken
 	var current strings.Builder
-	var quote rune
-	escaped := false
+	quoted, phrase := false, false
 	flush := func() {
 		if current.Len() > 0 {
-			tokens = append(tokens, current.String())
-			current.Reset()
+			tokens = append(tokens, searchToken{text: current.String(), phrase: phrase})
 		}
+		current.Reset()
+		phrase = false
 	}
 	for _, r := range raw {
-		if escaped {
+		switch {
+		case r == '"':
+			phrase = phrase || (!quoted && current.Len() == 0)
+			quoted = !quoted
+		case quoted || !unicode.IsSpace(r):
 			current.WriteRune(r)
-			escaped = false
-			continue
-		}
-		if r == '\\' {
-			current.WriteRune(r)
-			escaped = true
-			continue
-		}
-		if quote != 0 {
-			if r == quote {
-				quote = 0
-			} else {
-				current.WriteRune(r)
-			}
-			continue
-		}
-		if r == '\'' || r == '"' {
-			quote = r
-			continue
-		}
-		if unicode.IsSpace(r) {
+		default:
 			flush()
-			continue
 		}
-		current.WriteRune(r)
-	}
-	if escaped {
-		return nil, fmt.Errorf("%w: trailing escape", errInvalidSearch)
-	}
-	if quote != 0 {
-		return nil, fmt.Errorf("%w: unterminated quote", errInvalidSearch)
 	}
 	flush()
-	return tokens, nil
-}
-
-func splitSearchLabels(raw string) ([]string, error) {
-	var values []string
-	var current strings.Builder
-	inRegex := false
-	escaped := false
-	flush := func() error {
-		value := strings.TrimSpace(current.String())
-		current.Reset()
-		if value == "" {
-			return fmt.Errorf("%w: labels: contains an empty label", errInvalidSearch)
-		}
-		values = append(values, value)
-		return nil
-	}
-	for _, r := range raw {
-		if escaped {
-			current.WriteRune(r)
-			escaped = false
-			continue
-		}
-		if r == '\\' {
-			current.WriteRune(r)
-			escaped = true
-			continue
-		}
-		if r == '/' {
-			inRegex = !inRegex
-			current.WriteRune(r)
-			continue
-		}
-		if r == ',' && !inRegex {
-			if err := flush(); err != nil {
-				return nil, err
-			}
-			continue
-		}
-		current.WriteRune(r)
-	}
-	if inRegex {
-		return nil, fmt.Errorf("%w: labels: has an unterminated regex", errInvalidSearch)
-	}
-	if err := flush(); err != nil {
-		return nil, err
-	}
-	return values, nil
-}
-
-func searchPattern(value string) (string, error) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "", fmt.Errorf("%w: empty value", errInvalidSearch)
-	}
-	if len(value) > maxSearchValueBytes {
-		return "", fmt.Errorf("%w: value is too long", errInvalidSearch)
-	}
-	if strings.HasPrefix(value, "/") || strings.HasSuffix(value, "/") {
-		if len(value) < 2 || !strings.HasPrefix(value, "/") || !strings.HasSuffix(value, "/") {
-			return "", fmt.Errorf("%w: regex must be wrapped in /.../", errInvalidSearch)
-		}
-		value = value[1 : len(value)-1]
-		if value == "" {
-			return "", fmt.Errorf("%w: regex cannot be empty", errInvalidSearch)
-		}
-		if strings.Contains(value, "(?") {
-			return "", fmt.Errorf("%w: regex extensions are not supported", errInvalidSearch)
-		}
-		if _, err := regexp.Compile(value); err != nil {
-			return "", fmt.Errorf("%w: invalid regex: %v", errInvalidSearch, err)
-		}
-		return value, nil
-	}
-	return escapePostgresRegex(value), nil
-}
-
-func searchModifierPattern(value string) (string, error) {
-	isRegex := strings.HasPrefix(strings.TrimSpace(value), "/")
-	pattern, err := searchPattern(value)
-	if err != nil || isRegex {
-		return pattern, err
-	}
-	return "^" + pattern + "$", nil
-}
-
-func escapePostgresRegex(value string) string {
-	const metacharacters = `\\.^$*+?()[]{}|`
-	var out strings.Builder
-	for _, r := range value {
-		if strings.ContainsRune(metacharacters, r) {
-			out.WriteByte('\\')
-		}
-		out.WriteRune(r)
-	}
-	return out.String()
+	return tokens
 }

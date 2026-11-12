@@ -51,6 +51,72 @@ func (q *Queries) GetGitHubConnection(ctx context.Context, userID string) (GetGi
 	return i, err
 }
 
+const listGitHubAuthorAccess = `-- name: ListGitHubAuthorAccess :many
+SELECT DISTINCT v.created_by_type, v.created_by_id, u.id AS user_id, g.access_token_ciphertext, a.can_read
+FROM versions v
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  ON v.created_by_type = 'service_account' AND sa.id = v.created_by_id
+LEFT JOIN users u
+  ON u.id = CASE v.created_by_type WHEN 'user' THEN v.created_by_id WHEN 'service_account' THEN sa.owner_user_id END
+LEFT JOIN github_connections g ON g.user_id = u.id
+LEFT JOIN github_repo_access a
+  ON a.user_id = g.user_id AND a.owner = $1 AND a.repo = $2
+  AND a.checked_at > GREATEST(g.updated_at, $3::timestamptz)
+WHERE v.document_id = $4
+`
+
+type ListGitHubAuthorAccessParams struct {
+	Owner      string
+	Repo       string
+	FreshAfter pgtype.Timestamptz
+	DocumentID string
+}
+
+type ListGitHubAuthorAccessRow struct {
+	CreatedByType         string
+	CreatedByID           string
+	UserID                pgtype.Text
+	AccessTokenCiphertext []byte
+	CanRead               pgtype.Bool
+}
+
+// One row for each principal who created a version of the document. user_id
+// is the user whose GitHub access counts for the author: the author, or the
+// owner of a service account, because the owner controls its keys. The row
+// also has that user's sealed GitHub token (NULL when not connected) and the
+// cached access answer (NULL when missing, older than fresh_after, or older
+// than the user's last GitHub connection).
+func (q *Queries) ListGitHubAuthorAccess(ctx context.Context, arg ListGitHubAuthorAccessParams) ([]ListGitHubAuthorAccessRow, error) {
+	rows, err := q.db.Query(ctx, listGitHubAuthorAccess,
+		arg.Owner,
+		arg.Repo,
+		arg.FreshAfter,
+		arg.DocumentID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListGitHubAuthorAccessRow
+	for rows.Next() {
+		var i ListGitHubAuthorAccessRow
+		if err := rows.Scan(
+			&i.CreatedByType,
+			&i.CreatedByID,
+			&i.UserID,
+			&i.AccessTokenCiphertext,
+			&i.CanRead,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertGitHubConnection = `-- name: UpsertGitHubConnection :exec
 INSERT INTO github_connections(user_id, github_user_id, login, avatar_url, access_token_ciphertext)
 VALUES($1,$2,$3,$4,$5)
@@ -77,6 +143,33 @@ func (q *Queries) UpsertGitHubConnection(ctx context.Context, arg UpsertGitHubCo
 		arg.Login,
 		arg.AvatarUrl,
 		arg.AccessTokenCiphertext,
+	)
+	return err
+}
+
+const upsertGitHubRepoAccess = `-- name: UpsertGitHubRepoAccess :exec
+INSERT INTO github_repo_access(user_id, owner, repo, can_read)
+SELECT g.user_id, $1, $2, $3 FROM github_connections g WHERE g.user_id = $4
+ON CONFLICT (user_id, owner, repo) DO UPDATE SET
+  can_read = EXCLUDED.can_read,
+  checked_at = now()
+`
+
+type UpsertGitHubRepoAccessParams struct {
+	Owner   string
+	Repo    string
+	CanRead bool
+	UserID  string
+}
+
+// Selecting from github_connections skips the write when the user
+// disconnected GitHub during the check.
+func (q *Queries) UpsertGitHubRepoAccess(ctx context.Context, arg UpsertGitHubRepoAccessParams) error {
+	_, err := q.db.Exec(ctx, upsertGitHubRepoAccess,
+		arg.Owner,
+		arg.Repo,
+		arg.CanRead,
+		arg.UserID,
 	)
 	return err
 }

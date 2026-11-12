@@ -12,7 +12,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"strings"
 	"time"
 
@@ -20,14 +19,14 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/auth"
 )
 
-// JSON string escaping can expand a valid 10 MiB HTML document by up to 6x
+// JSON string escaping can expand a valid HTML document by up to 6x
 // before the MCP envelope reaches the server (for example, for control bytes
 // or clients that escape HTML characters). Keep enough authenticated
 // transport headroom to preserve parity with the REST and CLI HTML limit.
-const maxMCPRequestBytes int64 = 64 << 20
+const maxMCPRequestBytes int64 = maxHTMLBytes*6 + (1 << 20)
 
 type mcpPrincipalContextKey struct{}
 
@@ -64,15 +63,21 @@ func authenticateMCPRequest(w http.ResponseWriter, r *http.Request, authenticato
 	return principal
 }
 
+// mcpInstructions tells agents that links and names from before the rename
+// refer to this server, so a pasted aidocs link resolves here.
+const mcpInstructions = "slashdocs was formerly named aidocs. Treat an aidocs URL, document, or command as a slashdocs one. " +
+	"A document link ends in its ID (doc_...), which is the same on both names. Call get_authoring_guidelines before you create or update a document."
+
 func newMCPHTTPHandler(deps dependencies) http.Handler {
 	metrics := newMCPMetricRecorder()
 	protocol := mcpserver.NewMCPServer(
-		"aidocs",
+		"slashdocs",
 		BuildVersion,
 		mcpserver.WithToolCapabilities(false),
 		mcpserver.WithToolHandlerMiddleware(metrics.toolMiddleware),
 		mcpserver.WithRecovery(),
 		mcpserver.WithHooks(metrics.hooks()),
+		mcpserver.WithInstructions(mcpInstructions),
 	)
 	api := mcpAPIAdapter{handlers: handlers{deps: deps}}
 	registerMCPTools(protocol, api)
@@ -81,6 +86,8 @@ func newMCPHTTPHandler(deps dependencies) http.Handler {
 		protocol,
 		mcpserver.WithStateLess(true),
 		mcpserver.WithDisableStreaming(true),
+		// mcp-go caps bodies at 4 MiB by default; documents may be up to the HTML limit.
+		mcpserver.WithMaxRequestBodyBytes(maxMCPRequestBytes),
 	)
 	authenticator := auth.MCPAuthenticator{
 		Users:         deps.repository,
@@ -136,7 +143,10 @@ func newMCPHTTPHandler(deps dependencies) http.Handler {
 			return
 		}
 		if !observation.hasObservedRequest() {
-			method, outcome := mcpFallbackRequestLabels(r.Method, requestBody, response.Status())
+			// From 2026-07-28, mcp-go returns JSON-RPC errors with 4xx statuses.
+			jsonRPCError := mcp.IsModernProtocol(r.Header.Get("Mcp-Protocol-Version")) &&
+				strings.HasPrefix(response.Header().Get("Content-Type"), "application/json")
+			method, outcome := mcpFallbackRequestLabels(r.Method, requestBody, response.Status(), jsonRPCError)
 			observation.observeRequest(method, outcome)
 		}
 	})
@@ -155,9 +165,8 @@ func mcpTransportHeaderError(r *http.Request) string {
 	if !acceptsJSON || !acceptsEvents {
 		return "Accept must include application/json and text/event-stream"
 	}
-	if version := r.Header.Get("Mcp-Protocol-Version"); version != "" && !slices.Contains(mcp.ValidProtocolVersions, version) {
-		return "unsupported MCP protocol version"
-	}
+	// mcp-go checks Mcp-Protocol-Version and answers an unknown version with
+	// the supported ones (-32022), so a client can retry with one of them.
 	return ""
 }
 

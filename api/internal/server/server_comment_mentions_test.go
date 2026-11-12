@@ -8,11 +8,11 @@ import (
 	"testing"
 	"unicode/utf16"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
-	"github.com/razorpay/aidocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
-const commentMentionsContentType = "application/vnd.aidocs.comment-mentions+json"
+const commentMentionsContentType = "application/vnd.slashdocs.comment-mentions+json"
 
 type commentMentionWire struct {
 	Principal auth.Principal `json:"principal"`
@@ -26,6 +26,17 @@ type commentWire struct {
 	Status   string               `json:"status"`
 	Mentions []commentMentionWire `json:"mentions"`
 	Replies  []commentWire        `json:"replies"`
+}
+
+func TestStructuredCommentMentionsAcceptPreRenameMediaType(t *testing.T) {
+	e := newTestEnv(t)
+	body := "ping @owner@example.com"
+	created := createMentionCommentAs(t, e, "application/vnd.aidocs.comment-mentions+json", body, []map[string]any{
+		mentionRequest(t, body, "@owner@example.com", map[string]any{"type": "user", "id": fixtureOwner.ID}),
+	})
+	if len(created.Mentions) != 1 || created.Mentions[0].Principal.ID != fixtureOwner.ID {
+		t.Fatalf("mentions = %#v", created.Mentions)
+	}
 }
 
 func TestStructuredCommentMentionsRoundTripRootReplyAndList(t *testing.T) {
@@ -470,6 +481,11 @@ func TestLegacyCommentMarkersAreRejected(t *testing.T) {
 
 func createMentionComment(t *testing.T, e *testEnv, body string, mentions []map[string]any) commentWire {
 	t.Helper()
+	return createMentionCommentAs(t, e, commentMentionsContentType, body, mentions)
+}
+
+func createMentionCommentAs(t *testing.T, e *testEnv, contentType, body string, mentions []map[string]any) commentWire {
+	t.Helper()
 	payload := map[string]any{
 		"version_id": e.ver.ID,
 		"body":       body,
@@ -477,7 +493,7 @@ func createMentionComment(t *testing.T, e *testEnv, body string, mentions []map[
 		"mentions":   mentions,
 	}
 	rr := do(t, e.h, http.MethodPost, "/v1/documents/"+e.doc.ID+"/comments", jsonString(t, payload), map[string]string{
-		"Content-Type":     commentMentionsContentType,
+		"Content-Type":     contentType,
 		"X-Test-Principal": principalHeader(fixtureCommenter),
 	})
 	assertStatus(t, rr, http.StatusCreated)

@@ -1,8 +1,11 @@
 package server
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -12,8 +15,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"golang.org/x/oauth2"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
-	"github.com/razorpay/aidocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
 const webOAuthStateAudience = "oauth-state"
@@ -31,7 +34,7 @@ type cliExchangePrincipal struct {
 	Email string `json:"email"`
 }
 
-// discoveryResponse is the payload of GET /.well-known/aidocs.json.
+// discoveryResponse is the payload of GET /.well-known/slashdocs.json.
 type discoveryResponse struct {
 	Name       string        `json:"name"`
 	APIVersion string        `json:"api_version"`
@@ -50,6 +53,7 @@ type configResponse struct {
 	ProviderName         string `json:"provider_name"`
 	DefaultDocPermission string `json:"default_doc_permission"`
 	GoogleGroupsEnabled  bool   `json:"google_groups_enabled"`
+	LabelsEnabled        bool   `json:"labels_enabled"`
 }
 
 // meResponse is the payload of GET /v1/me. Exactly one of User and
@@ -193,6 +197,7 @@ func (h handlers) oauthCallback(c *gin.Context) {
 	metricKind := oidcAuthMetricKind(h.deps.oidc.Issuer)
 	u, err := h.deps.oidc.ExchangeAndVerify(c.Request.Context(), c.Query("code"))
 	if err != nil {
+		slog.WarnContext(c.Request.Context(), "oidc login failed", slog.Any("error", err))
 		incAuth(metricKind, "failure")
 		c.JSON(http.StatusUnauthorized, errorResponse("unauthorized", "oidc login failed", nil))
 		return
@@ -202,8 +207,18 @@ func (h handlers) oauthCallback(c *gin.Context) {
 		c.JSON(http.StatusForbidden, errorResponse("forbidden", "account domain is not allowed", nil))
 		return
 	}
-	uid, externalSubject := oidcIdentityKeys(h.deps.oidc.Issuer, u.Sub)
-	p, err := h.deps.repository.UpsertGoogleUser(c.Request.Context(), uid, u.Email, u.Name, externalSubject, u.PictureURL)
+	p, err := h.signInOIDCUser(c.Request.Context(), u)
+	var conflict *repo.EmailIdentityConflictError
+	if errors.As(err, &conflict) {
+		slog.WarnContext(c.Request.Context(), "oidc sign-in email belongs to another identity",
+			slog.String("issuer", h.deps.oidc.Issuer),
+			slog.String("email", conflict.Email),
+			slog.String("existing_identity", conflict.ExistingIdentity),
+			slog.String("incoming_identity", conflict.IncomingIdentity))
+		incAuth(metricKind, "identity_conflict")
+		c.JSON(http.StatusConflict, errorResponse("conflict", "this email is already linked to another sign-in identity; see docs/self-hosting.md#generic-oidc-providers", nil))
+		return
+	}
 	if err != nil {
 		internalErr(c, err)
 		return
@@ -237,6 +252,37 @@ func (h handlers) oauthCallback(c *gin.Context) {
 	c.Redirect(http.StatusFound, redir)
 }
 
+// signInOIDCUser creates or updates the user of a verified ID token.
+//
+// Generic OIDC identity keys hash the issuer URL, so a change to
+// SLASHDOCS_OIDC_ISSUER_URL gives every user a new key. When the new key
+// matches no user but the email belongs to a user with another generic OIDC
+// key, that user moves to the new key. Only the configured issuer can sign the
+// token and ExchangeAndVerify accepts only verified emails, so this trusts the
+// issuer no more than adopting a user without a key by email already does.
+// Google subjects never change, so a collision with a Google key is not an
+// issuer change and stays a conflict.
+func (h handlers) signInOIDCUser(ctx context.Context, u auth.OIDCUser) (auth.Principal, error) {
+	uid, externalSubject := oidcIdentityKeys(h.deps.oidc.Issuer, u.Sub)
+	p, err := h.deps.repository.UpsertGoogleUser(ctx, uid, u.Email, u.Name, externalSubject, u.PictureURL)
+	var conflict *repo.EmailIdentityConflictError
+	if !errors.As(err, &conflict) || !genericOIDCIdentity(conflict.ExistingIdentity) || !genericOIDCIdentity(externalSubject) {
+		return p, err
+	}
+	switch err := h.deps.repository.RelinkUserIdentity(ctx, conflict.ExistingIdentity, externalSubject); {
+	case errors.Is(err, repo.ErrNotFound):
+		return p, conflict
+	case err != nil:
+		return auth.Principal{}, err
+	}
+	slog.WarnContext(ctx, "relinked user to a new oidc identity",
+		slog.String("issuer", h.deps.oidc.Issuer),
+		slog.String("email", u.Email),
+		slog.String("old_identity", conflict.ExistingIdentity),
+		slog.String("new_identity", externalSubject))
+	return h.deps.repository.UpsertGoogleUser(ctx, uid, u.Email, u.Name, externalSubject, u.PictureURL)
+}
+
 func oidcAuthMetricKind(issuer string) string {
 	if issuer == auth.GoogleIssuer {
 		return "google"
@@ -263,19 +309,24 @@ func (h handlers) validWebOAuthStateBinding(c *gin.Context, st auth.LoginState, 
 // the exact, verified issuer identifier with the subject so equal subjects
 // from different issuers cannot collide. The versioned domain separator keeps
 // the namespace deterministic and bounded without treating issuer host aliases
-// as equivalent identifiers.
+// as equivalent identifiers. The separator keeps the pre-rename "aidocs" name:
+// changing it would give every existing OIDC user a new identity.
 func oidcIdentityKeys(issuer, subject string) (userID, externalSubject string) {
 	if issuer == auth.GoogleIssuer {
 		return googleUserIDPrefix + subject, subject
 	}
 	digest := sha256.Sum256([]byte("aidocs-oidc-subject-v1\x00" + issuer + "\x00" + subject))
 	namespace := hex.EncodeToString(digest[:])
-	return oidcUserIDPrefix + namespace, "oidc_sha256_" + namespace
+	return oidcUserIDPrefix + namespace, oidcIdentityPrefix + namespace
+}
+
+func genericOIDCIdentity(externalSubject string) bool {
+	return strings.HasPrefix(externalSubject, oidcIdentityPrefix)
 }
 
 func webOAuthStateCookieName(state string, secure bool) string {
 	digest := sha256.Sum256([]byte(state))
-	prefix := "aidocs_oauth_state_"
+	prefix := "slashdocs_oauth_state_"
 	if secure {
 		// Browsers only accept __Host- cookies when they are Secure, host-only,
 		// and scoped to Path=/, preventing sibling subdomains from cookie tossing.
@@ -346,7 +397,7 @@ func (h handlers) cliExchange(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, errorResponse("unauthorized", "invalid cli code", nil))
 		return
 	}
-	token, hash, err := auth.NewBearerToken("aidocs_cli_")
+	token, hash, err := auth.NewBearerToken("slashdocs_cli_")
 	if err != nil {
 		internalErr(c, err)
 		return
@@ -399,13 +450,28 @@ func (h handlers) revokeCLICredential(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// Logout godoc
+// @Summary End the browser session
+// @Description Clears the session cookie. CLI credentials stay valid.
+// @Tags auth
+// @Success 204
+// @Router /v1/auth/logout [post]
+func (h handlers) logout(c *gin.Context) {
+	h.writeSessionCookie(c, "", -1)
+	c.Status(http.StatusNoContent)
+}
+
 func (h handlers) setSessionCookie(c *gin.Context, p auth.Principal) {
-	cookie := (auth.SessionCodec{Secret: []byte(h.deps.sessionSecret)}).Sign(p.ID)
+	h.writeSessionCookie(c, (auth.SessionCodec{Secret: []byte(h.deps.sessionSecret)}).Sign(p.ID), sessionTTLSeconds)
+}
+
+// writeSessionCookie sets the session cookie. A negative maxAge deletes it.
+func (h handlers) writeSessionCookie(c *gin.Context, value string, maxAge int) {
 	//nolint:gosec // G124: Secure is deliberately false only for configured local HTTP development origins.
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     sessionCookieName,
-		Value:    cookie,
-		MaxAge:   sessionTTLSeconds,
+		Value:    value,
+		MaxAge:   maxAge,
 		Path:     "/",
 		Secure:   secureCookiesForOrigin(h.deps.appOrigin),
 		HttpOnly: true,
@@ -418,9 +484,9 @@ func (h handlers) setSessionCookie(c *gin.Context, p auth.Principal) {
 // @Tags discovery
 // @Produce json
 // @Success 200 {object} discoveryResponse
-// @Router /.well-known/aidocs.json [get]
+// @Router /.well-known/slashdocs.json [get]
 func (h handlers) discovery(c *gin.Context) {
-	c.JSON(http.StatusOK, discoveryResponse{Name: "aidocs", APIVersion: "v1", Auth: discoveryAuth{Modes: []string{authModeWeb, authModeCLI, "mcp"}}})
+	c.JSON(http.StatusOK, discoveryResponse{Name: "slashdocs", APIVersion: "v1", Auth: discoveryAuth{Modes: []string{authModeWeb, authModeCLI, "mcp"}}})
 }
 
 // everyoneLabel is the human label for the "anyone" grant on this deployment.
@@ -437,7 +503,7 @@ func everyoneLabel(deployment, orgName string) string {
 }
 
 // defaultProviderName labels the login button; "SSO" is the neutral fallback
-// for deployments that predate AIDOCS_OIDC_PROVIDER_NAME.
+// for deployments that predate SLASHDOCS_OIDC_PROVIDER_NAME.
 func defaultProviderName(name string) string {
 	if name == "" {
 		return "SSO"
@@ -463,6 +529,7 @@ func (h handlers) config(c *gin.Context) {
 		ProviderName:         defaultProviderName(h.deps.oidcProviderName),
 		DefaultDocPermission: defaultDocPermissionLabel(h.deps.defaultDocPermission),
 		GoogleGroupsEnabled:  h.deps.googleGroupsEnabled,
+		LabelsEnabled:        h.deps.labelsEnabled,
 	})
 }
 
@@ -484,7 +551,7 @@ func defaultDocPermissionLabel(role repo.Role) string {
 func (h handlers) commitTXT(c *gin.Context) {
 	sha := releaseCommit()
 	if sha == "" {
-		sha = os.Getenv("AIDOCS_COMMIT_SHA")
+		sha = os.Getenv("SLASHDOCS_COMMIT_SHA")
 	}
 	if sha == "" {
 		sha = os.Getenv("COMMIT_SHA")

@@ -6,12 +6,13 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
-	"github.com/razorpay/aidocs/api/internal/blob"
-	"github.com/razorpay/aidocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/blob"
+	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
 // createDocumentResponse is the payload of POST /v1/documents.
@@ -47,6 +48,15 @@ type defaultGrantPrincipal struct {
 // @Router /v1/documents [post]
 func (h handlers) createDocument(c *gin.Context) {
 	p := current(c)
+	html, err := readMultipartFile(c, "file")
+	if errors.Is(err, errPayloadTooLarge) {
+		c.JSON(http.StatusRequestEntityTooLarge, errorResponse("payload_too_large", "HTML file exceeds 50 MiB", nil))
+		return
+	}
+	if err != nil {
+		badRequest(c, "invalid document upload")
+		return
+	}
 	title := c.PostForm("title")
 	// The request override beats the server-wide default regardless of
 	// deployment mode: only the server env is org-gated (at startup), because
@@ -60,12 +70,7 @@ func (h handlers) createDocument(c *gin.Context) {
 		}
 		permission = role
 	}
-	html, err := readMultipartFile(c, "file")
-	if errors.Is(err, errPayloadTooLarge) {
-		c.JSON(http.StatusRequestEntityTooLarge, errorResponse("payload_too_large", "HTML file exceeds 10 MiB", nil))
-		return
-	}
-	if err != nil || title == "" {
+	if title == "" {
 		badRequest(c, "invalid document upload")
 		return
 	}
@@ -99,39 +104,37 @@ func (h handlers) createDocument(c *gin.Context) {
 	c.JSON(http.StatusCreated, createDocumentResponse{ID: d.ID, CurrentVersionID: d.CurrentVersionID, DefaultGrant: granted})
 }
 
-// Page sizes for document search. Named for search specifically so this composes with the
-// list-path pagination in #32 instead of colliding with it.
+// documentListResponse is the payload of GET /v1/documents.
+type documentListResponse struct {
+	Items []repo.Document `json:"items"`
+	// HasMore reports that more documents follow this page.
+	HasMore bool `json:"has_more"`
+}
+
 const (
-	searchPageDefault = 25
-	searchPageMax     = 200
+	defaultDocumentPageSize = 25
+	maxDocumentPageSize     = 100
 )
 
-// pageParams reads limit/offset. A malformed value is rejected rather than silently ignored —
-// a client that asks for limit=abc has a bug, and returning page 1 hides it.
-//
-// ParseInt with a bitSize of 32 does the range check for us: anything outside int32 is a
-// syntax/range error here rather than a silent wrap. Converting a plain Atoi result would
-// turn offset=3000000000 into -1294967296, which Postgres then rejects as a negative OFFSET.
-func pageParams(c *gin.Context) (limit, offset int32, err error) {
-	limit, offset = searchPageDefault, 0
-	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
-		n, convErr := strconv.ParseInt(raw, 10, 32)
-		if convErr != nil || n <= 0 {
-			return 0, 0, errors.New("limit must be a positive integer")
+// documentPage reads the limit and offset query parameters. A limit above the
+// maximum gets the maximum, and has_more tells the client to ask again.
+func documentPage(c *gin.Context) (repo.Page, error) {
+	page := repo.Page{Limit: defaultDocumentPageSize}
+	if raw := c.Query("limit"); raw != "" {
+		limit, err := strconv.ParseInt(raw, 10, 32)
+		if err != nil || limit < 1 {
+			return page, errors.New("limit must be a positive integer")
 		}
-		if n > searchPageMax {
-			n = searchPageMax
-		}
-		limit = int32(n)
+		page.Limit = int32(min(limit, maxDocumentPageSize))
 	}
-	if raw := strings.TrimSpace(c.Query("offset")); raw != "" {
-		n, convErr := strconv.ParseInt(raw, 10, 32)
-		if convErr != nil || n < 0 {
-			return 0, 0, errors.New("offset must be a non-negative integer")
+	if raw := c.Query("offset"); raw != "" {
+		offset, err := strconv.ParseInt(raw, 10, 32)
+		if err != nil || offset < 0 {
+			return page, errors.New("offset must be zero or a positive integer")
 		}
-		offset = int32(n)
+		page.Offset = int32(offset)
 	}
-	return limit, offset, nil
+	return page, nil
 }
 
 // ListDocuments godoc
@@ -140,57 +143,66 @@ func pageParams(c *gin.Context) (limit, offset int32, err error) {
 // @Security bearerAuth
 // @Security cookieAuth
 // @Produce json
-// @Param q query string false "Search query; supports author:, labels:, in:, and /regex/ values"
-// @Param label query string false "Deprecated exact label filter; use q=labels:<label>"
-// @Param limit query int false "Page size for search results (default 25, max 200)"
-// @Param offset query int false "Row offset for search results"
-// @Success 200 {object} listResponse[repo.Document]
+// @Param q query string false "Slack-style search of titles and text: words, \"phrases\", -word, from:, in:, label:, before:, after:, on:, and during:"
+// @Param tz query string false "IANA time zone for date modifiers; defaults to UTC"
+// @Param label query string false "Deprecated exact label filter; use q=label:<label>"
+// @Param limit query int false "Page size: 25 by default, 100 at most"
+// @Param offset query int false "The number of documents to skip"
+// @Success 200 {object} documentListResponse
 // @Router /v1/documents [get]
 func (h handlers) listDocuments(c *gin.Context) {
 	if !requireResolvedGroupsForAggregate(c) {
 		return
 	}
 	q := strings.TrimSpace(c.Query("q"))
-	search, err := parseDocumentSearch(q)
+	zone, err := time.LoadLocation(c.Query("tz"))
+	if err != nil {
+		badRequest(c, "invalid tz")
+		return
+	}
+	search, err := parseDocumentSearch(q, *current(c), time.Now().In(zone))
 	if err != nil {
 		badRequest(c, err.Error())
 		return
 	}
+	page, err := documentPage(c)
+	if err != nil {
+		badRequest(c, err.Error())
+		return
+	}
+	search.IncludeLabels = h.deps.labelsEnabled
 	if label := strings.ToLower(strings.TrimSpace(c.Query("label"))); label != "" {
+		if !h.deps.labelsEnabled {
+			featureDisabled(c, "Document labels are temporarily disabled")
+			return
+		}
 		if !labelPattern.MatchString(label) {
 			badRequest(c, "invalid label")
 			return
 		}
-		if len(search.LabelPatterns) >= maxSearchLabels {
-			badRequest(c, fmt.Sprintf("at most %d labels are allowed", maxSearchLabels))
-			return
-		}
-		search.LabelPatterns = append(search.LabelPatterns, "^"+escapePostgresRegex(label)+"$")
+		search.Labels = append(search.Labels, label)
 	}
-	if q != "" || len(search.LabelPatterns) > 0 {
-		limit, offset, err := pageParams(c)
-		if err != nil {
-			badRequest(c, err.Error())
-			return
-		}
+	if q != "" || len(search.Labels) > 0 {
 		includeOrgWide := h.deps.deployment == DeploymentOrg
-		items, hasMore, err := h.deps.repository.SearchDocuments(c.Request.Context(), *current(c), search, includeOrgWide, limit, offset)
+		items, more, err := h.deps.repository.SearchDocuments(c.Request.Context(), *current(c), search, includeOrgWide, page)
 		if err != nil {
 			internalErr(c, err)
 			return
 		}
-		c.JSON(http.StatusOK, listResponse[repo.Document]{Items: items, HasMore: hasMore})
+		c.JSON(http.StatusOK, documentListResponse{Items: items, HasMore: more})
 		return
 	}
-	items, err := h.deps.repository.ListDocuments(c.Request.Context(), *current(c))
+	items, more, err := h.deps.repository.ListDocuments(c.Request.Context(), *current(c), page)
 	if err != nil {
 		internalErr(c, err)
 		return
 	}
-	for i := range items {
-		items[i].Labels, _ = h.deps.repository.ListDocumentLabels(c.Request.Context(), items[i].ID)
+	if h.deps.labelsEnabled {
+		for i := range items {
+			items[i].Labels, _ = h.deps.repository.ListDocumentLabels(c.Request.Context(), items[i].ID)
+		}
 	}
-	c.JSON(http.StatusOK, listResponse[repo.Document]{Items: items})
+	c.JSON(http.StatusOK, documentListResponse{Items: items, HasMore: more})
 }
 
 // GetDocument godoc
@@ -217,15 +229,12 @@ func (h handlers) getDocument(c *gin.Context) {
 		return
 	}
 	if !atLeast(role, repo.RoleViewer) {
-		if groupMembershipUnavailable(current(c)) {
-			groupMembershipUnavailableResponse(c)
-			return
-		}
-		forbidden(c, "viewer role required")
+		denyDocRole(c, repo.RoleViewer)
 		return
 	}
 	p := current(c)
-	if p.Type != d.Owner.Type || p.ID != d.Owner.ID {
+	// The workspace lists documents that a signed-in principal opened.
+	if p.Type != auth.PrincipalAnonymous && (p.Type != d.Owner.Type || p.ID != d.Owner.ID) {
 		_ = h.deps.repository.RecordDocumentOpened(c.Request.Context(), d.ID, *p)
 	}
 	// Show parent folder in breadcrumb only if viewer has access to it. The
@@ -239,7 +248,9 @@ func (h handlers) getDocument(c *gin.Context) {
 			}
 		}
 	}
-	d.Labels, _ = h.deps.repository.ListDocumentLabels(c.Request.Context(), d.ID)
+	if h.deps.labelsEnabled {
+		d.Labels, _ = h.deps.repository.ListDocumentLabels(c.Request.Context(), d.ID)
+	}
 	c.JSON(http.StatusOK, d)
 }
 
@@ -272,6 +283,7 @@ func (h handlers) patchDocument(c *gin.Context) {
 		internalErr(c, err)
 		return
 	}
+	h.announce(c, repo.DocumentEventDocument)
 	c.JSON(http.StatusOK, d)
 }
 

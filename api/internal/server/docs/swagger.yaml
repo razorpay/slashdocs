@@ -27,6 +27,13 @@ definitions:
     - PrincipalGoogleGroup
     - PrincipalAnyone
     - PrincipalAnonymous
+  repo.AccessRequest:
+    properties:
+      requested_at:
+        type: string
+      requester:
+        $ref: '#/definitions/auth.Principal'
+    type: object
   repo.Anchor:
     properties:
       dom_path:
@@ -65,6 +72,11 @@ definitions:
         $ref: '#/definitions/repo.FolderBreadcrumb'
       parent_folder_id:
         type: string
+      snippet:
+        description: |-
+          Snippet is set in search results when the text matches. U+0002 and
+          U+0003 surround each match.
+        type: string
       title:
         type: string
       updated_at:
@@ -93,6 +105,13 @@ definitions:
         type: string
       role:
         $ref: '#/definitions/repo.Role'
+    type: object
+  repo.NotificationPreferences:
+    properties:
+      effective_enabled:
+        type: boolean
+      enabled:
+        type: boolean
     type: object
   repo.OwnershipTransfer:
     properties:
@@ -237,6 +256,19 @@ definitions:
       version_id:
         type: string
     type: object
+  server.commentReactionResponse:
+    properties:
+      count:
+        type: integer
+      emoji:
+        type: string
+      reacted:
+        type: boolean
+      reactors:
+        items:
+          $ref: '#/definitions/server.principalResponse'
+        type: array
+    type: object
   server.commentResponse:
     properties:
       anchor:
@@ -245,10 +277,14 @@ definitions:
         $ref: '#/definitions/server.principalResponse'
       body:
         type: string
+      created_at:
+        type: string
       created_on_version_id:
         type: string
       current_placement:
         $ref: '#/definitions/server.commentPlacementResponse'
+      edited:
+        type: boolean
       id:
         type: string
       mentions:
@@ -257,10 +293,16 @@ definitions:
         type: array
       parent_comment_id:
         type: string
+      reactions:
+        items:
+          $ref: '#/definitions/server.commentReactionResponse'
+        type: array
       replies:
         items:
           $ref: '#/definitions/server.commentResponse'
         type: array
+      resolved_at:
+        type: string
       selected_text:
         type: string
       status:
@@ -275,6 +317,8 @@ definitions:
       everyone_label:
         type: string
       google_groups_enabled:
+        type: boolean
+      labels_enabled:
         type: boolean
       org_name:
         type: string
@@ -384,6 +428,11 @@ definitions:
       name:
         type: string
     type: object
+  server.documentLinkResponse:
+    properties:
+      url:
+        type: string
+    type: object
   server.errorBody:
     properties:
       code:
@@ -433,7 +482,6 @@ definitions:
         - viewer
         - commenter
         - editor
-        - owner
     type: object
   server.grantPrincipal:
     properties:
@@ -469,6 +517,24 @@ definitions:
         type: string
       type:
         type: string
+    type: object
+  server.headingResponse:
+    properties:
+      id:
+        type: string
+      level:
+        type: integer
+      text:
+        type: string
+      url:
+        type: string
+    type: object
+  server.listResponse-repo_AccessRequest:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/repo.AccessRequest'
+        type: array
     type: object
   server.listResponse-repo_CLICredential:
     properties:
@@ -519,6 +585,13 @@ definitions:
           $ref: '#/definitions/server.commentResponse'
         type: array
     type: object
+  server.listResponse-server_headingResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/server.headingResponse'
+        type: array
+    type: object
   server.meResponse:
     properties:
       principal:
@@ -547,6 +620,11 @@ definitions:
         type: string
       name:
         type: string
+    type: object
+  server.notificationPreferencesRequest:
+    properties:
+      enabled:
+        type: boolean
     type: object
   server.patchCommentRequest:
     properties:
@@ -613,13 +691,13 @@ definitions:
     type: object
 info:
   contact: {}
-  description: This API powers a review tool where people can upload one self-contained
-    HTML file, view it, and leave comments anchored to specific text ranges inside
-    that HTML.
-  title: aidocs API
+  description: This API powers slashdocs, a collaborative workspace where agents and
+    people publish self-contained HTML documents, comment on specific text ranges
+    inside them, and publish new versions.
+  title: slashdocs API
   version: v1
 paths:
-  /.well-known/aidocs.json:
+  /.well-known/slashdocs.json:
     get:
       produces:
       - application/json
@@ -769,6 +847,15 @@ paths:
       summary: Start OIDC login
       tags:
       - auth
+  /v1/auth/logout:
+    post:
+      description: Clears the session cookie. CLI credentials stay valid.
+      responses:
+        "204":
+          description: No Content
+      summary: End the browser session
+      tags:
+      - auth
   /v1/auth/oidc/callback:
     get:
       parameters:
@@ -832,11 +919,15 @@ paths:
   /v1/documents:
     get:
       parameters:
-      - description: Search query; supports author:, labels:, in:, and /regex/ values
+      - description: 'Slack-style search of titles and text: words, \'
         in: query
         name: q
         type: string
-      - description: Deprecated exact label filter; use q=labels:<label>
+      - description: IANA time zone for date modifiers; defaults to UTC
+        in: query
+        name: tz
+        type: string
+      - description: Deprecated exact label filter; use q=label:<label>
         in: query
         name: label
         type: string
@@ -938,6 +1029,50 @@ paths:
       summary: Update document
       tags:
       - documents
+  /v1/documents/{id}/access-requests:
+    get:
+      description: The newest first. A grant on the document to the requester removes
+        the request.
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/server.listResponse-repo_AccessRequest'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: List requests for access to a document
+      tags:
+      - documents
+    post:
+      description: Records the request for the people who manage access, and notifies
+        the current owner when notifications are enabled. The response does not reveal
+        whether the document or owner exists. Repeated requests are coalesced.
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Request access to a document
+      tags:
+      - documents
   /v1/documents/{id}/comments:
     get:
       parameters:
@@ -968,8 +1103,8 @@ paths:
     post:
       consumes:
       - application/json
-      - application/vnd.aidocs.comment-mentions+json
-      description: Requests with non-empty mentions must use Content-Type application/vnd.aidocs.comment-mentions+json
+      - application/vnd.slashdocs.comment-mentions+json
+      description: Requests with non-empty mentions must use Content-Type application/vnd.slashdocs.comment-mentions+json
         so mixed-version deployments fail closed instead of dropping metadata.
       parameters:
       - description: Document ID
@@ -1019,9 +1154,9 @@ paths:
     patch:
       consumes:
       - application/json
-      - application/vnd.aidocs.comment-mentions+json
+      - application/vnd.slashdocs.comment-mentions+json
       description: Any request containing the mentions key, including an empty array,
-        must use Content-Type application/vnd.aidocs.comment-mentions+json so mixed-version
+        must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version
         deployments fail closed.
       parameters:
       - description: Document ID
@@ -1052,12 +1187,89 @@ paths:
       summary: Update comment
       tags:
       - comments
+  /v1/documents/{id}/comments/{comment_id}/reactions/{emoji}:
+    delete:
+      description: Removes the caller's reaction from a comment or reply. Removing
+        an absent reaction is a no-op.
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Comment ID
+        in: path
+        name: comment_id
+        required: true
+        type: string
+      - description: Reaction slug
+        enum:
+        - "+1"
+        - "-1"
+        - laugh
+        - hooray
+        - confused
+        - heart
+        - rocket
+        - eyes
+        - plus
+        in: path
+        name: emoji
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Remove comment reaction
+      tags:
+      - comments
+    put:
+      description: Adds the caller's reaction to a comment or reply. Repeating the
+        same reaction is a no-op.
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Comment ID
+        in: path
+        name: comment_id
+        required: true
+        type: string
+      - description: Reaction slug
+        enum:
+        - "+1"
+        - "-1"
+        - laugh
+        - hooray
+        - confused
+        - heart
+        - rocket
+        - eyes
+        - plus
+        in: path
+        name: emoji
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Add comment reaction
+      tags:
+      - comments
   /v1/documents/{id}/comments/{comment_id}/replies:
     post:
       consumes:
       - application/json
-      - application/vnd.aidocs.comment-mentions+json
-      description: Requests with non-empty mentions must use Content-Type application/vnd.aidocs.comment-mentions+json
+      - application/vnd.slashdocs.comment-mentions+json
+      description: Requests with non-empty mentions must use Content-Type application/vnd.slashdocs.comment-mentions+json
         so mixed-version deployments fail closed instead of dropping metadata.
       parameters:
       - description: Document ID
@@ -1151,6 +1363,108 @@ paths:
       summary: Update document grant
       tags:
       - grants
+  /v1/documents/{id}/headings:
+    get:
+      description: Lists headings in stored HTML. Explicit HTML IDs are preserved.
+        JavaScript-only headings appear in the viewer when created.
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Version ID (pins links to this version)
+        in: query
+        name: version
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/server.listResponse-server_headingResponse'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: List document headings and shareable links
+      tags:
+      - documents
+  /v1/documents/{id}/link:
+    get:
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Comment or reply ID
+        in: query
+        name: comment
+        type: string
+      - description: Heading ID, including an ID created by document JavaScript
+        in: query
+        name: heading
+        type: string
+      - description: Version ID for a heading or document link
+        in: query
+        name: version
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/server.documentLinkResponse'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Get a shareable link to a document, comment, or heading
+      tags:
+      - documents
+  /v1/documents/{id}/notifications:
+    get:
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/repo.NotificationPreferences'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Read your notification preferences for a document
+      tags:
+      - notifications
+    put:
+      consumes:
+      - application/json
+      description: Personal preference only. Global disable overrides this preference.
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Notification preference
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/server.notificationPreferencesRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/repo.NotificationPreferences'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Enable or mute your document notifications
+      tags:
+      - notifications
   /v1/documents/{id}/versions:
     get:
       parameters:
@@ -1354,6 +1668,43 @@ paths:
       summary: Current principal
       tags:
       - auth
+  /v1/me/notifications:
+    get:
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/repo.NotificationPreferences'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Read your notification preferences
+      tags:
+      - notifications
+    put:
+      consumes:
+      - application/json
+      description: Applies only to the authenticated principal. Document preferences
+        never change access or other users' notifications. Global disable overrides
+        document preferences.
+      parameters:
+      - description: Notification preference
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/server.notificationPreferencesRequest'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/repo.NotificationPreferences'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Set your notification preferences
+      tags:
+      - notifications
   /v1/service-accounts:
     get:
       responses:
@@ -1536,6 +1887,6 @@ securityDefinitions:
     type: apiKey
   cookieAuth:
     in: cookie
-    name: aidocs_session
+    name: slashdocs_session
     type: apiKey
 swagger: "2.0"

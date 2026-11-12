@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
-	"github.com/razorpay/aidocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
 func TestHTTPDirectorySearchEscapesFiltersAndPaginates(t *testing.T) {
@@ -27,7 +27,7 @@ func TestHTTPDirectorySearchEscapesFiltersAndPaginates(t *testing.T) {
 			}
 		}
 		if requests == 1 {
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"groups": []any{
 					groupJSON("groups/1", "customers/C123", "z@example.com", "Zulu"),
 					groupJSON("groups/external", "customers/C999", "bad@example.com", "Bad"),
@@ -39,7 +39,7 @@ func TestHTTPDirectorySearchEscapesFiltersAndPaginates(t *testing.T) {
 		if r.URL.Query().Get("pageToken") != "next" {
 			t.Fatalf("page token = %q", r.URL.Query().Get("pageToken"))
 		}
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"groups": []any{groupJSON("groups/2", "customers/C123", "a@example.com", "Alpha")},
 		})
 	}))
@@ -62,9 +62,9 @@ func TestHTTPDirectoryLookupVerifiesImmutableGroup(t *testing.T) {
 			if got := r.URL.Query().Get("groupKey.id"); got != "platform@example.com" {
 				t.Fatalf("lookup email = %q", got)
 			}
-			json.NewEncoder(w).Encode(map[string]any{"name": "groups/immutable"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": "groups/immutable"})
 		case "/v1/groups/immutable":
-			json.NewEncoder(w).Encode(groupJSON("groups/immutable", "customers/C123", "renamed@example.com", "Platform"))
+			_ = json.NewEncoder(w).Encode(groupJSON("groups/immutable", "customers/C123", "renamed@example.com", "Platform"))
 		default:
 			http.NotFound(w, r)
 		}
@@ -92,14 +92,14 @@ func TestHTTPDirectoryRejectsExternalMalformedAndDeletedGroups(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/v1/groups:lookup" {
-					json.NewEncoder(w).Encode(map[string]any{"name": "groups/1"})
+					_ = json.NewEncoder(w).Encode(map[string]any{"name": "groups/1"})
 					return
 				}
 				if tc.status != 0 {
 					http.Error(w, "sensitive response", tc.status)
 					return
 				}
-				json.NewEncoder(w).Encode(tc.group)
+				_ = json.NewEncoder(w).Encode(tc.group)
 			}))
 			defer server.Close()
 			_, err := newTestDirectory(t, server).LookupGroup(context.Background(), "secret-user@example.com")
@@ -122,7 +122,7 @@ func TestHTTPDirectoryMapsDirectAndNestedTransitiveGroups(t *testing.T) {
 		if !strings.Contains(query, "member_key_id == 'member@example.com'") || !strings.Contains(query, "parent == 'customers/C123'") || !strings.Contains(query, securityLabel) {
 			t.Fatalf("query = %q", query)
 		}
-		json.NewEncoder(w).Encode(map[string]any{"memberships": []any{
+		_ = json.NewEncoder(w).Encode(map[string]any{"memberships": []any{
 			map[string]any{"group": "groups/direct", "groupKey": map[string]any{"id": "direct@example.com"}, "displayName": "Direct", "relationType": "DIRECT", "labels": map[string]string{discussionLabel: ""}},
 			map[string]any{"group": "groups/nested", "groupKey": map[string]any{"id": "nested@example.com"}, "displayName": "Nested", "relationType": "INDIRECT", "labels": map[string]string{securityLabel: ""}},
 		}})
@@ -157,9 +157,9 @@ type fakeMembershipStore struct {
 func (s *fakeMembershipStore) GoogleGroupMembershipSnapshot(context.Context, string) (repo.GoogleGroupMembershipSnapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	copy := s.snapshot
-	copy.GroupIDs = append([]string(nil), copy.GroupIDs...)
-	return copy, nil
+	snapshot := s.snapshot
+	snapshot.GroupIDs = append([]string(nil), snapshot.GroupIDs...)
+	return snapshot, nil
 }
 func (s *fakeMembershipStore) ReplaceGoogleGroupMemberships(_ context.Context, _ string, groups []repo.GoogleGroup, at time.Time) error {
 	s.mu.Lock()
@@ -229,7 +229,9 @@ func TestResolverFreshEmptyStaleFailureAndCooldown(t *testing.T) {
 	if got.GoogleGroupMembershipState != auth.GoogleGroupMembershipUnavailable || len(got.GoogleGroupIDs) != 0 || store.failures != 1 {
 		t.Fatalf("failed refresh resolved as %+v failures=%d", got, store.failures)
 	}
-	got = resolver.Resolve(context.Background(), principal)
+	// Resolved value is irrelevant here; the assertion is that the cooldown
+	// stopped this call from reaching the directory again.
+	resolver.Resolve(context.Background(), principal)
 	if directory.calls.Load() != 2 {
 		t.Fatalf("cooldown made another call: %d", directory.calls.Load())
 	}

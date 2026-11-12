@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes, useParams } from "react-router-dom";
 import { QueryCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster, toast } from "sonner";
-import { TooltipProvider } from "@radix-ui/react-tooltip";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import "./styles.css";
 import { APIError } from "@/api";
 import { errorMessage } from "@/lib/errors";
@@ -18,6 +18,8 @@ import { ServiceAccountsPage } from "@/pages/service-accounts";
 import { DevelopersPage } from "@/pages/developers";
 import { ProfilePage } from "@/pages/profile";
 import { StartPage } from "@/pages/start";
+import { migrateLegacyStorage } from "@/lib/legacy-storage";
+import { finishLegacySignOut } from "@/lib/auth-state";
 
 // Query failures (other than auth, handled by route guards) and any mutation
 // without its own onError surface as a toast.
@@ -41,7 +43,7 @@ function App() {
   return (
     <ThemeProvider>
       <QueryClientProvider client={qc}>
-        <TooltipProvider delayDuration={150}>
+        <TooltipProvider>
           <BrowserRouter>
             <Routes>
               <Route path="/" element={<LandingPage />} />
@@ -80,8 +82,12 @@ function LegacyDocRedirect() {
   return <Navigate to={`/app/d/${id}`} replace />;
 }
 
-createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
+migrateLegacyStorage();
+
+void finishLegacySignOut().then(() =>
+  createRoot(document.getElementById("root")!).render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>,
+  ),
 );

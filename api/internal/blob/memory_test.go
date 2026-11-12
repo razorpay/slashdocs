@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/razorpay/aidocs/api/internal/blob"
+	"github.com/razorpay/slashdocs/api/internal/blob"
 )
 
 // TestMemoryStoreContract exercises the Store contract against the in-memory

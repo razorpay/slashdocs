@@ -1,0 +1,13 @@
+slashdocs has been installed.
+
+App origin:
+  {{ .Values.origins.app }}
+
+If ingress is enabled, verify DNS and TLS point to this release.
+
+CLI login:
+  slashdocs auth login {{ .Values.origins.app }}
+
+API docs:
+  {{ .Values.origins.app }}/api-docs
+  {{ .Values.origins.app }}/openapi.json

@@ -4,6 +4,6 @@ frontend/node_modules
 frontend/dist
 api/internal/server/docs
 monitoring/grafana/vendor
-monitoring/grafana/aidocs-dashboard.json
+monitoring/grafana/slashdocs-dashboard.json
 *.sum
 *.lock

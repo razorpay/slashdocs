@@ -9,10 +9,11 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
-	"github.com/razorpay/aidocs/api/internal/repo"
-	"github.com/razorpay/aidocs/api/internal/server"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/server"
 )
 
 // createDocumentWithFields uploads a document with extra multipart form
@@ -94,28 +95,67 @@ func TestDocumentSearchPrimitives(t *testing.T) {
 	rr := do(t, e.h, http.MethodPut, "/v1/documents/"+e.doc.ID+"/labels", `{"labels":["api-review","payments"]}`, headers)
 	assertStatus(t, rr, http.StatusOK)
 
-	query := `author:/@example\.com$/ labels:/^api-/,payments`
-	rr = do(t, e.h, http.MethodGet, "/v1/documents?q="+url.QueryEscape(query), "", map[string]string{
-		"X-Test-Principal": principalHeader(fixtureOwner),
-	})
-	assertStatus(t, rr, http.StatusOK)
-	if !strings.Contains(rr.Body.String(), e.doc.ID) {
-		t.Fatalf("combined search did not return document: %s", rr.Body.String())
+	search := func(query string) string {
+		t.Helper()
+		rr := do(t, e.h, http.MethodGet, "/v1/documents?"+query, "", headers)
+		assertStatus(t, rr, http.StatusOK)
+		return rr.Body.String()
+	}
+	for _, query := range []string{
+		`fix from:me label:api-review,payments`,
+		`FIXTURE from:@owner -draft`,
+		`"fixture" from:owner@example.com on:today`,
+		`during:` + time.Now().UTC().Format("2006-01") + ` after:2000-01-01`,
+		`fixture from:someone-else from:owner`,
+		// A partly typed modifier has no effect.
+		`fixture before: on:2026-0`,
+	} {
+		if body := search("q=" + url.QueryEscape(query)); !strings.Contains(body, e.doc.ID) {
+			t.Errorf("search %q did not return the document: %s", query, body)
+		}
+	}
+	for _, query := range []string{
+		`fixture -fix`,
+		`fixture from:someone-else`,
+		`fixture before:today`,
+		`fixture label:missing`,
+		`"label:payments"`,
+	} {
+		if body := search("q=" + url.QueryEscape(query)); strings.Contains(body, e.doc.ID) {
+			t.Errorf("search %q returned the document: %s", query, body)
+		}
+	}
+	if body := search("tz=Asia/Kolkata&q=" + url.QueryEscape("fixture on:today")); !strings.Contains(body, e.doc.ID) {
+		t.Errorf("search in a time zone did not return the document: %s", body)
 	}
 
 	// The legacy label parameter remains compatible and combines with q.
-	rr = do(t, e.h, http.MethodGet, "/v1/documents?q="+url.QueryEscape(e.doc.Title)+"&label=payments", "", map[string]string{
-		"X-Test-Principal": principalHeader(fixtureOwner),
-	})
-	assertStatus(t, rr, http.StatusOK)
-	if !strings.Contains(rr.Body.String(), e.doc.ID) {
-		t.Fatalf("legacy label compatibility search did not return document: %s", rr.Body.String())
+	if body := search("q=fixture&label=payments"); !strings.Contains(body, e.doc.ID) {
+		t.Fatalf("legacy label compatibility search did not return document: %s", body)
 	}
 
-	rr = do(t, e.h, http.MethodGet, "/v1/documents?q="+url.QueryEscape(`author:/[/`), "", map[string]string{
+	rr = do(t, e.h, http.MethodGet, "/v1/documents?q=fixture&tz=Mars/Olympus", "", headers)
+	assertStatus(t, rr, http.StatusBadRequest)
+}
+
+func TestTemporarilyDisabledLabels(t *testing.T) {
+	e := newConfiguredTestEnv(t, server.Config{
+		Environment:   "test",
+		DisableLabels: true,
+	})
+	headers := map[string]string{
+		"Content-Type":     "application/json",
+		"X-Test-Principal": principalHeader(fixtureOwner),
+	}
+
+	rr := do(t, e.h, http.MethodPut, "/v1/documents/"+e.doc.ID+"/labels", `{"labels":["payments"]}`, headers)
+	assertStatus(t, rr, http.StatusNotFound)
+	assertJSON(t, rr.Body.Bytes(), `{"error":{"code":"feature_disabled","message":"Document labels are temporarily disabled"}}`)
+
+	rr = do(t, e.h, http.MethodGet, "/v1/documents?label=payments", "", map[string]string{
 		"X-Test-Principal": principalHeader(fixtureOwner),
 	})
-	assertStatus(t, rr, http.StatusBadRequest)
+	assertStatus(t, rr, http.StatusNotFound)
 }
 
 func TestServiceAccountCanCreateDocument(t *testing.T) {
@@ -134,16 +174,26 @@ func TestServiceAccountCanCreateDocument(t *testing.T) {
 	}
 }
 
-func TestUploadRejectsPayloadOver10MiB(t *testing.T) {
-	largeHTML := "<html>" + strings.Repeat("x", 10*1024*1024+1) + "</html>"
-	body, contentType := multipartBody(t, map[string]string{"title": "Too large"}, "file", "large.html", largeHTML)
-
-	rr := doRaw(t, newTestEnv(t).h, http.MethodPost, "/v1/documents", body, map[string]string{
-		"Content-Type":     contentType,
-		"X-Test-Principal": principalHeader(fixtureUser),
-	})
-
-	assertStatus(t, rr, http.StatusRequestEntityTooLarge)
+func TestUpload50MiBLimit(t *testing.T) {
+	e := newTestEnv(t)
+	for _, test := range []struct {
+		name   string
+		bytes  int
+		status int
+	}{
+		{"at limit", 50 * 1024 * 1024, http.StatusCreated},
+		{"one byte over", 50*1024*1024 + 1, http.StatusRequestEntityTooLarge},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			html := "<html>" + strings.Repeat("x", test.bytes-len("<html></html>")) + "</html>"
+			body, contentType := multipartBody(t, map[string]string{"title": "Upload boundary"}, "file", "large.html", html)
+			rr := doRaw(t, e.h, http.MethodPost, "/v1/documents", body, map[string]string{
+				"Content-Type":     contentType,
+				"X-Test-Principal": principalHeader(fixtureUser),
+			})
+			assertStatus(t, rr, test.status)
+		})
+	}
 }
 
 func TestAnyoneGrantGivesStrangerAccess(t *testing.T) {

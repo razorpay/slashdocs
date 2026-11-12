@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 
+	"github.com/gin-gonic/gin"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
@@ -38,8 +39,8 @@ func registerMCPDocumentTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 
 func registerMCPDocumentCRUDTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 	server.AddTool(mcp.NewTool("list_documents", readOnlyOptions(
-		mcp.WithDescription("List documents visible to the caller, optionally filtering by title."),
-		mcp.WithString("query", mcp.Description("Optional title search text.")),
+		mcp.WithDescription("List documents visible to the caller, or search their titles and text. Documents with the words in the title come first, then the latest."),
+		mcp.WithString("query", mcp.Description("Optional Slack-style search of titles and text: words, \"phrases\", -word, from:, in:, label:, before:, after:, on:, and during:.")),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		values := url.Values{}
 		if query := request.GetString("query", ""); query != "" {
@@ -64,9 +65,9 @@ func registerMCPDocumentCRUDTools(server *mcpserver.MCPServer, api mcpAPIAdapter
 	})
 
 	server.AddTool(mcp.NewTool("create_document", mutationOptions(false, false,
-		mcp.WithDescription("Create an aidocs document from complete self-contained HTML. Returns its document and initial version IDs. The server applies its configured default sharing at create; when a default grant was applied, the result carries default_grant (grant_id, principal, role) plus a warning describing who can access the document and how to revoke the grant."),
+		mcp.WithDescription("Create a slashdocs document from complete self-contained HTML. Returns its document and initial version IDs. The server applies its configured default sharing at create; when a default grant was applied, the result carries default_grant (grant_id, principal, role) plus a warning describing who can access the document and how to revoke the grant."),
 		mcp.WithString("title", mcp.Required(), mcp.Description("Human-readable document title.")),
-		mcp.WithString("html", mcp.Required(), mcp.Description("Complete self-contained HTML, up to 10 MiB.")),
+		mcp.WithString("html", mcp.Required(), mcp.Description("Complete self-contained HTML, up to 50 MiB.")),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		title, invalid := mcpRequired(request, "title")
 		if invalid != nil {
@@ -250,8 +251,8 @@ func registerMCPVersionTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 		mcp.WithDescription("Publish complete HTML as a new document version using optimistic concurrency."),
 		mcpDocumentID(),
 		mcp.WithString("base_version_id", mcp.Required(), mcp.Description("Version on which these edits are based.")),
-		mcp.WithString("html", mcp.Required(), mcp.Description("Complete replacement HTML, up to 10 MiB.")),
-		mcp.WithString("change_summary", mcp.Description("Short summary of the changes.")),
+		mcp.WithString("html", mcp.Required(), mcp.Description("Complete replacement HTML, up to 50 MiB.")),
+		mcp.WithString("change_summary", mcp.Description("Short summary of the changes, one change per line.")),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		doc, invalid := mcpRequired(request, "document_id")
 		if invalid != nil {
@@ -389,6 +390,39 @@ func registerMCPCommentMutationTools(server *mcpserver.MCPServer, api mcpAPIAdap
 			return api.json(ctx, http.MethodPatch, "/v1/documents/"+doc+"/comments/"+comment, map[string]any{"status": definition.status}, mcpParams("id", doc, "comment_id", comment), api.handlers.patchComment)
 		})
 	}
+
+	// Both verbs are idempotent and neither destroys content, so a repeated
+	// call is always safe: reacting twice leaves one reaction, and removing an
+	// absent reaction succeeds.
+	for _, definition := range []struct {
+		name, method, description string
+		handler                   gin.HandlerFunc
+	}{
+		{"react_comment", http.MethodPut, "Add your reaction to a document comment or reply.", api.handlers.putCommentReaction},
+		{"unreact_comment", http.MethodDelete, "Remove your reaction from a document comment or reply.", api.handlers.deleteCommentReaction},
+	} {
+		server.AddTool(mcp.NewTool(definition.name, mutationOptions(false, true,
+			mcp.WithDescription(definition.description), mcpDocumentID(), mcpCommentID(),
+			mcp.WithString("emoji",
+				mcp.Required(),
+				mcp.Description("Reaction slug."),
+				mcp.Enum("+1", "-1", "laugh", "hooray", "confused", "heart", "rocket", "eyes", "plus"),
+			),
+		)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			doc, comment, _, invalid := mcpCommentArguments(request, false)
+			if invalid != nil {
+				return invalid, nil
+			}
+			emoji, invalid := mcpRequired(request, "emoji")
+			if invalid != nil {
+				return invalid, nil
+			}
+			target := "/v1/documents/" + doc + "/comments/" + comment + "/reactions/" + url.PathEscape(emoji)
+			params := mcpParams("id", doc, "comment_id", comment, "emoji", emoji)
+			response, err := api.call(ctx, definition.method, target, "", nil, params, definition.handler)
+			return api.result(response, err, false)
+		})
+	}
 }
 
 func mcpCommentArguments(request mcp.CallToolRequest, requireBody bool) (string, string, string, *mcp.CallToolResult) {
@@ -411,6 +445,26 @@ func mcpCommentArguments(request mcp.CallToolRequest, requireBody bool) (string,
 }
 
 func registerMCPDocumentAccessTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
+	server.AddTool(mcp.NewTool("request_document_access", mutationOptions(false, false,
+		mcp.WithDescription("Ask the current document owner to grant you access. Repeated requests are coalesced."), mcpDocumentID(),
+	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		doc, invalid := mcpRequired(request, "document_id")
+		if invalid != nil {
+			return invalid, nil
+		}
+		return api.json(ctx, http.MethodPost, "/v1/documents/"+doc+"/access-requests", map[string]any{}, mcpParams("id", doc), api.handlers.requestDocumentAccess)
+	})
+
+	server.AddTool(mcp.NewTool("list_document_access_requests", readOnlyOptions(
+		mcp.WithDescription("List requests for access to a document, the newest first. Needs the editor role. Share the document with a requester to grant access and remove the request."), mcpDocumentID(),
+	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		doc, invalid := mcpRequired(request, "document_id")
+		if invalid != nil {
+			return invalid, nil
+		}
+		return api.get(ctx, "/v1/documents/"+doc+"/access-requests", mcpParams("id", doc), api.handlers.listDocumentAccessRequests)
+	})
+
 	server.AddTool(mcp.NewTool("list_document_access", readOnlyOptions(
 		mcp.WithDescription("List effective access to a document and the grants that provide it."), mcpDocumentID(),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

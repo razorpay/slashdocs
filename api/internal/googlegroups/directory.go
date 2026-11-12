@@ -281,39 +281,46 @@ func (d *HTTPDirectory) getJSON(ctx context.Context, operation, path string, val
 	started := time.Now()
 	resp, err := d.client.Do(req)
 	if err != nil {
-		if d.observe != nil {
-			d.observe(operation, "unavailable", time.Since(started))
-		}
+		d.observeCall(operation, "unavailable", started)
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return &directoryError{operation: operation, code: "timeout"}
 		}
 		return &directoryError{operation: operation, code: "unavailable"}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
-		code := "unavailable"
-		switch resp.StatusCode {
-		case http.StatusUnauthorized, http.StatusForbidden:
-			code = "permission_denied"
-		case http.StatusNotFound:
-			code = "not_found"
-		case http.StatusTooManyRequests:
-			code = "quota"
-		}
-		if d.observe != nil {
-			d.observe(operation, code, time.Since(started))
-		}
+		code := directoryErrorCode(resp.StatusCode)
+		d.observeCall(operation, code, started)
 		return &directoryError{operation: operation, code: code, status: resp.StatusCode}
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(out); err != nil {
-		if d.observe != nil {
-			d.observe(operation, "invalid_response", time.Since(started))
-		}
+		d.observeCall(operation, "invalid_response", started)
 		return &directoryError{operation: operation, code: "invalid_response", status: resp.StatusCode}
 	}
-	if d.observe != nil {
-		d.observe(operation, "success", time.Since(started))
-	}
+	d.observeCall(operation, "success", started)
 	return nil
+}
+
+// observeCall reports a call outcome when an observer is configured, so the
+// callers above stay free of repeated nil checks.
+func (d *HTTPDirectory) observeCall(operation, code string, started time.Time) {
+	if d.observe != nil {
+		d.observe(operation, code, time.Since(started))
+	}
+}
+
+// directoryErrorCode maps an unsuccessful HTTP status onto the error taxonomy
+// callers match on.
+func directoryErrorCode(status int) string {
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "permission_denied"
+	case http.StatusNotFound:
+		return "not_found"
+	case http.StatusTooManyRequests:
+		return "quota"
+	default:
+		return "unavailable"
+	}
 }

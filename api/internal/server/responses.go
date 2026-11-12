@@ -32,6 +32,10 @@ func forbidden(c *gin.Context, msg string) {
 	c.JSON(http.StatusForbidden, errorResponse("forbidden", msg, nil))
 }
 
+func featureDisabled(c *gin.Context, message string) {
+	c.JSON(http.StatusNotFound, errorResponse("feature_disabled", message, nil))
+}
+
 // internalErr logs err (if non-nil) and writes a 500 response.
 func internalErr(c *gin.Context, err error) {
 	if err != nil {

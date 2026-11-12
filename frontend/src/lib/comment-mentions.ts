@@ -250,3 +250,22 @@ function validMentionEndBoundary(body: string, end: number) {
 function isMentionTokenPunctuation(value: string) {
   return "_%+-@'".includes(value);
 }
+
+export type MentionTarget = { start: number; end: number; query: string };
+
+export function getMentionTarget(
+  value: string,
+  caret: number,
+  mentions: CommentMention[] = [],
+): MentionTarget | null {
+  if (mentions.some((m) => caret > m.offset && caret <= m.offset + m.length))
+    return null;
+  const match = /(^|\p{White_Space}|[([{])@([\p{L}\p{N}._%+\-'’ ]*)$/u.exec(
+    value.slice(0, caret),
+  );
+  if (!match || match[2].length > 100) return null;
+  const start = match.index + match[1].length;
+  if (mentions.some((m) => start >= m.offset && start < m.offset + m.length))
+    return null;
+  return { start, end: caret, query: match[2] };
+}

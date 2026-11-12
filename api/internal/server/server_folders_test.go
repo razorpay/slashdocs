@@ -68,12 +68,12 @@ func TestFolderAccessControl(t *testing.T) {
 		assertStatus(t, rr, http.StatusOK)
 	})
 
-	t.Run("commenter can manage folder grants", func(t *testing.T) {
+	t.Run("editor can manage folder grants", func(t *testing.T) {
 		e := newTestEnv(t)
 		folderID := createFolder(t, e, `{"title":"Shared"}`, owner)
 
 		rr := do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/grants",
-			`{"address":"`+otherEmail+`","role":"commenter"}`,
+			`{"address":"`+otherEmail+`","role":"editor"}`,
 			map[string]string{"X-Test-Principal": owner, "Content-Type": "application/json"})
 		assertStatus(t, rr, http.StatusCreated)
 
@@ -92,12 +92,12 @@ func TestFolderAccessControl(t *testing.T) {
 		assertStatus(t, rr, http.StatusNoContent)
 	})
 
-	t.Run("viewer cannot manage folder grants", func(t *testing.T) {
+	t.Run("commenter cannot manage folder grants", func(t *testing.T) {
 		e := newTestEnv(t)
 		folderID := createFolder(t, e, `{"title":"Shared"}`, owner)
 
 		rr := do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/grants",
-			`{"address":"`+otherEmail+`","role":"viewer"}`,
+			`{"address":"`+otherEmail+`","role":"commenter"}`,
 			map[string]string{"X-Test-Principal": owner, "Content-Type": "application/json"})
 		assertStatus(t, rr, http.StatusCreated)
 
@@ -172,6 +172,53 @@ func TestFolderAccessControl(t *testing.T) {
 			`{"parent_folder_id":"`+destID+`"}`,
 			map[string]string{"X-Test-Principal": other, "Content-Type": "application/json"})
 		assertStatus(t, rr, http.StatusForbidden)
+	})
+
+	t.Run("moving doc out of a folder requires editor on that folder unless owner", func(t *testing.T) {
+		e := newTestEnv(t)
+
+		// Owner files a doc in Shared and gives other editor on the doc only.
+		sharedID := createFolder(t, e, `{"title":"Shared"}`, owner)
+		docID, _ := e.createDocument("MyDoc", "<p>hi</p>", fixtureOwner)
+		rr := do(t, e.h, http.MethodPost, "/v1/folders/"+sharedID+"/documents",
+			`{"document_id":"`+docID+`"}`,
+			map[string]string{"X-Test-Principal": owner, "Content-Type": "application/json"})
+		assertStatus(t, rr, http.StatusOK)
+		rr = do(t, e.h, http.MethodPost, "/v1/documents/"+docID+"/grants",
+			`{"address":"`+otherEmail+`","role":"editor"}`,
+			map[string]string{"X-Test-Principal": owner, "Content-Type": "application/json"})
+		assertStatus(t, rr, http.StatusCreated)
+
+		// Other cannot pull the doc out of Shared into a private folder.
+		privateID := createFolder(t, e, `{"title":"Private"}`, other)
+		move := func() int {
+			return do(t, e.h, http.MethodPost, "/v1/folders/"+privateID+"/documents",
+				`{"document_id":"`+docID+`"}`,
+				map[string]string{"X-Test-Principal": other, "Content-Type": "application/json"}).Code
+		}
+		if code := move(); code != http.StatusForbidden {
+			t.Fatalf("move without editor on source = %d, want 403", code)
+		}
+
+		rr = do(t, e.h, http.MethodPost, "/v1/folders/"+sharedID+"/grants",
+			`{"address":"`+otherEmail+`","role":"editor"}`,
+			map[string]string{"X-Test-Principal": owner, "Content-Type": "application/json"})
+		assertStatus(t, rr, http.StatusCreated)
+		if code := move(); code != http.StatusOK {
+			t.Fatalf("move with editor on source = %d, want 200", code)
+		}
+
+		// The owner has no role on Private, but can still take the doc back.
+		rr = do(t, e.h, http.MethodDelete, "/v1/folders/"+privateID+"/documents/"+docID, "", map[string]string{"X-Test-Principal": owner})
+		assertStatus(t, rr, http.StatusNoContent)
+		rr = do(t, e.h, http.MethodGet, "/v1/documents/"+docID, "", map[string]string{"X-Test-Principal": owner})
+		assertStatus(t, rr, http.StatusOK)
+		var doc struct {
+			ParentFolderID string `json:"parent_folder_id"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &doc); err != nil || doc.ParentFolderID != "" {
+			t.Fatalf("doc parent = %q err=%v, want root", doc.ParentFolderID, err)
+		}
 	})
 
 	t.Run("ambiguous root path returns 409 with candidates", func(t *testing.T) {
@@ -304,4 +351,41 @@ func createFolder(t *testing.T, e *testEnv, body, principal string) string {
 	rr := do(t, e.h, http.MethodPost, "/v1/folders", body, map[string]string{"X-Test-Principal": principal, "Content-Type": "application/json"})
 	assertStatus(t, rr, http.StatusCreated)
 	return jsonField(t, rr.Body.Bytes(), "id")
+}
+
+// TestMoveDeletedDocumentNo500 is a regression guard: moving a deleted document
+// must never return 500. It does not cover the ErrNotFound branch in needDocMove
+// (lines 50-55 of handlers_folders.go) — that branch requires the caller to hold
+// RoleOwner at RoleForDocument time but the document be absent by GetDocument,
+// which is a TOCTOU race that the Postgres repo cannot reproduce without injection.
+// In practice the Postgres RoleForDocument returns RoleNone for deleted documents
+// even for the original owner (GetDocumentOwner returns no rows), so the caller
+// is stopped by the "editor role required" gate (403) before reaching GetDocument.
+func TestMoveDeletedDocumentNo500(t *testing.T) {
+	e := newTestEnv(t)
+	owner := principalHeader(fixtureOwner)
+	editor := principalHeader(fixtureEditor)
+
+	destID := createFolder(t, e, `{"title":"Dest"}`, owner)
+
+	// Owner creates a doc and grants fixtureEditor editor access.
+	docID, _ := e.createDocument("ToDelete", "<p>x</p>", fixtureOwner)
+	rr := do(t, e.h, http.MethodPost, "/v1/documents/"+docID+"/grants",
+		`{"address":"`+fixtureEditor.Email+`","role":"editor"}`,
+		map[string]string{"X-Test-Principal": owner, "Content-Type": "application/json"})
+	assertStatus(t, rr, http.StatusCreated)
+
+	// Delete the document so it is gone when the editor tries to move it.
+	rr = do(t, e.h, http.MethodDelete, "/v1/documents/"+docID, "", map[string]string{"X-Test-Principal": owner})
+	assertStatus(t, rr, http.StatusNoContent)
+
+	// Editor attempts to move the now-deleted doc. RoleForDocument returns RoleNone
+	// (grant rows gone, document row gone), so the request is rejected with 403 at
+	// the "editor role required" gate. The key invariant: it must not 500.
+	rr = do(t, e.h, http.MethodPost, "/v1/folders/"+destID+"/documents",
+		`{"document_id":"`+docID+`"}`,
+		map[string]string{"X-Test-Principal": editor, "Content-Type": "application/json"})
+	if rr.Code == http.StatusInternalServerError {
+		t.Fatalf("move on deleted document must not 500; got %d: %s", rr.Code, rr.Body.String())
+	}
 }
