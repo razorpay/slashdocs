@@ -3,14 +3,18 @@ package server_test
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/razorpay/slashdocs/api/internal/auth"
@@ -77,7 +81,7 @@ func TestMCPStreamableHTTPInitializeListAndCall(t *testing.T) {
 	initialize := mcpPost(t, e, token, "", map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "initialize",
 		"params": map[string]any{
-			"protocolVersion": mcp.LATEST_PROTOCOL_VERSION,
+			"protocolVersion": mcp.LATEST_LEGACY_PROTOCOL_VERSION,
 			"capabilities":    map[string]any{},
 			"clientInfo":      map[string]any{"name": "slashdocs-test", "version": "1"},
 		},
@@ -102,7 +106,7 @@ func TestMCPStreamableHTTPInitializeListAndCall(t *testing.T) {
 		} `json:"result"`
 	}
 	decodeMCPResponse(t, initialize, &initialized)
-	if initialized.Result.ProtocolVersion != mcp.LATEST_PROTOCOL_VERSION || initialized.Result.ServerInfo.Name != "slashdocs" || initialized.Result.Capabilities.Tools == nil || !strings.Contains(initialized.Result.Instructions, "formerly named aidocs") {
+	if initialized.Result.ProtocolVersion != mcp.LATEST_LEGACY_PROTOCOL_VERSION || initialized.Result.ServerInfo.Name != "slashdocs" || initialized.Result.Capabilities.Tools == nil || !strings.Contains(initialized.Result.Instructions, "formerly named aidocs") {
 		t.Fatalf("initialize result = %#v", initialized.Result)
 	}
 
@@ -195,7 +199,7 @@ func TestMCPAuthenticationInfrastructureFailureIsServerError(t *testing.T) {
 	body := marshalMCP(t, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "initialize",
 		"params": map[string]any{
-			"protocolVersion": mcp.LATEST_PROTOCOL_VERSION,
+			"protocolVersion": mcp.LATEST_LEGACY_PROTOCOL_VERSION,
 			"capabilities":    map[string]any{},
 			"clientInfo":      map[string]any{"name": "auth-failure-test", "version": "1"},
 		},
@@ -217,7 +221,7 @@ func TestMCPHTTPTransportSecurityAndMalformedInput(t *testing.T) {
 	initializeBody := marshalMCP(t, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "initialize",
 		"params": map[string]any{
-			"protocolVersion": mcp.LATEST_PROTOCOL_VERSION,
+			"protocolVersion": mcp.LATEST_LEGACY_PROTOCOL_VERSION,
 			"capabilities":    map[string]any{},
 			"clientInfo":      map[string]any{"name": "security-test", "version": "1"},
 		},
@@ -275,7 +279,7 @@ func TestMCPHTTPTransportSecurityAndMalformedInput(t *testing.T) {
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Accept", "application/json, text/event-stream")
-		req.Header.Set("Mcp-Protocol-Version", mcp.LATEST_PROTOCOL_VERSION)
+		req.Header.Set("Mcp-Protocol-Version", mcp.LATEST_LEGACY_PROTOCOL_VERSION)
 		rr := httptest.NewRecorder()
 		e.h.ServeHTTP(rr, req)
 		assertStatus(t, rr, http.StatusRequestEntityTooLarge)
@@ -298,10 +302,67 @@ func TestMCPHTTPTransportSecurityAndMalformedInput(t *testing.T) {
 		assertStatus(t, rr, http.StatusBadRequest)
 	})
 
+	t.Run("newer protocol version is answered with the supported versions", func(t *testing.T) {
+		rr := statelessMCPRequest(t, e, token, "tools/list", "2099-01-01")
+		assertStatus(t, rr, http.StatusBadRequest)
+		var response struct {
+			Error struct {
+				Code int `json:"code"`
+				Data struct {
+					Supported []string `json:"supported"`
+				} `json:"data"`
+			} `json:"error"`
+		}
+		decodeMCPResponse(t, rr, &response)
+		if response.Error.Code != -32022 || !slices.Contains(response.Error.Data.Supported, mcp.ProtocolVersion20260728) ||
+			!slices.Contains(response.Error.Data.Supported, mcp.ProtocolVersion20251125) {
+			t.Fatalf("unsupported version response = %s", rr.Body.String())
+		}
+	})
+
 	t.Run("POST requires an MCP Accept header", func(t *testing.T) {
 		rr := rawMCPRequest(t, e, http.MethodPost, token, "", initializeBody, "application/json", false)
 		assertStatus(t, rr, http.StatusBadRequest)
 	})
+}
+
+func TestMCPServesStatelessAndHandshakeClients(t *testing.T) {
+	e := newMCPOAuthTestEnv(t)
+	token := auth.NewMCPAccessToken(fixtureUser.ID, e.resource, oauthTestSigningMaterial, time.Minute)
+
+	tools := map[string]map[string]string{}
+	for _, version := range []string{mcp.ProtocolVersion20260728, mcp.ProtocolVersion20251125} {
+		c, initialized := connectMCPClient(t, e, token, version)
+		if c.ProtocolVersion() != version || !strings.Contains(initialized.Instructions, "formerly named aidocs") {
+			t.Fatalf("%s: protocol = %q, instructions = %q", version, c.ProtocolVersion(), initialized.Instructions)
+		}
+		listed, err := c.ListTools(t.Context(), mcp.ListToolsRequest{})
+		if err != nil {
+			t.Fatalf("%s: list tools: %v", version, err)
+		}
+		tools[version] = map[string]string{}
+		for _, tool := range listed.Tools {
+			tools[version][tool.Name] = marshalMCP(t, tool.InputSchema)
+		}
+		result, err := c.CallTool(t.Context(), mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "whoami"}})
+		if err != nil || result.IsError {
+			t.Fatalf("%s: whoami = %+v, %v", version, result, err)
+		}
+	}
+	if !maps.Equal(tools[mcp.ProtocolVersion20260728], tools[mcp.ProtocolVersion20251125]) {
+		t.Fatalf("tools differ between protocol versions: %v", tools)
+	}
+}
+
+func TestMCPCreateDocumentAboveSDKDefaultBodyLimit(t *testing.T) {
+	e := newMCPOAuthTestEnv(t)
+	token := auth.NewMCPAccessToken(fixtureUser.ID, e.resource, oauthTestSigningMaterial, time.Minute)
+
+	// mcp-go rejects bodies over 4 MiB unless the server raises its limit.
+	html := "<html><body>" + strings.Repeat("x", 5<<20) + "</body></html>"
+	assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "create_document", map[string]any{
+		"title": "Large document", "html": html,
+	}), "current_version_id")
 }
 
 func TestMCPDocumentAndFolderToolParity(t *testing.T) {
@@ -641,7 +702,7 @@ func mcpPost(t *testing.T, e *mcpOAuthTestEnv, token, origin string, value any) 
 
 func rawMCPRequest(t *testing.T, e *mcpOAuthTestEnv, method, token, origin, body, contentType string, accept bool) *httptest.ResponseRecorder {
 	t.Helper()
-	return rawMCPRequestWithProtocol(t, e, method, token, origin, body, contentType, accept, mcp.LATEST_PROTOCOL_VERSION)
+	return rawMCPRequestWithProtocol(t, e, method, token, origin, body, contentType, accept, mcp.LATEST_LEGACY_PROTOCOL_VERSION)
 }
 
 func rawMCPRequestWithProtocol(t *testing.T, e *mcpOAuthTestEnv, method, token, origin, body, contentType string, accept bool, protocolVersion string) *httptest.ResponseRecorder {
@@ -679,6 +740,49 @@ func decodeMCPResponse(t *testing.T, rr *httptest.ResponseRecorder, target any) 
 	if err := json.Unmarshal(rr.Body.Bytes(), target); err != nil {
 		t.Fatalf("decode MCP response: %v; body=%s", err, rr.Body.String())
 	}
+}
+
+// statelessMCPRequest sends one request in the 2026-07-28 shape: version and
+// method in headers, and version and capabilities in params._meta.
+func statelessMCPRequest(t *testing.T, e *mcpOAuthTestEnv, token, method, version string) *httptest.ResponseRecorder {
+	t.Helper()
+	params := map[string]any{"_meta": map[string]any{
+		mcp.MetaKeyProtocolVersion:    version,
+		mcp.MetaKeyClientCapabilities: map[string]any{},
+	}}
+	return do(t, e.h, http.MethodPost, "/mcp", marshalMCP(t, map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": method, "params": params,
+	}), map[string]string{
+		"Authorization":        "Bearer " + token,
+		"Content-Type":         "application/json",
+		"Accept":               "application/json, text/event-stream",
+		"Mcp-Protocol-Version": version,
+		"Mcp-Method":           method,
+	})
+}
+
+// connectMCPClient connects mcp-go's client over HTTP, preferring version.
+func connectMCPClient(t *testing.T, e *mcpOAuthTestEnv, token, version string) (*client.Client, *mcp.InitializeResult) {
+	t.Helper()
+	srv := httptest.NewServer(e.h)
+	t.Cleanup(srv.Close)
+	tr, err := transport.NewStreamableHTTP(srv.URL+"/mcp",
+		transport.WithHTTPHeaders(map[string]string{"Authorization": "Bearer " + token}))
+	if err != nil {
+		t.Fatalf("new transport: %v", err)
+	}
+	c := client.NewClient(tr, client.WithProtocolVersion(version))
+	t.Cleanup(func() { _ = c.Close() })
+	if err := c.Start(t.Context()); err != nil {
+		t.Fatalf("start client: %v", err)
+	}
+	initialized, err := c.Initialize(t.Context(), mcp.InitializeRequest{Params: mcp.InitializeParams{
+		ClientInfo: mcp.Implementation{Name: "slashdocs-test", Version: "1"},
+	}})
+	if err != nil {
+		t.Fatalf("initialize %s: %v", version, err)
+	}
+	return c, initialized
 }
 
 // The server applies its configured default sharing at create; the MCP result
