@@ -19,7 +19,7 @@
 import { SOURCE_ATTR, type Patch, type Piece, type Region } from "./source-pieces.ts";
 
 // The changes of the editor since editing started. The editor keeps adding
-// to them; the source map reads them when it needs them.
+// to them. The source map reads them when it needs them.
 export type EditorChanges = {
   // The original blocks that the editor changed.
   touched: Iterable<Element>;

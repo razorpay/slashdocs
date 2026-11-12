@@ -1416,7 +1416,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "Applies exact find-and-replace edits to the live document on the server and saves the result as a new version. Each old_string must occur exactly once; edits apply in order and either all apply or none do. The HTML is never parsed, so everything else stays byte-for-byte the same. When the edits together leave the document as it is, the response is 200 with unchanged set and the current version.",
+                "description": "Applies exact find-and-replace edits to the live document on the server and saves the result as a new version. Each old_string must occur exactly once. The edits apply in order, and either all apply or none do. The HTML is never parsed, so everything else stays byte-for-byte the same. When the edits together leave the document as it is, the response is 200 with unchanged set and the current version.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1443,6 +1443,12 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server.editDocumentResponse"
+                        }
+                    },
                     "201": {
                         "description": "Created",
                         "schema": {
@@ -2146,6 +2152,12 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server.createVersionResponse"
+                        }
+                    },
                     "201": {
                         "description": "Created",
                         "schema": {

@@ -407,11 +407,10 @@ export function useLiveText(options: {
       let op = s.unsent;
       try {
         op ??= await compose(s);
-        const answering = op && api.sendOps(opts.current.docId, op.body);
         if (op) {
           const at = s.text!;
           const before = at.head.version;
-          const answer = (await answering)!;
+          const answer = await api.sendOps(opts.current.docId, op.body);
           // The server holds the text of the operation.
           s.unsent = undefined;
           at.shown = op.screen;

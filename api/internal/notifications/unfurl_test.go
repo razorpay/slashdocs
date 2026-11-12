@@ -47,7 +47,7 @@ func TestLiveUnfurlLeavesOutMissingFacts(t *testing.T) {
 
 func TestNeutralUnfurlNamesNothing(t *testing.T) {
 	text := marshalPlain(t, NeutralUnfurl())
-	if !strings.Contains(text, `"text":"SlashDocs document · Sign in to see if you have access"`) || strings.Contains(text, "button") {
+	if !strings.Contains(text, `"text":"slashdocs document · Sign in to see if you have access"`) || strings.Contains(text, "button") {
 		t.Fatalf("unexpected neutral card: %s", text)
 	}
 }

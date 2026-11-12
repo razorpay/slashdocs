@@ -406,7 +406,7 @@ export function trackPointer(
 
 // createCursorChat lets a viewer type a short message at their cursor, as in
 // Figma: "/" opens a field by the pointer, and others see the text live at
-// this viewer's cursor. Enter keeps it a few seconds; Esc clears it. The field
+// this viewer's cursor. Enter keeps it a few seconds. Esc clears it. The field
 // lives in the bridge window, over the document, and lets the pointer through.
 export function createCursorChat(
   d: Document,

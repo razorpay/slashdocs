@@ -332,7 +332,7 @@ func compactRow(m map[string]any) string {
 }
 
 // pinLabel names the element of a point comment by its label, or else by its
-// target, or "element", or "page" for a point on the body; it is "" for a
+// target, or "element", or "page" for a point on the body. It is "" for a
 // text comment. The row shows the start of the element's text as
 // selected_text.
 func pinLabel(anchor any) string {

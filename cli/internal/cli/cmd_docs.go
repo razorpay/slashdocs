@@ -852,7 +852,7 @@ another part of it since you read it.`,
 }
 
 // editArgs builds the edits from --old/--new pairs or an --edits file. all
-// applies to the pairs; each edit in the file says for itself.
+// applies to the pairs. Each edit in the file says for itself.
 func editArgs(olds, news []string, all bool, file string) ([]textedit.Edit, error) {
 	if len(olds) != len(news) {
 		return nil, fmt.Errorf("pass one --new for each --old (got %d --old and %d --new)", len(olds), len(news))

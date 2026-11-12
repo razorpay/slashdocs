@@ -329,10 +329,9 @@ func (s *Server) routes(deps dependencies) {
 	reader.GET("/documents/:id", h.getDocument)
 	reader.GET("/documents/:id/versions", h.listVersions)
 	// A browser that follows live edits asks for the changes when the event
-	// of an operation does not carry it, or when it missed an event, and an
-	// editor writes many operations a second.
-	// A read of the source at a seq costs as much as a read of the changes
-	// does, so the two share one budget.
+	// of an operation does not carry it, or when it missed an event. A read
+	// of the source at a seq costs as much as a read of the changes does, so
+	// the two share one budget.
 	followLimit := activityRateLimit(1200)
 	reader.GET("/documents/:id/changes", followLimit, h.documentChanges)
 	reader.GET("/documents/:id/versions/:version_id", h.getVersion)
@@ -354,6 +353,8 @@ func (s *Server) routes(deps dependencies) {
 	// blob. Decisions have their own budget, so that other activity and
 	// typing never block them.
 	decisionLimit := activityRateLimit(60)
+	// An editor writes many operations a second.
+	opsLimit := activityRateLimit(1200)
 	// A comment update changes the body or the status of a comment, or moves
 	// a point comment. The server moves text anchors itself, off the request
 	// (followLater). Comment updates have their own budget, so that other
@@ -401,7 +402,7 @@ func (s *Server) routes(deps dependencies) {
 	authed.DELETE("/documents/:id/approvals/:approval_id", h.deleteApproval)
 	authed.POST("/documents/:id/versions", h.createVersion)
 	authed.POST("/documents/:id/edits", h.editDocument)
-	authed.POST("/documents/:id/ops", activityRateLimit(1200), h.appendOperation)
+	authed.POST("/documents/:id/ops", opsLimit, h.appendOperation)
 	authed.POST("/documents/:id/versions/:version_id/restore", h.restoreVersion)
 	authed.GET("/documents/:id/labels", h.listDocumentLabels)
 	authed.PUT("/documents/:id/labels", h.replaceDocumentLabels)

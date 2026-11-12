@@ -203,8 +203,8 @@ type Approval struct {
 	SHA256        string         `json:"sha256"`
 	Approver      auth.Principal `json:"approver"`
 	Decision      string         `json:"decision"`
-	// Note is the reviewer's explanation. It is optional, but a rejection
-	// without one needs open comments by the reviewer instead.
+	// Note is the approver's explanation. It is optional, but a rejection
+	// without one needs open comments by the approver instead.
 	Note      string `json:"note,omitempty"`
 	DecidedAt string `json:"decided_at,omitempty"`
 }

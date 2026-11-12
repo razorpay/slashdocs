@@ -39,7 +39,7 @@ type DocumentAccessRequestNotification struct {
 	FinishedProviders []string
 }
 
-// Approval notification reasons. A request goes to the approver; a decision
+// Approval notification reasons. A request goes to the approver. A decision
 // goes to the document owner.
 const (
 	ApprovalNotificationRequested = "approval_requested"

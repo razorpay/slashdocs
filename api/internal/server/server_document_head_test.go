@@ -151,7 +151,7 @@ func TestDocumentPageHeadUsesCachedGroupMemberships(t *testing.T) {
 }
 
 // A CLI or an agent with an expired token must not read a document as
-// anonymous; the page stays generic for it, as the API refuses it.
+// anonymous. The page stays generic for it, as the API refuses it.
 func TestDocumentPageKeepsTheGenericShellForAnInvalidBearerToken(t *testing.T) {
 	e := newShellTestEnv(t, server.Config{Environment: "test"})
 	e.shareWithAnyone("viewer")
@@ -240,7 +240,7 @@ func (slowRoleRepo) RoleForDocument(ctx context.Context, _ auth.Principal, _ str
 	return repo.RoleNone, ctx.Err()
 }
 
-// The page of the web app must load when the database is slow or down; the
+// The page of the web app must load when the database is slow or down. The
 // app then reports the problem itself.
 func TestDocumentPageServesTheGenericShellWhenTheDatabaseIsSlow(t *testing.T) {
 	e := newShellTestEnv(t, server.Config{Environment: "test"})
