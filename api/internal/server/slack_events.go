@@ -202,15 +202,15 @@ func (h handlers) docUnfurl(ctx context.Context, docID, versionID string, isExte
 		URL:   notifications.DocumentURL(h.deps.appOrigin, docID),
 		Owner: doc.Owner.Name,
 	}
-	if version, ok := h.shownVersion(ctx, doc, versionID); ok {
-		html, err := h.deps.repository.GetVersionHTML(ctx, version.ID)
-		if err != nil {
-			return neutral
-		}
-		card.Version, card.HTML = version.Number, html
-	} else if doc.CurrentVersionID != "" {
+	version, err := h.shownVersion(ctx, doc, versionID)
+	if err != nil {
 		return neutral
 	}
+	preview, err := h.deps.repository.VersionPreview(ctx, version.ID)
+	if err != nil {
+		return neutral
+	}
+	card.Version, card.Text = version.Number, preview.Text
 	comments, err := h.deps.repository.ListComments(ctx, docID, "open", "")
 	if err != nil {
 		return neutral
@@ -225,17 +225,13 @@ func (h handlers) docUnfurl(ctx context.Context, docID, versionID string, isExte
 }
 
 // shownVersion is the ?version= version when it belongs to the doc, otherwise the current one.
-func (h handlers) shownVersion(ctx context.Context, doc repo.Document, versionID string) (repo.Version, bool) {
+func (h handlers) shownVersion(ctx context.Context, doc repo.Document, versionID string) (repo.Version, error) {
 	if versionID != "" {
 		if v, err := h.deps.repository.GetVersion(ctx, versionID); err == nil && v.DocumentID == doc.ID {
-			return v, true
+			return v, nil
 		}
 	}
-	if doc.CurrentVersionID == "" {
-		return repo.Version{}, false
-	}
-	v, err := h.deps.repository.GetVersion(ctx, doc.CurrentVersionID)
-	return v, err == nil
+	return h.deps.repository.GetVersion(ctx, doc.CurrentVersionID)
 }
 
 var docIDPattern = regexp.MustCompile(`^doc_[a-z0-9]{1,64}$`)

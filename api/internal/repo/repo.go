@@ -105,16 +105,6 @@ type Document struct {
 	Snippet string `json:"snippet,omitempty"`
 }
 
-// DocumentPreview is what a link preview of a document shows besides its
-// title and owner.
-type DocumentPreview struct {
-	// Text is the start of what a reader sees in the current version. It is
-	// empty until the version is indexed.
-	Text string
-	// UpdatedAt is when the current version was created.
-	UpdatedAt time.Time
-}
-
 type FolderBreadcrumb struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
@@ -243,6 +233,15 @@ type Version struct {
 	ChangeSummary string         `json:"change_summary"`
 	SHA256        string         `json:"sha256"`
 	CreatedAt     string         `json:"created_at"`
+}
+
+// VersionPreview is what a link preview shows of a version besides its
+// document's title and owner.
+type VersionPreview struct {
+	// Text is the start of what a reader sees in the version. It is empty
+	// until the version is indexed.
+	Text      string
+	CreatedAt time.Time
 }
 
 type GitHubConnection struct {
@@ -416,9 +415,6 @@ type Repository interface {
 	// first open. Idempotent.
 	RecordDocumentOpened(ctx context.Context, documentID string, principal auth.Principal) error
 	GetDocument(ctx context.Context, id string) (Document, error)
-	// DocumentPreview returns the start of a document's current text, for link
-	// previews. Returns ErrNotFound when the document is missing.
-	DocumentPreview(ctx context.Context, documentID string) (DocumentPreview, error)
 	UpdateDocument(ctx context.Context, id, title string) (Document, error)
 	DeleteDocument(ctx context.Context, id string) error
 	ListDocumentsByLabel(ctx context.Context, principal auth.Principal, label string) ([]Document, error)
@@ -460,6 +456,9 @@ type Repository interface {
 	ListVersions(ctx context.Context, documentID string) ([]Version, error)
 	GetVersion(ctx context.Context, id string) (Version, error)
 	GetVersionHTML(ctx context.Context, id string) ([]byte, error)
+	// VersionPreview returns the start of a version's text, for link previews.
+	// Returns ErrNotFound when the version is missing.
+	VersionPreview(ctx context.Context, id string) (VersionPreview, error)
 	CreateComment(ctx context.Context, documentID, versionID, body string, anchor Anchor, author auth.Principal, mentions []CommentMention) (Comment, error)
 	CreateCommentReply(ctx context.Context, documentID, parentCommentID, body string, author auth.Principal, mentions []CommentMention) (Comment, error)
 	GetComment(ctx context.Context, id string) (Comment, error)

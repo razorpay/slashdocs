@@ -11,18 +11,18 @@ import (
 	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
-func TestPostgresDocumentPreview(t *testing.T) {
+func TestPostgresVersionPreview(t *testing.T) {
 	ctx := context.Background()
 	store := newStore(t)
 	owner := auth.Principal{Type: auth.PrincipalUser, ID: "usr_preview_owner", Email: "preview-owner@test.com"}
 	html := "<html><head><title>Plan</title><style>p{}</style></head><body><h1>Plan</h1><p>Ship it.</p>" +
 		strings.Repeat("<p>word</p>", 1000) + "</body></html>"
-	doc, _, err := store.CreateDocument(ctx, owner, "Plan", []byte(html))
+	_, version, err := store.CreateDocument(ctx, owner, "Plan", "", []byte(html))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := store.DocumentPreview(ctx, doc.ID)
+	got, err := store.VersionPreview(ctx, version.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,11 +32,11 @@ func TestPostgresDocumentPreview(t *testing.T) {
 	if n := utf8.RuneCountInString(got.Text); n != 2000 {
 		t.Errorf("text has %d characters, want 2000", n)
 	}
-	if got.UpdatedAt.IsZero() {
-		t.Error("UpdatedAt is zero")
+	if got.CreatedAt.IsZero() {
+		t.Error("CreatedAt is zero")
 	}
 
-	if _, err := store.DocumentPreview(ctx, "doc_missing"); !errors.Is(err, repo.ErrNotFound) {
-		t.Errorf("missing document: err = %v, want ErrNotFound", err)
+	if _, err := store.VersionPreview(ctx, "ver_missing"); !errors.Is(err, repo.ErrNotFound) {
+		t.Errorf("missing version: err = %v, want ErrNotFound", err)
 	}
 }

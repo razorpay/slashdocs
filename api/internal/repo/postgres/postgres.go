@@ -382,17 +382,6 @@ func (s *Store) GetDocument(ctx context.Context, id string) (repo.Document, erro
 	return docFromGet(r), nil
 }
 
-func (s *Store) DocumentPreview(ctx context.Context, documentID string) (repo.DocumentPreview, error) {
-	r, err := s.q.GetDocumentPreview(ctx, documentID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return repo.DocumentPreview{}, repo.ErrNotFound
-	}
-	if err != nil {
-		return repo.DocumentPreview{}, err
-	}
-	return repo.DocumentPreview{Text: r.Text, UpdatedAt: r.CreatedAt.Time}, nil
-}
-
 func (s *Store) CreateServiceAccount(ctx context.Context, owner auth.Principal, name string) (repo.ServiceAccount, error) {
 	if owner.Type != auth.PrincipalUser {
 		return repo.ServiceAccount{}, errors.New("owner must be user")
@@ -1246,6 +1235,16 @@ func (s *Store) GetVersionHTML(ctx context.Context, id string) ([]byte, error) {
 		return nil, repo.ErrNotFound
 	}
 	return b, err
+}
+func (s *Store) VersionPreview(ctx context.Context, id string) (repo.VersionPreview, error) {
+	r, err := s.q.GetVersionPreview(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return repo.VersionPreview{}, repo.ErrNotFound
+	}
+	if err != nil {
+		return repo.VersionPreview{}, err
+	}
+	return repo.VersionPreview{Text: r.Text, CreatedAt: r.CreatedAt.Time}, nil
 }
 func (s *Store) GetComment(ctx context.Context, id string) (repo.Comment, error) {
 	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})

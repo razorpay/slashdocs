@@ -13,7 +13,8 @@ var sensitiveField = regexp.MustCompile(`(?i)\b(otp|one[ -]time (?:password|code
 var oneTimeCode = regexp.MustCompile(`(?i)\b(otp|one[ -]time (?:password|code)|verification code)(\s+(?:is\s+)?)([0-9]{4,10})\b`)
 var cardNumber = regexp.MustCompile(`\b(?:[0-9][ -]?){12,18}[0-9]\b`)
 
-func notificationPreview(text string, limit int) string {
+// redact masks recognizable sensitive fields.
+func redact(text string) string {
 	text = sensitiveField.ReplaceAllString(text, "$1$2[redacted]")
 	text = oneTimeCode.ReplaceAllString(text, "$1$2[redacted]")
 	text = cardNumber.ReplaceAllStringFunc(text, func(value string) string {
@@ -34,7 +35,11 @@ func notificationPreview(text string, limit int) string {
 		}
 		return value
 	})
-	chars := []rune(strings.TrimSpace(text))
+	return text
+}
+
+func notificationPreview(text string, limit int) string {
+	chars := []rune(strings.TrimSpace(redact(text)))
 	if len(chars) > limit {
 		return string(chars[:limit-1]) + "…"
 	}

@@ -12,40 +12,6 @@ import (
 	"testing"
 )
 
-func TestDocSummaryPicksTheFirstSourceThatExists(t *testing.T) {
-	long := strings.Repeat("word ", 80)
-	cases := []struct {
-		name, doc, title, want string
-	}{
-		{name: "meta description wins", title: "T",
-			doc:  `<head><meta name="description" content=" Short  summary. "><meta property="og:description" content="OG"></head><body><p>Body</p></body>`,
-			want: "Short summary."},
-		{name: "og description next", title: "T",
-			doc:  `<head><meta property="og:description" content="From OG"></head><body><p>Body</p></body>`,
-			want: "From OG"},
-		{name: "body text without the title", title: "Q3 review",
-			doc:  `<head><title>Q3 review</title></head><body><h1>Q3 review</h1><p>Card payments grew 22%.</p></body>`,
-			want: "Card payments grew 22%."},
-		{name: "hidden text is skipped", title: "",
-			doc:  `<body><script>secret()</script><div hidden>hidden one</div><span aria-hidden="true">hidden two</span><template>t</template><p>Visible</p></body>`,
-			want: "Visible"},
-		{name: "nested hidden text is skipped", title: "",
-			doc:  `<body><div hidden><p><b>deep</b> hidden</p></div><br><p>Shown</p></body>`,
-			want: "Shown"},
-		{name: "long text is cut at a word", title: "", doc: "<body><p>" + long + "</p></body>",
-			want: strings.TrimSpace(strings.Repeat("word ", 31)) + "…"},
-		{name: "nothing usable", title: "", doc: `<head><title>Only a title</title></head><body></body>`, want: ""},
-		{name: "empty doc", title: "", doc: "", want: ""},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := docSummary([]byte(tc.doc), tc.title); got != tc.want {
-				t.Fatalf("docSummary = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
 func TestLiveUnfurlEscapesRedactsAndListsFacts(t *testing.T) {
 	card := LiveUnfurl(DocCard{
 		Title:       "Plan <!channel> & more",
@@ -53,7 +19,7 @@ func TestLiveUnfurlEscapesRedactsAndListsFacts(t *testing.T) {
 		Owner:       "Sudarshan Srinivas",
 		Version:     27,
 		OpenThreads: 1,
-		HTML:        []byte(`<meta name="description" content="The OTP is 482913, use it.">`),
+		Text:        "The OTP is 482913, use it.",
 	})
 	text := marshalPlain(t, card)
 	for _, want := range []string{
