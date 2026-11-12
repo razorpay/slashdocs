@@ -138,6 +138,57 @@ func TestDocumentSearchPrimitives(t *testing.T) {
 	assertStatus(t, rr, http.StatusBadRequest)
 }
 
+func TestDocumentListPages(t *testing.T) {
+	e := newTestEnv(t)
+	for _, title := range []string{"Paged one", "Paged two"} {
+		e.createDocument(title, "<html><body>text</body></html>", fixtureOwner)
+	}
+	headers := map[string]string{"X-Test-Principal": principalHeader(fixtureOwner)}
+	list := func(query string) (ids []string, more bool) {
+		t.Helper()
+		rr := do(t, e.h, http.MethodGet, "/v1/documents?"+query, "", headers)
+		assertStatus(t, rr, http.StatusOK)
+		var page struct {
+			Items []struct {
+				ID string `json:"id"`
+			} `json:"items"`
+			HasMore bool `json:"has_more"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &page); err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range page.Items {
+			ids = append(ids, item.ID)
+		}
+		return ids, page.HasMore
+	}
+
+	// The list has the fixture document and the two above, and search finds
+	// the two above.
+	for _, tc := range []struct {
+		query, next string
+		limit       int
+	}{
+		{query: "limit=2", next: "limit=2&offset=2", limit: 2},
+		{query: "q=paged&limit=1", next: "q=paged&limit=1&offset=1", limit: 1},
+	} {
+		first, more := list(tc.query)
+		if len(first) != tc.limit || !more {
+			t.Errorf("%s: %v, has_more %v, want a full page and more", tc.query, first, more)
+		}
+		second, more := list(tc.next)
+		if len(second) != 1 || more || second[0] == first[0] {
+			t.Errorf("%s: %v, has_more %v, want the last document only after %v", tc.next, second, more, first)
+		}
+	}
+	if ids, more := list("limit=1000"); len(ids) != 3 || more {
+		t.Errorf("limit above the maximum: %v, has_more %v, want all 3 documents", ids, more)
+	}
+	for _, query := range []string{"limit=0", "limit=x", "offset=-1", "offset=99999999999"} {
+		assertStatus(t, do(t, e.h, http.MethodGet, "/v1/documents?"+query, "", headers), http.StatusBadRequest)
+	}
+}
+
 func TestTemporarilyDisabledLabels(t *testing.T) {
 	e := newConfiguredTestEnv(t, server.Config{
 		Environment:   "test",

@@ -433,6 +433,16 @@ definitions:
       url:
         type: string
     type: object
+  server.documentListResponse:
+    properties:
+      has_more:
+        description: HasMore reports that more documents follow this page.
+        type: boolean
+      items:
+        items:
+          $ref: '#/definitions/repo.Document'
+        type: array
+    type: object
   server.errorBody:
     properties:
       code:
@@ -541,13 +551,6 @@ definitions:
       items:
         items:
           $ref: '#/definitions/repo.CLICredential'
-        type: array
-    type: object
-  server.listResponse-repo_Document:
-    properties:
-      items:
-        items:
-          $ref: '#/definitions/repo.Document'
         type: array
     type: object
   server.listResponse-repo_OwnershipTransfer:
@@ -931,13 +934,21 @@ paths:
         in: query
         name: label
         type: string
+      - description: 'Page size: 25 by default, 100 at most'
+        in: query
+        name: limit
+        type: integer
+      - description: The number of documents to skip
+        in: query
+        name: offset
+        type: integer
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/server.listResponse-repo_Document'
+            $ref: '#/definitions/server.documentListResponse'
       security:
       - bearerAuth: []
       - cookieAuth: []
