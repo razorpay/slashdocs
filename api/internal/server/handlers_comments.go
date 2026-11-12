@@ -60,6 +60,15 @@ type createCommentRequest struct {
 	Mentions []commentMentionRequest `json:"mentions"`
 }
 
+// anchorSeq gives the seq that the anchor is on. A seq that is not in the
+// range of the live document gives the live seq.
+func (in createCommentRequest) anchorSeq(live int64) int64 {
+	if in.Seq != nil && *in.Seq >= 0 && *in.Seq < live {
+		return *in.Seq
+	}
+	return live
+}
+
 type createCommentReplyRequest struct {
 	Body     string                  `json:"body"`
 	Mentions []commentMentionRequest `json:"mentions"`
@@ -174,10 +183,7 @@ func (h handlers) createComment(c *gin.Context) {
 		commentWriteError(c, err)
 		return
 	}
-	seq := d.Seq
-	if in.Seq != nil && *in.Seq >= 0 && *in.Seq < seq {
-		seq = *in.Seq
-	}
+	seq := in.anchorSeq(d.Seq)
 	cm, err := h.deps.repository.CreateComment(c.Request.Context(), c.Param("id"), in.VersionID, in.Body, in.Anchor, seq, *p, commentMentions(in.Mentions))
 	if err != nil {
 		commentWriteError(c, err)
