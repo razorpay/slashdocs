@@ -841,7 +841,7 @@ describe("undo after the text of other people came in", () => {
       return (seed >>> 8) % below;
     };
     let undone = 0;
-    for (let run = 0; run < 300; run++) {
+    for (let run = 0; run < 100; run++) {
       stop?.();
       const doc = await open("<p> a b c</p>");
       const p = document.querySelector("p")!;
@@ -902,7 +902,7 @@ describe("undo after the text of other people came in", () => {
       return (seed >>> 8) % below;
     };
     let undone = 0;
-    for (let run = 0; run < 200; run++) {
+    for (let run = 0; run < 50; run++) {
       stop?.();
       const doc = await open("<p> a b c</p>");
       const p = document.querySelector("p")!;

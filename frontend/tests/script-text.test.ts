@@ -306,6 +306,9 @@ test("a probe renders the html with the live prelude, measures it, and removes t
       for (const node of addedNodes) {
         if (node === live || !(node instanceof HTMLIFrameElement)) continue;
         frames.push(node);
+        // The second script throws on purpose. The probe counts the error,
+        // and the test takes it, so that jsdom does not print it.
+        node.contentWindow!.addEventListener("error", (e) => e.preventDefault());
         node.contentDocument!.open();
         node.contentDocument!.write(node.srcdoc);
         node.contentDocument!.close();
