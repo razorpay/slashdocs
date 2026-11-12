@@ -13,6 +13,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import { createCursorBatch } from "@/lib/live-cursors";
 import { principalColor, principalLabel, samePrincipal } from "@/lib/principals";
 import type { RemoteCursor } from "../../bridge/cursors";
+import { randomId } from "@/lib/uuid";
 
 // The server lists a viewer for 45 seconds after their last report.
 const PRESENCE_TTL = 45_000;
@@ -104,7 +105,7 @@ export function useDocumentStream({
   onRemoteDocumentChange: () => void;
 }) {
   const q = useQueryClient();
-  const [session] = useState(() => crypto.randomUUID());
+  const [session] = useState(() => randomId());
   const kvListeners = useRef(new Set<DocumentKVListener>());
   const [sessions, setSessions] = useState<ReadonlyMap<string, Viewer>>(new Map());
   const place = useRef<{ version: string; anchor?: Partial<Anchor> }>({ version });

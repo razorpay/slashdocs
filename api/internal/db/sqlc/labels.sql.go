@@ -141,3 +141,34 @@ func (q *Queries) ListDocumentLabels(ctx context.Context, documentID string) ([]
 	}
 	return items, nil
 }
+
+const listLabelsForDocuments = `-- name: ListLabelsForDocuments :many
+SELECT document_id, label FROM document_labels
+WHERE document_id = ANY($1::text[])
+ORDER BY document_id, label
+`
+
+type ListLabelsForDocumentsRow struct {
+	DocumentID string
+	Label      string
+}
+
+func (q *Queries) ListLabelsForDocuments(ctx context.Context, documentIds []string) ([]ListLabelsForDocumentsRow, error) {
+	rows, err := q.db.Query(ctx, listLabelsForDocuments, documentIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLabelsForDocumentsRow
+	for rows.Next() {
+		var i ListLabelsForDocumentsRow
+		if err := rows.Scan(&i.DocumentID, &i.Label); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

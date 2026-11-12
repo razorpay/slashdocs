@@ -182,8 +182,12 @@ func (s *localDocs) list(r *http.Request, doc string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if status := r.URL.Query().Get("status"); status != "" {
+	switch status := r.URL.Query().Get("status"); status {
+	case "", "all":
+	case "open", "resolved":
 		t.Comments = slices.DeleteFunc(t.Comments, func(c *localComment) bool { return c.Status != status })
+	default:
+		return nil, localError{http.StatusBadRequest, "status must be open, resolved or all"}
 	}
 	return map[string][]*localComment{"items": s.view(t.Comments...)}, nil
 }

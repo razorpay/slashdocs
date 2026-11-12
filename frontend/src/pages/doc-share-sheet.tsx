@@ -64,6 +64,11 @@ export function ShareSheet({
     queryKey: accessKey,
     queryFn: () => (isFolder ? api.folderAccess(id) : api.documentAccess(id)),
   });
+  const accessRequests = useQuery({
+    queryKey: queryKeys.documentAccessRequests(id),
+    queryFn: () => api.documentAccessRequests(id),
+    enabled: !isFolder && canManageAccess,
+  });
   const config = useQuery({
     queryKey: queryKeys.config(),
     queryFn: () => api.getConfig(),
@@ -130,6 +135,7 @@ export function ShareSheet({
 
   const invalidateAccess = () => {
     q.invalidateQueries({ queryKey: accessKey });
+    q.invalidateQueries({ queryKey: queryKeys.documentAccessRequests(id) });
     q.invalidateQueries({ queryKey: queryKeys.folderAccessAll() });
     q.invalidateQueries({ queryKey: queryKeys.userSearchAll() });
   };
@@ -535,6 +541,52 @@ export function ShareSheet({
                 </Button>
               </fieldset>
             </form>
+            {accessRequests.data?.items.length ? (
+              <div className="mt-6">
+                <h4 className="mb-2 text-xs font-medium uppercase tracking-wider text-[var(--color-fg-muted)]">
+                  Requests for access
+                </h4>
+                <div className="space-y-1">
+                  {accessRequests.data.items.map(({ requester }) => {
+                    // A bot has no email. Its name is its address.
+                    const requesterAddress = requester.email || requester.name || "";
+                    return (
+                      <div
+                        key={requester.type + ":" + requester.id}
+                        className="flex items-center justify-between gap-3 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm"
+                      >
+                        <div className="min-w-0">
+                          <div className="truncate font-medium">
+                            {requester.name || requester.email || requester.id}
+                            {requester.type === "service_account" ? " (bot)" : ""}
+                          </div>
+                          {requester.name && requester.email ? (
+                            <div className="truncate text-xs text-[var(--color-fg-muted)]">
+                              {requester.email}
+                            </div>
+                          ) : null}
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="shrink-0"
+                          disabled={!requesterAddress}
+                          aria-label={`Share with ${requesterAddress}`}
+                          onClick={() => {
+                            setShareMode("people");
+                            setSelectedGroup(null);
+                            setAddress(requesterAddress);
+                          }}
+                        >
+                          Share
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
             <div className="mt-6">
               <h4 className="mb-2 text-xs font-medium uppercase tracking-wider text-[var(--color-fg-muted)]">
                 People and groups with access
