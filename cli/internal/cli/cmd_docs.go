@@ -622,7 +622,7 @@ func commentsCmd(g *globals, out io.Writer) *cobra.Command {
 			return c.do("GET", path, nil, "")
 		})
 	}}
-	list.Flags().StringVar(&listStatus, "status", "", "filter by thread status: open, resolved, orphaned or all")
+	list.Flags().StringVar(&listStatus, "status", "", "filter threads by status: open, resolved or all")
 	list.Flags().StringVar(&listVersion, "version", "", "filter by version ID")
 
 	var createBody, createQuote, createPrefix, createSuffix, createVersion string
