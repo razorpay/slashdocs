@@ -48,7 +48,7 @@ import { ADDRESS_PATTERN, COMMENT_STATUS, ROLE_RANK } from "@/lib/constants";
 import { errorMessage } from "@/lib/errors";
 import { queryKeys } from "@/lib/queryKeys";
 import { loadFailed } from "@/lib/query-retry";
-import { samePrincipal } from "@/lib/principals";
+import { principalNames, samePrincipal } from "@/lib/principals";
 import { useDoc } from "./doc-context";
 import { useInvalidateApprovals } from "./use-invalidate-approvals";
 import { useShownApprovals } from "./use-shown-approvals";
@@ -272,12 +272,14 @@ type Decision = {
 // the form that sent it, while it is open. The toast, the refresh and
 // onDecided come always. Each form waits while any of them decides.
 function useDecide(docId: string, onDecided?: (d: Decision) => void) {
+  // The approver decides on the state of the document that they see.
+  const { shownSeq } = useDoc();
   const invalidate = useInvalidateApprovals(docId);
   const mutationKey = [...queryKeys.approvalsAll(docId), "decide"];
   const decide = useMutation({
     mutationKey,
     mutationFn: (d: Decision) =>
-      api.createApproval(docId, d.version, d.decision, d.note),
+      api.createApproval(docId, d.version, d.decision, d.note, shownSeq),
     onSuccess: (_, d) => {
       toast.success(
         `${d.decision === "approved" ? "Approved" : "Rejected"} “${d.title}”.`,
@@ -287,8 +289,9 @@ function useDecide(docId: string, onDecided?: (d: Decision) => void) {
     },
     onError: (e) => {
       toast.error(errorMessage(e, "Could not record decision"));
-      // A newer version may have been pushed while this one was open: reload
-      // the document and decisions so the next click is on the latest one.
+      // The server says why, as when people still type in the document. The
+      // document and the decisions load again, so that the next decision is
+      // on what the server has.
       invalidate();
     },
   });
@@ -308,7 +311,7 @@ export function ReviewActions({
   // Called when the reader jumps to a comment, so a surrounding dialog can close.
   onNavigate?: () => void;
 }) {
-  const { docId, version, principal, comments, setActiveComment } = useDoc();
+  const { docId, version, principal, comments, setActiveComment, typists } = useDoc();
   const invalidate = useInvalidateApprovals(docId);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [confirmApprove, setConfirmApprove] = useState(false);
@@ -372,6 +375,9 @@ export function ReviewActions({
     (own.comments_total ?? 0) > 0 &&
     (own.comments_open ?? 0) === 0;
   const plural = mine.length === 1 ? "comment" : "comments";
+  // The server takes no approval while another person types, so Approve
+  // waits, and comes back by itself when they stop.
+  const typing = typists.length > 0;
 
   return (
     <>
@@ -382,13 +388,19 @@ export function ReviewActions({
               All your comments are resolved. Ready to approve?
             </p>
           ) : null}
+          {typing && own.decision !== "approved" ? (
+            <p className="mb-2 text-xs text-[var(--color-fg-muted)]">
+              {principalNames(typists)} {typists.length === 1 ? "is" : "are"} editing.
+              You can approve when they stop.
+            </p>
+          ) : null}
           {confirmApprove ? (
             <div className="space-y-2">
               <p className="text-xs">
                 You have {mine.length} open {plural}. Approve anyway?
               </p>
               <div className="flex gap-2">
-                <Button size="sm" busy={deciding} onClick={approve}>
+                <Button size="sm" disabled={typing} busy={deciding} onClick={approve}>
                   <Check className="h-3.5 w-3.5" /> Approve anyway
                 </Button>
                 <Button
@@ -409,7 +421,7 @@ export function ReviewActions({
                 <Button
                   size="sm"
                   autoFocus
-                  disabled={deciding}
+                  disabled={deciding || typing}
                   busy={decide.isPending}
                   onClick={() =>
                     mine.length > 0 ? setConfirmApprove(true) : approve()
@@ -492,7 +504,7 @@ function RejectForm({
   onJump: (commentId: string) => void;
   onClose: () => void;
 }) {
-  const { docId, version, showLatest } = useDoc();
+  const { docId, version, showCurrent } = useDoc();
   const doc = useQuery({
     queryKey: queryKeys.document(docId),
     queryFn: () => api.getDocument(docId),
@@ -577,7 +589,7 @@ function RejectForm({
             keep: `Use it for ${named(latest)}`,
             onKeep: () => {
               reason.follow();
-              if (version !== latest) showLatest();
+              if (version !== latest) showCurrent();
             },
           }}
         />
@@ -629,6 +641,11 @@ export function Approvals({ onClose }: { onClose?: () => void }) {
 
   const summary = approvals.data?.summary;
   const items = approvals.data?.items;
+  // While the decisions load, the document says if its current version has
+  // approvers, as the bar does. With none, no list holds a place for them.
+  const empty = approvals.isPending
+    ? isCurrentVersion && doc.isSuccess && !doc.data.approval_status
+    : items?.length === 0;
 
   return (
     // The parts divide by lines, so a part that is not there leaves no line.
@@ -651,7 +668,7 @@ export function Approvals({ onClose }: { onClose?: () => void }) {
           </>
         ) : null}
       </div>
-      {items?.length === 0 ? null : (
+      {empty ? null : (
         <div className="flex-1 space-y-1 overflow-y-auto px-4 py-3">
           {approvals.isPending ? (
             <>

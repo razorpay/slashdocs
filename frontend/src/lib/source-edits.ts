@@ -41,16 +41,23 @@ export type SourceTree = {
   readonly parse: (source: string) => SourceTree;
 };
 
+// The parser puts the text after </body> in the last text of the body. That
+// source stays after the end tag: the child ends at the tag, and past is
+// where its source ends.
 export type Child =
   | { element: P.Element }
-  | { kind: "text" | "comment" | "other"; start: number; end: number };
+  | { kind: "text" | "comment" | "other"; start: number; end: number; past?: number };
 
+// The elements that have no end tag.
+export const VOID =
+  /^(area|base|br|col|embed|hr|img|input|link|meta|source|track|wbr)$/i;
 // The tags that new content can have, as the bridge writes them.
 const NEW_TAG = /^(p|br|strong|b|em|i|a|ul|ol|li)$/;
 const NEW_OPEN = /^<([a-z]+)((?: [^\s"'>/=]+="[^"]*")*)>$/;
 const NEW_ATTRIBUTE = / ([^\s"'>/=]+)="([^"]*)"/g;
 const SAFE_HREF = /^(https?:|mailto:|#)/i;
 const TAG_NAME = /[^\s/>]*/y;
+const MARKUP = /<!--[\s\S]*?-->|<[^>]*>/g;
 
 // The units of source text: a character reference, a line break, or one
 // character. Each decodes on its own, so the spelling of each one that did
@@ -100,13 +107,34 @@ function treeOf(parser: typeof import("parse5"), source: string): SourceTree {
 // The reason that a region cannot apply.
 class Refusal extends Error {}
 
-// applyRegions writes every region into the source of tree. It refuses when
-// a piece refers to a node that the source does not have, or when a region
-// would drop an original element that its pieces do not name.
+// applyRegions writes every region into the source of tree. outside are the
+// changes that the frame shows and that no region writes: of a start tag,
+// or of the text of a style. They are in order, and each one is in the
+// source of one original element, which the regions copy whole. made are
+// the start tags of the elements that patches put in the frame: a region
+// writes such an element with its start tag as the patch had it. It refuses
+// when a piece refers to a node that the source does not have, or when a
+// region would drop an original element that its pieces do not name.
 export function applyRegions(
   tree: SourceTree,
   regions: Region[],
+  outside: Change[] = [],
+  made: ReadonlySet<string> = new Set(),
 ): { html: string } | { refused: string } {
+  // copy gives the source from start to end, with the changes in it.
+  const copy: Copy = (start, end) => {
+    let html = "";
+    let at = start;
+    for (const change of outside) {
+      if ((change.end <= start && change.start < start) || change.start >= end)
+        continue;
+      if (change.start < start || change.end > end)
+        throw new Refusal("a change outside the regions is in a region");
+      html += tree.source.slice(at, change.start) + change.text;
+      at = change.end;
+    }
+    return html + tree.source.slice(at, end);
+  };
   try {
     const spans = regions
       .map((region) => ({ region, ...spanOf(tree, region) }))
@@ -115,10 +143,10 @@ export function applyRegions(
     let at = 0;
     for (const span of spans) {
       if (span.start < at) throw new Refusal("two regions overlap");
-      html += tree.source.slice(at, span.start) + writeRegion(tree, span);
+      html += copy(at, span.start) + writeRegion(tree, span, copy, made);
       at = span.end;
     }
-    return { html: html + tree.source.slice(at) };
+    return { html: html + copy(at, tree.source.length) };
   } catch (error) {
     if (error instanceof Refusal) return { refused: error.message };
     throw error;
@@ -126,6 +154,7 @@ export function applyRegions(
 }
 
 type Span = { region: Region; parent: P.ParentNode; start: number; end: number };
+type Copy = (start: number, end: number) => string;
 
 // spanOf finds the source that a region replaces: from the start of its
 // first element to the end of its last one, two children of one parent.
@@ -141,7 +170,12 @@ function spanOf(tree: SourceTree, region: Region): Omit<Span, "region"> {
   return { parent, start: from.start, end: to.end };
 }
 
-function writeRegion(tree: SourceTree, span: Span): string {
+function writeRegion(
+  tree: SourceTree,
+  span: Span,
+  copy: Copy,
+  made: ReadonlySet<string>,
+): string {
   const mentions = new Map<P.Element, "keep" | "element">();
   const mention = (element: P.Element, how: "keep" | "element") => {
     if (mentions.has(element))
@@ -154,7 +188,7 @@ function writeRegion(tree: SourceTree, span: Span): string {
     if ("keep" in piece) {
       const { element, start, end } = rangeOf(elementAt(tree, piece.keep));
       mention(element, "keep");
-      return tree.source.slice(start, end);
+      return copy(start, end);
     }
     if ("keepChild" in piece) {
       const child = childAt(tree, piece.keepChild);
@@ -167,7 +201,7 @@ function writeRegion(tree: SourceTree, span: Span): string {
           `no text or comment in the region at ${refName(piece.keepChild)}`,
         );
       }
-      return tree.source.slice(child.start, child.end);
+      return copy(child.start, child.end);
     }
     if ("text" in piece) {
       if (!piece.was) return newText(piece.text, "");
@@ -175,7 +209,9 @@ function writeRegion(tree: SourceTree, span: Span): string {
       if (!("kind" in was) || was.kind !== "text") {
         throw new Refusal(`no text at ${refName(piece.was)}`);
       }
-      return respell(tree, tree.source.slice(was.start, was.end), piece.text);
+      const old = tree.source.slice(was.start, was.end);
+      const past = tree.source.slice(was.end, was.past ?? was.end).replace(MARKUP, "");
+      return respell(tree, old, piece.text, past);
     }
     if ("element" in piece) {
       const element = elementAt(tree, piece.element);
@@ -184,12 +220,12 @@ function writeRegion(tree: SourceTree, span: Span): string {
       mention(element, "element");
       const { startTag, endTag } = location;
       return (
-        tree.source.slice(startTag.startOffset, startTag.endOffset) +
+        copy(startTag.startOffset, startTag.endOffset) +
         piece.children.map(write).join("") +
-        (endTag ? tree.source.slice(endTag.startOffset, endTag.endOffset) : "")
+        (endTag ? copy(endTag.startOffset, endTag.endOffset) : "")
       );
     }
-    checkNewTag(tree, piece.open, piece.close);
+    checkNewTag(tree, piece.open, piece.close, made);
     return piece.open + piece.children.map(write).join("") + piece.close;
   };
   const html = span.region.pieces.map(write).join("");
@@ -227,8 +263,20 @@ function writeRegion(tree: SourceTree, span: Span): string {
 // checkNewTag makes sure that new content is one of the tags that the bridge
 // writes, with attributes that the source already uses on that tag or the
 // start number of a list, so that a region can never add a script or an
-// event handler.
-function checkNewTag(tree: SourceTree, open: string, close: string) {
+// event handler. An element that a patch put in has its start tag exactly as
+// the patch had it, one of made: that text is already in the document.
+function checkNewTag(
+  tree: SourceTree,
+  open: string,
+  close: string,
+  made: ReadonlySet<string>,
+) {
+  if (made.has(open)) {
+    const name = /^<([^\s/>]+)/.exec(open)![1].toLowerCase();
+    if (close !== (VOID.test(name) ? "" : `</${name}>`))
+      throw new Refusal(`new content cannot be ${open}${close}`);
+    return;
+  }
   const [, name, attributes] = NEW_OPEN.exec(open) ?? [];
   if (!name || !NEW_TAG.test(name) || close !== (name === "br" ? "" : `</${name}>`)) {
     throw new Refusal(`new content cannot be ${open}${close}`);
@@ -246,16 +294,28 @@ function checkNewTag(tree: SourceTree, open: string, close: string) {
 
 // respell writes text in place of the source text old. The characters at
 // the start and the end that did not change keep their old spelling, such
-// as &nbsp; or a CRLF line break.
-function respell(tree: SourceTree, old: string, text: string): string {
-  const units = old.match(TEXT_UNIT) ?? [];
+// as &nbsp; or a CRLF line break. past is the text that follows old after
+// </body>: the source keeps it there, so it is not written when it did not
+// change. A frame that loaded the source shows the past after old, and a
+// frame that a patch changed does not.
+function respell(tree: SourceTree, old: string, text: string, past = ""): string {
+  const units = (old + past).match(TEXT_UNIT) ?? [];
   const decoded = units.map((unit) =>
     unit[0] === "&" ? tree.decode(unit) : unit[0] === "\r" ? "\n" : unit,
   );
+  const end = units.length - (past.match(TEXT_UNIT) ?? []).length;
   let head = 0;
   let from = 0;
   while (head < units.length && text.startsWith(decoded[head], from)) {
     from += decoded[head++].length;
+  }
+  // A text that goes on from old into the past shows the past. Only the
+  // text before the past can change, because the source keeps the past
+  // after </body>.
+  if (head > end) {
+    const kept = decoded.slice(end).join("");
+    if (!text.endsWith(kept)) throw new Refusal("the text after </body> cannot change");
+    return respell(tree, old, text.slice(0, text.length - kept.length));
   }
   let tail = units.length;
   let to = text.length;
@@ -269,7 +329,7 @@ function respell(tree: SourceTree, old: string, text: string): string {
   return (
     units.slice(0, head).join("") +
     newText(text.slice(from, to), decoded.join("")) +
-    units.slice(tail).join("")
+    units.slice(tail, Math.max(tail, end)).join("")
   );
 }
 
@@ -362,6 +422,13 @@ export function childrenOf(parent: P.ParentNode): Child[] {
     }
   };
   add(parent);
+  const close = (parent as P.Element).sourceCodeLocation?.endTag?.startOffset;
+  const last = list.at(-1);
+  if (close !== undefined && last && "kind" in last && last.end > close) {
+    last.past = last.end;
+    last.start = Math.min(last.start, close);
+    last.end = close;
+  }
   children.set(parent, list);
   return list;
 }
@@ -418,18 +485,17 @@ const utf8Length = (text: string) => encoder.encode(text).length;
 // A token is a word, a run of white space, or the edge of a tag.
 const TOKEN = /[^\s<>]+|\s+|[<>]/g;
 const WORD = /[^\s<>]/;
-// Myers' diff costs memory by the square of the count of tokens that
-// differ. Beyond this count, one replacement covers the change.
-const MAX_EDITS = 1000;
-
 // A run of tokens that a and b have in common: its index in a and in b, and
 // its length.
 type Run = [number, number, number];
 
-// commonRuns gives the runs that a and b have in common, in order, from
-// Myers' diff of the tokens between their common start and end. A run
-// without words does not divide two changes, so that "twice" to "three
-// times" stays one change.
+// commonRuns gives the runs that a and b have in common, in order: their
+// common start and end, and between those the runs around a token that each
+// of the two has only once. A word such as "the" or a space is in many
+// places, and a match with one of them by chance puts typed text in the
+// middle of other text. A token that is there once is the same token in the
+// two. A run without words does not divide two changes, so that "twice" to
+// "three times" stays one change.
 function commonRuns(a: string[], b: string[]): Run[] {
   let head = 0;
   while (head < a.length && head < b.length && a[head] === b[head]) head++;
@@ -440,48 +506,63 @@ function commonRuns(a: string[], b: string[]): Run[] {
     a.at(-1 - tail) === b.at(-1 - tail)
   )
     tail++;
-  const middle = myers(a.slice(head, a.length - tail), b.slice(head, b.length - tail));
-  return [
-    [0, 0, head] as Run,
-    ...middle.map(([x, y, length]): Run => [head + x, head + y, length]),
-    [a.length - tail, b.length - tail, tail] as Run,
-  ].filter(([x, , length]) => a.slice(x, x + length).some((t) => WORD.test(t)));
+  const [aEnd, bEnd] = [a.length - tail, b.length - tail];
+  const runs: Run[] = [[0, 0, head]];
+  // The end of the last run in a and in b.
+  let [x0, y0] = [head, head];
+  for (const [x, y] of inOrder(onlyOnce(a, b, head, aEnd, bEnd))) {
+    if (x < x0 || y < y0) continue;
+    // The run grows over the equal tokens around the one that is there once.
+    let back = 0;
+    while (x - back > x0 && y - back > y0 && a[x - back - 1] === b[y - back - 1])
+      back++;
+    let on = 1;
+    while (x + on < aEnd && y + on < bEnd && a[x + on] === b[y + on]) on++;
+    runs.push([x - back, y - back, back + on]);
+    [x0, y0] = [x + on, y + on];
+  }
+  runs.push([aEnd, bEnd, tail]);
+  return runs.filter(([x, , length]) =>
+    a.slice(x, x + length).some((t) => WORD.test(t)),
+  );
 }
 
-// myers gives the common runs of a and b, or none when more than MAX_EDITS
-// tokens differ. trace[d][k + d] is the furthest place in a on diagonal k
-// after d edits.
-function myers(a: string[], b: string[]): Run[] {
-  const trace: Int32Array[] = [];
-  // The place in a that the furthest path on diagonal k after d edits
-  // comes from, and whether it comes down (an insert) or across (a delete).
-  const from = (d: number, k: number) => {
-    const prev = trace[d - 1];
-    const down = k === -d || (k !== d && prev[k - 1 + d - 1] < prev[k + 1 + d - 1]);
-    return down
-      ? { x: prev[k + 1 + d - 1], k: k + 1, start: prev[k + 1 + d - 1] }
-      : { x: prev[k - 1 + d - 1], k: k - 1, start: prev[k - 1 + d - 1] + 1 };
+// onlyOnce gives the places in a and in b of each token that a has once
+// from head to aEnd, and b once from head to bEnd, in the order of a.
+function onlyOnce(a: string[], b: string[], head: number, aEnd: number, bEnd: number) {
+  // The place of a token, or -1 when it is there more than once.
+  const places = (tokens: string[], end: number) => {
+    const at = new Map<string, number>();
+    for (let i = head; i < end; i++) at.set(tokens[i], at.has(tokens[i]) ? -1 : i);
+    return at;
   };
-  for (let d = 0; d <= Math.min(a.length + b.length, MAX_EDITS); d++) {
-    const v = new Int32Array(2 * d + 1);
-    trace.push(v);
-    for (let k = -d; k <= d; k += 2) {
-      let x = d ? from(d, k).start : 0;
-      while (x < a.length && x - k < b.length && a[x] === b[x - k]) x++;
-      v[k + d] = x;
-      if (x < a.length || x - k < b.length) continue;
-      // Back from the end, each step gives the common run that it ends.
-      const runs: Run[] = [];
-      for (let e = d; e >= 0; e--) {
-        const step = e ? from(e, k) : { x: 0, k: 0, start: 0 };
-        runs.push([step.start, step.start - k, x - step.start]);
-        x = step.x;
-        k = step.k;
-      }
-      return runs.reverse();
+  const inB = places(b, bEnd);
+  return [...places(a, aEnd)]
+    .map(([token, x]): [number, number] => [x, inB.get(token) ?? -1])
+    .filter(([x, y]) => x >= 0 && y >= 0);
+}
+
+// inOrder gives the longest list of the pairs, which are in the order of
+// their first number, that is also in the order of their second number.
+function inOrder(pairs: [number, number][]): [number, number][] {
+  // ends[n] is the index of the pair with the smallest second number that
+  // ends a list of n + 1 pairs, and before[i] is the pair before pair i.
+  const ends: number[] = [];
+  const before: number[] = [];
+  pairs.forEach(([, y], i) => {
+    let lo = 0;
+    let hi = ends.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (pairs[ends[mid]][1] < y) lo = mid + 1;
+      else hi = mid;
     }
-  }
-  return [];
+    before[i] = lo ? ends[lo - 1] : -1;
+    ends[lo] = i;
+  });
+  const list: [number, number][] = [];
+  for (let i = ends.at(-1) ?? -1; i >= 0; i = before[i]) list.push(pairs[i]);
+  return list.reverse();
 }
 
 // tagSource gives the source with SOURCE_ATTR on every start tag, right

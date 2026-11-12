@@ -8,7 +8,6 @@ import { describeAnchor, resolveAnchor, snapToWords } from "./anchoring/index.ts
 import { TextRange } from "./anchoring/text-range.ts";
 import type { CommentAnchor } from "./anchoring/types.ts";
 import {
-  clearHighlights,
   clearHighlightsFor,
   highlightRange,
   refreshSVGRects,
@@ -29,6 +28,9 @@ import {
   slide,
 } from "./dom.ts";
 import type { Patch } from "./source-pieces.ts";
+import { caretOf, isCaret, placeCaret } from "./caret.ts";
+import { changedRects, QUIET_SHARE, watchView } from "./view.ts";
+import { changesOf, placeAfter } from "./patch.ts";
 import { startTextEditing, type TextEditor } from "./text-editing.ts";
 import { BRIDGE_UI, elementOf, REFUSED } from "./structure.ts";
 import { probe, startScriptText, type ScriptText } from "./script-text.ts";
@@ -129,7 +131,7 @@ interface SavedSelection {
 }
 
 interface PaintItem {
-  id?: string;
+  id: string;
   anchor?: CommentAnchor;
   quote?: string;
   selected_text?: string;
@@ -556,31 +558,33 @@ type Theme = "dark" | "light";
   // the changes. The others stay. Paints and repairs wait meanwhile, and the
   // comment rail keeps its positions.
   let highlightsHeld = false;
-
-  const DRAFT_MS = 100;
-  let draftTimer: ReturnType<typeof setTimeout> | undefined;
+  // Whether the highlights must be painted when they go back: one came off,
+  // or a paint waited.
+  let paintWaits = false;
 
   // textChanges gives the edits on screen, the count of user operations that
-  // made them, and the scroll of the document.
-  // A take starts the next save: the highlights of the changed blocks come
-  // back.
+  // made them, and the scroll of the document. A take also gives the
+  // selection, which a load keeps, and the highlights of the changed blocks
+  // come back after it.
   function textChanges(take: boolean) {
     const { regions } = (take ? textEditor?.take() : textEditor?.peek()) ?? {
       regions: [],
     };
     if (take) releaseHighlights();
+    const d = doc();
     return {
       regions,
       edits: textEditor?.edits() ?? 0,
       scripts: scriptText?.take() ?? [],
-      top: Math.round(doc()?.defaultView?.scrollY ?? 0),
+      top: Math.round(d?.defaultView?.scrollY ?? 0),
+      ...(take && { caret: d && caretOf(d) }),
     };
   }
 
   // Text editing makes the document editable in place. The frame's srcdoc
   // is the source as the server tagged it, before any script ran. Leaving
-  // Edit mode only pauses the editor, so that the next save still holds
-  // every change since the frame loaded. Text that is selected as Edit mode
+  // Edit mode only pauses the editor, so that the regions still hold every
+  // change since the frame loaded. Text that is selected as Edit mode
   // starts gets the caret.
   function setTextEditing(on: boolean): void {
     const d = doc();
@@ -605,14 +609,13 @@ type Theme = "dark" | "light";
   function startEditor(d: Document): void {
     markSurface(d);
     const post = (message: object) => parent.postMessage(message, targetOrigin());
-    // Each change also sends a draft soon after it, which the app saves when
-    // the frame goes before a save.
-    const onDirty = (count: number) => {
-      post({ type: "slashdocs:text-dirty", count });
-      clearTimeout(draftTimer);
-      draftTimer = setTimeout(
-        () => post({ type: "slashdocs:text-draft", ...textChanges(false) }),
-        DRAFT_MS,
+    // Each user operation also sends a draft, which the app sends when the
+    // page goes: a page that goes cannot wait for an answer of the frame. The
+    // draft goes in the same task, after the operation is complete.
+    const onDirty = () => {
+      if (held.size) followHeld(d.body);
+      queueMicrotask(() =>
+        post({ type: "slashdocs:text-draft", ...textChanges(false) }),
       );
     };
     textEditor = startTextEditing(
@@ -621,9 +624,10 @@ type Theme = "dark" | "light";
       {
         beforeTouch: holdHighlights,
         onDirty,
-        // A hint at the script text already says why it does not change.
+        // A hint at the text already says why it does not change.
         onRefused: (reason) =>
-          (reason === REFUSED.script && scriptText?.pulse()) ||
+          ((reason === REFUSED.script || reason === REFUSED.fixed) &&
+            scriptText?.pulse()) ||
           post({ type: "slashdocs:text-refused", reason }),
       },
       textEditing,
@@ -632,7 +636,7 @@ type Theme = "dark" | "light";
     scriptText = startScriptText(d, {
       source: textEditor.map,
       post,
-      onChange: () => onDirty(1),
+      onChange: onDirty,
     });
     scriptText.setEditable(textEditing);
   }
@@ -640,23 +644,43 @@ type Theme = "dark" | "light";
   // patchText shows the text of other people in place, without a load. The
   // app made the patches for the count of user operations that its last take
   // gave: after one more operation they are stale, and change nothing. A
-  // reader who does not edit gets the editor too, not editable, because a
-  // later save writes every change since the load. The reply is a take.
+  // reader who does not edit gets the editor too, not editable, because the
+  // regions hold every change since the load. The text that the reader
+  // reads stays in its place. With ask, a patch that still changes much of
+  // the view of the reader is withdrawn: it changes nothing. A patch of a
+  // script string goes to script text after the others fit, as the script
+  // text of the reader does, and it must change the count of places that
+  // the app found. The reply is a take.
   function patchText(data: {
     requestId: string;
     edits: number;
     patches: Patch[];
     flash?: boolean;
+    ask?: boolean;
   }): void {
     const d = doc();
     if (!textEditor && d?.body) startEditor(d);
-    const { ranges, ...result } = textEditor?.patch(data.patches, data.edits) ?? {
-      ok: false,
-    };
-    if (d && ranges && data.flash === true)
+    const isString = (p: Patch): p is Extract<Patch, { script: number }> =>
+      "script" in p;
+    const strings = data.patches.filter(isString);
+    // The view is measured only for a patch that fits.
+    let view = null as ReturnType<typeof watchView> | null;
+    const others = data.patches.filter((p) => !isString(p));
+    const { ranges = [], ...result } = textEditor?.patch(others, data.edits, () => {
+      view = d && watchView(d);
+      return (ranges) => (view?.settle(ranges) ?? 0) < QUIET_SHARE || data.ask !== true;
+    }) ?? { ok: false };
+    const texts = result.ok
+      ? strings.map(({ from, to }) => scriptText?.replace(from, to) ?? [])
+      : [];
+    if (texts.some((changed, i) => changed.length !== strings[i].places))
+      result.ok = false;
+    // The scroll goes back after the document is as it was.
+    if (result.withdrawn) view?.restore();
+    if (d && data.flash === true)
       flashRects(
         d,
-        ranges.flatMap((range) => Array.from(range.getClientRects())),
+        [...changedRects(ranges), ...texts.flat().flatMap(rectsOf)],
         CHANGED_FLASH,
       );
     // The text moved under the carets of the other editors.
@@ -672,29 +696,115 @@ type Theme = "dark" | "light";
     );
   }
 
+  // The highlights that live changes hold: the text of each comment, as
+  // offsets in heldText, the text of the body when they were last moved.
+  // A comment keeps its characters through the changes, as the caret does,
+  // so its highlight grows with typing in it and shrinks with deletion in
+  // it. It goes back on that text, and not where its quote is. The server
+  // moves the stored anchors in the same way.
+  const held = new Map<string, [start: number, end: number]>();
+  let heldText = "";
+
+  // followHeld moves the held highlights to the same characters of the text
+  // of body now.
+  function followHeld(body: HTMLElement): void {
+    const now = body.textContent ?? "";
+    const changes = held.size ? changesOf(heldText, now, []) : null;
+    if (changes)
+      for (const [id, [start, end]] of held)
+        held.set(id, [placeAfter(changes, start)[0], placeAfter(changes, end)[0]]);
+    heldText = now;
+  }
+
+  // anchorOf describes the text that the highlight of a comment holds, as
+  // for a new comment. A comment with no highlight has none.
+  function anchorOf(id: string): CommentAnchor | null {
+    const body = doc()?.body;
+    const range = body && marksRange(body, id);
+    return (range && describeAnchor(body, range)) || null;
+  }
+
   function holdHighlights(block: Element): void {
     const d = doc();
-    if (!d || !d.body) return;
+    const body = d?.body;
+    if (!d || !body) return;
     highlightsHeld = true;
-    if (!block.querySelector("mark.slashdocs-mark")) return;
+    const ids = new Set(
+      Array.from(
+        block.querySelectorAll<HTMLElement>(
+          "mark.slashdocs-mark,.slashdocs-svg-mark-text",
+        ),
+        (mark) => mark.dataset.cid!,
+      ),
+    );
+    if (held.size || ids.size) followHeld(body);
+    if (!ids.size) return;
+    paintWaits = true;
     suspendMutationObserver();
-    const caret = saveSelection(d, d.body, true);
-    clearHighlights(block);
-    if (caret) restoreSelection(d, d.body, caret);
+    const caret = saveSelection(d, body, true);
+    // The marks of a comment can be in other blocks too, and all of them
+    // come off. The text keeps its offsets when marks go.
+    for (const id of ids) {
+      const range = marksRange(body, id);
+      const text = range && TextRange.fromRange(range).relativeTo(body);
+      if (text) held.set(id, [text.start.offset, text.end.offset]);
+      clearHighlightsFor(d, id);
+    }
+    if (caret) restoreSelection(d, body, caret);
     resumeMutationObserver();
   }
 
+  // marksRange gives the range from the first mark of a comment to its last
+  // one.
+  function marksRange(body: HTMLElement, id: string): Range | null {
+    const cid = CSS.escape(id);
+    const marks = body.querySelectorAll(
+      `mark.slashdocs-mark[data-cid="${cid}"],.slashdocs-svg-mark-text[data-cid="${cid}"]`,
+    );
+    const last = marks[marks.length - 1];
+    if (!last) return null;
+    try {
+      const range = body.ownerDocument.createRange();
+      range.setStart(marks[0], 0);
+      range.setEnd(last, last.childNodes.length);
+      return range;
+    } catch {
+      return null;
+    }
+  }
+
+  // releaseHighlights paints each held highlight on its text. A comment
+  // whose text went is detached until a load: it does not go to other text
+  // that its quote finds.
   function releaseHighlights(): void {
     const d = doc();
-    if (!highlightsHeld || !d || !d.body) return;
+    const body = d?.body;
+    if (!highlightsHeld || !d || !body) return;
     highlightsHeld = false;
-    // Some marks are gone, so the same comments must be anchored again.
+    if (!paintWaits) return;
+    paintWaits = false;
     // Wrapping text in marks moves the caret, so it goes back after.
-    lastPaintKey = null;
-    const caret = saveSelection(d, d.body, true);
+    const caret = saveSelection(d, body, true);
+    suspendMutationObserver();
+    followHeld(body);
+    for (const [id, [start, end]] of held) {
+      const key = placed.get(id)?.key;
+      if (key === undefined) continue;
+      const range = TextRange.fromOffsets(body, start, end).toRange();
+      const quote = strippedText(range.toString());
+      const painted =
+        !!quote && highlightRange(range, id === lastPaint?.active, id, false) > 0;
+      placed.set(
+        id,
+        painted ? { key, text: quote } : { key, text: null, detached: true },
+      );
+    }
+    held.clear();
+    resumeMutationObserver();
     if (lastPaint) paint(lastPaint.items, lastPaint.active);
-    if (caret) restoreSelection(d, d.body, caret);
+    if (caret) restoreSelection(d, body, caret);
   }
+
   const exportPending = new Map<string, { resolve: () => void; reject: () => void }>();
   let exportID = 0;
   function requestPrint(): void {
@@ -857,10 +967,15 @@ type Theme = "dark" | "light";
     characterData: true,
     subtree: true,
   };
-  // Identity of the last fully painted item list, and its results, so a
-  // repaint that only changes the active comment can skip re-anchoring.
-  let lastPaintKey: string | null = null;
-  let lastPaintResults: { id: string; anchored: boolean }[] | null = null;
+  // Each comment that the page placed: the key of its item, and the text of
+  // its highlight without white space, or null when it has no highlight. A
+  // highlight stays on its text until a load. Only a new or changed item
+  // anchors by its quote. A comment whose text a live change removed is
+  // detached: it waits for a load, not for its quote.
+  const placed = new Map<
+    string,
+    { key: string; text: string | null; detached?: true }
+  >();
   let commentPositionFrame = 0;
   // The active comment whose mark was last revealed (scrolled into view).
   // Reveal fires only when activation changes to a different comment:
@@ -877,10 +992,15 @@ type Theme = "dark" | "light";
   let restoredSelection: Range | null = null;
   let restoredSelectionExpiry = 0;
 
-  function paintKeyOf(list: PaintItem[]): string {
-    return JSON.stringify(
-      list.map((x) => [x && x.id, x && x.anchor, x && x.quote, x && x.selected_text]),
-    );
+  const itemKey = (x: PaintItem) =>
+    JSON.stringify([x.anchor, x.quote, x.selected_text]);
+  const quoteOf = (x: PaintItem) => x.anchor?.quote || x.quote || x.selected_text || "";
+
+  function paintResults(): { id: string; anchored: boolean }[] {
+    return (lastPaint?.items ?? []).flatMap(({ id }) => {
+      const p = placed.get(id);
+      return p ? [{ id, anchored: p.text !== null }] : [];
+    });
   }
 
   // Snapshot the user's live selection as character offsets into
@@ -1008,10 +1128,6 @@ type Theme = "dark" | "light";
     return s.replace(/\s+/g, "");
   }
 
-  // Painted quote (whitespace-stripped) per comment id, used to detect
-  // whether a highlight survived a document mutation intact.
-  const paintedQuotes = new Map<string, string>();
-
   // Report a short passage in the middle of the viewport, so other viewers
   // can follow this reader. Debounced: one scroll fires many events.
   const VIEWPORT_QUOTE_LENGTH = 64;
@@ -1108,7 +1224,7 @@ type Theme = "dark" | "light";
   }
 
   function highlightIntact(d: Document, id: string): boolean {
-    const expected = paintedQuotes.get(id);
+    const expected = placed.get(id)?.text;
     if (!expected) return false;
     const cid = CSS.escape(id);
     let text = "";
@@ -1159,32 +1275,21 @@ type Theme = "dark" | "light";
   // and move with the document, so an anchored comment whose marks are still
   // present with their text intact needs no work at all — an unrelated DOM
   // change (opening a dropdown, an animation tick) touches nothing. Only
-  // comments whose highlighted text was removed or edited, and comments
+  // comments whose highlighted text a script removed or changed, and comments
   // still waiting for their text to appear, are re-anchored.
   function repairAfterMutations(): void {
     const d = doc();
     const body = d && d.body;
-    if (
-      !d ||
-      !body ||
-      highlightsHeld ||
-      !lastPaint ||
-      !lastPaint.items.length ||
-      !lastPaintResults
-    ) {
+    if (!d || !body || highlightsHeld || !lastPaint || !lastPaint.items.length) {
       return;
     }
     refreshSVGRects(d);
-    const resultByID = new Map(lastPaintResults.map((r) => [r.id, r]));
-    const dirty: PaintItem[] = [];
-    for (const x of lastPaint.items) {
-      if (!x || !x.id) continue;
-      const res = resultByID.get(x.id);
-      if (!res) continue;
-      // Unanchored comments retry (their text may just have been rendered);
-      // anchored comments only repaint when their highlight was damaged.
-      if (!res.anchored || !highlightIntact(d, x.id)) dirty.push(x);
-    }
+    // A comment with no highlight tries again, as its text can show later.
+    // A detached one waits for a load.
+    const dirty = lastPaint.items.filter((x) => {
+      const p = placed.get(x.id);
+      return p && !p.detached && (!p.text || !highlightIntact(d, x.id));
+    });
     if (!dirty.length) return;
 
     suspendMutationObserver();
@@ -1195,21 +1300,8 @@ type Theme = "dark" | "light";
       let rendered: RenderedTextWithBrPositions | undefined;
       const getRenderedText = () => (rendered ??= renderedTextOf(body));
       for (const x of dirty) {
-        let painted: boolean;
-        try {
-          if (clearHighlightsFor(d, x.id!) > 0) mutatedDOM = true;
-          const anchor: CommentAnchor = Object.assign({}, x.anchor);
-          if (!anchor.quote) anchor.quote = x.quote || x.selected_text || "";
-          paintedQuotes.set(x.id!, strippedText(anchor.quote));
-          const r = resolveAnchor(body, anchor, getRenderedText);
-          painted =
-            !!r && highlightRange(r, x.id === lastPaint.active, x.id, false) > 0;
-          if (painted) mutatedDOM = true;
-        } catch {
-          painted = false;
-        }
-        const res = resultByID.get(x.id!);
-        if (res) res.anchored = painted;
+        if (clearHighlightsFor(d, x.id) > 0) mutatedDOM = true;
+        if (anchorByQuote(body, x, getRenderedText)) mutatedDOM = true;
       }
       // Only put the selection back when this repair actually touched the
       // DOM; a fruitless retry must not churn the user's selection.
@@ -1221,10 +1313,32 @@ type Theme = "dark" | "light";
       resumeMutationObserver();
     }
     parent.postMessage(
-      { type: "slashdocs:paint-result", results: lastPaintResults },
+      { type: "slashdocs:paint-result", results: paintResults() },
       targetOrigin(),
     );
     scheduleCommentPositions();
+  }
+
+  // anchorByQuote paints a comment where its stored anchor finds its text, as
+  // on a load, and tells whether it did.
+  function anchorByQuote(
+    body: HTMLElement,
+    x: PaintItem,
+    getRenderedText: () => RenderedTextWithBrPositions,
+  ): boolean {
+    const anchor: CommentAnchor = { ...x.anchor, quote: quoteOf(x) };
+    let text: string | null = null;
+    try {
+      const r = resolveAnchor(body, anchor, getRenderedText);
+      const found = r && strippedText(r.toString());
+      if (found && highlightRange(r, x.id === lastPaint?.active, x.id, false) > 0)
+        text = found;
+    } catch {
+      // A single off-contract item must not abort the whole paint: it is
+      // unanchored instead.
+    }
+    placed.set(x.id, { key: itemKey(x), text });
+    return text !== null;
   }
 
   // Our own painting mutates the document (splitText, mark wrapping, svg
@@ -1262,78 +1376,66 @@ type Theme = "dark" | "light";
     active: string | null | undefined,
   ): void {
     const d = doc();
-    const list = items || [];
+    const list = (items || []).filter((x) => x && typeof x.id === "string");
     const activeID = typeof active === "string" ? active : null;
     lastPaint = { items: list, active: activeID };
     // Held highlights take this paint when they go back.
+    paintWaits = highlightsHeld;
     if (highlightsHeld) return;
-    const key = paintKeyOf(list);
     const body = d && d.body;
-
-    // Repaint with the same comments (sidebar clicks changing the active
-    // id): move the active class without touching DOM structure. Any damage
-    // from document mutations is healed by repairAfterMutations.
-    const reveal = activeID !== null && activeID !== revealedActive;
-    if (d && body && lastPaintResults && key === lastPaintKey) {
+    if (d && body) {
+      placeComments(d, body, list);
+      // A repaint that only changes the active comment, as a click in the
+      // sidebar does, moves the active class and leaves the DOM as it is.
+      const reveal = activeID !== null && activeID !== revealedActive;
       revealedActive = activeID;
       applyActiveOnly(d, activeID, reveal);
-      markThreads(d);
-      parent.postMessage(
-        { type: "slashdocs:paint-result", results: lastPaintResults },
-        targetOrigin(),
-      );
-      scheduleCommentPositions();
-      return;
-    }
-
-    const results: { id: string; anchored: boolean }[] = [];
-    if (d && body) {
-      revealedActive = activeID;
-      suspendMutationObserver();
-      const savedSelection = saveSelection(d, body);
-      try {
-        clearHighlights(d);
-        paintedQuotes.clear();
-        injectStyles();
-        // One rendered-text snapshot serves every comment in this paint: marks
-        // add no text, so wrapping earlier comments never invalidates it.
-        let rendered: RenderedTextWithBrPositions | undefined;
-        const getRenderedText = () => (rendered ??= renderedTextOf(body));
-        list.forEach((x) => {
-          let painted: boolean;
-          // A single off-contract item must not abort the whole paint: catch
-          // per comment and report it unanchored instead.
-          try {
-            const anchor: CommentAnchor = Object.assign({}, x && x.anchor);
-            if (!anchor.quote) anchor.quote = (x && (x.quote || x.selected_text)) || "";
-            if (x && x.id) paintedQuotes.set(x.id, strippedText(anchor.quote || ""));
-            // Resolve immediately before painting each comment: wrapping a
-            // previous comment's marks moves text nodes, which corrupts other
-            // already-resolved live Ranges (overlapping comments would paint
-            // wrong extents), while character offsets into textContent stay
-            // valid across wraps and splits.
-            const r = resolveAnchor(body, anchor, getRenderedText);
-            painted = !!r && highlightRange(r, x.id === activeID, x.id, reveal) > 0;
-          } catch {
-            painted = false;
-          }
-          if (x && x.id) results.push({ id: x.id, anchored: painted });
-        });
-        if (savedSelection) restoreSelection(d, body, savedSelection);
-      } catch {
-        // Even a document with exotic DOM state (throwing accessors, broken
-        // replaceWith) must not prevent the paint-result post below.
-      } finally {
-        resumeMutationObserver();
-      }
-      lastPaintKey = key;
-      lastPaintResults = results;
       markThreads(d);
     }
     // Post even when the inner document is unavailable so the parent never
     // keeps stale "highlight not found" state.
-    parent.postMessage({ type: "slashdocs:paint-result", results }, targetOrigin());
+    parent.postMessage(
+      { type: "slashdocs:paint-result", results: paintResults() },
+      targetOrigin(),
+    );
     scheduleCommentPositions();
+  }
+
+  // placeComments keeps the highlight of each comment that the page placed
+  // for the same item, or that shows the quote of its changed item already,
+  // as after an editor typed in its text. It takes off those of the others,
+  // and anchors each new or changed item by its quote.
+  function placeComments(d: Document, body: HTMLElement, list: PaintItem[]): void {
+    const keys = new Map(list.map((x) => [x.id, itemKey(x)]));
+    for (const x of list) {
+      const p = placed.get(x.id);
+      if (p?.text && p.text === strippedText(quoteOf(x)))
+        placed.set(x.id, { key: itemKey(x), text: p.text });
+    }
+    const gone = [...placed].filter(([id, { key }]) => keys.get(id) !== key);
+    gone.forEach(([id]) => placed.delete(id));
+    const fresh = list.filter((x) => !placed.has(x.id));
+    if (!gone.length && !fresh.length) return;
+    suspendMutationObserver();
+    const savedSelection = saveSelection(d, body);
+    try {
+      injectStyles();
+      gone.forEach(([id]) => clearHighlightsFor(d, id));
+      // One rendered-text snapshot serves every comment in this paint: marks
+      // add no text, so wrapping earlier comments never invalidates it.
+      // Each comment resolves just before it paints: wrapping a previous
+      // comment's marks moves text nodes, which corrupts other resolved live
+      // ranges, while character offsets into textContent stay valid.
+      let rendered: RenderedTextWithBrPositions | undefined;
+      const getRenderedText = () => (rendered ??= renderedTextOf(body));
+      fresh.forEach((x) => anchorByQuote(body, x, getRenderedText));
+      if (savedSelection) restoreSelection(d, body, savedSelection);
+    } catch {
+      // Even a document with exotic DOM state (throwing accessors, broken
+      // replaceWith) must not prevent the paint-result post.
+    } finally {
+      resumeMutationObserver();
+    }
   }
 
   // The thread whose popover the app shows, and the last rect sent for it.
@@ -2314,13 +2416,13 @@ type Theme = "dark" | "light";
     // any repaint already scheduled for it — keeps its comments from being
     // anchored into the new document mid-load.
     lastPaint = null;
-    lastPaintKey = null;
-    lastPaintResults = null;
+    placed.clear();
+    held.clear();
     highlightsHeld = false;
+    paintWaits = false;
     commentPositionFrame = 0;
     revealedActive = null;
     restoredSelection = null;
-    paintedQuotes.clear();
     clearTimeout(mutationRepaintTimer ?? undefined);
     mutationRepaintTimer = null;
     mutationRepaintDeadline = 0;
@@ -2712,6 +2814,23 @@ type Theme = "dark" | "light";
       );
       return;
     }
+    // A draft comment is sent on the text that its highlight holds now: the
+    // highlight moves with the text that other people type.
+    if (
+      e.data.type === "slashdocs:anchor" &&
+      typeof e.data.requestId === "string" &&
+      typeof e.data.id === "string"
+    ) {
+      parent.postMessage(
+        {
+          type: "slashdocs:anchor-result",
+          requestId: e.data.requestId,
+          anchor: anchorOf(e.data.id),
+        },
+        targetOrigin(),
+      );
+      return;
+    }
     if (
       e.data.type === "slashdocs:text-patch" &&
       typeof e.data.requestId === "string" &&
@@ -2811,10 +2930,16 @@ type Theme = "dark" | "light";
       typeof e.data.top === "number" &&
       Number.isFinite(e.data.top)
     ) {
-      doc()?.defaultView?.scrollTo({
+      const d = doc();
+      d?.defaultView?.scrollTo({
         top: Math.max(0, e.data.top),
         behavior: "instant",
       });
+      // The caret of an editor goes back to its characters after a load.
+      if (d?.body && isCaret(e.data.caret)) {
+        if (textEditing) d.body.focus({ preventScroll: true });
+        placeCaret(d, e.data.caret);
+      }
     } else if (e.data.type === "slashdocs:vim-key") {
       const d = doc();
       const KeyboardEventCtor = d?.defaultView?.KeyboardEvent;

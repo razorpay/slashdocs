@@ -113,7 +113,7 @@ it("keeps a typed upload title through a close, and asks for the file again", as
   ).toBeTruthy();
 });
 
-it("replaces only the version that the reader saw, unless they choose the new one", async () => {
+it("keeps the summary and the base of the upload when a new version comes", async () => {
   const user = userEvent.setup();
   const create = vi
     .spyOn(api, "createVersion")
@@ -121,10 +121,11 @@ it("replaces only the version that the reader saw, unless they choose the new on
       ReturnType<typeof api.createVersion>
     >);
   const { change } = renderDialog(
-    (open, setOpen, base) => (
+    (open, setOpen, live) => (
       <UploadVersionSheet
         docId="doc_1"
-        baseVersion={base}
+        base={{ version: "ver_1", seq: 3 }}
+        live={{ version: live }}
         open={open}
         onOpenChange={setOpen}
       />
@@ -138,17 +139,14 @@ it("replaces only the version that the reader saw, unless they choose the new on
   );
   await pick(user, html("v.html", "V"));
   change("ver_2");
-  expect(
-    await screen.findByText(
-      "A new version was published after you opened this form. The upload would replace it.",
-    ),
-  ).toBeTruthy();
-  const upload = screen.getByRole("button", { name: "Upload" });
-  expect(upload).toBeDisabled();
-  await user.click(screen.getByRole("button", { name: "Replace the new version" }));
-  await user.click(upload);
+  // The server moves the upload over the new version, or refuses it.
+  await user.click(screen.getByRole("button", { name: "Upload" }));
   await waitFor(() => expect(create).toHaveBeenCalled());
-  expect(create.mock.calls[0].slice(0, 3)).toEqual(["doc_1", "ver_2", "Fix tables"]);
+  expect(create.mock.calls[0].slice(0, 3)).toEqual([
+    "doc_1",
+    { version: "ver_1", seq: 3 },
+    "Fix tables",
+  ]);
 });
 
 it("keeps a folder name when the folder is renamed elsewhere, and asks which to use", async () => {

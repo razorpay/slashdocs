@@ -6,9 +6,11 @@
 //
 //   1. Position: resolve the stored character offsets and verify the text
 //      still matches the stored quote.
-//   2. Quote: search the whole document text for the best exact or fuzzy
-//      match, scored by prefix/suffix context and proximity to the stored
-//      position.
+//   2. Quote: search the whole document text for the quote, verbatim, and
+//      choose among its copies by prefix/suffix context and proximity to the
+//      stored position. Unlike Hypothesis, no fuzzy match anchors: the API
+//      (comment_placement.go) places only verbatim text, and a comment shows
+//      as detached rather than on text that only looks like its quote.
 //
 // All offsets are character offsets into the document body's raw
 // `textContent`. Quotes are stored in "rendered" form (each `<br>`
@@ -32,28 +34,6 @@ export { snapToWords } from "./word-range.ts";
  * Matches the Hypothesis client.
  */
 const CONTEXT_LENGTH = 32;
-
-/**
- * Minimum `matchQuote` score for a fuzzy quote-tier match to be accepted.
- *
- * `matchQuote` caps the search at an edit distance of half the quote length,
- * so every candidate scores >= 0.5 on the quote component (weight 50 of 92);
- * this floor additionally requires reasonable prefix/suffix agreement before
- * a degraded match is highlighted, preferring "no highlight" (which the UI
- * surfaces as a badge) over a wrong one. Verbatim matches bypass the floor:
- * an exact occurrence whose stored context was completely rewritten (score
- * ~0.57) must still anchor.
- */
-const MIN_ANCHOR_SCORE = 0.6;
-
-/**
- * Fuzzy floor for anchors that carry NO prefix/suffix context. matchQuote's
- * context components (40 of 92 points) score a free 1.0 when absent, so the
- * regular floor would accept a match with only ~20% quote similarity —
- * highlighting garbage when the real text was deleted. 0.89 corresponds to a
- * quote similarity of ~0.8 with the context points given away.
- */
-const MIN_ANCHOR_SCORE_WITHOUT_CONTEXT = 0.89;
 
 /**
  * Minimum prefix/suffix agreement (`Match.contextScore`) for a verbatim match
@@ -169,55 +149,41 @@ export function resolveAnchor(
     return null;
   }
 
-  // Tier 2: exact-or-fuzzy quote search over the whole document text,
+  // Tier 2: verbatim quote search over the whole document text,
   // disambiguated by context and the stored position.
   const { text, brPositionsInText } = getRenderedText
     ? getRenderedText()
     : renderedTextOf(root);
+  if (!text.includes(quote)) {
+    return null;
+  }
+  // Each candidate is a verbatim copy of the quote.
   const candidates = matchQuoteCandidates(text, quote, {
     prefix,
     suffix,
     // The stored offset is a raw-textContent position while matchQuote works
     // in rendered coordinates, so convert it (they drift apart by one per
     // preceding <br>). Clamp too: offsets from a longer prior version would
-    // push posScore negative and orphan even a perfect quote+context match.
+    // push posScore negative.
     hint: hasPosition
       ? Math.min(rawOffsetToRendered(brPositionsInText, start), text.length)
       : undefined,
   });
-  let match = candidates[0];
+  // A quote that appears once always anchors, also when its surrounding
+  // context was rewritten. A quote that is repeated, in the document now or
+  // around the comment when it was made, instead anchors on a copy whose
+  // context agrees, so an edit to the commented copy detaches the comment
+  // rather than moving it to another copy. Any such copy will do, as in the
+  // API's placement check: the best scoring one can lead on the position
+  // hint alone.
+  const ambiguous =
+    candidates.length > 1 ||
+    occursMoreThanOnce(`${prefix ?? ""}${quote}${suffix ?? ""}`, quote);
+  const match = ambiguous
+    ? candidates.find((m) => m.contextScore >= MIN_CONTEXT_SCORE_FOR_AMBIGUOUS_QUOTE)
+    : candidates[0];
   if (!match) {
     return null;
-  }
-  // A verbatim occurrence of an unambiguous quote always anchors: the score
-  // floor exists to reject garbled fuzzy matches, not exact text whose
-  // surrounding context was rewritten. A quote that is repeated, in the
-  // document now or around the comment when it was made, instead anchors on
-  // a verbatim copy whose context agrees, so an edit to the commented copy
-  // detaches the comment rather than moving it to another copy. Any such copy
-  // will do, as in the API's placement check (comment_placement.go): the best
-  // scoring one can lead on the position hint alone.
-  const isExact = (m: { start: number; end: number }) =>
-    text.slice(m.start, m.end) === quote;
-  if (isExact(match)) {
-    const ambiguous =
-      occursMoreThanOnce(text, quote) ||
-      occursMoreThanOnce(`${prefix ?? ""}${quote}${suffix ?? ""}`, quote);
-    if (ambiguous && match.contextScore < MIN_CONTEXT_SCORE_FOR_AMBIGUOUS_QUOTE) {
-      const agreeing = candidates.find(
-        (m) => isExact(m) && m.contextScore >= MIN_CONTEXT_SCORE_FOR_AMBIGUOUS_QUOTE,
-      );
-      if (!agreeing) {
-        return null;
-      }
-      match = agreeing;
-    }
-  } else {
-    const minScore =
-      prefix || suffix ? MIN_ANCHOR_SCORE : MIN_ANCHOR_SCORE_WITHOUT_CONTEXT;
-    if (match.score < minScore) {
-      return null;
-    }
   }
   try {
     return TextRange.fromOffsets(

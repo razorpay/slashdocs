@@ -1,23 +1,24 @@
 import { describe, expect, test } from "vitest";
 import type { Patch } from "../../bridge/source-pieces.ts";
 import { parseSource } from "./source-edits";
-import { patchBetween, patchRun } from "./source-patch";
+import { patchBetween, patchRun, type Code } from "./source-patch";
 
 // patch gives the patches from source to target. It also makes sure that
 // the patches make the target: each run of the loaded source that a patch
 // names, replaced with the html of the patch.
-async function patch(source: string, target: string): Promise<Patch[]> {
+async function patch(source: string, target: string): Promise<(Patch | Code)[]> {
   const tree = await parseSource(source);
   const result = patchBetween(tree, target);
   if ("reload" in result) throw new Error(`reload: ${result.reload}`);
-  const runs = result.patches
+  const patches = [...result.patches, ...result.codes];
+  const runs = patches
     .map((p) => ({ run: patchRun(tree, p), html: p.html }))
     .sort((a, b) => b.run[0] - a.run[0]);
   let html = source;
   for (const { run, html: next } of runs)
     html = html.slice(0, run[0]) + next + html.slice(run[1]);
   expect(html).toBe(target);
-  return result.patches;
+  return patches;
 }
 
 async function reload(source: string, target: string) {
@@ -25,8 +26,8 @@ async function reload(source: string, target: string) {
   return "reload" in result ? result.reload : result.patches;
 }
 
-const page = (body: string) =>
-  `<!doctype html><html><head><title>T</title></head><body>${body}</body></html>`;
+const page = (body: string, head = "<title>T</title>") =>
+  `<!doctype html><html><head>${head}</head><body>${body}</body></html>`;
 // The offset of the first place of text in the page.
 const at = (body: string, text: string) => page(body).indexOf(text);
 
@@ -115,18 +116,124 @@ describe("patchBetween", () => {
     ]);
   });
 
-  test("puts an element whose attribute changed in the run of its parent", async () => {
+  test("patches the start tag of an element whose attribute changed", async () => {
     const body = `<p>one</p><p class="a">two</p><p>three</p>`;
     expect(
       await patch(page(body), page(body.replace(`class="a"`, `class="b"`))),
+    ).toEqual([{ tag: at(body, "<p class"), html: `<p class="b">` }]);
+    expect(
+      await patch(
+        page(body),
+        page(body.replace(`class="a"`, `class="a" style="color: red"`)),
+      ),
+    ).toEqual([
+      { tag: at(body, "<p class"), html: `<p class="a" style="color: red">` },
+    ]);
+    expect(await patch(page(body), page(body.replace(` class="a"`, "")))).toEqual([
+      { tag: at(body, "<p class"), html: "<p>" },
+    ]);
+  });
+
+  test("puts an element whose tag name changed in the run of its parent", async () => {
+    const body = `<p>one</p><p class="a">two</p><p>three</p>`;
+    expect(
+      await patch(
+        page(body),
+        page(body.replace(`<p class="a">two</p>`, `<h2 class="a">two</h2>`)),
+      ),
     ).toEqual([
       {
         in: at(body, "<body>"),
         after: at(body, "<p>one"),
         before: at(body, "<p>three"),
-        html: `<p class="b">two</p>`,
+        html: `<h2 class="a">two</h2>`,
       },
     ]);
+  });
+
+  test("patches the start tag and the text of one element apart", async () => {
+    const body = `<p>zero</p><div class="a"><p>one</p></div>`;
+    expect(
+      await patch(page(body), page(`<p>zero</p><div class="b"><p>one!</p></div>`)),
+    ).toEqual([
+      { in: at(body, "<p>one"), after: null, before: null, html: "one!" },
+      { tag: at(body, "<div"), html: `<div class="b">` },
+    ]);
+  });
+
+  test("leaves the start tag of an element in a run to the run", async () => {
+    const body = `<p>zero</p><div><p class="a">one</p></div>`;
+    const next = `<p>zero</p><section><div><p class="b">one</p></div></section>`;
+    expect(await patch(page(body), page(next))).toEqual([
+      {
+        in: at(body, "<body>"),
+        after: at(body, "<p>zero"),
+        before: null,
+        html: `<section><div><p class="b">one</p></div></section>`,
+      },
+    ]);
+  });
+
+  test("patches the text of a style in the head or the body", async () => {
+    const head = "<title>T</title><style>p { color: red }</style>";
+    const source = page("<p>a</p>", head);
+    expect(await patch(source, source.replace("red", "blue"))).toEqual([
+      { style: source.indexOf("<style>"), html: "p { color: blue }" },
+    ]);
+    const body = "<style></style><p>a</p>";
+    expect(
+      await patch(page(body), page(body.replace("<style>", "<style>p { margin: 0 }"))),
+    ).toEqual([{ style: at(body, "<style>"), html: "p { margin: 0 }" }]);
+  });
+
+  test("gives the code of each script that changed, in the head or the body", async () => {
+    const head = `<title>T</title><script>const title = "One";</script>`;
+    const source = page(`<p>a</p><script>go("Two"); go("Three")</script>`, head);
+    const target = source.replace("One", "Uno").replace("Three", "Tres");
+    expect(await patch(source, target)).toEqual([
+      { script: source.indexOf("<script>"), html: `const title = "Uno";` },
+      { script: source.lastIndexOf("<script>"), html: `go("Two"); go("Tres")` },
+    ]);
+  });
+
+  test("brings back what the frame shows and the target does not", async () => {
+    const body = `<style>p { color: red }</style><p class="a">one two</p><p>three</p><script>go("x")</script>`;
+    const tree = await parseSource(page(body));
+    const shows = page(
+      body
+        .replace(`"a"`, `"b"`)
+        .replace("red", "blue")
+        .replace("one two", "one new two")
+        .replace("<p>three</p>", "<p>three</p><p>four</p>")
+        .replace(`"x"`, `"y"`),
+    );
+    expect(patchBetween(tree, page(body), [], shows)).toEqual({
+      patches: [
+        { in: at(body, "<p class"), after: null, before: null, html: "one two" },
+        {
+          in: at(body, "<body>"),
+          after: at(body, "<p>three"),
+          before: at(body, "<script>"),
+          html: "",
+        },
+        { style: at(body, "<style>"), html: "p { color: red }" },
+        { tag: at(body, "<p class"), html: `<p class="a">` },
+      ],
+      codes: [{ script: at(body, "<script>"), html: `go("x")` }],
+      tags: [],
+    });
+    // A change of the target in the same place is the patch.
+    expect(
+      patchBetween(tree, page(body.replace(`"a"`, `"c"`)), [], shows),
+    ).toMatchObject({
+      patches: [{}, {}, { style: at(body, "<style>") }, { html: `<p class="c">` }],
+    });
+    // The frame shows the loaded source: nothing comes back.
+    expect(patchBetween(tree, page(body))).toEqual({
+      patches: [],
+      codes: [],
+      tags: [],
+    });
   });
 
   test("puts a paragraph that Enter divided in the run of its parent", async () => {
@@ -141,6 +248,15 @@ describe("patchBetween", () => {
         html: "<p>two</p><p>halves</p>",
       },
     ]);
+  });
+
+  test("gives the start tags of the elements that the patches put in, as the target has them", async () => {
+    const body = "<h1>T</h1><p>one</p><p>two</p>";
+    const tree = await parseSource(page(body));
+    const target = page(`<h1>T</h1><p id="c" class='x'>t<b>wo</b></p>`);
+    expect(patchBetween(tree, target)).toMatchObject({
+      tags: [`<p id="c" class='x'>`, "<b>"],
+    });
   });
 
   test("gives one patch for each paragraph that changed", async () => {
@@ -165,16 +281,58 @@ describe("patchBetween", () => {
     ]);
   });
 
+  test("gives each patch the ranges of its html that other people put in", async () => {
+    const body = "<p>one</p><p>two</p><p>three</p>";
+    const target = page("<p>one!</p><p>two</p><p>three more</p>");
+    const range = (text: string): [number, number] => [
+      target.indexOf(text),
+      target.indexOf(text) + text.length,
+    ];
+    const tree = await parseSource(page(body));
+    // A range that crosses the edge of a run names no place in one patch.
+    const marks = [range("e!"), range("ee more</p>"), range(" more")];
+    expect(patchBetween(tree, target, marks)).toEqual({
+      patches: [
+        {
+          in: at(body, "<p>one"),
+          after: null,
+          before: null,
+          html: "one!",
+          marks: [[2, 4]],
+        },
+        {
+          in: at(body, "<p>three"),
+          after: null,
+          before: null,
+          html: "three more",
+          marks: [[5, 10]],
+        },
+      ],
+      codes: [],
+      tags: [],
+    });
+    // A patch with no range has no marks.
+    expect(patchBetween(tree, target, [range("e!")])).toMatchObject({
+      patches: [
+        { marks: [[2, 4]] },
+        expect.not.objectContaining({ marks: expect.anything() }),
+      ],
+    });
+  });
+
   test("leaves out a patch in an element that an outer patch replaces", async () => {
-    const body = `<p>zero</p><div class="a"><p>one</p></div>`;
+    const body = `<p>zero</p><div><p>one</p></div>`;
     expect(
-      await patch(page(body), page(`<p>zero</p><div class="b"><p>one!</p></div>`)),
+      await patch(
+        page(body),
+        page(`<p>zero</p><section><div><p>one!</p></div></section>`),
+      ),
     ).toEqual([
       {
         in: at(body, "<body>"),
         after: at(body, "<p>zero"),
         before: null,
-        html: `<div class="b"><p>one!</p></div>`,
+        html: `<section><div><p>one!</p></div></section>`,
       },
     ]);
   });
@@ -269,16 +427,58 @@ describe("patchBetween", () => {
       "outside the body",
     ],
     [
-      "a script",
-      page("<p>a</p><script>let a = 1;</script>"),
-      page("<p>a</p><script>let a = 2;</script>"),
-      "a change is in <script>",
+      "a script in a template",
+      page("<template><script>let a = 'x';</script></template>"),
+      page("<template><script>let a = 'y';</script></template>"),
+      "a change is in <template>",
     ],
     [
-      "a style",
-      page("<style>p { color: red }</style><p>a</p>"),
-      page("<style>p { color: blue }</style><p>a</p>"),
+      "a new attribute of a script",
+      page("<p>a</p><script>let a = 1;</script>"),
+      page(`<p>a</p><script type="module">let a = 1;</script>`),
+      "a change has <script> in it",
+    ],
+    [
+      "a style in an svg",
+      page("<svg><style>a { fill: red }</style></svg>"),
+      page("<svg><style>a { fill: blue }</style></svg>"),
       "a change is in <style>",
+    ],
+    [
+      "a new attribute of a style",
+      page("<style>p { color: red }</style><p>a</p>"),
+      page(`<style media="print">p { color: red }</style><p>a</p>`),
+      "a change has <style> in it",
+    ],
+    [
+      "a new event handler on an element",
+      page(`<p>a</p><p class="x">b</p>`),
+      page(`<p>a</p><p class="x" onclick="x()">b</p>`),
+      "a change has an event handler or a script URL in it",
+    ],
+    [
+      "a removed event handler",
+      page(`<p>a</p><p onclick="x()">b</p>`),
+      page(`<p>a</p><p>b</p>`),
+      "a change has an event handler or a script URL in it",
+    ],
+    [
+      "a script URL on an element",
+      page(`<p><a href="https://x.dev">a</a></p>`),
+      page(`<p><a href=" java\tscript:alert(1)">a</a></p>`),
+      "a change has an event handler or a script URL in it",
+    ],
+    [
+      "a new link with a script URL",
+      page("<p>a</p>"),
+      page(`<p>a <a href="JavaScript:alert(1)">b</a></p>`),
+      "a change has an event handler or a script URL in it",
+    ],
+    [
+      "a new tag name",
+      page(`<p>a</p><p class="x">b</p>`),
+      page(`<p>a</p><h2 onclick="x()">b</h2>`),
+      "a change has an event handler or a script URL in it",
     ],
     [
       "a textarea",
@@ -308,13 +508,13 @@ describe("patchBetween", () => {
       "a new event handler",
       page("<p>a</p>"),
       page(`<p>a</p><p onclick="x()">b</p>`),
-      "a change has an event handler in it",
+      "a change has an event handler or a script URL in it",
     ],
     [
       "an event handler on the element that changed",
       page(`<div><p>a</p></div>`),
       page(`<div><p onmouseover="x()">a</p></div>`),
-      "a change has an event handler in it",
+      "a change has an event handler or a script URL in it",
     ],
     [
       "an input next to the text that changed",
@@ -327,6 +527,18 @@ describe("patchBetween", () => {
       page("<div><p>a</p></div>"),
       page("<div><p>a</p><select><option>x</select></div>"),
       "a change has <select> in it",
+    ],
+    [
+      "a new noscript, whose content the frame parses as elements",
+      page("<p>a</p>"),
+      page(`<p>a</p><noscript><img src=x onerror="x()"></noscript>`),
+      "a change has <noscript> in it",
+    ],
+    [
+      "text in a noscript",
+      page("<p>a</p><noscript>one</noscript>"),
+      page(`<p>a</p><noscript>one<img src=x onerror="x()"></noscript>`),
+      "a change is in <noscript>",
     ],
     [
       "a tag that closes too late",

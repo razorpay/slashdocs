@@ -17,8 +17,10 @@ export function principalNames(people: Principal[]) {
   return new Intl.ListFormat("en").format(people.map(principalLabel));
 }
 
-// Twelve hues, each at least 4.5:1 with white text, so initials stay
-// readable in light and dark.
+// Ten hues, each at least 4.5:1 with white text, so initials stay readable
+// in light and dark. None is a blue near the accent color or the selection
+// color of the browser: the selection of another person must not look like
+// the selection of the reader.
 const PRINCIPAL_COLORS = [
   "#ce2c31",
   "#cc4e00",
@@ -27,8 +29,6 @@ const PRINCIPAL_COLORS = [
   "#218358",
   "#008573",
   "#107d98",
-  "#0b68cb",
-  "#3a5bc7",
   "#6550b9",
   "#ab4aba",
   "#c2298a",

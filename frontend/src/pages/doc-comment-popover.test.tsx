@@ -132,6 +132,7 @@ function renderDraft() {
   };
   const ctx = {
     drafts: [draft],
+    anchorOf: async () => undefined,
     activeComment: "d1",
     unanchoredComments: new Set(["d1"]),
     setActiveComment: vi.fn(),
@@ -325,6 +326,7 @@ it.each([
             docId: "doc-1",
             comments: [],
             drafts: active === "d1" ? [draft] : [],
+            anchorOf: async () => undefined,
             activeComment: active,
             setActiveComment: setActive,
             unanchoredComments: new Set(["d1"]),
@@ -391,6 +393,7 @@ it("puts the focus in Reply when the posted thread opens from its own composer",
         signIn={undefined}
         comments={active === "c2" ? [posted] : []}
         drafts={drafts}
+        anchorOf={async () => undefined}
         activeComment={active}
         setActiveComment={setActive}
         unanchoredComments={new Set(["d1", "c2"])}

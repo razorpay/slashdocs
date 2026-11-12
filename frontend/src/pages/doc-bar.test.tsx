@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import type { ComponentProps } from "react";
@@ -9,6 +9,7 @@ import { clearFieldDrafts } from "@/lib/field-drafts";
 import { DocBar } from "./doc-bar";
 import { ModeButton } from "./doc-mode-button";
 import { DocProvider, type DocContextValue, type SaveState } from "./doc-context";
+import { newLoads } from "./live-load";
 import type { Viewer } from "./use-document-stream";
 
 const mockDocContext: DocContextValue = {
@@ -46,21 +47,29 @@ const mockDocContext: DocContextValue = {
   subscribeDocumentKV: () => () => {},
   reportViewport: vi.fn(),
   moveCursor: vi.fn(),
+  holdCursor: vi.fn(),
   subscribeCursors: () => () => {},
   canEdit: false,
   editing: false,
-  setEditing: vi.fn(async () => {}),
-  registerTextSettle: vi.fn(),
+  setEditing: vi.fn(async () => true),
+  registerLiveText: vi.fn(),
   saveState: "idle",
   setSaveState: vi.fn(),
   retrySave: vi.fn(),
   frameReady: true,
   setFrameReady: vi.fn(),
-  stayOnVersion: vi.fn(),
-  showLatest: vi.fn(),
+  frameShows: vi.fn(),
+  showCurrent: vi.fn(),
+  frameLoad: 0,
+  reloadFrame: vi.fn(),
+  onPage: { current: true },
+  liveLoads: newLoads(),
+  typists: [],
+  madeBy: () => undefined,
   live: true,
-  others: false,
   holdUpdate: vi.fn(),
+  showUpdate: vi.fn(),
+  anchorOf: vi.fn(async () => undefined),
 };
 
 const OWNER = { type: "user" as const, id: "usr_owner" };
@@ -191,6 +200,8 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     cleanup();
     vi.unstubAllGlobals();
     mockDocContext.canEdit = false;
+    mockDocContext.latest = undefined;
+    mockDocContext.shownSeq = undefined;
   });
 
   it("opens the history from the More menu", async () => {
@@ -215,7 +226,46 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     expect(await screen.findByText("Second version")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /Second version/ }));
+    // The reader leaves Edit mode first, as with Done.
+    expect(mockDocContext.setEditing).toHaveBeenCalledWith(false);
     expect(onSelectVersion).toHaveBeenCalledWith("v_2");
+  });
+
+  it("stays on the document when text of the reader cannot save", async () => {
+    const user = userEvent.setup();
+    // Done does not leave Edit mode: the reader copies or discards first.
+    vi.mocked(mockDocContext.setEditing).mockResolvedValueOnce(false);
+    const { onSelectVersion } = renderDocBar();
+    await user.click(screen.getByRole("button", { name: "More" }));
+    await user.click(await screen.findByRole("menuitem", { name: /^History$/ }));
+
+    await user.click(await screen.findByRole("button", { name: /Second version/ }));
+
+    expect(onSelectVersion).not.toHaveBeenCalled();
+  });
+
+  it("uploads on the state that the page showed when the form opened", async () => {
+    const user = userEvent.setup();
+    const create = vi
+      .spyOn(api, "createVersion")
+      .mockResolvedValue({ id: "v_3", number: 3, seq: 8 });
+    mockDocContext.latest = 6;
+    mockDocContext.shownSeq = 5;
+    renderDocBar();
+    await user.click(screen.getByRole("button", { name: "More" }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Replace with an HTML file" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    // Other people type while the form is open, and the page follows them.
+    mockDocContext.shownSeq = 7;
+    await user.upload(
+      dialog.querySelector<HTMLInputElement>('input[type="file"]')!,
+      new File(["<p>x</p>"], "x.html", { type: "text/html" }),
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Upload" }));
+    await waitFor(() => expect(create).toHaveBeenCalled());
+    expect(create.mock.lastCall![1]).toEqual({ version: "v_2", seq: 5 });
   });
 
   it("opens labels dialog from the More menu when labels are enabled", async () => {
@@ -506,7 +556,7 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
   });
 
   it("starts Edit mode, and Done leaves it, from one button that keeps the focus", async () => {
-    const setEditing = vi.fn(async () => {});
+    const setEditing = vi.fn(async () => true);
     const bar = (editing: boolean) => (
       <DocProvider value={{ ...mockDocContext, canEdit: true, editing, setEditing }}>
         <ModeButton />
@@ -528,14 +578,14 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
 
   it("hides the state of a save, and shows only edits that did not save, with Retry", async () => {
     const retrySave = vi.fn();
-    const status = (saveState: SaveState) => {
+    const status = (saveState: SaveState, editing = true) => {
       cleanup();
       render(
         <DocProvider
           value={{
             ...mockDocContext,
             canEdit: true,
-            editing: true,
+            editing,
             saveState,
             retrySave,
           }}
@@ -547,11 +597,50 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
       expect(region).toHaveAttribute("aria-live", "polite");
       return region.textContent;
     };
-    for (const saveState of ["idle", "unsaved", "saving", "saved"] as const)
-      expect(status(saveState)).toBe("");
+    expect(status("idle")).toBe("");
     for (const saveState of ["failed", "refused"] as const)
       expect(status(saveState)).toBe("Not saved · Retry");
+    // Done left Edit mode while the edits wait for the network: they still
+    // show as not saved.
+    expect(status("idle", false)).toBe("");
+    expect(status("failed", false)).toBe("Not saved · Retry");
     await userEvent.click(screen.getByRole("button", { name: "Not saved · Retry" }));
     expect(retrySave).toHaveBeenCalledOnce();
+  });
+
+  it("shows Offline, with no Retry, while the browser has no network", async () => {
+    const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    const chip = (saveState: SaveState) => {
+      cleanup();
+      render(
+        <DocProvider
+          value={{ ...mockDocContext, canEdit: true, editing: true, saveState }}
+        >
+          <ModeButton />
+        </DocProvider>,
+      );
+      return screen.getByRole("status");
+    };
+    expect(chip("idle")).toHaveTextContent("");
+    // A change that cannot save needs the editor, also offline.
+    expect(chip("refused")).toHaveTextContent("Not saved · Retry");
+    const status = chip("failed");
+    expect(status).toHaveTextContent(/^Offline$/);
+    expect(within(status).queryByRole("button")).toBeNull();
+    await userEvent.hover(screen.getByText("Offline"));
+    expect(
+      await screen.findByRole("tooltip", {
+        name: "Your edits are kept here. They save when you are online again.",
+      }),
+    ).toBeInTheDocument();
+
+    // The chip follows the network of the browser.
+    online.mockReturnValue(true);
+    act(() => void window.dispatchEvent(new Event("online")));
+    expect(status).toHaveTextContent("Not saved · Retry");
+    online.mockReturnValue(false);
+    act(() => void window.dispatchEvent(new Event("offline")));
+    expect(status).toHaveTextContent(/^Offline$/);
+    online.mockRestore();
   });
 });

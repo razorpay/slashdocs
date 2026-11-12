@@ -1,5 +1,57 @@
 // Small DOM helpers that several bridge modules share.
 
+// The blocks of text of a document.
+export const BLOCKS = "p,li,h1,h2,h3,h4,h5,h6,blockquote,pre,td,th,dt,dd,figcaption";
+
+// A caret offset is at most this, like the server takes.
+export const MAX_CARET = 1_000_000;
+
+// sameEnds gives the lengths of the common start and of the common end of
+// two texts, or of two lists. The two do not overlap. The end counts first:
+// typed text ends at the caret, so the text after it is the common end.
+export function sameEnds(
+  a: ArrayLike<unknown>,
+  b: ArrayLike<unknown>,
+  same = (i: number, j: number) => a[i] === b[j],
+): [number, number] {
+  const most = Math.min(a.length, b.length);
+  let end = 0;
+  while (end < most && same(a.length - 1 - end, b.length - 1 - end)) end++;
+  let start = 0;
+  while (start < most - end && same(start, start)) start++;
+  return [start, end];
+}
+
+// Two lists pair in at most this many steps. Longer lists give no pairs.
+const MOST_STEPS = 1_000_000;
+
+// equalPairs gives the longest list of pairs [i, j], in order, of one of n
+// items and one of m items that are equal.
+export function equalPairs(
+  n: number,
+  m: number,
+  equal: (i: number, j: number) => boolean,
+): [number, number][] {
+  if (n * m > MOST_STEPS) return [];
+  // lengths[i * width + j] is the count of the pairs from items i and j on.
+  const width = m + 1;
+  const lengths = new Uint32Array((n + 1) * width);
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      lengths[i * width + j] = equal(i, j)
+        ? lengths[(i + 1) * width + j + 1] + 1
+        : Math.max(lengths[(i + 1) * width + j], lengths[i * width + j + 1]);
+    }
+  }
+  const pairs: [number, number][] = [];
+  for (let i = 0, j = 0; i < n && j < m;) {
+    if (equal(i, j)) pairs.push([i++, j++]);
+    else if (lengths[(i + 1) * width + j] >= lengths[i * width + j + 1]) i++;
+    else j++;
+  }
+  return pairs;
+}
+
 // isEditableTarget tells whether a key at target, or else at the focused
 // element, types into document d: a text field, focused editable content, or
 // a document in design mode. The bridge's own shortcuts leave such keys
@@ -73,7 +125,7 @@ export function markSurface(d: Document) {
 }
 
 // paperOf gives the color of the page behind the document, as [r, g, b].
-export function paperOf(d: Document): number[] {
+function paperOf(d: Document): number[] {
   const view = d.defaultView;
   return (
     [d.body, d.documentElement]
@@ -142,7 +194,7 @@ export function placeClear(
   return place === edges[0] ? "bottom" : place === edges[1] ? "top" : null;
 }
 
-function union(a: DOMRect, b: DOMRect): DOMRect {
+export function union(a: DOMRect, b: DOMRect): DOMRect {
   const [left, top] = [Math.min(a.left, b.left), Math.min(a.top, b.top)];
   return new DOMRect(
     left,
@@ -156,7 +208,7 @@ function grow(box: DOMRect, by: number): DOMRect {
   return new DOMRect(box.x - by, box.y - by, box.width + by * 2, box.height + by * 2);
 }
 
-function overlap(a: DOMRect, b: DOMRect): boolean {
+export function overlap(a: DOMRect, b: DOMRect): boolean {
   return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
 }
 
@@ -182,6 +234,24 @@ export function textLines(d: Document, box: DOMRect): DOMRect[] {
     words.selectNodeContents(node);
     return Array.from(words.getClientRects()).filter((line) => overlap(box, line));
   });
+}
+
+// scrollerOf gives the nearest ancestor of an element that scrolls, or else
+// the document's scrolling element. Many documents scroll an inner element.
+// With vertical, only an ancestor that scrolls up and down counts.
+export function scrollerOf(el: Element, vertical = false): Element {
+  const d = el.ownerDocument;
+  const root = d.scrollingElement ?? d.documentElement;
+  for (let node = el.parentElement; node && node !== root; node = node.parentElement) {
+    const style = d.defaultView?.getComputedStyle(node);
+    const scrolls = (overflow = "") => /auto|scroll|overlay/.test(overflow);
+    if (
+      (scrolls(style?.overflowY) && node.scrollHeight > node.clientHeight) ||
+      (!vertical && scrolls(style?.overflowX) && node.scrollWidth > node.clientWidth)
+    )
+      return node;
+  }
+  return root;
 }
 
 // viewOf gives the viewport of document d without its scroll bars, and,

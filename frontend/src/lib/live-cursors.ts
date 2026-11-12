@@ -1,5 +1,6 @@
 import type { CursorPlace, CursorPoint, CursorSpot } from "@/api";
 import { createPersistentStore } from "@/lib/persistent-store";
+import { MAX_CARET } from "../../bridge/dom";
 
 // Whether this reader sees other viewers' cursors.
 export const cursorsShownStore = createPersistentStore<boolean>(
@@ -24,8 +25,6 @@ const MAX_VIEW_FRACTION = 1000;
 const MAX_MESSAGE = 100;
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
-// The server takes a caret offset up to this.
-const MAX_CARET = 1_000_000;
 
 function parsePlace(value: unknown, limit = { min: 0, max: 1 }): CursorPlace | null {
   const { path, x, y, z } = (value ?? {}) as Record<string, unknown>;
@@ -39,22 +38,25 @@ function parsePlace(value: unknown, limit = { min: 0, max: 1 }): CursorPlace | n
 
 // parseCursorSpot accepts a spot from the render frame, which also runs the
 // document's own scripts. Anything else means that the pointer left. An
-// invalid view, message, edited block or caret is dropped. A caret goes with
-// its block. A spot for a pointer that left keeps only its view, edited block
-// and caret, and is null without a view and a block.
+// invalid view, message, edited block, caret or selection end is dropped. A
+// caret goes with its block, and the other end of a selection with its
+// caret. A spot for a pointer that left keeps only its view, edited block,
+// caret and selection end, and is null without a view and a block.
 export function parseCursorSpot(value: unknown): CursorSpot | null {
-  const { m, e, c, v, hidden } = (value ?? {}) as Record<string, unknown>;
+  const { m, e, c, a, v, hidden } = (value ?? {}) as Record<string, unknown>;
+  const offset = (n: unknown): n is number =>
+    Number.isInteger(n) && (n as number) >= 0 && (n as number) <= MAX_CARET;
   const view = parsePlace(v, {
     min: -MAX_VIEW_FRACTION,
     max: MAX_VIEW_FRACTION,
   });
   const edit = typeof e === "string" && e && SPOT_PATH.test(e) ? e : undefined;
-  const caret =
-    edit && Number.isInteger(c) && (c as number) >= 0 && (c as number) <= MAX_CARET;
+  const caret = edit && offset(c) ? c : undefined;
   const extras = {
     ...(view && { v: view }),
     ...(edit && { e: edit }),
-    ...(caret && { c: c as number }),
+    ...(caret !== undefined && { c: caret }),
+    ...(caret !== undefined && offset(a) && { a }),
   };
   if (hidden === true) return view || edit ? { ...HIDDEN, ...extras } : null;
   const spot = parsePlace(value);
@@ -67,13 +69,15 @@ export function parseCursorSpot(value: unknown): CursorSpot | null {
 
 // createCursorBatch collects this reader's pointer points and sends them in
 // batches, one request at a time and in order. When a request is slow, the
-// next batch gets larger. A full batch drops its oldest points.
+// next batch gets larger. A full batch drops its oldest points. While the
+// batch is held, the points wait.
 export function createCursorBatch(send: (points: CursorPoint[]) => Promise<unknown>) {
   let queue: CursorPoint[] = [];
   let last: CursorSpot | null = null;
   let lastPoint = -Infinity;
   let lastSend = -Infinity;
   let sending = false;
+  let held = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   function flush() {
@@ -101,7 +105,7 @@ export function createCursorBatch(send: (points: CursorPoint[]) => Promise<unkno
   }
 
   function schedule() {
-    if (timer !== undefined || sending || !queue.length) return;
+    if (timer !== undefined || sending || held || !queue.length) return;
     const wait = Math.max(0, lastSend + CURSOR_BATCH_INTERVAL - performance.now());
     timer = setTimeout(flush, wait);
   }
@@ -125,11 +129,22 @@ export function createCursorBatch(send: (points: CursorPoint[]) => Promise<unkno
     schedule();
   }
 
+  // hold keeps the points while the text that this reader typed is not on
+  // the server: a caret names a place in that text, and a viewer who does
+  // not have the text yet would show it too far. The points go when the
+  // hold ends.
+  function hold(on: boolean) {
+    held = on;
+    clearTimeout(timer);
+    timer = undefined;
+    schedule();
+  }
+
   function stop() {
     clearTimeout(timer);
     timer = undefined;
     queue = [];
   }
 
-  return { add, resend, stop };
+  return { add, resend, hold, stop };
 }

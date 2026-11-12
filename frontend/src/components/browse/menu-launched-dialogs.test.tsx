@@ -13,7 +13,8 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api } from "@/api";
+import { toast } from "sonner";
+import { api, APIError } from "@/api";
 import { DeleteDocumentDialog } from "@/components/delete-document-dialog";
 import {
   Dropdown,
@@ -135,7 +136,8 @@ describe("dialogs launched from a dropdown menu", () => {
         dialog={(open, setOpen) => (
           <UploadVersionSheet
             docId="doc_1"
-            baseVersion="ver_1"
+            base={{ version: "ver_1", seq: 7 }}
+            live={{ version: "ver_2", seq: 9 }}
             open={open}
             onOpenChange={setOpen}
           />
@@ -149,10 +151,101 @@ describe("dialogs launched from a dropdown menu", () => {
     await user.click(screen.getByRole("button", { name: "Upload" }));
 
     await waitFor(() =>
-      expect(create).toHaveBeenCalledWith("doc_1", "ver_1", "Fix typo", HTML),
+      // The upload names the state of the document that the form opened on.
+      expect(create).toHaveBeenCalledWith(
+        "doc_1",
+        { version: "ver_1", seq: 7 },
+        "Fix typo",
+        HTML,
+      ),
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
+
+  it("says that the file is the same as the document when the upload makes no version", async () => {
+    const user = userEvent.setup();
+    const success = vi.spyOn(toast, "success");
+    const info = vi.spyOn(toast, "info");
+    vi.spyOn(api, "createVersion").mockResolvedValue({
+      id: "ver_1",
+      number: 1,
+      seq: 0,
+      unchanged: true,
+    });
+    renderMenu(
+      <Menu
+        item={(open) => <UploadVersionMenuItem onSelect={open} />}
+        dialog={(open, setOpen) => (
+          <UploadVersionSheet
+            docId="doc_1"
+            base={{ version: "ver_1" }}
+            live={{ version: "ver_1" }}
+            open={open}
+            onOpenChange={setOpen}
+          />
+        )}
+      />,
+    );
+
+    const dialog = await openFromMenuAndBlurWindow(user, "Replace with an HTML file");
+    await chooseFile(user, dialog);
+    await user.click(screen.getByRole("button", { name: "Upload" }));
+
+    await waitFor(() =>
+      expect(info).toHaveBeenCalledExactlyOnceWith(
+        "The file is the same as the document.",
+      ),
+    );
+    expect(success).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  // A conflict names the current state, which the upload then replaces. A
+  // stale base names none, and the upload replaces the newest state that
+  // the page knows.
+  it.each([
+    [
+      "version_conflict",
+      { current_version_id: "ver_4", seq: 12 },
+      { version: "ver_4", seq: 12 },
+    ],
+    ["stale", undefined, { version: "ver_2", seq: 9 }],
+  ])(
+    "replaces the text of other people only when the uploader chooses it (%s)",
+    async (code, details, latest) => {
+      const user = userEvent.setup();
+      const create = vi
+        .spyOn(api, "createVersion")
+        .mockRejectedValueOnce(new APIError(409, code, "It changed.", details))
+        .mockResolvedValue({ id: "ver_3", number: 3, seq: 10 });
+      renderMenu(
+        <Menu
+          item={(open) => <UploadVersionMenuItem onSelect={open} />}
+          dialog={(open, setOpen) => (
+            <UploadVersionSheet
+              docId="doc_1"
+              base={{ version: "ver_1", seq: 7 }}
+              live={{ version: "ver_2", seq: 9 }}
+              open={open}
+              onOpenChange={setOpen}
+            />
+          )}
+        />,
+      );
+
+      const dialog = await openFromMenuAndBlurWindow(user, "Replace with an HTML file");
+      await chooseFile(user, dialog);
+      await user.click(screen.getByRole("button", { name: "Upload" }));
+
+      await screen.findByText("This document changed after you opened this form.");
+      expect(screen.getByRole("dialog")).toBeTruthy();
+      await user.click(screen.getByRole("button", { name: "Replace anyway" }));
+      await waitFor(() =>
+        expect(create).toHaveBeenLastCalledWith("doc_1", latest, "", HTML),
+      );
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    },
+  );
 
   it("keeps the delete confirmation open after the window lost focus", async () => {
     const user = userEvent.setup();

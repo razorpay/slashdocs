@@ -24,6 +24,7 @@ import type { ThreadCount } from "@/components/layout/doc-bar-frame";
 import { Center } from "@/components/ui/misc";
 import { SheetHandle } from "@/components/ui/sheet";
 import { keepToastsAbove } from "@/components/ui/toaster";
+import { useMounted } from "@/lib/hooks";
 import { useIsMobile } from "@/lib/use-media-query";
 import { useTheme } from "@/lib/theme";
 import { useEscChord } from "@/lib/use-esc-chord";
@@ -35,19 +36,22 @@ import { fade, sheetUp, slideIn } from "@/lib/motion";
 import { COMMENT_STATUS } from "@/lib/constants";
 import {
   DocProvider,
-  notSaved,
   type CommentPosition,
   type DocContextValue,
+  type DocumentScroller,
+  type LiveText,
   type PendingSelection,
   type SaveState,
   type UnanchoredKind,
 } from "./doc-context";
 import { RenderFrame } from "./doc-render-frame";
+import { newLoads } from "./live-load";
 import { CommentsList } from "./doc-comments";
 import { CommentMap } from "./comment-map";
 import { Keycast } from "./doc-keycast";
 import { ShortcutsDialog } from "./doc-shortcuts";
 import { useCommentLink } from "./use-comment-link";
+import { useEarlierDraft } from "./use-earlier-draft";
 import { useCommentReads } from "./use-comment-reads";
 import { useResolveThread } from "./use-resolve-thread";
 import { plainKey } from "./use-comment-pins";
@@ -60,10 +64,13 @@ const NO_STREAM = {
   subscribeKV: () => () => {},
   reportViewport: () => {},
   moveCursor: () => {},
+  holdCursor: () => {},
   subscribeCursors: () => () => {},
 };
 
 const noop = () => {};
+const NO_TYPISTS: Principal[] = [];
+const NO_AUTHORS = () => undefined;
 
 // The document's area. A narrow screen keeps a gutter for the tick strip,
 // off the text, in the paper white of the document, and the same gutter on
@@ -104,12 +111,15 @@ export function DocWorkspace({
   canEdit = false,
   editing = false,
   onEditingChange = noop,
-  stayOnVersion = noop,
-  showLatest = noop,
+  frameShows = noop,
+  onLeavePreview = noop,
   showsLatest = true,
   latest,
   live = true,
-  others = false,
+  event,
+  typists = NO_TYPISTS,
+  madeBy = NO_AUTHORS,
+  shownSeq,
   holdUpdate = noop,
   bar,
   banner,
@@ -125,6 +135,7 @@ export function DocWorkspace({
     subscribeKV: DocContextValue["subscribeDocumentKV"];
     reportViewport: DocContextValue["reportViewport"];
     moveCursor: DocContextValue["moveCursor"];
+    holdCursor: DocContextValue["holdCursor"];
     subscribeCursors: DocContextValue["subscribeCursors"];
   };
   followedCursor?: DocContextValue["followedCursor"];
@@ -135,19 +146,23 @@ export function DocWorkspace({
   // Edit mode, which the page keeps. Each document opens in Comment mode.
   editing?: boolean;
   onEditingChange?: (editing: boolean) => void;
-  stayOnVersion?: (version?: string) => void;
-  showLatest?: () => void;
-  // The version on screen is the document's latest one.
+  frameShows?: DocContextValue["frameShows"];
+  // Leaves a preview of an earlier version.
+  onLeavePreview?: () => void;
+  // The page shows the document, not a preview of an earlier version.
   showsLatest?: boolean;
-  // What the frame needs to follow the newest version. A document without
-  // an event stream has no newer version to follow.
+  // What the frame needs to follow the live document. A document without
+  // an event stream has no newer state to follow.
   latest?: DocContextValue["latest"];
   live?: boolean;
-  others?: boolean;
+  event?: DocContextValue["event"];
+  typists?: DocContextValue["typists"];
+  madeBy?: DocContextValue["madeBy"];
+  shownSeq?: DocContextValue["shownSeq"];
   holdUpdate?: DocContextValue["holdUpdate"];
   bar: (controls: DocBarControls) => ReactNode;
-  // Shown under the bar, or floating over the document in full screen.
-  banner?: (floating: boolean) => ReactNode;
+  // Shown above the document, under the bar when there is one.
+  banner?: ReactNode;
 }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const fullscreen = searchParams.get("fullscreen") === "1";
@@ -192,28 +207,43 @@ export function DocWorkspace({
   }, []);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [frameReady, setFrameReady] = useState(false);
-  const textSettle = useRef<(() => Promise<boolean>) | null>(null);
-  const registerTextSettle = useCallback((settle: (() => Promise<boolean>) | null) => {
-    textSettle.current = settle;
+  const liveText = useRef<LiveText | null>(null);
+  const registerLiveText = useCallback((text: LiveText | null) => {
+    liveText.current = text;
   }, []);
   const setEditing = useCallback(
     async (on: boolean) => {
-      if (on ? !canEdit : (await textSettle.current?.()) === false) return;
-      onEditingChange(on);
+      const can = on ? canEdit : (await liveText.current?.settle()) !== false;
+      if (can) onEditingChange(on);
+      return can;
     },
     [canEdit, onEditingChange],
   );
-  const retrySave = useCallback(() => void textSettle.current?.(), []);
-  useEffect(() => setSaveState("idle"), [docId]);
-  const documentScrollerRef = useRef<((top: number) => void) | null>(null);
-  const registerDocumentScroller = useCallback(
-    (scroller: ((top: number) => void) | null) => {
-      documentScrollerRef.current = scroller;
-    },
+  const retrySave = useCallback(() => void liveText.current?.settle(), []);
+  const showUpdate = useCallback(() => void liveText.current?.showUpdate(), []);
+  const anchorOf = useCallback(
+    async (id: string) => liveText.current?.anchorOf(id),
     [],
   );
+  const [frameLoad, setFrameLoad] = useState(0);
+  const reloadFrame = useCallback(() => setFrameLoad((n) => n + 1), []);
+  const showCurrent = useCallback(() => {
+    onLeavePreview();
+    reloadFrame();
+  }, [onLeavePreview, reloadFrame]);
+  const onPage = useMounted();
+  const [liveLoads] = useState(newLoads);
+  // A load lives while its page does: another page can then send its draft.
+  useEffect(() => () => liveLoads.all.forEach((s) => s.release()), [liveLoads]);
+  // The page offers the text of an earlier visit one time: not again when
+  // the frame mounts again, while a load that ended still sends its text.
+  useEarlierDraft(docId, principal?.id);
+  const documentScroller = useRef<DocumentScroller | null>(null);
+  const registerDocumentScroller = useCallback((scroller: DocumentScroller | null) => {
+    documentScroller.current = scroller;
+  }, []);
   const scrollDocumentTo = useCallback((top: number) => {
-    documentScrollerRef.current?.(top);
+    documentScroller.current?.to(top);
   }, []);
   const isMobile = useIsMobile();
   const [listOpen, setListOpen] = useState(false);
@@ -229,12 +259,6 @@ export function DocWorkspace({
   const [chordLabel, setChordLabel] = useState<string>();
   const nav = useNavigate();
   const { theme, setTheme } = useTheme();
-
-  useEffect(() => {
-    setActiveComment(undefined);
-    setListOpen(false);
-    setPlacingPin(false);
-  }, [docId]);
 
   const { leaving, resolveThread } = useResolveThread(docId, setActiveComment);
   const [jump, setJump] = useState<{ id: string }>();
@@ -308,8 +332,10 @@ export function DocWorkspace({
   }, [activeComment, updateDrafts]);
 
   // A selection or a placed pin starts a new draft next to the drafts that
-  // have text. Picking the same text or spot again returns to its draft. A
-  // reader who is signed out signs in first, and comes back to the draft.
+  // have text. Picking the same text or spot again returns to its draft when
+  // the draft has text. An empty draft is not used again: the timer of its
+  // closed popover can remove it before it opens again. A reader who is
+  // signed out signs in first, and comes back to the draft.
   const startDraft = useCallback(
     (selection: PendingSelection, draftVersion = version) => {
       if (signIn) {
@@ -322,6 +348,7 @@ export function DocWorkspace({
           JSON.stringify([anchor?.point, anchor?.start_offset]);
         const same = list.find(
           (draft) =>
+            draft.body.trim() &&
             draft.version === draftVersion &&
             draft.quote === selection.quote &&
             key(draft.anchor) === key(selection.anchor),
@@ -539,24 +566,34 @@ export function DocWorkspace({
       subscribeDocumentKV: stream.subscribeKV,
       reportViewport: stream.reportViewport,
       moveCursor: stream.moveCursor,
+      holdCursor: stream.holdCursor,
       subscribeCursors: stream.subscribeCursors,
       followedCursor,
       onUnfollowCursor,
       canEdit,
       editing,
       setEditing,
-      registerTextSettle,
+      registerLiveText,
       saveState,
       setSaveState,
       retrySave,
       frameReady,
       setFrameReady,
-      stayOnVersion,
-      showLatest,
+      frameShows,
+      showCurrent,
+      frameLoad,
+      reloadFrame,
+      onPage,
+      liveLoads,
       latest,
       live,
-      others,
+      event,
+      typists,
+      madeBy,
+      shownSeq,
       holdUpdate,
+      showUpdate,
+      anchorOf,
     }),
     [
       docId,
@@ -592,22 +629,32 @@ export function DocWorkspace({
       stream.subscribeKV,
       stream.reportViewport,
       stream.moveCursor,
+      stream.holdCursor,
       stream.subscribeCursors,
       followedCursor,
       onUnfollowCursor,
       canEdit,
       editing,
       setEditing,
-      registerTextSettle,
+      registerLiveText,
       saveState,
       retrySave,
       frameReady,
-      stayOnVersion,
-      showLatest,
+      frameShows,
+      showCurrent,
+      frameLoad,
+      reloadFrame,
+      onPage,
+      liveLoads,
       latest,
       live,
-      others,
+      event,
+      typists,
+      madeBy,
+      shownSeq,
       holdUpdate,
+      showUpdate,
+      anchorOf,
     ],
   );
 
@@ -637,14 +684,14 @@ export function DocWorkspace({
       <CommentMap comments={shownComments} />
       <Keycast state={chord} available={chordKeys} label={chordLabel} />
       {/* In Edit mode an accent edge runs along the top of the document, red
-          while the edits do not save. It grows from the left and shrinks
+          while a change cannot save. It grows from the left and shrinks
           back, by its transform alone. */}
       <div
         aria-hidden="true"
         className={cn(
           "pointer-events-none absolute inset-x-0 top-0 z-10 h-0.5 origin-left bg-[var(--color-accent)] transition-[scale,background-color] duration-200 ease-out motion-reduce:transition-none",
           !editing && "scale-x-0 duration-150",
-          notSaved(saveState) && "bg-[var(--color-danger)]",
+          saveState === "refused" && "bg-[var(--color-danger)]",
         )}
       />
     </>
@@ -653,24 +700,28 @@ export function DocWorkspace({
     <DocProvider value={ctx}>
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
       {fullscreen ? (
-        <div className={cn("bg-[var(--color-surface-muted)]", FRAME_AREA)}>
-          {showFullscreenHint ? (
-            <div className="pointer-events-none absolute left-1/2 top-6 z-20 hidden -translate-x-1/2 rounded-full bg-[var(--color-surface)] px-6 py-3 text-base font-semibold text-[var(--color-fg)] shadow-xl ring-1 ring-[var(--color-border)] sm:block">
-              Esc to exit · ? for all shortcuts
-            </div>
-          ) : null}
-          {/* A phone has no Esc key, so its exit stays in view. */}
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={exitFullscreen}
-            aria-label="Exit full screen"
-            className="absolute right-4 top-3 z-20 h-10 w-10 rounded-full sm:hidden"
+        <div className="flex h-full flex-col">
+          {banner}
+          <div
+            className={cn("min-h-0 flex-1 bg-[var(--color-surface-muted)]", FRAME_AREA)}
           >
-            <Minimize2 className="h-4 w-4" />
-          </Button>
-          {frame}
-          {banner?.(true)}
+            {showFullscreenHint ? (
+              <div className="pointer-events-none absolute left-1/2 top-6 z-20 hidden -translate-x-1/2 rounded-full bg-[var(--color-surface)] px-6 py-3 text-base font-semibold text-[var(--color-fg)] shadow-xl ring-1 ring-[var(--color-border)] sm:block">
+                Esc to exit · ? for all shortcuts
+              </div>
+            ) : null}
+            {/* A phone has no Esc key, so its exit stays in view. */}
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={exitFullscreen}
+              aria-label="Exit full screen"
+              className="absolute right-4 top-3 z-20 h-10 w-10 rounded-full sm:hidden"
+            >
+              <Minimize2 className="h-4 w-4" />
+            </Button>
+            {frame}
+          </div>
         </div>
       ) : (
         <div className="flex h-full flex-col">
@@ -680,7 +731,7 @@ export function DocWorkspace({
             onToggleComments: toggleComments,
             onShowShortcuts: () => setShortcutsOpen(true),
           })}
-          {banner?.(false)}
+          {banner}
           <section className="relative min-w-0 flex-1 overflow-hidden bg-[var(--color-surface-muted)]">
             {/* A wide screen makes room for the list beside a crowded
                 document, as Google Docs does. The room opens at once, so the

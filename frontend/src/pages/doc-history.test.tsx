@@ -1,11 +1,19 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Principal, Version } from "@/api";
 import { HistoryDialog } from "./doc-history";
 
 const ana: Principal = { type: "user", id: "ana", name: "Ana" };
-const versions: Version[] = [1, 2].map((number) => ({
+const versions: Version[] = [1, 2, 3].map((number) => ({
   id: `ver_${number}`,
   number,
   created_by: ana,
@@ -21,7 +29,7 @@ const json = (body: unknown, status = 200) =>
 function renderHistory(
   current: string,
   fetch = vi.fn(async () => json({ items: versions })),
-  latest = "ver_2",
+  latest = "ver_3",
   onSelectVersion = () => {},
 ) {
   vi.stubGlobal("fetch", fetch);
@@ -50,34 +58,24 @@ afterEach(() => {
 
 describe("HistoryDialog", () => {
   it("marks only the current entry when the document is not a preview", async () => {
-    const dialog = renderHistory("ver_2");
+    const dialog = renderHistory("ver_3");
     expect(await within(dialog).findByText("Current")).toBeVisible();
     expect(within(dialog).queryByText("Viewing")).toBeNull();
-    // The session counts its earlier entries once, on the expander.
-    expect(within(dialog).queryByText(/edits since/)).toBeNull();
-    expect(
-      within(dialog).getByRole("button", { name: "Show 1 earlier edit" }),
-    ).toBeVisible();
   });
 
   it("marks the entry that the preview shows", async () => {
-    const dialog = renderHistory("ver_1");
+    const dialog = renderHistory("ver_2");
     expect(
       await within(dialog).findByText("Viewing", { exact: false }),
     ).toBeInTheDocument();
   });
 
-  it("leaves out an edit that its author undid", async () => {
-    const undone: Version[] = [
-      { ...versions[0], sha256: "a" },
+  it("shows every entry, also those that are newer than a restored one", async () => {
+    // The author typed x, restored the version before it, and typed y.
+    const restored: Version[] = [
+      versions[0],
       { ...versions[1], sha256: "b", change_summary: "Added “x”" },
-      {
-        id: "ver_3",
-        number: 3,
-        created_by: ana,
-        sha256: "a",
-        change_summary: "Removed “x”",
-      },
+      { ...versions[2], sha256: "a", change_summary: "Restored an earlier version" },
       {
         id: "ver_4",
         number: 4,
@@ -86,75 +84,115 @@ describe("HistoryDialog", () => {
         change_summary: "Added “y”",
       },
     ];
-    const dialog = renderHistory(
-      "ver_4",
-      vi.fn(async () => json({ items: undone })),
-      "ver_4",
-    );
-    expect(await within(dialog).findByText("Added “y”")).toBeVisible();
-    fireEvent.click(
-      within(dialog).getByRole("button", { name: "Show 1 earlier edit" }),
-    );
-    expect(within(dialog).getByText("Created")).toBeInTheDocument();
-    expect(within(dialog).queryByText("Added “x”")).toBeNull();
-    expect(within(dialog).queryByText("Removed “x”")).toBeNull();
-  });
-
-  it("lets the entry before an undone newest run stand for the latest version", async () => {
-    const undone: Version[] = [
-      { ...versions[0], sha256: "a" },
-      { ...versions[1], sha256: "b", change_summary: "Changed “Green” to “Greeny”" },
-      {
-        id: "ver_3",
-        number: 3,
-        created_by: ana,
-        sha256: "a",
-        change_summary: "Changed “Greeny” to “Green”",
-      },
-    ];
     const onSelectVersion = vi.fn();
     const dialog = renderHistory(
-      "ver_3",
-      vi.fn(async () => json({ items: undone })),
-      "ver_3",
+      "ver_4",
+      vi.fn(async () => json({ items: restored })),
+      "ver_4",
       onSelectVersion,
     );
-    const entry = (await within(dialog).findByText("Created")).closest("button")!;
-    expect(within(entry).getByText("Current")).toBeVisible();
-    expect(within(dialog).queryByText(/Greeny/)).toBeNull();
-    fireEvent.click(entry);
-    expect(onSelectVersion).not.toHaveBeenCalled();
+    const newest = (await within(dialog).findByText("Added “y”")).closest("button")!;
+    expect(within(newest).getByText("Current")).toBeVisible();
+    fireEvent.click(within(dialog).getByText("Added “x”"));
+    expect(onSelectVersion).toHaveBeenCalledExactlyOnceWith("ver_2");
+    // The version on screen opens nothing.
+    fireEvent.click(newest);
+    expect(onSelectVersion).toHaveBeenCalledOnce();
   });
 
-  it("names everyone who typed in a live session, the newest author first", async () => {
+  it("gives each version a row of its own: the time, the person, and what changed", async () => {
+    // An agent pushed thirteen times in two minutes.
+    const bot: Principal = { type: "service_account", id: "sa_docs" };
+    const pushes: Version[] = Array.from({ length: 13 }, (_, i) => ({
+      id: `ver_${i + 2}`,
+      number: i + 2,
+      created_by: bot,
+      created_at: new Date(Date.UTC(2026, 9, 1, 10, 0, i * 10)).toISOString(),
+      change_summary: `Added “push ${i + 1}”`,
+    }));
+    const dialog = renderHistory(
+      "ver_14",
+      vi.fn(async () => json({ items: [versions[0], ...pushes] })),
+      "ver_14",
+    );
+    const newest = (await within(dialog).findByText("Added “push 13”")).closest(
+      "button",
+    )!;
+    const rows = within(dialog)
+      .getAllByRole("button")
+      .filter((b) => b.querySelector("time"));
+    // The newest is first, and nothing hides behind a count.
+    expect(rows).toHaveLength(14);
+    expect(rows[0]).toBe(newest);
+    expect(newest.querySelector("time")).toHaveAttribute(
+      "datetime",
+      pushes[12].created_at,
+    );
+    expect(newest).toHaveTextContent(/sa_docsAdded “push 13”$/);
+    expect(rows[13]).toHaveTextContent(/AnaCreated$/);
+    expect(dialog).not.toHaveTextContent(/earlier|since/);
+  });
+
+  it("names everyone who typed in a version, at the time of its last edit", async () => {
     const ravi: Principal = { type: "user", id: "ravi", name: "Ravi" };
-    const live: Version[] = [
-      { ...versions[0], live: true },
-      { ...versions[1], created_by: ravi, live: true },
+    const edited_at = new Date(Date.UTC(2026, 9, 1, 11)).toISOString();
+    const typed: Version[] = [
+      versions[0],
+      { ...versions[1], created_by: ravi },
+      {
+        ...versions[2],
+        created_by: ravi,
+        authors: [ravi, ana],
+        edited_at,
+        change_summary: "Added “x”",
+      },
     ];
     const dialog = renderHistory(
-      "ver_2",
-      vi.fn(async () => json({ items: live })),
+      "ver_3",
+      vi.fn(async () => json({ items: typed })),
     );
-    expect(await within(dialog).findByText(/^Ravi and Ana · since /)).toBeVisible();
+    const entry = (await within(dialog).findByText("Ravi and Ana")).closest("button")!;
+    // The version that people still type in is a row as each other one.
+    expect(entry).toHaveTextContent(/CurrentRavi and AnaAdded “x”$/);
+    expect(entry.querySelector("time")).toHaveAttribute("datetime", edited_at);
+    expect(dialog).not.toHaveTextContent("Now");
+  });
+
+  it("reads the versions again each time it opens", async () => {
+    const fetch = vi.fn(async () => json({ items: versions }));
+    vi.stubGlobal("fetch", fetch);
+    const history = (open: boolean) => (
+      <HistoryDialog
+        open={open}
+        onOpenChange={() => {}}
+        docId="doc_1"
+        current="ver_3"
+        latest="ver_3"
+        canRestore
+        onSelectVersion={() => {}}
+      />
+    );
+    const client = new QueryClient();
+    const { rerender } = render(history(false), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      ),
+    });
+    await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+
+    rerender(history(true));
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+  });
+
+  it("says what an entry is for, and that it can come back only to a reader who can restore", async () => {
+    const dialog = renderHistory("ver_3");
     expect(
-      within(dialog).getByRole("button", { name: "Show 1 earlier edit" }),
+      within(dialog).getByText(
+        "Open an entry to see the document as it was, and restore it to bring it back.",
+      ),
     ).toBeVisible();
-  });
-
-  it("names the one author of a session", async () => {
-    const dialog = renderHistory("ver_2");
-    expect(await within(dialog).findByText(/^Ana · since /)).toBeVisible();
-  });
-
-  it("gives each earlier edit its own time, small and muted", async () => {
-    const dialog = renderHistory("ver_2");
-    fireEvent.click(
-      await within(dialog).findByRole("button", { name: "Show 1 earlier edit" }),
-    );
-    const entry = within(dialog).getByText("Created").closest("button")!;
-    const time = entry.querySelector(`time[datetime="${versions[0].created_at}"]`);
-    expect(time?.parentElement).toHaveClass("text-xs", "text-[var(--color-fg-muted)]");
+    expect(within(dialog).queryByText(/Every edit is kept/)).toBeNull();
   });
 
   it("shows that the history loads", () => {

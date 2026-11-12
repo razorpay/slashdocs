@@ -86,6 +86,36 @@ describe("applyRegions", () => {
     ).toBe("<p>&ampx &notin; A\r\nb&#xA0;</p>");
   });
 
+  test("writes text that goes on after </body> only before </body>", async () => {
+    // The parser puts "def" after </body> in the last text of the body. A
+    // frame that loaded the source shows it, and a frame that a patch
+    // changed does not.
+    const source = "<html><body><p>a</p>abc</body>def</html>";
+    const body = (text: string): Region => ({
+      from: 6,
+      to: 6,
+      pieces: [
+        {
+          element: 6,
+          children: [{ keep: 12 }, { text, was: { parent: 6, index: 1 } }],
+        },
+      ],
+      removed: [],
+    });
+    expect(await apply(source, body("abXcdef"))).toBe(
+      "<html><body><p>a</p>abXc</body>def</html>",
+    );
+    expect(await apply(source, body("abX"))).toBe(
+      "<html><body><p>a</p>abX</body>def</html>",
+    );
+    expect(await apply(source, body("abcdef!"))).toBe(
+      "refused: the text after </body> cannot change",
+    );
+    expect(await apply(source, body("abcdf"))).toBe(
+      "refused: the text after </body> cannot change",
+    );
+  });
+
   test("applies regions in any order", async () => {
     const source = "<p>a</p><p>b</p>";
     const text = (at: number, text: string): Region => ({
@@ -176,6 +206,51 @@ describe("applyRegions", () => {
     );
   });
 
+  // A patch put in <p id="c" class='x'>. The region writes that element
+  // with its start tag exactly as the patch had it, and no other tag.
+  describe("an element that a patch put in", () => {
+    const made = new Set([`<p id="c" class='x'>`]);
+    const region = (open: string, close = "</p>"): Region => ({
+      from: 0,
+      to: 0,
+      pieces: [{ open, close, children: [{ text: "t" }] }],
+      removed: [0],
+    });
+    const write = async (piece: Region) => {
+      const result = applyRegions(await parseSource("<p>a</p>"), [piece], [], made);
+      return "html" in result ? result.html : `refused: ${result.refused}`;
+    };
+
+    test("keeps its start tag as the patch had it", async () => {
+      expect(await write(region(`<p id="c" class='x'>`))).toBe(
+        `<p id="c" class='x'>t</p>`,
+      );
+    });
+
+    test.each([
+      [
+        "another id",
+        `<p id="d" class='x'>`,
+        "</p>",
+        `new content cannot be <p id="d" class='x'></p>`,
+      ],
+      [
+        "other quotes",
+        `<p id="c" class="x">`,
+        "</p>",
+        "new content cannot have id on <p>",
+      ],
+      [
+        "another end tag",
+        `<p id="c" class='x'>`,
+        "</div>",
+        `new content cannot be <p id="c" class='x'></div>`,
+      ],
+    ])("refuses %s", async (_, open, close, reason) => {
+      expect(await write(region(open, close))).toBe(`refused: ${reason}`);
+    });
+  });
+
   test("refuses regions that overlap", async () => {
     const region: Region = { from: 0, to: 0, pieces: [{ keep: 0 }], removed: [] };
     expect(await apply("<p>a</p>", region, region)).toBe(
@@ -208,9 +283,75 @@ describe("applyRegions", () => {
       }),
     ).toBe(source + open + "</ol>");
   });
+
+  test("writes the changes outside the regions where the regions copy the source", async () => {
+    const source =
+      '<style>p{}</style><div class="a"><p>one</p></div><p class="b">two</p>';
+    const tree = await parseSource(source);
+    const change = (from: string, text: string) => ({
+      start: source.indexOf(from),
+      end: source.indexOf(from) + from.length,
+      text,
+    });
+    const outside = [
+      change("p{}", "p{color:red}"),
+      change('<div class="a">', '<div class="c">'),
+      change('<p class="b">', "<p>"),
+    ];
+    const div = source.indexOf("<div");
+    const one = source.indexOf("<p>one");
+    const region = (at: number, text: string): Region => ({
+      from: at,
+      to: at,
+      pieces: [{ element: at, children: [{ text }] }],
+      removed: [],
+    });
+    expect(applyRegions(tree, [], outside)).toEqual({
+      html: '<style>p{color:red}</style><div class="c"><p>one</p></div><p>two</p>',
+    });
+    // A region copies the start tag of the element that it writes, and each
+    // element that it keeps.
+    expect(applyRegions(tree, [region(one, "one!")], outside)).toEqual({
+      html: '<style>p{color:red}</style><div class="c"><p>one!</p></div><p>two</p>',
+    });
+    expect(
+      applyRegions(
+        tree,
+        [{ from: div, to: div, pieces: [{ keep: div }, { text: "new" }], removed: [] }],
+        outside,
+      ),
+    ).toEqual({
+      html: '<style>p{color:red}</style><div class="c"><p>one</p></div>new<p>two</p>',
+    });
+    // A change that a region writes over is refused.
+    expect(
+      applyRegions(tree, [region(one, "one!")], [change("<p>one</p>", "<p>uno</p>")]),
+    ).toEqual({ refused: "a change outside the regions is in a region" });
+  });
 });
 
 describe("replacementsBetween", () => {
+  // Another person typed " on th" at the caret of this one, who now types
+  // " o" before it. A diff that matches "on" or a space of the two texts by
+  // chance puts the "o" into the word of the other person.
+  test("gives text typed next to equal words as one change, at one place", () => {
+    const prev = '<p id="a">The plan starts here on th and ends there.</p>';
+    const next = '<p id="a">The plan starts here o on th and ends there.</p>';
+    const changes = replacementsBetween(prev, next);
+    expect(changes).toHaveLength(1);
+    expect(changes[0].old_html).toBe("");
+    expect(changes[0].new_html).toMatch(/^( o|o )$/);
+  });
+
+  test("gives two changes for edits that have a word between them that is there once", () => {
+    const prev = "<p>one two three</p><p>the end of the tale</p>";
+    const next = "<p>one 2 three</p><p>the end of the story</p>";
+    expect(replacementsBetween(prev, next).map((r) => r.new_html)).toEqual([
+      "2",
+      "story",
+    ]);
+  });
+
   test("gives nothing for equal sources", () => {
     expect(replacementsBetween("<p>a</p>", "<p>a</p>")).toEqual([]);
   });

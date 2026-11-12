@@ -1,865 +1,980 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast, type ExternalToast } from "sonner";
-import { api, APIError, type Principal } from "@/api";
-import { disruption } from "@/lib/disruption";
-import { principalLabel, principalNames, samePrincipal } from "@/lib/principals";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import {
+  api,
+  APIError,
+  currentVersionID,
+  type DocumentChanges,
+  type DocumentEvent,
+  type Principal,
+} from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
-import {
-  checkScriptChange,
-  findLiterals,
-  writeScriptChange,
-  type Render,
-} from "@/lib/script-literals";
-import {
-  applyRegions,
-  parseSource,
-  replacementsBetween,
-  type Replacement,
-  type SourceTree,
-} from "@/lib/source-edits";
-import { applyReplacements, merge3 } from "@/lib/source-merge";
+import { findLiterals, type Render } from "@/lib/script-literals";
+import { applyOps, sumOf } from "@/lib/source-merge";
 import { patchBetween } from "@/lib/source-patch";
-import {
-  draftText,
-  readTextDraft,
-  removeTextDraft,
-  writeTextDraft,
-} from "@/lib/text-drafts";
-import { randomId } from "@/lib/uuid";
-import type { Patch, ScriptChange } from "../../bridge/source-pieces";
+import { draftText, removeTextDraft, writeTextDraft } from "@/lib/text-drafts";
+import type { Patch } from "../../bridge/source-pieces";
 import type { SaveState, TextEditResult, TextPatchResult } from "./doc-context";
 import type { DocUpdate } from "./doc-update-banner";
+import {
+  apart,
+  applied,
+  cancel,
+  denied,
+  draftOf,
+  drop,
+  enter,
+  expire,
+  failure,
+  fromFrame,
+  gone,
+  hidden,
+  lags,
+  lose,
+  Lost,
+  newLoad,
+  open,
+  outdated,
+  over,
+  pending,
+  release,
+  removed,
+  request,
+  signedOut,
+  stage,
+  TIMERS,
+  Unread,
+  unsaved,
+  type Load,
+  type Loads,
+  type Op,
+  type Patched,
+  type Screen,
+  type Text,
+  type Timer,
+} from "./live-load";
+import {
+  describe,
+  outsideAfter,
+  screenOf,
+  stringPatches,
+  without,
+} from "./live-screen";
+import { useApprovalNotes } from "./use-approval-notes";
+import { copyAction } from "./use-earlier-draft";
 
-// A pause in typing this long saves the edits, and typing without a pause
-// still saves after the longest delay.
-const ALONE = { pause: 1500, most: 10_000 };
-// With other people in the document the saves are fast, so that those
-// people see the text as it comes.
-const TOGETHER = { pause: 300, most: 700 };
-// A save or a follow that failed for a reason that can pass, such as the
+// A change in the frame goes to the server after this long, so that the
+// events of one key are one operation. It is too short to see.
+const BURST_MS = 50;
+// A send or a follow that failed for a reason that can pass, such as the
 // network, tries again after this long.
 const RETRY_MS = 5_000;
+// Sends that fail go again by themselves, so the bar says nothing at first.
+// It says that the text is not saved when they fail for this long.
+const FAILED_SIGN_MS = 10_000;
 // A key that comes between a take and its patch makes the patch stale. The
-// patch then goes again, at most this many times.
+// patch then goes again, at most this many times, and after that when the
+// keys stopped for a moment.
 const PATCH_ATTEMPTS = 4;
+const STALE_MS = 300;
+// While a change waits behind the banner, the frame is asked about it again
+// after the reader scrolled, at most once in this time.
+const ASK_MS = 1_000;
 
-const FAILED_TOAST = "autosave-failed";
-const REFUSED_TOAST = "autosave-refused";
-const COPIED_TOAST = "autosave-copied";
-const EARLIER_TOAST = "autosave-earlier";
-const APPROVALS_TOAST = "autosave-approvals";
+const REFUSED_TOAST = "live-text-refused";
 
-// The edits do not fit the version that the server has.
-const UNFIT =
-  "This edit does not fit the latest version of the document, so it cannot save.";
+// The edits do not fit the document that the server has, or its source.
+const UNFIT = "This edit no longer fits the document, so it cannot save.";
 
-// The messages of a save that did not go, by the status of the response.
+// The messages of an operation that the server refused, by the status of
+// the response, and for another status.
 const SERVER_REFUSALS: Record<number, string> = {
   403: "You can no longer edit this document, so your text cannot save.",
   404: "This document no longer exists, so your text cannot save.",
   413: "This change is too large to save.",
 };
-
-// The version that the frame loaded: its source, and the parse of it that
-// the regions from the frame and the patches for the frame refer to.
-type Base = { source: string; tree: SourceTree };
-
-// The text from one load of the frame to the next. head is the version that
-// this client follows. shown is the source that the frame showed for the
-// head, with and without script text: what the frame shows more than that
-// is not saved.
-type Text = {
-  base: Base;
-  // from is the version that the server made the head on.
-  head: { id: string; source: string; from?: string };
-  shown: { source: string; regions: string };
-  // What turns shown into the head, when the server gave it. The server
-  // gives it exactly, also for a change too large for the diff here.
-  ahead?: Replacement[];
-};
-
-// A script string that a save changes: the text that the page shows for it
-// before the save and after it, and the count of places that show it. key
-// names the script text that the reader typed in.
-type ScriptSave = { key: string; from: string; to: string; places: number };
-
-// One save: the text that it is for, the source that the frame showed, the
-// source that it makes, and the request. A request that failed for a reason
-// that can pass goes again as it is, so that the server can tell that it is
-// the same save.
-type Save = {
-  text: Text;
-  now: Text["shown"];
-  target: string;
-  body: Parameters<typeof api.editSource>[1];
-  scripts: ScriptSave[];
-};
-
-// The edits cannot be written into the source.
-class Refused extends Error {}
-
-// The source of the loaded version did not load, so no edit can be written
-// into it yet. It says nothing about the save, so it loads again.
-class Unread extends Error {}
+const REFUSED = "The server did not take this change, so it cannot save.";
 
 // useLiveText keeps the rendered document and the server together, for
-// readers and editors. save sends what the editor typed as replacements by
-// position, and the server merges them with the changes of other people.
-// follow gets the changes from the head to the newest version. patch shows
-// them in the frame in place, around the text that the editor types. It
-// returns the functions to call on each change in the frame and on each
-// draft that the frame sends.
+// readers and editors. There is no save step: send gives what the editor
+// typed to the server at once, as one operation of replacements by position,
+// and the server merges it with the changes of other people. While one
+// operation is on its way, the next changes wait and go as one. follow gets
+// the changes after the head. patch shows them in the frame in place, around
+// the text that the editor types. The states of a load are at the top of
+// live-load.ts. The hook returns the functions to call on what the frame
+// tells, and those that the page calls for the reader.
 export function useLiveText(options: {
   docId: string;
-  // The version the frame loaded, and which load it is. A new load starts
-  // over from that version.
-  loaded: { version: string; load: number };
-  // The newest version of the document, when the page knows it.
-  latest?: string;
-  // The frame is ready and follows the newest version. A preview does not.
+  // The principal of the reader. Storage keeps their text as theirs, and
+  // keeps nothing for a reader with no principal.
+  owner?: string;
+  // Takes the reader to sign in. It is there when the reader is signed out.
+  signIn?: () => void;
+  // What the frame loaded: the version, the seq of the document that it
+  // shows, and the URL, which each load of the frame has its own. A new
+  // load starts over from there. A server with no live documents gives no
+  // seq: nothing is sent or followed then.
+  loaded: { version: string; seq?: number; url?: string };
+  // The newest seq of the document, when the page knows it.
+  latest?: number;
+  // The last event of the document. It can hold a small operation, which
+  // then needs no request.
+  event?: DocumentEvent;
+  // The frame is ready and follows the live document. A preview does not.
   live: boolean;
-  // Other people have the document open.
-  others: boolean;
+  // Edit mode: the reader can type in the frame.
+  editing: boolean;
+  // The page of the document is there. It stays when the frame mounts
+  // again, as full screen does, and this hook ends then.
+  onPage: { readonly current: boolean };
+  // The loads that the page answers for. They outlive this hook.
+  loads: Loads;
   take: () => Promise<TextEditResult>;
   // Changes the frame in place, for the count of edits of the last take.
-  patch: (patches: Patch[], edits: number, flash: boolean) => Promise<TextPatchResult>;
+  // With ask, the frame holds a change that would change much of what the
+  // reader sees, and changes nothing.
+  patch: (
+    patches: Patch[],
+    edits: number,
+    flash: boolean,
+    ask: boolean,
+  ) => Promise<TextPatchResult>;
   setState: (state: SaveState) => void;
-  // The frame shows this version, so the page moves to it without a load.
-  // The server made it on top of the version from.
-  move: (versionID: string, from?: string) => void;
-  // Loads a version, or else the latest one, in place of what is on screen.
-  reload: (versionID?: string) => void;
+  // Holds the cursor of the reader while the server does not hold all of
+  // their text: a cursor names a place in that text, which other people do
+  // not have yet. The server relays an operation before it answers it.
+  holdCursor: (held: boolean) => void;
+  // The frame shows the document at this seq, which this version holds. It
+  // shows no seq that the page can follow while it loads, and in a preview.
+  frameShows: (seq: number | undefined, versionID: string) => void;
+  // Loads the document in the frame again, in place of what is on screen.
+  reload: () => void;
   // Shows the banner for a change that waits for the reader, or removes it.
   holdUpdate: (update?: DocUpdate) => void;
-  // Renders a source in a probe frame, to make sure that a script change
-  // shows.
+  // The people who made the changes that are not typing after a seq, up to
+  // another one, or none when the page knows of no change there (see
+  // useTypists).
+  madeBy: (after: number, upto: number) => Principal[] | undefined;
+  // Renders a source in a probe frame: a script change must show there.
   probe: Render;
   // Changes the script text that the page shows in every place, as a load
   // of the saved source would.
   replaceText: (from: string, to: string) => void;
 }) {
-  const { loaded, latest, live } = options;
+  const { docId, loaded, latest, live, editing, event, signIn } = options;
   const opts = useRef(options);
   opts.current = options;
   const q = useQueryClient();
-  // Unset until the source of the loaded version loads.
-  const text = useRef<Text | undefined>(undefined);
-  const unsent = useRef<Save | undefined>(undefined);
-  // The latest edits from the frame. They save when the frame goes before
-  // it could save them, and stay in storage while they cannot save.
-  const draft = useRef<TextEditResult | undefined>(undefined);
-  // Set while storage holds the draft of this visit.
-  const kept = useRef(false);
-  // Set when the frame went away: saves use the draft, and say nothing.
-  const gone = useRef(false);
-  const timer = useRef<number | undefined>(undefined);
-  const retry = useRef<number | undefined>(undefined);
-  const burstStart = useRef(0);
-  // Set while a save or a follow runs: one runs at a time. A save (again)
-  // and a follow (asked) that were asked for meanwhile start when the run
-  // ends, the save first.
-  const busy = useRef(false);
-  const again = useRef(false);
-  const asked = useRef(false);
-  // Called when the run on its way ends.
-  const waiting = useRef<(() => void)[]>([]);
-  // Set when the frame cannot show the head in place. It loads the head
-  // once the text on screen is saved.
-  const stale = useRef(false);
-  const unsaved = useRef(false);
-  const attempts = useRef(0);
-  // Why the last save left out a change, if it did.
-  const refusal = useRef<string | undefined>(undefined);
-  // Shows again the message of edits that cannot save, with its choices.
-  const problem = useRef<(() => void) | undefined>(undefined);
-  // The outcome of each script change, by its JSON, and the text that the
-  // page shows for each script text that the reader typed in.
-  const checks = useRef(
-    new Map<string, Promise<{ places: number } | { refused: string }>>(),
+  // The load of the frame. Each load of the frame makes a new one (see
+  // below). The first one stands in until then: it is not on the page, and
+  // holds no lock.
+  const [first] = useState(newLoad);
+  const load = useRef(first);
+  const { beforeEdit, afterEdit } = useApprovalNotes(docId);
+
+  // send and follow start work again after a time, through this. wait
+  // starts it for one of the timers of a load, after due makes the change
+  // that the end of the time makes. A page that went tries nothing again.
+  const run = useRef<(s: Load) => Promise<void>>(async () => {});
+  const wait = useCallback((s: Load, timer: Timer, delay: number, due?: () => void) => {
+    cancel(s, timer);
+    s.timers[timer] = window.setTimeout(() => {
+      delete s.timers[timer];
+      if (!opts.current.onPage.current) return;
+      due?.();
+      void run.current(s);
+    }, delay);
+  }, []);
+
+  // forget takes the draft of a load out of storage.
+  const forget = useCallback((s: Load) => {
+    const { docId, owner } = opts.current;
+    if (s.kept && owner) removeTextDraft(owner, docId, s.id);
+    s.kept = false;
+  }, []);
+  // Whether the frame can hold text of the reader: they are in Edit mode,
+  // or they typed in this load of the frame. What a frame shows while
+  // changes wait behind the banner is never an edit.
+  const writes = useCallback(
+    (s: Load) => !s.text?.held && (opts.current.editing || !!s.draft?.edits),
+    [],
   );
-  const written = useRef(new Map<string, Pick<ScriptSave, "to" | "places">>());
-  // Set when the document has approvers, whose approvals an edit resets.
-  const reviewed = useRef(false);
-  reviewed.current = !!useQuery({
-    queryKey: queryKeys.document(options.docId),
-    queryFn: () => api.getDocument(options.docId),
-  }).data?.approval_status;
-  // The version whose approvers the editor was told about.
-  const noted = useRef<string | undefined>(undefined);
-  // save and follow start each other, so each one starts through this.
-  const run = useRef({ save: async () => {}, follow: async () => {} });
+  // keep makes storage follow what the server may not hold of a load, so
+  // that it outlives the page (see draftOf).
+  const keep = useCallback(
+    (s: Load) => {
+      const { docId, owner } = opts.current;
+      if (!owner) return;
+      s.kept = true;
+      const draft = draftOf(s, writes(s));
+      if (draft) writeTextDraft(owner, docId, s.id, draft);
+      else removeTextDraft(owner, docId, s.id);
+    },
+    [writes],
+  );
 
-  // keep puts the draft in storage, so that it outlives the page while it
-  // cannot save. forget removes it when it saved or the reader dropped it.
-  const keep = useCallback(() => {
-    const { docId, loaded } = opts.current;
-    if (!draft.current) return;
-    kept.current = true;
-    writeTextDraft(docId, { version: loaded.version, edits: draft.current });
+  // Whether the frame does not show the newest state of the document that
+  // the page knows.
+  const behind = useCallback((s: Load) => {
+    const { latest = 0, event } = opts.current;
+    const newest = Math.max(latest, event?.seq ?? 0);
+    return (
+      s.sync === "lost" || lags(s.text) || newest > (s.text?.head.seq ?? s.seq ?? 0)
+    );
   }, []);
-  const forget = useCallback(() => {
-    if (kept.current) removeTextDraft(opts.current.docId);
-    kept.current = false;
-  }, []);
 
-  useEffect(() => {
-    // A new load drops what the frame showed. When that was not saved, the
-    // reader chose to see the saved version.
-    if (unsaved.current) opts.current.setState("idle");
-    text.current = undefined;
-    unsent.current = undefined;
-    draft.current = undefined;
-    again.current = asked.current = stale.current = false;
-    unsaved.current = false;
-    refusal.current = undefined;
-    problem.current = undefined;
-    checks.current = new Map();
-    written.current = new Map();
-    forget();
-    opts.current.holdUpdate(undefined);
-    for (const id of [REFUSED_TOAST, FAILED_TOAST]) toast.dismiss(id);
-  }, [loaded, forget]);
-
-  // Text that did not save on an earlier visit. The reader copies it to add
-  // it again, or discards it.
-  const { docId } = options;
-  useEffect(() => {
-    const earlier = readTextDraft(docId);
-    if (!earlier) return;
-    toast.error("You have text in this document that was not saved.", {
-      id: EARLIER_TOAST,
-      duration: Infinity,
-      action: copyAction(async () =>
-        draftText(
-          (await readBase(docId, earlier.version).catch(() => undefined))?.tree,
-          earlier.edits,
-        ),
-      ),
-      cancel: {
-        label: "Discard my change",
-        // Storage may hold the draft of this visit by now.
-        onClick: () => {
-          if (readTextDraft(docId)?.updatedAt === earlier.updatedAt)
-            removeTextDraft(docId);
-        },
-      },
-    });
-    return () => void toast.dismiss(EARLIER_TOAST);
-  }, [docId]);
-
-  // The text of this load of the frame. It starts at the loaded version.
-  const load = useCallback(async (): Promise<Text> => {
-    const { docId, loaded } = opts.current;
-    if (text.current) return text.current;
-    const base = await readBase(docId, loaded.version).catch((cause) => {
-      throw new Unread("", { cause });
-    });
-    // A new load of the frame came first.
-    if (opts.current.loaded !== loaded) throw new Unread();
-    const { source } = base;
-    return (text.current ??= {
-      base,
-      head: { id: loaded.version, source },
-      shown: { source, regions: source },
-    });
-  }, []);
-  // Whether the frame still shows the load that an operation started on.
-  const here = (at: Text) => !gone.current && text.current === at;
-  // Whether the frame holds text that is not saved, or that a save waits for.
-  const pending = () => unsaved.current || timer.current !== undefined;
-
-  // The approvers whose approval counts on a version. Without them, the
-  // messages say nothing about approvals.
-  const approvedOn = useCallback(async (version: string): Promise<Principal[]> => {
-    if (!reviewed.current) return [];
+  // read gives the text of a load of the frame. It starts at the loaded
+  // seq, with the loaded source, which is read once.
+  const read = useCallback(async (s: Load): Promise<Text> => {
     try {
-      const { items } = await api.listApprovals(opts.current.docId, version);
-      return items.filter((i) => i.decision === "approved").map((i) => i.approver);
-    } catch {
-      return [];
+      return (
+        s.text ??
+        (await (s.reading ??= open(s, opts.current.docId).finally(
+          () => (s.reading = undefined),
+        )))
+      );
+    } catch (cause) {
+      throw new Unread("", { cause });
     }
   }, []);
 
-  // Before the first key on an approved version, the editor learns that a
-  // change asks its approvers to approve again. They learn it once for each
-  // version that has approvals.
-  const focused = useCallback(async () => {
-    const version = text.current?.head.id ?? opts.current.loaded.version;
-    if (noted.current === version) return;
-    noted.current = version;
-    const approvers = await approvedOn(version);
-    if (approvers.length)
-      toast.info(`Your change asks ${principalNames(approvers)} to approve again.`, {
-        id: APPROVALS_TOAST,
-      });
-  }, [approvedOn]);
+  // recover gives the text of a load with a head that this client knows.
+  // When this client lost the head, the live document is the new head, with
+  // no operations that lead to it: the text that the frame holds then
+  // merges into it from the two sources. It changes the head, so only the
+  // work, which sends and follows from the head, calls it.
+  const recover = useCallback(
+    async (s: Load): Promise<Text> => {
+      const at = await read(s);
+      if (s.sync !== "lost") return at;
+      const { docId } = opts.current;
+      try {
+        const version = currentVersionID(await api.getDocument(docId));
+        const { source, seq } = await api.versionSource(docId, version);
+        if (seq === undefined) throw new Unread();
+        at.head = { seq, version, source };
+        at.ahead = undefined;
+        s.sync = "unsure";
+        return at;
+      } catch (cause) {
+        throw new Unread("", { cause });
+      }
+    },
+    [read],
+  );
 
   // Whether the reader can type in script text: when one string of the
   // loaded source holds it.
   const scriptEditable = useCallback(
     async (typed: string): Promise<boolean> =>
-      (await findLiterals((await load()).base.source, typed)).length === 1,
-    [load],
+      (await findLiterals((await read(load.current)).base.source, typed)).length === 1,
+    [read],
   );
 
-  // check makes sure once that a script change shows on the page. Without
-  // the frame, only a change that was checked before can save.
-  const check = useCallback((change: ScriptChange) => {
-    const key = JSON.stringify(change);
-    let checked = checks.current.get(key);
-    if (!checked && !gone.current) {
-      checked = checkScriptChange(text.current!.base, change, opts.current.probe).catch(
-        () => ({ refused: "The new text could not be checked." }),
-      );
-      checks.current.set(key, checked);
-    }
-    return checked;
-  }, []);
-
-  // The local source for what the frame shows: the loaded source with every
-  // region, and with each script change that shows on the page. refused
-  // tells why a script change is left out.
+  // The screen for edits of the frame (see screenOf).
   const build = useCallback(
-    async ({ regions, scripts }: TextEditResult) => {
-      const applied = applyRegions(text.current!.base.tree, regions);
-      if ("refused" in applied) throw new Refused(applied.refused);
-      let html = applied.html;
-      let refused: string | undefined;
-      const changes: ScriptSave[] = [];
-      for (const change of scripts) {
-        const key = JSON.stringify(change.locator);
-        const last = written.current.get(key);
-        // Text typed back to its loaded text writes nothing into the source,
-        // but its other places still show the last save.
-        if (change.before.trim() === change.after.trim()) {
-          if (last)
-            changes.push({ key, from: last.to, to: change.after, places: last.places });
-          continue;
-        }
-        const checked = await check(change);
-        if (checked && "refused" in checked) refused ??= checked.refused;
-        if (!checked || "refused" in checked) continue;
-        const done = await writeScriptChange(html, change.before, change.after);
-        if (!done) continue;
-        html = done;
-        const from = last?.to ?? change.before;
-        changes.push({ key, from, to: change.after, places: checked.places });
-      }
-      return { html, regions: applied.html, scripts: changes, refused };
-    },
-    [check],
+    (s: Load, taken: TextEditResult) => screenOf(s, taken, opts.current.probe),
+    [],
   );
 
-  // The edits on screen: from the frame, or the last draft without it.
-  const edits = useCallback(async () => {
-    if (!gone.current) draft.current = await opts.current.take();
-    return draft.current;
-  }, []);
-
-  // The save for what the frame shows now, or nothing when the head holds
-  // it. Between a save that the server merged and its patch, the frame does
-  // not show the head: the text typed since then merges into the head here,
-  // as it does on the server.
-  const next = useCallback(async (): Promise<Save | undefined> => {
-    const at = await load();
-    const result = await edits();
-    if (!result) return undefined;
-    const built = await build(result);
-    refusal.current = built.refused;
-    const { head, shown } = at;
-    const now = { source: built.html, regions: built.regions };
-    const target =
-      shown.source === head.source
-        ? now.source
-        : merge3(shown.source, now.source, at.ahead ?? head.source);
-    const replacements = replacementsBetween(head.source, target);
-    if (!replacements.length) {
-      at.shown = now;
-      return undefined;
-    }
-    const scripts = built.scripts.filter((s) => s.from.trim() !== s.to.trim());
-    // A save of script text only says what it changed in words.
-    const summary =
-      scripts.length && now.regions === shown.regions ? describe(scripts) : undefined;
-    return {
-      text: at,
-      now,
-      target,
-      body: {
-        base_version_id: head.id,
-        client_change_id: randomId(),
-        replacements,
-        change_summary: summary,
-      },
-      scripts,
-    };
-  }, [load, edits, build]);
-
-  // Copies the text that the reader typed, as it is now.
-  const copyTyped = useMemo(
-    () =>
-      copyAction(async () => {
-        const result = await edits();
-        return result ? draftText(text.current?.base.tree, result) : "";
-      }),
-    [edits],
-  );
-
-  // tell gives the state of the edits on screen to the page. Edits that are
-  // not saved stay in storage, and edits that cannot save show why, with the
-  // choices, until the reader acts on them.
-  const tell = useCallback(
-    (state: SaveState) => {
-      unsaved.current = state !== "saved" && state !== "idle";
-      opts.current.setState(state);
-      if (unsaved.current) keep();
-      else forget();
-      if (state !== "failed") toast.dismiss(FAILED_TOAST);
-      problem.current = undefined;
-      if (state !== "refused" || gone.current) return void toast.dismiss(REFUSED_TOAST);
-      const message = refusal.current;
-      problem.current = () =>
-        toast.error(message, {
-          id: REFUSED_TOAST,
-          duration: Infinity,
-          action: copyTyped,
-          // The saved version shows the text before the change.
-          cancel: {
-            label: "Discard my change",
-            onClick: () => opts.current.reload(text.current?.head.id),
-          },
+  // The edits on screen: of the frame, or the last draft when it went.
+  const edits = useCallback(
+    async (s: Load) => {
+      if (!gone(s))
+        s.draft = await fromFrame(s, opts.current.take()).catch((e) => {
+          // The frame went before it gave them.
+          if (!gone(s)) throw e;
+          return s.draft;
         });
-      problem.current();
-    },
-    [keep, forget, copyTyped],
-  );
-
-  // release ends a run. The save that waits goes first, after wait when the
-  // run failed, and then the follow.
-  const release = useCallback((wait?: number) => {
-    busy.current = false;
-    for (const done of waiting.current.splice(0)) done();
-    if (wait !== undefined || again.current) later(timer, run.current.save, wait ?? 0);
-    else if (asked.current) void run.current.follow();
-    again.current = false;
-  }, []);
-
-  // leave loads a version in the frame, in place of what is on screen. What
-  // waits is about the frame that goes.
-  const leave = useCallback((version?: string) => {
-    again.current = asked.current = false;
-    opts.current.reload(version);
-  }, []);
-
-  const save = useCallback(async (): Promise<void> => {
-    window.clearTimeout(timer.current);
-    timer.current = undefined;
-    burstStart.current = 0;
-    if (busy.current) {
-      again.current = true;
-      return;
-    }
-    const { docId, setState, move } = opts.current;
-    busy.current = true;
-    // The state after the save, and whether no text waits for a save.
-    let state: SaveState | undefined;
-    let done = false;
-    try {
-      const resent = unsent.current !== undefined;
-      const change = (unsent.current ??= await next());
-      if (!change) {
-        // The edits went back to what is saved: there is no new version.
-        if (refusal.current) state = "refused";
-        else if (unsaved.current)
-          state =
-            text.current?.head.id === opts.current.loaded.version ? "idle" : "saved";
-      } else {
-        setState("saving");
-        const approved = approvedOn(change.body.base_version_id);
-        const saved = await api.editSource(docId, change.body);
-        const at = change.text;
-        const { now, target } = change;
-        // The new version is the head. When it also holds changes of other
-        // people, the answer names them, and the follow shows them. The text
-        // typed after this save is then a change to that version. The save
-        // goes again, and gets the same answer, until its source is known.
-        const merged = saved.rebased
-          ? ((saved.others && applyReplacements(target, saved.others)) ??
-            (await api.getVersionHTML(docId, saved.id)))
-          : target;
-        unsent.current = undefined;
-        attempts.current = 0;
-        at.shown = now;
-        at.head = { id: saved.id, source: merged, from: saved.base_version_id };
-        at.ahead = target === now.source ? saved.others : undefined;
-        if (here(at) && merged === now.source) move(saved.id, saved.base_version_id);
-        // The frame changed while the save waited to go again.
-        again.current ||= resent;
-        state = refusal.current ? "refused" : "saved";
-        if (!gone.current)
-          void afterSave(change.scripts, approvalsChange(approved, saved.id));
-      }
-      // A newer version that waited for this save can go into the frame.
-      done = asked.current = true;
-    } catch (e) {
-      if (e instanceof Refused) {
-        state = "refused";
-        refusal.current =
-          "This edit does not fit the source of the document, so it cannot save.";
-      } else if (e instanceof Unread || passing(e)) {
-        state = "failed";
-        attempts.current++;
-        const why =
-          e instanceof Unread
-            ? "The saved version of this document did not load, so your edits are not saved yet."
-            : "Your edits are not saved yet.";
-        toast.error(`${why} Trying again (attempt ${attempts.current})…`, {
-          id: FAILED_TOAST,
-          action: copyTyped,
-          cancel: { label: "Try now", onClick: () => void run.current.save() },
-        });
-      } else {
-        // The server refused the save, and saving again cannot help. The
-        // text stays on screen until the reader copies or discards it.
-        const { code, status } = e as APIError;
-        state = "refused";
-        refusal.current =
-          code === "edit_failed"
-            ? UNFIT
-            : (SERVER_REFUSALS[status] ??
-              "The server did not take this change, so it cannot save.");
-      }
-      if (state !== "failed") unsent.current = undefined;
-    } finally {
-      if (state) tell(state);
-      // The frame never loads while it holds text that is not saved.
-      const at = text.current;
-      if (done && stale.current && at && !gone.current && !again.current && !pending())
-        leave(at.head.id);
-      release(state === "failed" ? RETRY_MS : undefined);
-    }
-    // afterSave changes the other places of saved script text in place, as
-    // a load of the saved source would. A save that resets approvals, or
-    // gives them back, says so, as it is about more than the words.
-    async function afterSave(scripts: ScriptSave[], approvals: Promise<string>) {
-      for (const s of scripts) {
-        opts.current.replaceText(s.from, s.to);
-        written.current.set(s.key, { to: s.to, places: s.places });
-      }
-      const note = await approvals;
-      if (note) toast.info(note, { id: APPROVALS_TOAST });
-    }
-    // approvalsChange says whose approvals a save reset or gave back.
-    async function approvalsChange(before: Promise<Principal[]>, version: string) {
-      const [was, now] = await Promise.all([before, approvedOn(version)]);
-      const without = (a: Principal[], b: Principal[]) =>
-        a.filter((p) => !b.some((q) => samePrincipal(p, q)));
-      return [
-        approvalsText(without(was, now), "reset"),
-        approvalsText(without(now, was), "restored"),
-      ]
-        .filter(Boolean)
-        .join(" ");
-    }
-  }, [next, tell, leave, release, copyTyped, approvedOn]);
-
-  // The delays of a save: short with other people in the document.
-  const pace = () => (opts.current.others ? TOGETHER : ALONE);
-
-  // Each change waits for a pause in typing, but no longer than the longest
-  // delay since the first change of the burst.
-  const changed = useCallback(
-    (count: number) => {
-      if (count > 0) {
-        unsaved.current = true;
-        opts.current.setState("unsaved");
-      }
-      const { pause, most } = pace();
-      const now = Date.now();
-      burstStart.current ||= now;
-      later(timer, save, Math.min(pause, burstStart.current + most - now));
-    },
-    [save],
-  );
-
-  // patch shows the head in the frame in place: the changes of other people
-  // go around the text that the reader typed since the last save. The frame
-  // answers with what it shows then, and only the exact target counts. When
-  // the frame cannot show the head in place, it loads the head after the
-  // text on screen saves.
-  const patch = useCallback(
-    async (at: Text, flash: boolean): Promise<void> => {
-      const { base, head, shown } = at;
-      // Set while the frame can hold a patch that it did not answer for.
-      let sent: string | undefined;
-      // The frame shows a source that is not the target. That source stands
-      // for the target from now on, so that the patch never becomes an edit
-      // of the reader. The text that the reader typed before the patch is
-      // in the target, and saves from it.
-      const spoil = (now: Text["shown"], target: string) => {
-        if (target === head.source) at.shown = now;
-        else
-          unsent.current = {
-            text: at,
-            now,
-            target,
-            body: {
-              base_version_id: head.id,
-              client_change_id: randomId(),
-              replacements: replacementsBetween(head.source, target),
-            },
-            scripts: [],
-          };
-        at.ahead = undefined;
-      };
-      try {
-        for (let attempt = 0; attempt < PATCH_ATTEMPTS; attempt++) {
-          const taken = (draft.current = await opts.current.take());
-          let now = await build(taken);
-          const target =
-            now.html === shown.source
-              ? head.source
-              : merge3(shown.source, now.html, at.ahead ?? head.source);
-          if (now.html !== target) {
-            const wanted = patchBetween(base.tree, target);
-            if ("reload" in wanted) break;
-            // The frame already shows the patches of the text that it holds.
-            const there = patchBetween(base.tree, now.html);
-            const patches = wanted.patches.filter(
-              (p) =>
-                !("patches" in there && there.patches.some((q) => samePatch(p, q))),
-            );
-            sent = target;
-            const result = await opts.current.patch(patches, taken.edits, flash);
-            sent = undefined;
-            if (!here(at)) return;
-            // A key came between: the patch changed nothing. Typing that
-            // does not stop gets the patch at its next pause.
-            if (result.stale) {
-              if (attempt + 1 === PATCH_ATTEMPTS)
-                return later(retry, run.current.follow, pace().pause);
-              continue;
-            }
-            if (!result.ok) break;
-            draft.current = result;
-            now = await build(result);
-            if (now.html !== target) {
-              spoil({ source: now.html, regions: now.regions }, target);
-              break;
-            }
-          }
-          at.shown = { source: head.source, regions: now.regions };
-          at.ahead = undefined;
-          opts.current.move(head.id, head.from);
-          opts.current.holdUpdate(undefined);
-          // The frame holds text that is not saved.
-          if (target !== head.source) changed(1);
-          return;
-        }
-      } catch {
-        // The frame did not answer, or its text does not fit the source.
-        if (!here(at)) return;
-        if (sent !== undefined) {
-          const now = await opts.current
-            .take()
-            .then(build)
-            .catch(() => undefined);
-          if (now) spoil({ source: now.html, regions: now.regions }, sent);
-        }
-      }
-      stale.current = again.current = true;
-    },
-    [build, changed],
-  );
-
-  // follow brings the frame to the newest version. It first shows a head
-  // that a save made, and then asks the server for the changes since the
-  // head. A large change that is not live typing waits behind a banner
-  // while the reader has no text of their own in the frame, and the head
-  // stays, so that the next follow asks for the whole difference again.
-  // Each other change goes into the frame in place.
-  const follow = useCallback(async (): Promise<void> => {
-    window.clearTimeout(retry.current);
-    const { docId, loaded, latest, live, holdUpdate } = opts.current;
-    if (gone.current || !live || stale.current) return;
-    if (busy.current) {
-      asked.current = true;
-      return;
-    }
-    asked.current = false;
-    const lags = (at = text.current) => !!at && at.shown.source !== at.head.source;
-    if (!lags() && (!latest || latest === (text.current?.head.id ?? loaded.version)))
-      return;
-    busy.current = true;
-    try {
-      const at = await load();
-      // A save that waits to go again is for this head. Its end comes back
-      // here.
-      if (unsent.current) return;
-      if (lags(at)) await patch(at, false);
-      if (!here(at) || lags(at) || !latest || latest === at.head.id) return;
-      const { base, head, shown } = at;
-      const changes = await api.documentChanges(docId, head.id);
-      if (!here(at) || changes.version_id === head.id) return;
-      const next = applyReplacements(head.source, changes.replacements);
-      if (next === undefined) {
-        // This client and the server do not agree about the head.
-        if (!pending() && !again.current) return leave(latest);
-        refusal.current = UNFIT;
-        return tell("refused");
-      }
-      const waits =
-        !changes.live &&
-        !pending() &&
-        !again.current &&
-        disruption(base.tree.parse(head.source), next).disruptive;
-      // The frame is read only now, because few changes wait.
-      if (waits && (await build(await opts.current.take())).html === shown.source)
-        return holdUpdate({ authors: changes.authors });
-      at.head = { id: changes.version_id, source: next, from: head.id };
-      at.ahead = changes.replacements;
-      await patch(at, !changes.live);
-    } catch (e) {
-      if (denied(e)) void q.invalidateQueries({ queryKey: queryKeys.document(docId) });
-      else later(retry, follow, RETRY_MS);
-    } finally {
-      release();
-    }
-  }, [q, load, build, patch, tell, leave, release]);
-  run.current = { save, follow };
-
-  // The page learned of a newer version, or the frame is ready for one.
-  useEffect(() => void follow(), [follow, latest, live, loaded]);
-
-  const drafted = useCallback(
-    (result: TextEditResult) => {
-      draft.current = result;
-      if (kept.current) keep();
+      if (s.kept) keep(s);
+      return s.draft;
     },
     [keep],
   );
 
-  // Save at once when the reader leaves the frame for the page around it, or
-  // leaves the page, and warn before an unload loses unsaved edits. When the
-  // frame goes, as on a move to another page, its last draft saves.
-  useEffect(() => {
-    gone.current = false;
-    const flush = () => {
-      if (timer.current !== undefined) void save();
-    };
-    const onHidden = () => {
-      if (document.visibilityState === "hidden") flush();
-    };
-    const warn = (e: BeforeUnloadEvent) => {
-      if (pending()) e.preventDefault();
-    };
-    document.addEventListener("pointerdown", flush, true);
-    document.addEventListener("visibilitychange", onHidden);
-    window.addEventListener("beforeunload", warn);
-    return () => {
-      document.removeEventListener("pointerdown", flush, true);
-      document.removeEventListener("visibilitychange", onHidden);
-      window.removeEventListener("beforeunload", warn);
-      // The draft in storage outlives the message about it.
-      if (kept.current) toast.dismiss(REFUSED_TOAST);
-      const left = pending();
-      window.clearTimeout(timer.current);
-      timer.current = undefined;
-      gone.current = true;
-      if (left) void save();
-    };
-  }, [save]);
-
-  // settle saves the edits on screen at once, after the run on its way, and
-  // tells whether all of them are saved. A save that fails says why, as
-  // any save does. Edits that cannot save say why again, with the choices.
-  const settle = useCallback(async (): Promise<boolean> => {
-    // A save can wait for a follow, and a follow can leave text to save.
-    for (let round = 0; round < 3 && !attempts.current; round++) {
-      while (busy.current)
-        await new Promise<void>((done) => waiting.current.push(done));
-      if (timer.current === undefined) break;
-      await save();
-    }
-    if (unsaved.current) problem.current?.();
-    return !unsaved.current;
-  }, [save]);
-
-  return { changed, drafted, scriptEditable, focused, settle };
-}
-
-// copyAction puts text that the reader typed on the clipboard. The message
-// stays after a copy, so that the reader can still choose.
-function copyAction(text: () => Promise<string>): ExternalToast["action"] {
-  return {
-    label: "Copy my text",
-    onClick: (event) => {
-      event.preventDefault();
-      void copy(text);
+  // compose makes the operation that turns the head into the document with
+  // the text of the frame, or nothing when the head holds that text. It
+  // makes nothing for a frame that cannot hold text of the reader: what such
+  // a frame shows other than the head is never an edit.
+  const compose = useCallback(
+    async (s: Load): Promise<Op | undefined> => {
+      s.dirty = false;
+      const at = await recover(s);
+      if (s.unwritable) return undefined;
+      const taken = await edits(s);
+      if (!taken || !writes(s)) return undefined;
+      const { scripts, refused, ...screen } = await build(s, taken);
+      s.refusal = refused;
+      const target = over(at, screen.source).source;
+      const changed = scripts.filter((c) => c.from.trim() !== c.to.trim());
+      // An operation on script text only says what it changed in words.
+      const words = changed.length > 0 && screen.regions === at.shown.regions;
+      const body = request(s, target, words ? describe(changed) : undefined);
+      return body && stage(s, { screen, target, body, scripts });
     },
-  };
-}
-
-async function copy(text: () => Promise<string>) {
-  try {
-    await navigator.clipboard.writeText(await text());
-    toast.success("Your text is copied.", { id: COPIED_TOAST });
-  } catch {
-    toast.error("Could not copy your text.", { id: COPIED_TOAST });
-  }
-}
-
-async function readBase(docId: string, version: string): Promise<Base> {
-  const source = await api.getVersionHTML(docId, version);
-  return { source, tree: await parseSource(source) };
-}
-
-function later(
-  timer: { current: number | undefined },
-  run: () => Promise<void>,
-  delay: number,
-) {
-  window.clearTimeout(timer.current);
-  timer.current = window.setTimeout(() => void run(), Math.max(0, delay));
-}
-
-// passing reports an error that saving again can fix: the network, the
-// frame that did not answer, a server that is busy or failed, or a race
-// with other saves that the server lost.
-function passing(e: unknown): boolean {
-  return (
-    !(e instanceof APIError) ||
-    e.status >= 500 ||
-    [408, 429].includes(e.status) ||
-    e.code === "version_conflict"
+    [recover, edits, build, writes],
   );
-}
 
-// denied reports that the reader cannot read the document: it is gone, or
-// their access to it is.
-function denied(e: unknown): boolean {
-  const error = e instanceof Unread ? e.cause : e;
-  return error instanceof APIError && [403, 404].includes(error.status);
-}
+  // show tells the page whether the server holds the text of its loads.
+  // Sends that fail go again by themselves, so the page says that the text
+  // is not saved only when they fail for FAILED_SIGN_MS. Text that cannot
+  // save says why, with the choices, until the reader acts on it. A reader
+  // who discards the text gets the document again, without it: nothing of
+  // it goes to the server or stays in storage. Only the hook of a frame
+  // that shows the text can load that frame again, so a hook leaves the
+  // message of a load of another hook as it is.
+  const show = useCallback(() => {
+    const { loads, onPage, setState, holdCursor } = opts.current;
+    if (!onPage.current) return;
+    const all = [...loads.all];
+    const refused = all.find((s) => s.refusal);
+    if (!all.some((s) => s.failing)) {
+      window.clearTimeout(loads.sign);
+      loads.sign = undefined;
+      loads.late = false;
+    } else
+      loads.sign ??= window.setTimeout(() => {
+        loads.late = true;
+        show();
+      }, FAILED_SIGN_MS);
+    setState(refused ? "refused" : loads.late ? "failed" : "idle");
+    holdCursor(all.some(pending));
+    if (!refused) return void toast.dismiss(REFUSED_TOAST);
+    if (!gone(refused) && refused !== load.current) return;
+    toast.error(refused.refusal, {
+      id: REFUSED_TOAST,
+      duration: Infinity,
+      action: copyAction(async () => {
+        const result = await edits(refused);
+        return result ? draftText(refused.text?.base.tree, result) : "";
+      }),
+      cancel: {
+        label: "Discard my change",
+        onClick: () => {
+          refused.dirty = false;
+          refused.unsent = refused.refusal = undefined;
+          forget(refused);
+          if (gone(refused)) drop(loads, refused);
+          else {
+            refused.frame = "reloading";
+            opts.current.reload();
+          }
+          show();
+        },
+      },
+    });
+  }, [edits, forget]);
 
-const samePatch = (a: Patch, b: Patch) =>
-  a.in === b.in && a.after === b.after && a.before === b.before && a.html === b.html;
+  // report keeps the text of a load in storage while the server does not
+  // hold it, and tells the page. Storage takes it when its send failed, and
+  // follows it once it holds it. A load that ended leaves the page when the
+  // server holds its text.
+  const report = useCallback(
+    (s: Load) => {
+      if (s.refusal || s.failing || (s.kept && pending(s))) keep(s);
+      else if (!pending(s)) forget(s);
+      if (gone(s) && !unsaved(s)) drop(opts.current.loads, s);
+      show();
+    },
+    [keep, forget, show],
+  );
 
-// describe says in words what a save changed in script text.
-function describe(scripts: ScriptSave[]): string {
-  return scripts
-    .map(
-      ({ from, to, places }) =>
-        `Changed “${from.trim()}” to “${to.trim()}” in ${places} ${places === 1 ? "place" : "places"}`,
-    )
-    .join(", ");
-}
+  // send gives the text that the frame holds to the server, as one
+  // operation on the head, and ends in one of these ways:
+  //   1. The head holds the text: nothing goes.
+  //   2. The server took the operation. Its answer is the new head. When
+  //      the answer also names operations of other people, the frame lags,
+  //      and the follow shows them.
+  //   3. The edits cannot be written into the source: the text cannot save.
+  //   4. The send failed (see failure):
+  //      passing  The same operation goes again after a time, also for a
+  //               frame that went. A reader whose session ended signs in
+  //               first: nothing goes again, and their text waits in
+  //               storage, which the page after sign-in sends.
+  //      lost     The text goes again, on the live document, unless the
+  //               server took this operation: the document then has the
+  //               text already. When the live document was the head
+  //               already, the frame loads again after that, and text that
+  //               the server refused cannot save.
+  //      unfit, refused  The text cannot save.
+  // Text that cannot save stays on screen until the reader copies or
+  // discards it.
+  const send = useCallback(
+    async (s: Load): Promise<void> => {
+      cancel(s, "burst");
+      let op = s.unsent;
+      try {
+        op ??= await compose(s);
+        const answering = op && api.sendOps(opts.current.docId, op.body);
+        if (op) {
+          const at = s.text!;
+          const before = at.head.version;
+          const answer = (await answering)!;
+          // The server holds the text of the operation.
+          s.unsent = undefined;
+          at.shown = op.screen;
+          const source = applyOps(op.target, answer.others);
+          if (source === undefined || sumOf(source) !== answer.sum) throw new Lost();
+          s.sync = "sure";
+          at.head = { seq: answer.seq, version: answer.version_id, source };
+          // The answer names the text of other people for a frame that
+          // showed the head. Else the next merge is from the two sources.
+          at.ahead = op.target === op.screen.source ? answer.others : undefined;
+          if (gone(s)) {
+            // The page learns the new seq from the server, and the frame
+            // that came after this one follows it.
+            void q.invalidateQueries({
+              queryKey: queryKeys.document(opts.current.docId),
+            });
+          } else {
+            if (!lags(at)) opts.current.frameShows(answer.seq, answer.version_id);
+            // The other places of sent script text change in place, as a
+            // load of the new source would.
+            for (const { key, from, to } of op.scripts) {
+              opts.current.replaceText(from, to);
+              s.written.set(key, to);
+            }
+            void afterEdit(before, answer.version_id);
+          }
+        }
+        // A newer state that waited for this send can go into the frame.
+        s.wanted = true;
+        s.failing = false;
+      } catch (e) {
+        const failed = failure(e);
+        s.failing = failed === "passing";
+        // Only an operation that can pass goes again.
+        if (failed !== "passing") s.unsent = undefined;
+        switch (failed) {
+          case "passing": {
+            s.dirty ||= !s.unsent;
+            if (!signedOut(e)) {
+              wait(s, "resend", RETRY_MS);
+              break;
+            }
+            // The page asks who the reader is, learns that they are signed
+            // out, and takes them to sign in (see below). A page that knows
+            // it already takes them at once.
+            const { loads, signIn } = opts.current;
+            loads.signedOut = true;
+            void q.invalidateQueries({ queryKey: queryKeys.me() });
+            signIn?.();
+            break;
+          }
+          case "lost": {
+            // The server holds the text of an operation that it answered,
+            // or that it applied before. That text counts as shown, so that
+            // it merges into the live document one time, and it never fails
+            // to save.
+            const held = e instanceof Lost || applied(e);
+            if (held) s.text!.shown = op!.screen;
+            if (e instanceof Lost && s.sync === "unsure") {
+              expire(s);
+              s.sync = "lost";
+            } else lose(s);
+            if (s.sync === "lost") s.dirty = true;
+            else if (!held) s.refusal = UNFIT;
+            break;
+          }
+          case "unfit":
+            s.refusal = UNFIT;
+            break;
+          case "refused":
+            s.refusal = SERVER_REFUSALS[(e as APIError).status] ?? REFUSED;
+        }
+      }
+      report(s);
+    },
+    [q, compose, report, afterEdit, wait],
+  );
 
-// approvalsText says that the approvals of people are reset or restored.
-function approvalsText(people: Principal[], change: "reset" | "restored") {
-  if (!people.length) return "";
-  return people.length === 1
-    ? `The approval of ${principalLabel(people[0])} is ${change}.`
-    : `${people.length} approvals are ${change}.`;
+  // patch makes the frame show the head in place: the text of other people
+  // goes around the text that the reader typed since the last send. It
+  // tells how it ended (see Patched). With ask, the frame is asked first
+  // whether the reader would see the change as a small one. Each attempt
+  // has four steps:
+  //   1. Take what the frame shows.
+  //   2. Make the target: the head, with the text of the reader on top.
+  //   3. Give the frame the patches that it does not show yet.
+  //   4. Take what the frame shows now. Only a screen that is exactly the
+  //      target counts as shown.
+  const patch = useCallback(
+    async (s: Load, flash: boolean, ask = false): Promise<Patched> => {
+      const at = s.text!;
+      const { base, head } = at;
+      // The frame shows target, and regions is the source of its regions.
+      // While changes wait, target is the head without them. Else the frame
+      // holds text that the server does not when target is not the head.
+      const shows = (target: string, regions: string): Patched => {
+        at.shown = { source: head.source, regions };
+        at.ahead = undefined;
+        if (at.held !== undefined) at.held = target;
+        else s.dirty ||= target !== head.source;
+        return "shown";
+      };
+      // The frame shows screen, and not target, which the document must
+      // have: target holds the text that the reader typed before the patch.
+      // That text goes to the server as target, and screen counts as shown
+      // after it. What the frame shows other than target is thus never sent
+      // as an edit of the reader. A frame that cannot hold text of the
+      // reader sends nothing.
+      const differs = (screen: Screen, target: string): Patched => {
+        at.ahead = undefined;
+        const body = writes(s) && request(s, target);
+        if (body) stage(s, { screen, target, body, scripts: [] });
+        else at.shown = screen;
+        return "failed";
+      };
+      try {
+        for (let attempt = 0; attempt < PATCH_ATTEMPTS; attempt++) {
+          const taken = (s.draft = await fromFrame(s, opts.current.take()));
+          // The regions of an unwritable frame say nothing about what it
+          // shows.
+          const before = s.unwritable ? undefined : await build(s, taken);
+          // A frame that cannot hold text of the reader has the head as its
+          // target also when it shows another source, as after a load that
+          // the page did not start.
+          const typed = before && writes(s) ? before.source : undefined;
+          const { source: target, marks } = over(
+            at,
+            typed ?? at.held ?? at.shown.source,
+          );
+          if (before?.source === target) return shows(target, before.regions);
+
+          const wanted = patchBetween(
+            base.tree,
+            target,
+            marks,
+            before?.source ?? at.shown.source,
+          );
+          // A load of the frame is never a small change for the reader.
+          if ("reload" in wanted) return ask ? "held" : "failed";
+          // The frame already shows the patches of the text that it holds.
+          const patches = without(wanted.patches, base, before?.source);
+          const codes = without(wanted.codes, base, before?.source);
+          // A style or script text can change all that the reader sees.
+          if (ask && (codes.length || patches.some((p) => "style" in p))) return "held";
+          const strings = await stringPatches(s, codes, taken, opts.current.probe);
+          if (!strings) return "failed";
+          patches.push(...strings);
+          const result = await fromFrame(
+            s,
+            opts.current.patch(patches, taken.edits, flash, ask),
+          ).catch(() => undefined);
+          if (!result) {
+            // The frame did not answer for the patch, and shows it or not.
+            // The keys that came after the first take go with the text of
+            // the reader when they are surely keys (see apart), and the
+            // frame loads again.
+            const again = (s.draft = await fromFrame(s, opts.current.take()));
+            const screen = await build(s, again);
+            return differs(
+              screen,
+              typed ? apart(typed, screen.source, target) : target,
+            );
+          }
+          if (result.withdrawn) return "held";
+          // A key came between the take and the patch.
+          if (result.stale) continue;
+          if (!result.ok) return "failed";
+
+          at.outside = outsideAfter(at.outside, base, patches);
+          for (const tag of wanted.tags) at.made.add(tag);
+          s.draft = result;
+          if (!before) return shows(target, head.source);
+          const after = await build(s, result);
+          if (after.source === target) return shows(target, after.regions);
+          // The regions cannot write what the frame shows now, as with a
+          // new table. That only matters for text that the reader types.
+          // Outside Edit mode, a frame with no text of the reader stays as
+          // it is: it shows the head, or the head without the changes that
+          // wait.
+          if (opts.current.editing || (typed !== undefined && target !== head.source))
+            return differs(after, target);
+          s.unwritable = true;
+          return shows(target, head.source);
+        }
+        return "busy";
+      } catch {
+        // The frame did not answer, or its text does not fit the source.
+        return "failed";
+      }
+    },
+    [build, writes],
+  );
+
+  // advance moves the head to the newest state of the document, with the
+  // operations after it: those of the last event, when it is on the head,
+  // or else those that the server gives. It gives the changes, or nothing
+  // when the head did not move: it is the newest state, or this client
+  // lost it.
+  const advance = useCallback(
+    async (s: Load, at: Text): Promise<DocumentChanges | undefined> => {
+      // The live document can be the newest state.
+      if (!behind(s)) return undefined;
+      const { docId, event } = opts.current;
+      const { head } = at;
+      const changes =
+        event?.changes && event.prev_seq === head.seq
+          ? event.changes
+          : await api.documentChanges(docId, head.seq);
+      if (gone(s) || changes.seq <= head.seq) return undefined;
+      const source = applyOps(head.source, changes.ops);
+      if (source === undefined || sumOf(source) !== changes.sum) return void lose(s);
+      s.sync = "sure";
+      at.head = { seq: changes.seq, version: changes.version_id, source };
+      at.ahead = changes.ops;
+      return changes;
+    },
+    [behind],
+  );
+
+  // follow brings the frame to the newest state of the document: to a head
+  // that the frame lags behind, as after a send, or else to the operations
+  // after the head. It ends in one of these ways:
+  //   1. There is nothing to follow: the frame is not open, it shows a
+  //      preview, or the server has no live documents.
+  //   2. The frame shows the newest state that the page knows.
+  //   3. This client lost the head: the next follow starts from the live
+  //      document.
+  //   4. The frame shows the head now, or while changes wait behind the
+  //      banner, the head without them: typing of other people goes on.
+  //   5. The frame held the change. The frame stays as it is, in place of
+  //      the head, and the banner shows. Only a change that can be more
+  //      than typing can wait, and it never waits in Edit mode, in a tab
+  //      that the reader does not see, while the frame holds text that is
+  //      not saved, or when the reader asked for the latest.
+  //   6. The reader types: the patch goes again a moment later.
+  //   7. The frame cannot show the head in place: it loads the document
+  //      again, after the text that it can hold is sent.
+  //   8. The changes did not come: the follow goes again after a time. A
+  //      reader who cannot read the document gets the page that says so,
+  //      and a frame whose version is gone loads the current one.
+  const follow = useCallback(
+    async (s: Load): Promise<void> => {
+      cancel(s, "refollow");
+      s.wanted = false;
+      const { docId, live } = opts.current;
+      if (!live || s.seq === undefined || s.frame !== "open") return;
+      if (!behind(s)) return;
+      try {
+        const at = await recover(s);
+        const before = at.head;
+        const lagged = lags(at);
+        const changes = lagged ? undefined : await advance(s, at);
+        if (!lagged && !changes) return;
+        // Typing of other people goes in with no sign. A change that is
+        // not typing flashes, and so do the changes that waited behind the
+        // banner, and the live document that this client took as the head:
+        // they can hold any change.
+        const pushed = changes
+          ? !changes.typed
+          : s.update !== "none" || s.sync === "unsure";
+        const asks = () =>
+          pushed &&
+          !opts.current.editing &&
+          !hidden() &&
+          s.update !== "asked" &&
+          !unsaved(s);
+        let patched = await patch(s, pushed, asks());
+        // The frame answered after Edit mode started, or after the tab hid:
+        // the change does not wait.
+        if (patched === "held" && !asks()) patched = await patch(s, pushed, false);
+        if (gone(s)) return;
+        if (patched === "shown") {
+          if (at.held === undefined) {
+            s.update = "none";
+            s.since = undefined;
+            opts.current.frameShows(at.head.seq, at.head.version);
+            opts.current.holdUpdate(undefined);
+          }
+          // More can wait after a head that the frame lagged behind.
+          s.wanted = true;
+        } else if (patched === "held") {
+          // The frame keeps what it shows in place of the head, and the
+          // changes go in when the reader asks for them.
+          at.held ??= at.shown.source;
+          at.shown = { source: at.head.source, regions: at.head.source };
+          at.ahead = undefined;
+          s.since ??= before.seq;
+          // The banner names the people whose changes wait, and not those
+          // who typed in the same changes: typing shows live. A banner for
+          // the same changes stays as it is.
+          const { madeBy, holdUpdate } = opts.current;
+          const authors = changes
+            ? (madeBy(s.since, changes.seq) ?? changes.authors)
+            : [];
+          if (changes || s.update !== "again") holdUpdate({ authors });
+          s.update = "held";
+          s.askedAt = Date.now();
+        } else if (patched === "busy") {
+          wait(s, "refollow", STALE_MS, () => (s.wanted = true));
+        } else {
+          expire(s);
+          s.dirty ||= writes(s);
+        }
+      } catch (e) {
+        const queryKey = queryKeys.document(docId);
+        if (removed(s, e)) {
+          // The page reads the document again first, so that the frame
+          // loads the version that is current now.
+          await q.refetchQueries({ queryKey, exact: true });
+          expire(s);
+        } else if (denied(e)) void q.invalidateQueries({ queryKey });
+        else if (outdated(e)) lose(s);
+        else if (!gone(s)) wait(s, "refollow", RETRY_MS, () => (s.wanted = true));
+      }
+    },
+    [q, recover, advance, patch, behind, writes, wait],
+  );
+
+  // work does what waits, one thing at a time: it sends the text that the
+  // frame holds, then follows, and so on until nothing waits. The follow
+  // after each send shows the text of other people also to a person who
+  // types faster than the server answers. A send that failed waits for its
+  // next try. A stale frame then loads the document again, once: never
+  // while it holds text that is not sent.
+  const work = useCallback(
+    (s: Load): Promise<void> => {
+      const sends = () =>
+        pending(s) &&
+        !opts.current.loads.signedOut &&
+        s.timers.burst === undefined &&
+        s.timers.resend === undefined;
+      const follows = () => s.wanted && !s.unsent;
+      const loop = async () => {
+        while (sends() || follows()) {
+          release(s);
+          if (sends()) await send(s);
+          if (follows()) await follow(s);
+        }
+      };
+      return (s.run ??= loop().then(() => {
+        s.run = undefined;
+        // More came in after the last look.
+        if (sends() || follows()) return work(s);
+        if (s.frame !== "stale" || unsaved(s)) return;
+        s.frame = "reloading";
+        opts.current.reload();
+      }));
+    },
+    [send, follow],
+  );
+  run.current = work;
+
+  // flush does at once what waits for its time.
+  const flush = useCallback(
+    (s: Load) => {
+      s.wanted ||= s.timers.refollow !== undefined;
+      (["burst", "resend", "refollow"] as const).forEach((timer) => cancel(s, timer));
+      return work(s);
+    },
+    [work],
+  );
+
+  // refresh loads the document in the frame again, after the text on screen
+  // is sent.
+  const refresh = useCallback(
+    (s: Load) => {
+      expire(s);
+      return work(s);
+    },
+    [work],
+  );
+
+  // end ends a load whose frame goes. The last draft stands for the frame
+  // from then on. Text that can still go stays in storage, and goes again
+  // from the draft until the server has it. Text that cannot save stays in
+  // storage, and does not go again. The page shows the state of such text
+  // until the server has it, or the reader discards it. Its message goes
+  // with the frame, and the next load shows it again.
+  const end = useCallback(
+    (s: Load) => {
+      if (gone(s)) return;
+      TIMERS.forEach((timer) => cancel(s, timer));
+      s.frame = "gone";
+      s.leave();
+      toast.dismiss(REFUSED_TOAST);
+      if (s.refusal) s.dirty = false;
+      else if (pending(s)) keep(s);
+      if (!unsaved(s)) drop(opts.current.loads, s);
+    },
+    [keep],
+  );
+
+  // A new load of the frame starts over. The load before ends, and its last
+  // edits go to the server from its draft. A frame that loaded by itself,
+  // as when a script of the document loads it again, is a new load too: it
+  // shows the document as the page loaded it, and none of what the load
+  // before put in it. What such a frame shows is never an edit of the reader.
+  const [restarts, restart] = useReducer((n: number) => n + 1, 0);
+  const frame = `${loaded.url} ${loaded.version} ${loaded.seq} ${restarts}`;
+  useEffect(() => {
+    const { loaded, loads, holdUpdate } = opts.current;
+    const s = (load.current = newLoad(loaded.version, loaded.seq));
+    enter(loads, s);
+    show();
+    holdUpdate(undefined);
+    return () => {
+      end(s);
+      void run.current(s);
+    };
+  }, [frame, end, show]);
+  // The load ends at once: the frame tells nothing more for it.
+  const restarted = useCallback(() => {
+    end(load.current);
+    restart();
+  }, [end]);
+
+  // showUpdate brings the frame to the newest state of the document for a
+  // reader who asked for it: the change that waited goes in, in place when
+  // the frame can show it so. Else the frame loads the document again,
+  // unless the changes did not come: the follow then tries again.
+  const showUpdate = useCallback(async () => {
+    const s = load.current;
+    cancel(s, "ask");
+    s.update = "asked";
+    s.wanted = true;
+    opts.current.holdUpdate(undefined);
+    await flush(s);
+    // The reader still waits for the changes when they did not come.
+    if (s.timers.refollow !== undefined) return;
+    if (s.update === "asked") s.update = "none";
+    if (behind(s) && !gone(s)) await refresh(s);
+  }, [flush, refresh, behind]);
+
+  // The reader scrolled. A change that waits behind the banner can be far
+  // from what they read now, so the frame is asked about it again, at most
+  // once in ASK_MS.
+  const scrolled = useCallback(() => {
+    const s = load.current;
+    if (s.update !== "held" || s.timers.ask !== undefined) return;
+    // The follow asks the frame again about the changes that wait.
+    wait(s, "ask", Math.max(0, s.askedAt + ASK_MS - Date.now()), () => {
+      s.wanted = true;
+      s.update = "again";
+    });
+  }, [wait]);
+
+  // A reader whose session ended during a send signs in when the page
+  // learns that they are signed out.
+  useEffect(() => {
+    if (signIn && opts.current.loads.signedOut) signIn();
+  }, [signIn]);
+
+  // An editor starts from the latest document, in a frame whose regions
+  // can write its source.
+  useEffect(() => {
+    const s = load.current;
+    if (!editing) return;
+    if (s.unwritable) void refresh(s);
+    else if (s.update === "held") void showUpdate();
+  }, [editing, refresh, showUpdate]);
+
+  // An editor has the loaded source before the first key: the first
+  // operation then needs no other request, also from a page that goes.
+  useEffect(() => {
+    if (editing && live) void read(load.current).catch(() => {});
+  }, [editing, live, frame, read]);
+
+  // The reader changed the text of the frame, which tells its edits with
+  // the change. The change goes out after the burst that it is in. A frame
+  // whose regions cannot write what it shows loads again first.
+  const changed = useCallback(
+    (edits?: TextEditResult) => {
+      const s = load.current;
+      if (gone(s)) return;
+      if (edits) s.draft = edits;
+      if (s.kept) keep(s);
+      if (s.seq === undefined) return;
+      if (s.unwritable) return void refresh(s);
+      s.dirty = true;
+      opts.current.holdCursor(true);
+      if (s.timers.burst === undefined) wait(s, "burst", BURST_MS);
+    },
+    [keep, refresh, wait],
+  );
+
+  // The page learns the seq that the frame shows when the frame is ready.
+  // Until then, and in a preview, the frame shows no seq of the live
+  // document.
+  useEffect(() => {
+    const { version, seq } = load.current;
+    opts.current.frameShows(live ? seq : undefined, version);
+  }, [live, frame]);
+
+  // The page learned of a newer seq, or the frame is ready for one.
+  useEffect(() => {
+    load.current.wanted = true;
+    void work(load.current);
+  }, [work, latest, event, live, frame]);
+
+  useEffect(() => {
+    // A tab that the reader does not see sends its text at once, and keeps
+    // it in storage until the server has it: the browser can end such a
+    // tab with no sign.
+    const onHidden = () => {
+      const s = load.current;
+      if (!hidden()) return;
+      if (pending(s)) keep(s);
+      void flush(s);
+      // The person who comes back wants the current document, not a banner.
+      if (s.update === "held") void showUpdate();
+    };
+    // The page goes, and gets no more answers from the frame. The load
+    // ends, so the last draft stands for the frame, and the operation for
+    // it starts in this task, in a request that outlives the page. An
+    // operation that is on its way already outlives the page too.
+    const onPageHide = () => {
+      const s = load.current;
+      end(s);
+      void work(s);
+    };
+    // The browser kept the page and shows it again: its load ended.
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) opts.current.reload();
+    };
+    // An unload warns only about text that cannot go with the page: text
+    // that cannot save, a send that failed, and text that is not sent while
+    // the browser is offline.
+    const stays = (s: Load) =>
+      !!s.refusal || s.failing || (!navigator.onLine && pending(s));
+    const warn = (e: BeforeUnloadEvent) => {
+      if ([...opts.current.loads.all].some(stays)) e.preventDefault();
+    };
+    // A send that failed goes again when the network is back.
+    const onOnline = () => opts.current.loads.all.forEach((s) => void flush(s));
+    const listeners = [
+      [document, "visibilitychange", onHidden],
+      [window, "pagehide", onPageHide],
+      [window, "pageshow", onPageShow],
+      [window, "beforeunload", warn],
+      [window, "online", onOnline],
+    ] as [EventTarget, string, EventListener][];
+    for (const [target, type, on] of listeners) target.addEventListener(type, on);
+    return () => {
+      for (const [target, type, on] of listeners) target.removeEventListener(type, on);
+    };
+  }, [flush, keep, end, work, showUpdate]);
+
+  // settle sends the text of each load of the page at once, also a send
+  // that waits for its next try, and tells whether the reader can leave it:
+  // text that cannot save says why again, with the choices. A send that
+  // failed for a reason that can pass goes on by itself.
+  const settle = useCallback(async (): Promise<boolean> => {
+    const all = [...opts.current.loads.all];
+    await Promise.all(all.map(flush));
+    show();
+    return !all.some((s) => s.refusal);
+  }, [flush, show]);
+
+  // The reader put the caret in the text.
+  const focused = useCallback(() => {
+    const { text, version } = load.current;
+    return beforeEdit(text?.head.version ?? version);
+  }, [beforeEdit]);
+
+  return { changed, scrolled, restarted, scriptEditable, focused, settle, showUpdate };
 }

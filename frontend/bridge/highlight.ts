@@ -224,32 +224,10 @@ export function highlightRange(
 }
 
 /**
- * Remove every highlight artifact that `highlightRange` created inside `root`
- * and merge the text nodes that wrapping split apart.
- */
-export function clearHighlights(root: ParentNode): void {
-  const parents = new Set<Node>();
-  root.querySelectorAll("mark.slashdocs-mark").forEach((m) => {
-    if (m.parentNode) {
-      parents.add(m.parentNode);
-    }
-    m.replaceWith(...m.childNodes);
-  });
-  root.querySelectorAll(".slashdocs-svg-mark-rect").forEach((r) => r.remove());
-  root.querySelectorAll<HTMLElement>(".slashdocs-svg-mark-text").forEach((t) => {
-    t.classList.remove("slashdocs-svg-mark-text");
-    delete t.dataset.cid;
-  });
-  // Merge only the text nodes our wrapping split apart. A whole-body
-  // normalize() would also merge or drop text nodes created by the
-  // document's own scripts, breaking any references those scripts hold.
-  parents.forEach((p) => p.normalize());
-}
-
-/**
  * Remove only the artifacts of one comment, leaving every other highlight
- * untouched. Used by mutation-driven repair so an unrelated DOM change never
- * rebuilds the whole overlay. Returns the number of artifacts removed.
+ * untouched, and merge the text nodes that wrapping split apart, so an
+ * unrelated change never rebuilds the whole overlay. Returns the number of
+ * artifacts removed.
  */
 export function clearHighlightsFor(d: Document, id: string): number {
   const cid = CSS.escape(id);

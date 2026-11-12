@@ -24,6 +24,26 @@ describe("principalColor", () => {
     const colors = new Set(
       Array.from({ length: 200 }, (_, i) => principalColor(user(`usr_${i}`))),
     );
-    expect(colors.size).toBe(12);
+    expect(colors.size).toBe(10);
+  });
+
+  it("gives nobody a blue that looks like the selection of the reader", () => {
+    const hue = (color: string) => {
+      const [r, g, b] = [1, 3, 5].map((i) => parseInt(color.slice(i, i + 2), 16));
+      const [max, min] = [Math.max(r, g, b), Math.min(r, g, b)];
+      const part =
+        max === r
+          ? (g - b) / (max - min)
+          : max === g
+            ? 2 + (b - r) / (max - min)
+            : 4 + (r - g) / (max - min);
+      return (part * 60 + 360) % 360;
+    };
+    // The accent color of the app, light and dark, and the selection color
+    // of the browser are blues at hues 207 to 218.
+    for (let i = 0; i < 200; i++) {
+      const h = hue(principalColor(user(`usr_${i}`)));
+      expect(h < 195 || h > 245).toBe(true);
+    }
   });
 });

@@ -288,6 +288,27 @@ test("a new pin shows and has its spot at once, before the next frame", () => {
   assert.ok(document.querySelector('.sd-pin[data-id="draft:1"]'));
 });
 
+test("a change of the page keeps the pin buttons, so that a press or a drag meets no swap", async () => {
+  document.body.innerHTML = '<main><p id="spot">Pin here</p><p id="clock"></p></main>';
+  layout();
+  const layer = createPinLayer({
+    doc: () => document,
+    post: () => {},
+    laidOut: () => {},
+  });
+  layer.start(document);
+  layer.setPins(
+    parsePins([
+      { id: "a", anchor: { quote: "", point: { target: "spot", x: 0.5, y: 0.5 } } },
+    ]),
+  );
+  const button = document.querySelector(".sd-pin");
+  document.getElementById("clock")!.dataset.at = "1";
+  await new Promise(requestAnimationFrame);
+  await new Promise(requestAnimationFrame);
+  assert.strictEqual(document.querySelector(".sd-pin"), button);
+});
+
 test("a pin whose element is gone shows at its page spot, marked as moved", () => {
   document.body.innerHTML = "<main><p>Rewritten</p></main>";
   layout();

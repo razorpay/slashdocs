@@ -124,11 +124,13 @@ export function CommentComposer({
 }) {
   const {
     docId,
+    version,
     setActiveComment,
     unanchoredComments,
     saveDraft,
     discardDraft,
     principal,
+    anchorOf,
   } = useDoc();
   const q = useQueryClient();
   const [text, edit, conflict] = useDraftText(draft, (next) =>
@@ -136,15 +138,22 @@ export function CommentComposer({
   );
 
   const create = useMutation({
-    mutationFn: (sent: MentionDraft) =>
-      api.createComment(
+    // The comment goes on the text that its highlight holds now, in the
+    // version on screen: the highlight moves with the text that other people
+    // type while the reader writes. A draft with no highlight keeps the
+    // place that the reader chose.
+    mutationFn: async (sent: MentionDraft) => {
+      const now = await anchorOf(draft.id).catch(() => undefined);
+      return api.createComment(
         docId,
-        draft.version,
+        now ? version : draft.version,
         sent.body,
-        draft.quote,
-        draft.anchor,
+        now?.anchor.quote ?? draft.quote,
+        now?.anchor ?? draft.anchor,
         sent.mentions,
-      ),
+        now?.seq,
+      );
+    },
     // It shows as sending until the new thread loads. Then the words typed
     // since (edit gives back the text now) wait as a reply to the thread,
     // which opens where the draft was, unless the reader closed it.

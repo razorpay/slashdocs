@@ -12,12 +12,14 @@ import {
 import { SOURCE_ATTR } from "../bridge/source-pieces.ts";
 
 // The source map of these tests: an element is original when it has
-// SOURCE_ATTR, and script-owned inside contenteditable="false".
+// SOURCE_ATTR, script-owned inside contenteditable="false", and fixed inside
+// an svg.
 const source = {
   offsetOf: (el: Element) =>
     el.hasAttribute(SOURCE_ATTR) ? Number(el.getAttribute(SOURCE_ATTR)) : null,
   scriptOwned: (node: Node) =>
-    !!(node as Element).closest?.('[contenteditable="false"]'),
+    !!(node as Element).closest?.('[contenteditable="false"]:not(svg *)'),
+  fixed: (node: Node) => !!(node as Element).closest?.("svg"),
 };
 
 let scriptText: ScriptText | null = null;
@@ -208,9 +210,9 @@ test("a failed check offers to try again", () => {
   );
 });
 
-test("a saved string shows its new text in every place, and a hint pulses in place of a message", () => {
+test("a saved string shows its new text in every place that a script shows, and a hint pulses in place of a message", () => {
   const el = render(
-    `<div ${SOURCE_ATTR}="0" contenteditable="false"><b id="t">Ready</b><b> Ready </b><b>Done</b></div>`,
+    `<div ${SOURCE_ATTR}="0" contenteditable="false"><b id="t">Ready</b><b> Ready </b><b>Done</b></div><p ${SOURCE_ATTR}="90">Ready</p>`,
   );
   start();
   vi.stubGlobal("matchMedia", () => ({ matches: true }));
@@ -218,6 +220,8 @@ test("a saved string shows its new text in every place, and a hint pulses in pla
   const texts = scriptText!.replace("Ready", "Set");
   expect(texts).toHaveLength(2);
   expect(document.querySelector("div")!.textContent).toBe("Set Set Done");
+  // The same text of the source is not the string.
+  expect(document.querySelector("p")!.textContent).toBe("Ready");
   el("t").click();
   scriptText!.answer("script-1", false);
   expect(scriptText!.pulse()).toBe(true);
@@ -265,6 +269,18 @@ test("script text with elements in it shows the hint without a question", () => 
   el("t").click();
   expect(post).not.toHaveBeenCalled();
   expect(document.querySelector(".slashdocs-script-hint")).not.toBeNull();
+});
+
+test("fixed content shows its own hint without a question", () => {
+  const el = render(
+    `<p>See <svg ${SOURCE_ATTR}="0" contenteditable="false"><text id="t">Sales</text></svg></p>`,
+  );
+  const post = start();
+  el("t").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  expect(post).not.toHaveBeenCalled();
+  expect(document.querySelector(".slashdocs-script-hint")).toHaveTextContent(
+    "You cannot change this part of the page here.",
+  );
 });
 
 test("the prelude goes where the server puts it", () => {

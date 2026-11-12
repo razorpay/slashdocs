@@ -22,6 +22,9 @@ export type Document = {
   title: string;
   owner?: Principal;
   current_version_id?: string;
+  // The sequence number of the live document: each operation on it gets the
+  // next one.
+  seq?: number;
   parent_folder_id?: string;
   parent_folder?: { id: string; title: string };
   approval_status?: ApprovalStatus;
@@ -48,19 +51,55 @@ export type Version = {
   change_summary?: string;
   sha256?: string;
   created_at?: string;
-  // Whether the browser editor made the version, as live typing does.
-  live?: boolean;
+  // The time of the last operation of the version.
+  edited_at?: string;
+  // The people whose operations the version holds.
+  authors?: Principal[];
 };
-// The changes from one version of a document to its current version. The
-// replacements are at UTF-8 byte offsets of the source of from_version_id.
-// live says that the browser editor made every version after it, and
-// authors are the people who made those versions, the newest first.
+// The answer to a change of the content of a document: the version that
+// the change made. unchanged says that the content was the same already:
+// the answer is then the current version, and no version was made. seq is
+// the seq of the document with the change.
+export type SavedVersion = Version & { seq: number; unchanged?: boolean };
+// The changes of a document after a seq, up to seq, which version_id holds.
+// ops are the operations between the two, in order: the replacements of
+// each one are at UTF-8 byte offsets of the source before it. typed says
+// that the browser editor made every one, and authors are the people who
+// made them, the newest first. sum is the CRC-32 of the source at seq.
 export type DocumentChanges = {
+  seq: number;
   version_id: string;
-  from_version_id: string;
-  replacements: Replacement[];
-  live: boolean;
+  ops: Replacement[][];
+  typed: boolean;
   authors: Principal[];
+  sum: number;
+};
+// An operation on the live document: replacements of the source at
+// base_seq, by position. The server tells a repeat of an operation by its
+// client_op_id.
+export type Operation = {
+  base_seq: number;
+  client_op_id: string;
+  replacements: Replacement[];
+  summary?: string;
+};
+// What a document event tells of the document: its newest seq and the
+// version that holds it. The event of an operation names its author, and
+// whether they typed it. A small operation comes with the event: changes
+// then turn the source at prev_seq into the source at seq.
+export type DocumentEvent = {
+  seq: number;
+  version_id: string;
+  typed?: boolean;
+  authors?: Principal[];
+  prev_seq?: number;
+  changes?: DocumentChanges;
+  // The people are done: the version is now a part of the history.
+  sealed?: boolean;
+  // A restore of an earlier state made the change, and updated_by is the
+  // person who restored.
+  restored?: boolean;
+  updated_by?: Principal;
 };
 export type GitHubStatus = {
   connected: boolean;
@@ -154,8 +193,9 @@ export type CommentPatch = {
   body?: string;
   status?: string;
   mentions?: CommentMention[];
-  // Moves a point comment to a new spot.
-  anchor?: Anchor & { point: AnchorPoint };
+  // Moves a point comment to a new spot, or gives a text comment the anchor
+  // of its text after the reader typed in it.
+  anchor?: Anchor;
   // The body that an edit started from. The server refuses the edit with 409
   // when the body is no longer this.
   base_body?: string;
@@ -275,8 +315,8 @@ export type DocumentKVEvent = {
   updated_at?: string;
   updated_by?: Principal;
   // Stream events other than KV changes set kind. Presence and cursor events
-  // carry data, and a document event carries data: { version_id }, the
-  // current version.
+  // carry data, and a document event carries data: the newest seq and its
+  // version, and the operation that made it when that is small.
   kind?: "kv" | "document" | "comments" | "approvals" | "presence" | "cursor";
   data?: unknown;
 };
@@ -295,15 +335,17 @@ export type DocumentPresence = {
 export type CursorPlace = { path: string; x: number; y: number; z?: number };
 // Where a viewer's pointer is, in v the place at the center of their view,
 // which those who follow them show, in m their cursor chat message, in e the
-// path of the block that holds their caret while they edit, and in c the
-// offset of the caret in the text of that block, in UTF-16 code units. A
-// hidden spot means that the pointer left the document; it may still carry
-// the view, the block and the caret.
+// path of the block that holds their caret while they edit, in c the offset
+// of the caret in the text of that block, in UTF-16 code units, and in a the
+// offset of the other end of their selection in that block, when they
+// selected text. A hidden spot means that the pointer left the document; it
+// may still carry the view, the block, the caret and the selection end.
 export type CursorSpot = CursorPlace & {
   v?: CursorPlace;
   m?: string;
   e?: string;
   c?: number;
+  a?: number;
   hidden?: boolean;
 };
 // A pointer position at time t, in milliseconds on the sender's clock.
@@ -390,6 +432,28 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await res.text()) as T;
 }
 
+// A browser refuses a request that outlives its page when the bodies of
+// all such requests on their way are larger than this together. keptAlive
+// is the size of those bodies.
+const KEEPALIVE_MAX = 64 * 1024;
+let keptAlive = 0;
+
+// requestKept is a request that outlives a page that goes, unless its body
+// is too large for that with the others on their way.
+async function requestKept<T>(path: string, init: RequestInit & { body: string }) {
+  const size = new TextEncoder().encode(init.body).length;
+  const keepalive = keptAlive + size <= KEEPALIVE_MAX;
+  if (keepalive) keptAlive += size;
+  try {
+    return await request<T>(path, { ...init, keepalive });
+  } finally {
+    if (keepalive) keptAlive -= size;
+  }
+}
+// A request of the live document that has no answer after this long fails,
+// as on a network that does not answer. It then goes again.
+const LIVE_TIMEOUT_MS = 10_000;
+
 function mentionPayload(mentions: CommentMention[]) {
   return mentions.map((mention) => ({
     principal: {
@@ -469,61 +533,75 @@ export const api = {
   },
   listVersions: (doc: string) =>
     request<{ items: Version[] }>(`/v1/documents/${doc}/versions`),
-  createVersion: (doc: string, base: string, summary: string, file: File) => {
+  // Replaces the content of the document with a file. base names the state
+  // that the person saw: the version, and the seq of the document when
+  // people type in that version.
+  createVersion: (
+    doc: string,
+    base: { version: string; seq?: number },
+    summary: string,
+    file: File,
+  ) => {
     const fd = new FormData();
-    fd.set("base_version_id", base);
+    fd.set("base_version_id", base.version);
+    if (base.seq !== undefined) fd.set("base_seq", String(base.seq));
     fd.set("change_summary", summary);
     fd.set("file", file);
-    return request<Version>(`/v1/documents/${doc}/versions`, {
+    return request<SavedVersion>(`/v1/documents/${doc}/versions`, {
       method: "POST",
       body: fd,
     });
   },
-  // The source of a version, exactly as stored. A leading byte order mark
-  // stays, because the server counts it in the offsets of source edits.
-  getVersionHTML: async (doc: string, version: string) => {
-    const res = await send(`/v1/documents/${doc}/versions/${version}/html`);
-    return new TextDecoder("utf-8", { ignoreBOM: true }).decode(
-      await res.arrayBuffer(),
+  // The source of a version, exactly as stored, or the source of the
+  // document at a seq that the version holds, with the seq that the server
+  // names for it. The source of the current version with no seq is the live
+  // document. A leading byte order mark stays, because the server counts it
+  // in the offsets of replacements.
+  versionSource: async (doc: string, version: string, seq?: number) => {
+    const res = await send(
+      `/v1/documents/${doc}/versions/${version}/html${seq === undefined ? "" : `?seq=${seq}`}`,
     );
+    const at = res.headers.get("X-Slashdocs-Seq") ?? "";
+    return {
+      source: new TextDecoder("utf-8", { ignoreBOM: true }).decode(
+        await res.arrayBuffer(),
+      ),
+      seq: /^\d+$/.test(at) ? Number(at) : undefined,
+    };
   },
-  // Replaces ranges of the source of the base version, by position. When a
-  // newer version exists, the server moves each range onto it, and rebased
-  // is true. A retry with the same client_change_id returns the version that
-  // the first request made.
-  editSource: (
-    doc: string,
-    input: {
-      base_version_id: string;
-      client_change_id: string;
-      change_summary?: string;
-      replacements: Replacement[];
-    },
-  ) =>
-    request<
-      Version & {
-        base_version_id: string;
-        rebased: boolean;
-        // With rebased: what turns the source that the caller made into the
-        // source of the new version, the changes of the other people.
-        others?: Replacement[];
-      }
-    >(`/v1/documents/${doc}/source-edits`, {
+  // Replaces ranges of the source at base_seq, by position, as one
+  // operation. The server merges it into the live document. others are the
+  // operations after base_seq, in order, on the source that the caller
+  // made: they turn it into the source at seq, whose CRC-32 is sum. A retry
+  // with the same client_op_id gives the answer of the first request. The
+  // request outlives a page that goes (see requestKept). A request with no
+  // answer in time fails, and can go again.
+  sendOps: (doc: string, input: Operation) =>
+    requestKept<{
+      seq: number;
+      version_id: string;
+      others: Replacement[][];
+      sum: number;
+    }>(`/v1/documents/${doc}/ops`, {
       method: "POST",
       body: JSON.stringify(input),
+      signal: AbortSignal.timeout(LIVE_TIMEOUT_MS),
     }),
-  // The changes from the version `from` to the current version.
-  documentChanges: (doc: string, from: string) =>
-    request<DocumentChanges>(
-      `/v1/documents/${doc}/changes?from=${encodeURIComponent(from)}`,
-    ),
+  // The changes of the document after the seq. A request with no answer in
+  // time fails.
+  documentChanges: (doc: string, after: number) =>
+    request<DocumentChanges>(`/v1/documents/${doc}/changes?after=${after}`, {
+      signal: AbortSignal.timeout(LIVE_TIMEOUT_MS),
+    }),
   // Saves the content of an earlier version as the newest one.
   restoreVersion: (doc: string, version: string) =>
-    request<Version>(`/v1/documents/${doc}/versions/${version}/restore`, {
+    request<SavedVersion>(`/v1/documents/${doc}/versions/${version}/restore`, {
       method: "POST",
     }),
+  // The URL that renders a version. For a document with live state, seq is
+  // the state of the document that the URL renders.
   renderToken: (doc: string, version: string) =>
-    request<{ token: string; url: string }>(
+    request<{ token: string; url: string; seq?: number }>(
       `/v1/documents/${doc}/versions/${version}/render-token`,
       { method: "POST" },
     ),
@@ -542,15 +620,18 @@ export const api = {
     request<ApprovalsList>(
       `/v1/documents/${doc}/approvals${version ? `?version=${encodeURIComponent(version)}` : ""}`,
     ),
+  // seq is the state of the document that the approver sees. The server
+  // refuses a decision on a state that is not the newest one.
   createApproval: (
     doc: string,
     versionId: string,
     decision: ApprovalDecision,
     note?: string,
+    seq?: number,
   ) =>
     request<Approval>(`/v1/documents/${doc}/approvals`, {
       method: "POST",
-      body: JSON.stringify({ version_id: versionId, decision, note }),
+      body: JSON.stringify({ version_id: versionId, decision, note, seq }),
     }),
   deleteApproval: (doc: string, approvalId: string) =>
     request<undefined>(`/v1/documents/${doc}/approvals/${approvalId}`, {
@@ -617,6 +698,8 @@ export const api = {
     quote: string,
     anchor?: Partial<Anchor>,
     mentions: CommentMention[] = [],
+    // The seq of the document that the anchor is on, when the page knows it.
+    seq?: number,
   ) =>
     request<Comment>(`/v1/documents/${doc}/comments`, {
       method: "POST",
@@ -625,6 +708,7 @@ export const api = {
         : {}),
       body: JSON.stringify({
         version_id: version,
+        seq,
         body,
         mentions: mentionPayload(mentions),
         // Use the anchor captured from the render bridge, falling back to a
@@ -653,8 +737,10 @@ export const api = {
         : {}),
       body: JSON.stringify({ body, mentions: mentionPayload(mentions) }),
     }),
+  // The change outlives a page that goes (see requestKept), as the new
+  // anchor of a comment that the reader typed in does.
   patchComment: (doc: string, id: string, patch: CommentPatch) =>
-    request<Comment>(`/v1/documents/${doc}/comments/${id}`, {
+    requestKept<Comment>(`/v1/documents/${doc}/comments/${id}`, {
       method: "PATCH",
       ...(patch.mentions !== undefined
         ? { headers: { "Content-Type": COMMENT_MENTIONS_MEDIA_TYPE } }

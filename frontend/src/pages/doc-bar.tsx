@@ -161,7 +161,22 @@ export function DocBar({
     role,
     canEdit,
   } = useDocumentRole(docId, owner, principal);
-  const { printDocument: exportPDF, signIn } = useDoc();
+  const {
+    printDocument: exportPDF,
+    signIn,
+    shownSeq,
+    latest: newestSeq,
+    setEditing,
+  } = useDoc();
+  // An upload replaces the document as the uploader saw it when they opened
+  // the form, as a push replaces the state of its pull. A preview shows no
+  // seq of the document: the base is then the newest one that the page knows.
+  const live = { version: latest || current, seq: newestSeq };
+  const [uploadBase, setUploadBase] = useState(live);
+  const openUpload = () => {
+    setUploadBase({ ...live, seq: shownSeq ?? newestSeq });
+    setUploadOpen(true);
+  };
   const canManageAccess = canManageSharing(role);
   const [renaming, setRenaming] = useState(false);
   // Rename in the menu waits until the menu closes, so the menu does not
@@ -412,7 +427,7 @@ export function DocBar({
                 <Pencil className="size-4" /> Rename
               </DropdownItem>
               {canChangeContent ? (
-                <UploadVersionMenuItem onSelect={() => setUploadOpen(true)} />
+                <UploadVersionMenuItem onSelect={openUpload} />
               ) : null}
               <DropdownItem onSelect={() => setMoveOpen(true)}>
                 <FolderInput className="size-4" /> Move to folder
@@ -451,7 +466,11 @@ export function DocBar({
         current={current}
         latest={latest}
         canRestore={canChangeContent}
-        onSelectVersion={onSelectVersion}
+        // The reader leaves Edit mode as with Done: text that cannot save
+        // keeps them there, with the choices for it.
+        onSelectVersion={async (versionID) => {
+          if (await setEditing(false)) onSelectVersion(versionID);
+        }}
       />
       {labelsEnabled ? (
         <LabelsDialog
@@ -466,7 +485,8 @@ export function DocBar({
         <>
           <UploadVersionSheet
             docId={docId}
-            baseVersion={latest || current}
+            base={uploadBase}
+            live={live}
             showSaved={showSaved}
             open={uploadOpen}
             onOpenChange={setUploadOpen}

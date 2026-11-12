@@ -6,7 +6,7 @@ import { clearCommentDrafts } from "./comment-drafts";
 import { clearFieldDrafts } from "./field-drafts";
 import { useMe } from "./hooks";
 import { clearOneTimeKeys, setKeyAccount } from "./one-time-keys";
-import { clearTextDrafts } from "./text-drafts";
+import { clearTextDrafts, keepTextDraftsOf } from "./text-drafts";
 
 // Sign-out once only set this flag and kept the session cookie.
 const LEGACY_SIGNED_OUT_KEY = "slashdocs.frontend_signed_out";
@@ -36,37 +36,41 @@ const accounts =
     : new BroadcastChannel("slashdocs.account");
 
 // useEndSession forgets everything of the session in this tab: unsent
-// comments and text, keys that show once, and the cache. They must not
-// outlive the session on a shared browser. Then the tab goes to the start.
+// comments, keys that show once, and the cache. They must not outlive the
+// session on a shared browser. Then the tab goes to the start. Text that did
+// not save stays in storage for its principal only (see keepTextDraftsOf),
+// so that it goes after the next sign-in of that principal.
 function useEndSession() {
   const qc = useQueryClient();
   const nav = useNavigate();
   return () => {
     clearCommentDrafts();
     clearFieldDrafts();
-    clearTextDrafts();
     clearOneTimeKeys();
     qc.clear();
     nav("/", { replace: true });
   };
 }
 
-// Ends the browser session, here and in every other tab.
+// Ends the browser session, here and in every other tab. A sign-out also
+// forgets the text that did not save.
 export function useSignOut() {
   const endSession = useEndSession();
   return useMutation({
     mutationFn: api.logout,
     onSuccess: () => {
       accounts?.postMessage(null);
+      clearTextDrafts();
       endSession();
     },
   });
 }
 
 // useAccountSync keeps a tab on the account of the browser. The tab tells
-// the others its account. When another tab tells of a sign-out or another
-// account, this tab ends its session, so that no key, draft or page of the
-// account before shows to the next one.
+// the others its account, and removes the text that other accounts did not
+// save. When another tab tells of a sign-out or another account, this tab
+// ends its session, so that no key, draft or page of the account before
+// shows to the next one.
 export function useAccountSync() {
   const me = useMe();
   const endSession = useEndSession();
@@ -74,6 +78,7 @@ export function useAccountSync() {
   useEffect(() => {
     if (account === undefined) return;
     setKeyAccount(account);
+    if (account) keepTextDraftsOf(account);
     accounts?.postMessage(account);
   }, [account]);
   useEffect(() => {

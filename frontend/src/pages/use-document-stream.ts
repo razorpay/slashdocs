@@ -5,11 +5,13 @@ import {
   type Anchor,
   type CursorSpot,
   type DocumentCursor,
+  type DocumentEvent,
   type DocumentKVEvent,
   type DocumentPresence,
   type Principal,
 } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
+import type { Replacement } from "@/lib/source-edits";
 import { createCursorBatch } from "@/lib/live-cursors";
 import { principalColor, principalLabel, samePrincipal } from "@/lib/principals";
 import type { RemoteCursor } from "../../bridge/cursors";
@@ -49,7 +51,7 @@ const EVENT_KINDS = [
 
 type DocumentEventHandlers = Partial<
   Record<(typeof EVENT_KINDS)[number], DocumentKVListener>
-> & { open?: () => void };
+> & { open?: () => void; closed?: () => void };
 
 // useDocumentEvents holds one connection to the document event stream and
 // passes each event to the handler for its kind. A session marks the
@@ -96,6 +98,8 @@ export function useDocumentEvents(
     let reconnect: number | undefined;
     source.onerror = () => {
       if (source.readyState !== EventSource.CLOSED) return;
+      // The server refused the stream, as when access to the document went.
+      handlersRef.current.closed?.();
       reconnect = window.setTimeout(() => setAttempt((n) => n + 1), RECONNECT_DELAY);
     };
     return () => {
@@ -124,10 +128,10 @@ export function useDocumentStream({
   // waits for the reader.
   following: boolean;
   principal?: Principal;
-  // Called on each change to the document, with the version that the change
-  // made, if it made one. It is also called when the stream opens, because
+  // Called on each change to the document, with what the event tells of
+  // it, if it names a seq. It is also called when the stream opens, because
   // the changes before that sent no event here.
-  onDocumentChange: (versionID?: string) => void;
+  onDocumentChange: (event?: DocumentEvent) => void;
 }) {
   const q = useQueryClient();
   const invalidateApprovals = useInvalidateApprovals(docId);
@@ -163,13 +167,12 @@ export function useDocumentStream({
         setSessions(new Map());
         onDocumentChange();
       },
+      // The page asks for the document again, and shows why it cannot.
+      closed: () => onDocumentChange(),
       kv: (event) => kvListeners.current.forEach((listener) => listener(event)),
       comments: () => q.invalidateQueries({ queryKey: queryKeys.comments(docId) }),
       approvals: invalidateApprovals,
-      document: (event) =>
-        onDocumentChange(
-          (event.data as { version_id?: string } | undefined)?.version_id,
-        ),
+      document: (event) => onDocumentChange(documentEvent(event)),
       presence: (event) => {
         const presence = event.data as DocumentPresence | undefined;
         const viewer = event.updated_by;
@@ -350,6 +353,7 @@ export function useDocumentStream({
     subscribeKV,
     reportViewport,
     moveCursor,
+    holdCursor: cursorBatch.hold,
     subscribeCursors,
     cursorVersion,
   };
@@ -363,4 +367,37 @@ function hiddenPoint(t: number) {
 // of its last point plus after.
 function hiddenCursor(cursor: RemoteCursor, after = 0): RemoteCursor {
   return { ...cursor, points: [hiddenPoint((cursor.points.at(-1)?.t ?? 0) + after)] };
+}
+
+// documentEvent reads what a document event tells of the document, or
+// nothing when it names no seq. Each event of an operation names its
+// author, and whether they typed it. A small operation comes with its
+// event. The event of a version that is done says so, and the event of a
+// restore names the person who restored.
+function documentEvent(event: DocumentKVEvent): DocumentEvent | undefined {
+  const data = event.data as
+    | (Partial<DocumentEvent> & { replacements?: Replacement[]; sum?: number })
+    | undefined;
+  if (typeof data?.seq !== "number" || !data.version_id) return undefined;
+  const { seq, version_id, prev_seq, replacements, sum } = data;
+  const typed = data.typed === true;
+  const authors = event.updated_by ? [event.updated_by] : undefined;
+  if (typeof prev_seq !== "number" || !replacements || typeof sum !== "number")
+    return {
+      seq,
+      version_id,
+      typed,
+      authors,
+      ...(data.sealed === true && { sealed: true }),
+      ...(data.restored === true && { restored: true, updated_by: event.updated_by }),
+    };
+  const ops = [replacements];
+  return {
+    seq,
+    version_id,
+    typed,
+    authors,
+    prev_seq,
+    changes: { seq, version_id, ops, typed, authors: authors ?? [], sum },
+  };
 }

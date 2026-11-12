@@ -177,16 +177,33 @@ describe("script content", () => {
     assert.equal(p.getAttribute("contenteditable"), "true");
   });
 
-  test("a region over an element that a script moved away is refused", async () => {
+  test("an element that a script moved away is fixed, and a region over its place keeps it", async () => {
     const source = page("<div>\n<p>1</p>\n<p>2</p>\n<p>3</p>\n</div>");
     const doc = await open(source, (d) => {
       d.body.append(d.querySelectorAll("p")[1]);
     });
-    const [one, three] = [doc.at("p"), doc.at("p", 1)];
+    const [one, three, moved] = [doc.at("p"), doc.at("p", 1), doc.at("p", 2)];
+    assert.ok(doc.map.fixed(moved.firstChild!));
+    assert.isFalse(doc.map.scriptOwned(moved.firstChild!));
     doc.type(one, one.firstChild!, "one");
     doc.type(three, three.firstChild!, "three");
-    const result = applyRegions(doc.tree, doc.map.regions());
-    assert.match("refused" in result ? result.refused : "", /leaves out <p> at/);
+    // The white space around the place goes after it.
+    assert.equal(
+      doc.save(),
+      source.replace("1</p>\n<p>2</p>\n<p>3", "one</p><p>2</p>\n\n<p>three"),
+    );
+  });
+
+  test("a change in an element that a script wrapped saves in its place", async () => {
+    const source = page("<p>one</p>\n<p>two <b>2</b></p>");
+    const doc = await open(source, (d) => {
+      const wrapper = d.createElement("section");
+      d.body.append(wrapper);
+      wrapper.append(d.querySelectorAll("p")[1]);
+    });
+    const two = doc.at("p", 1);
+    doc.type(two, two.firstChild!, "two, wrapped ");
+    assert.equal(doc.save(), source.replace("two ", "two, wrapped "));
   });
 });
 
