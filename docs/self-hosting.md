@@ -177,9 +177,12 @@ slashdocs runs in one of two modes, set by `SLASHDOCS_DEPLOYMENT`:
 
 - **`public`** (default) — anyone who can authenticate with the identity
   provider can sign in. Sharing a document with "everyone" means _anyone with
-  the link_. People search finds only your contacts: the people you share
-  with and the people who share with you. Other users appear only when you
-  type their full email address.
+  the link_, and that includes readers who are not signed in: they can read
+  the document, its versions, and its comments. To comment or edit, the app
+  sends them to sign in first, whatever role the link gives. People search
+  finds only your contacts: the people you share with and the people who
+  share with you. Other users appear only when you type their full email
+  address.
 - **`org`** — login is gated to your organization's domains
   (`SLASHDOCS_ORG_DOMAINS`, a comma-separated list that supports multiple domains
   for acquisitions). Sharing with "everyone" then means _anyone in the org_,

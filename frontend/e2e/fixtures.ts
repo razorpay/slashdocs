@@ -45,15 +45,20 @@ export async function loginThroughDex(page: Page) {
     page.getByRole("heading", { name: "Sign in to slashdocs" }),
   ).toBeVisible();
 
+  await continueWithDex(page);
+
+  await expect(page).toHaveURL(`${APP_ORIGIN}/app/documents`);
+  await expect(page.getByRole("heading", { name: "Documents" })).toBeVisible();
+}
+
+// continueWithDex signs in as the Dex dev user from the slashdocs login page.
+export async function continueWithDex(page: Page) {
   await page.getByRole("link", { name: "Continue with Dex" }).click();
   await expect.poll(() => new URL(page.url()).origin).toBe(new URL(DEX_ORIGIN).origin);
 
   await page.locator('input[name="login"]').fill("admin@example.com");
   await page.locator('input[name="password"]').fill("password");
   await page.getByRole("button", { name: /login/i }).click();
-
-  await expect(page).toHaveURL(`${APP_ORIGIN}/app/documents`);
-  await expect(page.getByRole("heading", { name: "Documents" })).toBeVisible();
 }
 
 type DocumentRecord = {
@@ -166,6 +171,16 @@ export class SlashdocsAPI {
       `get access for ${id}`,
     );
     return result.items;
+  }
+
+  async shareWithAnyone(id: string, role: "viewer" | "commenter" | "editor") {
+    await responseJSON(
+      await this.request.post(`/v1/documents/${id}/grants`, {
+        headers: this.writeHeaders(),
+        data: { principal: { type: "anyone" }, role },
+      }),
+      `share ${id} with anyone`,
+    );
   }
 
   async patchKV(id: string, key: string, value: string) {

@@ -113,7 +113,7 @@ func TestMCPDiscoveryAndOAuthMetadata(t *testing.T) {
 	  "registration_endpoint": "https://app.example/oauth/register",
 	  "response_types_supported": ["code"],
 	  "response_modes_supported": ["query"],
-	  "grant_types_supported": ["authorization_code"],
+	  "grant_types_supported": ["authorization_code", "refresh_token"],
 	  "token_endpoint_auth_methods_supported": ["none"],
 	  "code_challenge_methods_supported": ["S256"],
 	  "scopes_supported": ["mcp"]
@@ -427,6 +427,106 @@ func TestMCPOAuthCodeExchangeIsBoundAndOneTime(t *testing.T) {
 	}
 }
 
+// The authorization_code exchange must issue a rotating refresh token so MCP
+// clients can renew the access token without re-prompting the user when it
+// expires (the bug reported for the SlashDocs MCP server: signed in
+// at 2:05 PM, asked to re-auth by 3:07 PM, while the CLI stays signed in).
+func TestMCPRefreshTokenGrantRotatesAndIsBound(t *testing.T) {
+	e := newMCPOAuthTestEnv(t)
+	clientID := registeredMCPClientID(t, e, "Refresh client", []string{mcpTestRedirectURI})
+
+	code := approveMCPAuthorization(t, e, clientID, mcpTestRedirectURI, mcpTestVerifier, "refresh-flow")
+	exchanged := postMCPToken(t, e, mcpTokenValues(e, code, clientID, mcpTestRedirectURI, mcpTestVerifier))
+	assertStatus(t, exchanged, http.StatusOK)
+	refreshToken := jsonField(t, exchanged.Body.Bytes(), "refresh_token")
+	if !strings.HasPrefix(refreshToken, "slashdocs_mcp_refresh_") {
+		t.Fatalf("refresh_token = %q, want slashdocs_mcp_refresh_ prefix", refreshToken)
+	}
+
+	renewed := postMCPToken(t, e, mcpRefreshTokenValues(e, refreshToken, clientID))
+	assertStatus(t, renewed, http.StatusOK)
+	if got := renewed.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("refresh Cache-Control = %q, want no-store", got)
+	}
+	newAccess := jsonField(t, renewed.Body.Bytes(), "access_token")
+	if !strings.HasPrefix(newAccess, auth.MCPAccessTokenPrefix) {
+		t.Fatalf("refreshed access_token = %q, want %q prefix", newAccess, auth.MCPAccessTokenPrefix)
+	}
+	// Access tokens are deterministic over (sub, aud, exp) with second
+	// granularity, so same-second renewals can repeat bytes; the refresh token
+	// below must still rotate because it carries fresh random material.
+	newRefresh := jsonField(t, renewed.Body.Bytes(), "refresh_token")
+	if newRefresh == "" || newRefresh == refreshToken {
+		t.Fatalf("refresh_token was not rotated: %q", newRefresh)
+	}
+
+	// The refreshed access token must authenticate against the MCP resource.
+	authenticator := auth.MCPAuthenticator{
+		Users:         e.store,
+		ServiceTokens: auth.DBAuthenticator{Resolver: e.store, SessionSecret: oauthTestSigningMaterial},
+		SessionSecret: oauthTestSigningMaterial,
+		Resource:      e.resource,
+	}
+	if got := authenticateMCP(t, authenticator, newAccess, ""); got.ID != fixtureUser.ID {
+		t.Fatalf("refreshed token principal = %#v, want user %s", got, fixtureUser.ID)
+	}
+
+	// A rotated-out token is spent, but its replacement stays valid.
+	assertOAuthError(t, postMCPToken(t, e, mcpRefreshTokenValues(e, refreshToken, clientID)),
+		http.StatusBadRequest, "invalid_grant")
+	assertStatus(t, postMCPToken(t, e, mcpRefreshTokenValues(e, newRefresh, clientID)), http.StatusOK)
+
+	// Binding: a different client cannot redeem the token.
+	code2 := approveMCPAuthorization(t, e, clientID, mcpTestRedirectURI, mcpTestVerifier, "second-grant")
+	exchanged2 := postMCPToken(t, e, mcpTokenValues(e, code2, clientID, mcpTestRedirectURI, mcpTestVerifier))
+	assertStatus(t, exchanged2, http.StatusOK)
+	secondRefresh := jsonField(t, exchanged2.Body.Bytes(), "refresh_token")
+	otherClient := registeredMCPClientID(t, e, "Other client", []string{mcpTestRedirectURI})
+	assertOAuthError(t, postMCPToken(t, e, mcpRefreshTokenValues(e, secondRefresh, otherClient)),
+		http.StatusBadRequest, "invalid_grant")
+}
+
+func TestMCPRefreshTokenGrantValidatesRequests(t *testing.T) {
+	e := newMCPOAuthTestEnv(t)
+	clientID := registeredMCPClientID(t, e, "Validation client", []string{mcpTestRedirectURI})
+
+	t.Run("missing refresh_token", func(t *testing.T) {
+		values := mcpRefreshTokenValues(e, "", clientID)
+		values.Del("refresh_token")
+		assertOAuthError(t, postMCPToken(t, e, values), http.StatusBadRequest, "invalid_request")
+	})
+
+	t.Run("unknown refresh token", func(t *testing.T) {
+		values := mcpRefreshTokenValues(e, "slashdocs_mcp_refresh_forged", clientID)
+		assertOAuthError(t, postMCPToken(t, e, values), http.StatusBadRequest, "invalid_grant")
+	})
+
+	t.Run("mismatched resource", func(t *testing.T) {
+		code := approveMCPAuthorization(t, e, clientID, mcpTestRedirectURI, mcpTestVerifier, "resource-check")
+		exchanged := postMCPToken(t, e, mcpTokenValues(e, code, clientID, mcpTestRedirectURI, mcpTestVerifier))
+		assertStatus(t, exchanged, http.StatusOK)
+		refreshToken := jsonField(t, exchanged.Body.Bytes(), "refresh_token")
+
+		values := mcpRefreshTokenValues(e, refreshToken, clientID)
+		values.Set("resource", mcpTestOrigin+"/other")
+		assertOAuthError(t, postMCPToken(t, e, values), http.StatusBadRequest, "invalid_grant")
+	})
+
+	t.Run("login states cannot be replayed as refresh tokens", func(t *testing.T) {
+		// A state row that is not a refresh-token row (wrong mode) must never
+		// redeem, even when stored under the id the token endpoint looks up.
+		token := "slashdocs_mcp_refresh_imposter" //nolint:gosec // G101: fabricated test token, not a credential.
+		if err := e.stateStore.PutState(context.Background(), "mcp_refresh:"+auth.HashToken(token), auth.LoginState{
+			Mode: "web", UserID: fixtureUser.ID, OAuthClientID: clientID, OAuthResource: e.resource,
+			ExpiresAt: time.Now().Add(time.Hour),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		values := mcpRefreshTokenValues(e, token, clientID)
+		assertOAuthError(t, postMCPToken(t, e, values), http.StatusBadRequest, "invalid_grant")
+	})
+}
+
 func TestMCPAndCLIAuthCodesCannotCrossProtocols(t *testing.T) {
 	e := newMCPOAuthTestEnv(t)
 	clientID := registeredMCPClientID(t, e, "Protocol-bound client", []string{mcpTestRedirectURI})
@@ -613,6 +713,15 @@ func mcpTokenValues(e *mcpOAuthTestEnv, code, clientID, redirectURI, verifier st
 		"code_verifier": {verifier},
 		"client_id":     {clientID},
 		"redirect_uri":  {redirectURI},
+		"resource":      {e.resource},
+	}
+}
+
+func mcpRefreshTokenValues(e *mcpOAuthTestEnv, refreshToken, clientID string) url.Values {
+	return url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {refreshToken},
+		"client_id":     {clientID},
 		"resource":      {e.resource},
 	}
 }
