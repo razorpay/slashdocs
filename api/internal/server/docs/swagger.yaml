@@ -174,11 +174,37 @@ definitions:
       version_id:
         type: string
     type: object
+  repo.Folder:
+    properties:
+      ancestors:
+        items:
+          $ref: '#/definitions/repo.FolderBreadcrumb'
+        type: array
+      id:
+        type: string
+      owner:
+        $ref: '#/definitions/auth.Principal'
+      parent_folder_id:
+        type: string
+      title:
+        type: string
+    type: object
   repo.FolderBreadcrumb:
     properties:
       id:
         type: string
       title:
+        type: string
+    type: object
+  repo.FolderEntry:
+    properties:
+      document:
+        $ref: '#/definitions/repo.Document'
+      folder:
+        $ref: '#/definitions/repo.Folder'
+      last_active:
+        type: string
+      type:
         type: string
     type: object
   repo.Grant:
@@ -327,6 +353,15 @@ definitions:
         type: boolean
       sha256:
         type: string
+    type: object
+  server.ambiguousPathResponse:
+    properties:
+      candidates:
+        items:
+          $ref: '#/definitions/repo.Folder'
+        type: array
+      error:
+        $ref: '#/definitions/server.errorBody'
     type: object
   server.approvalListItem:
     properties:
@@ -766,6 +801,17 @@ definitions:
       error:
         $ref: '#/definitions/server.errorBody'
     type: object
+  server.folderListResponse:
+    properties:
+      folder:
+        $ref: '#/definitions/repo.Folder'
+      has_more:
+        type: boolean
+      items:
+        items:
+          $ref: '#/definitions/repo.FolderEntry'
+        type: array
+    type: object
   server.googleGroupSearchItem:
     properties:
       email:
@@ -954,6 +1000,17 @@ definitions:
         type: string
       name:
         type: string
+    type: object
+  server.moveDocResponse:
+    properties:
+      document_id:
+        type: string
+      folder_id:
+        type: string
+      moved:
+        type: boolean
+      permission_warning:
+        $ref: '#/definitions/server.permissionWarning'
     type: object
   server.notificationPreferencesRequest:
     properties:
@@ -2541,6 +2598,127 @@ paths:
       summary: Restore version
       tags:
       - versions
+  /v1/folders:
+    get:
+      description: 'With no parameters, lists the folders and documents at the root
+        of the caller. With folder_id or path, lists the contents of that folder.
+        With q or min_role, searches the folders that the caller can see by title,
+        at most 25: min_role keeps only the folders on which the caller has at least
+        that role, and min_role with no q lists every such folder, for a picker such
+        as the move dialog.'
+      parameters:
+      - description: Folder ID to list
+        in: query
+        name: folder_id
+        type: string
+      - description: Folder path to list, such as /A/B
+        in: query
+        name: path
+        type: string
+      - description: Words of a folder title
+        in: query
+        name: q
+        type: string
+      - description: Least role of the caller on each folder of a search
+        enum:
+        - viewer
+        - commenter
+        - editor
+        - owner
+        in: query
+        name: min_role
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/server.folderListResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "409":
+          description: 'ambiguous_path: more than one folder has a name of the path'
+          schema:
+            $ref: '#/definitions/server.ambiguousPathResponse'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: List or search folders
+      tags:
+      - folders
+  /v1/folders/{id}/documents:
+    post:
+      description: The caller needs the editor role on the document and on the folder.
+        The caller also needs the editor role on the folder that the document leaves,
+        unless the caller owns the document. permission_warning is set when the folder
+        gives access to more people than the document had.
+      parameters:
+      - description: Folder ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: The document to move
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            document_id:
+              type: string
+          type: object
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/server.moveDocResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Move a document into a folder
+      tags:
+      - folders
+  /v1/folders/{id}/documents/{doc_id}:
+    delete:
+      description: The caller needs the editor role on the document, and on the folder
+        that it leaves unless the caller owns the document.
+      parameters:
+      - description: Folder ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Document ID
+        in: path
+        name: doc_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Move a document out of a folder to the root
+      tags:
+      - folders
   /v1/folders/{id}/grants:
     post:
       parameters:
@@ -2633,6 +2811,10 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/server.listResponse-repo_InboxItem'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
       security:
       - bearerAuth: []
       - cookieAuth: []

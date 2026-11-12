@@ -481,7 +481,7 @@ func grantsCmd(g *globals, out io.Writer) *cobra.Command {
 	revoke := mutate(g, out, "revoke <doc_id> <grant_id>", "Revoke a document grant", "DELETE", "/v1/documents/%s/grants/%s", 2, func(a []string) string { return "Revoked grant " + a[1] + " on " + a[0] + "." })
 	list := simplePath(g, out, "list <doc_id>", "GET", "/v1/documents/%s/access")
 	list.Short = "List effective document access"
-	requests := simplePath(g, out, "requests", "GET", "/v1/documents/%s/access-requests")
+	requests := simplePath(g, out, "requests <doc_id>", "GET", "/v1/documents/%s/access-requests")
 	requests.Short = "List requests for access to a document"
 	c.AddCommand(list, requests, add, upd, revoke)
 	return c
@@ -510,7 +510,7 @@ func docVersionCmd(g *globals, out io.Writer, use, method, tmpl string) *cobra.C
 
 func pullCmd(g *globals, out io.Writer) *cobra.Command {
 	var ver, outp string
-	cmd := &cobra.Command{Use: "pull <doc_id>", Short: "Download a document HTML version", Example: "  slashdocs docs pull doc_123 --out report.html\n  slashdocs docs pull doc_123 --version ver_123", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "pull <doc_id>", Short: "Download a document HTML version", Long: "Download the HTML of a document version, the current one by default.\n\nWith --out, the CLI records the version and the seq of the HTML as the base of that file. A push of the file sends them, so the server keeps the edits that other people make after the pull.", Example: "  slashdocs docs pull doc_123 --out report.html\n  slashdocs docs pull doc_123 --version ver_123", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		cl, err := client(g)
 		if err != nil {
 			return err
@@ -610,7 +610,7 @@ func baseOf(cx *Context, doc, file string) Base {
 
 func docsPushCmd(g *globals, out io.Writer) *cobra.Command {
 	var base, summary string
-	cmd := &cobra.Command{Use: "push <doc_id> <file>", Short: "Upload a new document version", Example: "  slashdocs docs push doc_123 report.html --base-version ver_123\n  slashdocs docs push doc_123 report.html --summary 'Address comments'", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "push <doc_id> <file>", Short: "Upload a new document version", Long: "Upload a file as a new version of a document. Pull the document with --out first, edit that file, and push it: the push sends the base that the pull recorded.\n\nWhen other people changed other text after the base, the server merges the push with their edits, and the CLI writes the merged version into the file. When they changed the same text, the push is refused and their text stays: pull again, and make the change again. A file that equals the document makes no version.", Example: "  slashdocs docs push doc_123 report.html --base-version ver_123\n  slashdocs docs push doc_123 report.html --summary 'Address comments'", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 		doc, file := args[0], args[1]
 		data, fn, err := readFileArg(file)
 		if err != nil {
@@ -666,7 +666,7 @@ func docsPushCmd(g *globals, out io.Writer) *cobra.Command {
 		}
 		return printPushedVersion(out, g, doc, cl.Base, pushed, now != nil, pullBeside)
 	}}
-	cmd.Flags().StringVar(&base, "base-version", "", "base version ID")
+	cmd.Flags().StringVar(&base, "base-version", "", "base version ID, in place of the one that the pull recorded (while people edit, the server refuses it)")
 	cmd.Flags().StringVar(&summary, "summary", "", "change summary, one change per line")
 	return cmd
 }

@@ -56,6 +56,35 @@ the commit messages do not give it.
   values bump the minor version while we are pre-1.0, and the major version
   after that. Call them out under **Breaking changes** in the release notes.
 
+## The CLI ships with the server
+
+Release the CLI and the server from the same tag. The image already carries
+the CLI of its release, and the standalone archives come from the same run.
+Never release a server whose push contract changed without its CLI.
+
+The release with live editing (migration 44) is such a release. A push now
+sends `base_seq`, the seq of the HTML that `docs pull --out` recorded for the
+file. A CLI of the release before records no seq and sends only
+`base_version_id`, and the server then cannot tell which state of the
+document the file holds:
+
+- While people type in the document, the server refuses the push with
+  409 `stale` and the message to update the CLI, pull, and push again.
+- When the base version is sealed and people typed after it, the server
+  merges the push and answers `rebased: true`. The old CLI ignores this. It
+  does not write the merged version into the file, and it records that
+  version as the base. Its next push of the same file thus removes the text
+  of the other people.
+- When the old CLI pulled while people typed, and their version is sealed
+  before the push, the push also removes the text that they typed after the
+  pull.
+
+A signed CLI updates itself after its next command against a server of the
+new release. With `SLASHDOCS_DISABLE_AUTO_UPDATE` set, run `slashdocs update`.
+A CLI built with no signing key cannot update itself: install it again. Call
+this out under **Breaking changes** in the release notes. See also
+[Rolling deploy to the release with live editing](self-hosting.md#rolling-deploy-to-the-release-with-live-editing).
+
 ## Docker Hub credentials
 
 `release.yml` logs in to Docker Hub with the organization-level Actions secrets
