@@ -134,7 +134,15 @@ func decisionCmd(g *globals, out io.Writer, use, short, decision, did string) *c
 			if g.json {
 				return render(out, g, b)
 			}
-			return confirm(out, g, fmt.Sprintf("%s %s of %s.", did, v, args[0]))
+			// The server seals the version that people edit, and names the
+			// version that the decision is for.
+			var decided struct {
+				VersionID string `json:"version_id"`
+			}
+			if err := json.Unmarshal(b, &decided); err != nil {
+				return fmt.Errorf("could not parse approval response: %w", err)
+			}
+			return confirm(out, g, fmt.Sprintf("%s %s of %s.", did, decided.VersionID, args[0]))
 		},
 	}
 	cmd.Flags().StringVar(&ver, "version", "", "version ID (defaults to the current version)")

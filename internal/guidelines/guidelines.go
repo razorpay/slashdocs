@@ -69,7 +69,9 @@ Publish a new document:
   slashdocs docs create report.html --title 'Report'
 
 Push an update to an existing document:
-  slashdocs docs push <doc_id> report.html --base-version <version_id> --summary 'Address comments'
+  slashdocs docs pull <doc_id> --out report.html
+  (edit report.html)
+  slashdocs docs push <doc_id> report.html --summary 'Address comments'
 
 Change existing text without uploading the file again:
   slashdocs docs edit <doc_id> --old 'TTL of 10 minutes' --new 'TTL of 5 minutes'
@@ -83,17 +85,19 @@ byte-for-byte the same and comments elsewhere stay anchored.
 Write one change per line in --summary; the version history shows each line
 as a list item.
 
-If you previously ran slashdocs docs pull <doc_id>, the CLI remembers that base
-version for the active context, so --base-version is optional.
+A pull with --out records which state of the document the file holds, and the
+push sends it. The server then keeps the edits that other people made after
+your pull. A push of a file with no recorded state is refused, so pull with
+--out before you edit, and push that file.
 
 Publishing model:
   - Creating a document stores the uploaded HTML as version 1.
   - Pushing HTML, or editing its text, creates a new immutable version.
   - People with the editor role edit the document in the slashdocs UI: words,
-    paragraphs, lists, bold, italic and links. Each pause in their typing
-    saves the HTML of the elements they changed, by position, as a new
-    version. The rest of the HTML stays byte-for-byte the same. The UI shows versions as the document's history,
-    where people preview and restore them.
+    paragraphs, lists, bold, italic and links. Their edits save as they type,
+    and change only the HTML of the elements they edit. One sitting of edits
+    is one version. The UI shows versions as the document's history, where
+    people preview and restore them.
   - Runtime KV changes from uploaded HTML do not create versions; see:
       slashdocs guidelines interactivity kv
 

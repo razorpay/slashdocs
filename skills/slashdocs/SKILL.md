@@ -59,7 +59,11 @@ format:
 If the user is iterating on an existing slashdocs document, push a new version
 instead of creating a duplicate. Use the CLI help to find the current push/update
 syntax and include a short summary of what changed. Write one change per line;
-the document's history shows a multi-line summary as a list. People with the
+the document's history shows a multi-line summary as a list. Pull the
+document with `slashdocs docs pull <id> --out <file>` before you edit it, and
+push that file: the CLI records which state of the document the file holds, so
+the server keeps the edits that other people made after your pull. A push of a
+file with no recorded state is refused. People with the
 editor role also edit the document in the browser (words, paragraphs, lists,
 bold, italic and links), and their edits save as they type, so pull or read the
 HTML again before you edit a document that people work on. A browser edit

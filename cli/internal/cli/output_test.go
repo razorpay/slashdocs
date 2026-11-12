@@ -80,3 +80,38 @@ func TestJSONRenderingLeavesMentionPayloadUnchanged(t *testing.T) {
 		t.Fatalf("JSON render changed payload\n got: %#v\nwant: %#v", got, want)
 	}
 }
+
+func TestPushSaysWhenTheSavedVersionHoldsEditsOfOtherPeople(t *testing.T) {
+	t.Parallel()
+	const (
+		updated = "Other people edited this document while you worked. Your file now has their edits too."
+		pull    = "Other people edited this document while you worked, and your file does not have their edits. Run slashdocs docs pull doc_1 --out report.latest.html, and make your next changes in that file."
+	)
+	for _, tc := range []struct {
+		name        string
+		g           globals
+		rebased     bool
+		fileUpdated bool
+		unchanged   bool
+		want        string
+	}{
+		{"a push that the server merged", globals{}, true, true, false, updated},
+		{"a merged push of a file that changed", globals{}, true, false, false, pull},
+		{"a push with nothing after its base", globals{}, false, true, false, "✓ Your change is in the document: http://localhost:8080/app/d/doc_1\n"},
+		{"JSON output says if the file has the saved version", globals{json: true}, true, true, false, `"file_updated": true`},
+		{"JSON output of a file that changed", globals{json: true}, true, false, false, `"file_updated": false`},
+		{"quiet output", globals{quiet: true}, true, true, false, ""},
+		{"a file that is the document", globals{}, false, true, true, "Nothing changed.\n"},
+		{"JSON output of a file that is the document", globals{json: true}, false, true, true, `"unchanged": true`},
+	} {
+		var out bytes.Buffer
+		body := map[string]any{"id": "ver_2", "number": 2, "rebased": tc.rebased, "unchanged": tc.unchanged}
+		if err := printPushedVersion(&out, &tc.g, "doc_1", "http://localhost:8080", body, tc.fileUpdated, "slashdocs docs pull doc_1 --out report.latest.html"); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		got := out.String()
+		if !tc.rebased && (strings.Contains(got, "Other people") || strings.Contains(got, "file_updated")) || !strings.Contains(got, tc.want) || tc.unchanged && strings.Contains(got, "Your change") {
+			t.Errorf("%s: output %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}

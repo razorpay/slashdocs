@@ -64,12 +64,17 @@ func renderValue(out io.Writer, g *globals, v any) error {
 
 // errorEnvelope is the --json form of a failed command, in the shape of the
 // error responses of the server. An API error keeps the response of the
-// server, with its code and details. Other errors get a code from their kind.
+// server, with its code and details, and the message that the plain output
+// shows, which a command can replace. Other errors get a code from their
+// kind.
 func errorEnvelope(err error) map[string]any {
 	var ae *APIError
 	if errors.As(err, &ae) {
 		var v map[string]any
 		if json.Unmarshal([]byte(ae.Body), &v) == nil && v["error"] != nil {
+			if e, ok := v["error"].(map[string]any); ok {
+				e["message"] = ae.Message
+			}
 			return v
 		}
 	}
@@ -163,19 +168,30 @@ func action(g *globals, out io.Writer, fn func(*Client) ([]byte, error), msg fun
 	return nil
 }
 
-func printPushedVersion(out io.Writer, g *globals, docID, server string, b []byte) error {
-	return printSavedVersion(out, g, "Pushed version %s to %s.", docID, server, b)
+// printPushedVersion reports a push. When other people edited the document
+// since the base of the push, the server saved their edits and the push
+// together, so the saved version is not the pushed file. fileUpdated says
+// that the file now has the saved version. The caller learns that, or that
+// pull, a command, gets the saved version into another file.
+func printPushedVersion(out io.Writer, g *globals, docID, server string, m map[string]any, fileUpdated bool, pull string) error {
+	note := ""
+	if m["rebased"] == true {
+		m["file_updated"] = fileUpdated
+		note = "Other people edited this document while you worked. Your file now has their edits too."
+		if !fileUpdated {
+			note = fmt.Sprintf("Other people edited this document while you worked, and your file does not have their edits. Run %s, and make your next changes in that file.", pull)
+		}
+	}
+	return printSavedVersion(out, g, docID, server, m, note)
 }
 
-// printSavedVersion reports a new version of a document. done formats the
-// version and the document ID into what was done.
-func printSavedVersion(out io.Writer, g *globals, done, docID, server string, b []byte) error {
+// printSavedVersion reports m, the answer of a write that saves a version
+// of a document: the change is in the document, and the link to it, then
+// note when it is not empty. A write that left the document as it is saved
+// no version.
+func printSavedVersion(out io.Writer, g *globals, docID, server string, m map[string]any, note string) error {
 	if g.quiet {
 		return nil
-	}
-	var m map[string]any
-	if json.Unmarshal(b, &m) != nil {
-		return render(out, g, b)
 	}
 	url := browserURL(server, "/app/d/%s", docID)
 	if g.json {
@@ -190,15 +206,10 @@ func printSavedVersion(out io.Writer, g *globals, done, docID, server string, b 
 		}
 		return render(out, g, nb)
 	}
-	// slashdocs local keeps only the current version, so it has no number.
-	version := fmt.Sprint(value(m, "id"))
-	if num := value(m, "number"); num != nil {
-		version = fmt.Sprint(num) + " (" + version + ")"
+	if m["unchanged"] == true {
+		return message(out, g, "Nothing changed.")
 	}
-	if err := confirm(out, g, fmt.Sprintf(done+" Review it at %s", version, docID, url)); err != nil {
-		return err
-	}
-	return printOrgWideViewerNudge(out, g, docID)
+	return confirm(out, g, strings.TrimSpace("Your change is in the document: "+url+"\n"+note))
 }
 
 func humanize(hint string, x any) string {

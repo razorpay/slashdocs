@@ -85,8 +85,14 @@ func jsonTestEnv(t *testing.T, srv *httptest.Server) string {
 	return html
 }
 
+// refusedPush is what a refused push of file tells its author.
+func refusedPush(file string) string {
+	return "Other people changed the same text, and their text stays. Run slashdocs docs pull doc_1 --out " + file + " to get the document as it is now, then make your change again."
+}
+
 // TestJSONErrorEnvelopeIsTheServerResponse is the recovery case of issue #102:
 // a caller reads current_version_id from a 409, in the shape of the server.
+// The message is that of the plain output.
 func TestJSONErrorEnvelopeIsTheServerResponse(t *testing.T) {
 	html := jsonTestEnv(t, conflictServer(t))
 
@@ -96,19 +102,19 @@ func TestJSONErrorEnvelopeIsTheServerResponse(t *testing.T) {
 	}
 	body := errorBodyOf(t, out)
 	details, _ := body["details"].(map[string]any)
-	if body["code"] != "version_conflict" || body["message"] != "base_version_id is stale" || details["current_version_id"] != "ver_9" {
-		t.Fatalf("error envelope = %v, want the server response", body)
+	if body["code"] != "version_conflict" || body["message"] != refusedPush(html) || details["current_version_id"] != "ver_9" {
+		t.Fatalf("error envelope = %v, want the code and details of the server with the message of the CLI", body)
 	}
 }
 
-// TestVersionConflictTextNamesCurrentVersion gives the same detail to a person
-// who does not pass --json.
-func TestVersionConflictTextNamesCurrentVersion(t *testing.T) {
+// TestRefusedPushTextSaysWhatToDo: a person who does not pass --json gets
+// what to do, and no ids of the server.
+func TestRefusedPushTextSaysWhatToDo(t *testing.T) {
 	html := jsonTestEnv(t, conflictServer(t))
 
 	_, err := Execute([]string{"docs", "push", "doc_1", html, "--base-version", "ver_old"})
-	if err == nil || !strings.Contains(err.Error(), "current_version_id=ver_9") {
-		t.Fatalf("conflict text should name the current version, got %v", err)
+	if err == nil || err.Error() != refusedPush(html) {
+		t.Fatalf("conflict text = %v, want only what to do", err)
 	}
 }
 
