@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/razorpay/slashdocs/api/internal/auth"
 	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
@@ -35,9 +36,47 @@ func TestNotificationPreferencesArePersonalAndRequireDocumentAccess(t *testing.T
 	}
 }
 
+// The server records an access request also when no notification channel is
+// set, and the people who manage access can read it until they grant access.
+func TestAccessRequestsAreRecordedWithoutNotifications(t *testing.T) {
+	e := newTestEnv(t)
+	path := "/v1/documents/" + e.doc.ID + "/access-requests"
+	as := func(p auth.Principal) map[string]string {
+		return map[string]string{"X-Test-Principal": principalHeader(p), "Content-Type": "application/json"}
+	}
+	rr := do(t, e.h, http.MethodPost, path, `{}`, as(fixtureStranger))
+	assertStatus(t, rr, http.StatusAccepted)
+	assertJSON(t, rr.Body.Bytes(), `{"status":"sent"}`)
+	var queued int
+	if err := e.store.Pool().QueryRow(context.Background(), "SELECT count(*) FROM document_access_request_notification_outbox").Scan(&queued); err != nil || queued != 0 {
+		t.Fatalf("queued=%d err=%v, want no notification without a channel", queued, err)
+	}
+
+	for _, p := range []auth.Principal{fixtureOwner, fixtureEditor} {
+		rr = do(t, e.h, http.MethodGet, path, "", as(p))
+		assertStatus(t, rr, http.StatusOK)
+		var got struct{ Items []repo.AccessRequest }
+		if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Items) != 1 || got.Items[0].Requester.ID != fixtureStranger.ID ||
+			got.Items[0].Requester.Email != fixtureStranger.Email || got.Items[0].RequestedAt == "" {
+			t.Fatalf("%s: access requests = %+v, want the stranger's request", p.ID, got.Items)
+		}
+	}
+	rr = do(t, e.h, http.MethodGet, path, "", as(fixtureViewer))
+	assertStatus(t, rr, http.StatusForbidden)
+
+	rr = do(t, e.h, http.MethodPost, "/v1/documents/"+e.doc.ID+"/grants", `{"address":"`+fixtureStranger.Email+`","role":"viewer"}`, as(fixtureOwner))
+	assertStatus(t, rr, http.StatusCreated)
+	rr = do(t, e.h, http.MethodGet, path, "", as(fixtureOwner))
+	assertStatus(t, rr, http.StatusOK)
+	assertJSON(t, rr.Body.Bytes(), `{"items":[]}`)
+}
+
 func TestDocumentLinksEnforceAccessAndDocumentMembership(t *testing.T) {
 	e := newTestEnv(t)
-	other, ver, err := e.store.CreateDocument(context.Background(), fixtureOwner, "other", []byte("<h1>Other</h1>"))
+	other, ver, err := e.store.CreateDocument(context.Background(), fixtureOwner, "other", "", []byte("<h1>Other</h1>"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -19,7 +19,7 @@ func saRoot(g *globals, out io.Writer) *cobra.Command {
 	}}
 	var newName string
 	var enable, disable bool
-	update := &cobra.Command{Use: "update <sa_id>", Short: "Update a service account", Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	update := &cobra.Command{Use: "update <sa_id>", Short: "Update a service account", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		body := map[string]any{}
 		if newName != "" {
 			body["name"] = newName
@@ -31,7 +31,7 @@ func saRoot(g *globals, out io.Writer) *cobra.Command {
 			body["disabled"] = true
 		}
 		if len(body) == 0 {
-			return errors.New("nothing to update; pass --name, --enable, or --disable")
+			return usageError{errors.New("nothing to update; pass --name, --enable, or --disable")}
 		}
 		verb := "Updated"
 		if enable {
@@ -43,9 +43,10 @@ func saRoot(g *globals, out io.Writer) *cobra.Command {
 			return c.doJSON("PATCH", apiPath("/v1/service-accounts/%s", args[0]), body)
 		}, func(map[string]any) string { return verb + " service account " + args[0] + "." })
 	}}
-	update.Flags().StringVar(&newName, "name", "", "new service account name")
+	update.Flags().StringVar(&newName, "name", "", "new label, or full address ending in .bot")
 	update.Flags().BoolVar(&enable, "enable", false, "enable (un-disable) the service account")
 	update.Flags().BoolVar(&disable, "disable", false, "disable the service account")
+	update.MarkFlagsMutuallyExclusive("enable", "disable")
 	c.AddCommand(
 		simple(g, out, "list", "GET", "/v1/service-accounts", 0),
 		serviceAccountCreateCmd(g, out),
@@ -69,7 +70,7 @@ func serviceAccountCreateCmd(g *globals, out io.Writer) *cobra.Command {
 			"  slashdocs sa create n8n-prod\n" +
 			"  slashdocs sa create ci-runner@ops.team.bot\n" +
 			"  slashdocs sa create nightly@crew.bot",
-		Args: exactArgs(1),
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cl, err := client(g)
 			if err != nil {
@@ -81,7 +82,7 @@ func serviceAccountCreateCmd(g *globals, out io.Writer) *cobra.Command {
 				domain := label[at+1:]
 				label = label[:at]
 				if !strings.HasSuffix(domain, ".bot") {
-					return errors.New("addresses must end in .bot; that's how slashdocs tells bots apart from people")
+					return usageError{errors.New("addresses must end in .bot; that's how slashdocs tells bots apart from people")}
 				}
 				body["domain"] = domain
 			}
@@ -113,7 +114,7 @@ func serviceAccountCreateCmd(g *globals, out io.Writer) *cobra.Command {
 func serviceAccountKeyCmd(g *globals, out io.Writer) *cobra.Command {
 	var name string
 	key := &cobra.Command{Use: "key", Short: "Manage service account keys"}
-	keyCreate := &cobra.Command{Use: "create <sa_id>", Short: "Create a service account key", Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	keyCreate := &cobra.Command{Use: "create <sa_id>", Short: "Create a service account key", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		cl, err := client(g)
 		if err != nil {
 			return err
@@ -139,7 +140,7 @@ func serviceAccountKeyCmd(g *globals, out io.Writer) *cobra.Command {
 	}}
 	keyCreate.Flags().StringVar(&name, "name", "default", "key name")
 	keyRevoke := mutate(g, out, "revoke <sa_id> <key_id>", "Revoke a service account key", "DELETE", "/v1/service-accounts/%s/keys/%s", 2, func(a []string) string { return "Revoked key " + a[1] + " for " + a[0] + "." })
-	key.AddCommand(simplePath(g, out, "list", "GET", "/v1/service-accounts/%s/keys"), keyCreate, keyRevoke)
+	key.AddCommand(simplePath(g, out, "list <sa_id>", "GET", "/v1/service-accounts/%s/keys"), keyCreate, keyRevoke)
 	return key
 }
 
@@ -162,9 +163,9 @@ func writeNewSecret(out io.Writer, heading, token string) error {
 
 func transferCmd(g *globals, out io.Writer) *cobra.Command {
 	var to string
-	c := &cobra.Command{Use: "transfer <sa_id>", Short: "Transfer service account ownership", Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	c := &cobra.Command{Use: "transfer <sa_id>", Short: "Transfer service account ownership", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if to == "" {
-			return errors.New("pass --to <email>")
+			return usageError{errors.New("pass --to <email>")}
 		}
 		return action(g, out, func(c *Client) ([]byte, error) {
 			return c.doJSON("POST", apiPath("/v1/service-accounts/%s/transfer", args[0]), map[string]any{"to_user_email": to})

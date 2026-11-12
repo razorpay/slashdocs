@@ -48,7 +48,7 @@ func TestOutboxDeliveryPreferencesAndAccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc, v, err := store.CreateDocument(ctx, owner, "Private", []byte("<p>Review</p>"))
+	doc, v, err := store.CreateDocument(ctx, owner, "Private", "", []byte("<p>Review</p>"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +319,7 @@ func TestDocumentAccessNotifications(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc, _, err := store.CreateDocument(ctx, owner, "Access review", []byte("<p>Review</p>"))
+	doc, _, err := store.CreateDocument(ctx, owner, "Access review", "", []byte("<p>Review</p>"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -446,7 +446,7 @@ func TestDocumentAccessRequestNotification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc, _, err := store.CreateDocument(ctx, owner, "Request review", []byte("<p>Private</p>"))
+	doc, _, err := store.CreateDocument(ctx, owner, "Request review", "", []byte("<p>Private</p>"))
 	if err != nil {
 		t.Fatal(err)
 	}
