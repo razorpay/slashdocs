@@ -21,10 +21,20 @@ func e2eMux(t *testing.T) *http.ServeMux {
 			if got := r.URL.Query().Get("q"); got != "" && got != `incident from:alice@example.com label:api,review in:"Product Specs"` {
 				t.Fatalf("document search query = %q", got)
 			}
-			writeTestJSON(t, w, map[string]any{"items": []any{map[string]any{"id": "doc_1", "title": "Doc", "current_version_id": "ver_1"}}})
+			// A request for a page has more documents after it.
+			page := r.URL.Query().Has("limit")
+			if page && (r.URL.Query().Get("limit") != "1" || r.URL.Query().Get("offset") != "5") {
+				t.Fatalf("document page = %q", r.URL.RawQuery)
+			}
+			writeTestJSON(t, w, map[string]any{"items": []any{map[string]any{"id": "doc_1", "title": "Doc", "current_version_id": "ver_1"}}, "has_more": page})
 		case "POST":
 			requireMultipart(t, r)
-			writeTestJSON(t, w, map[string]any{"id": "doc_new", "current_version_id": "ver_new", "default_grant": map[string]any{"grant_id": "gr_new", "principal": map[string]any{"type": "anyone"}, "role": "viewer"}})
+			created := map[string]any{"id": "doc_new", "current_version_id": "ver_new", "default_grant": map[string]any{"grant_id": "gr_new", "principal": map[string]any{"type": "anyone"}, "role": "viewer"}}
+			if folderID := r.FormValue("folder_id"); folderID != "" {
+				created["folder_id"] = folderID
+				created["permission_warning"] = map[string]any{"kind": "may_broaden_access", "message": "This folder has active grants."}
+			}
+			writeTestJSON(t, w, created)
 		default:
 			w.WriteHeader(405)
 		}
@@ -103,6 +113,7 @@ func e2eMux(t *testing.T) *http.ServeMux {
 		writeTestJSON(t, w, map[string]any{"id": "cmt_1", "status": "ok"})
 	})
 	mux.HandleFunc("/v1/documents/doc_1/access", jsonH(t, map[string]any{"items": []any{map[string]any{"effective_role": "viewer", "principal": map[string]any{"type": "user", "id": "usr_2"}}}}))
+	mux.HandleFunc("/v1/documents/doc_1/access-requests", jsonH(t, map[string]any{"items": []any{map[string]any{"requester": map[string]any{"type": "user", "id": "usr_3"}}}}))
 	mux.HandleFunc("/v1/documents/doc_1/grants", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
 			t.Fatalf("doc grant collection used unexpected method: %s", r.Method)
@@ -162,7 +173,7 @@ func TestCLICommandsE2E(t *testing.T) {
 	html := filepath.Join(t.TempDir(), "x.html")
 	writeTestFile(t, html, []byte("<h1>x</h1>"))
 	out := filepath.Join(t.TempDir(), "out.html")
-	cmds := [][]string{{"auth", "whoami"}, {"docs", "list"}, {"docs", "list", `incident from:alice@example.com label:api,review in:"Product Specs"`}, {"docs", "labels", "list", "doc_1"}, {"docs", "labels", "set", "doc_1", "API,review"}, {"docs", "labels", "clear", "doc_1"}, {"docs", "create", html}, {"docs", "show", "doc_1"}, {"docs", "update", "doc_1", "--title", "New"}, {"docs", "versions", "list", "doc_1"}, {"docs", "versions", "show", "doc_1", "ver_1"}, {"docs", "versions", "html", "doc_1", "ver_1"}, {"docs", "pull", "doc_1", "--out", out}, {"docs", "push", "doc_1", html}, {"docs", "comments", "list", "doc_1"}, {"docs", "comments", "create", "doc_1", "--body", "hi", "--quote", "x", "--version", "ver_1"}, {"docs", "comments", "reply", "doc_1", "cmt_1", "--body", "reply"}, {"docs", "comments", "update", "doc_1", "cmt_1", "--status", "resolved"}, {"docs", "comments", "update", "doc_1", "cmt_1", "--body", "revised"}, {"docs", "comments", "delete", "doc_1", "cmt_1"}, {"docs", "comments", "resolve", "doc_1", "cmt_1"}, {"docs", "comments", "reopen", "doc_1", "cmt_1"}, {"docs", "grants", "list", "doc_1"}, {"docs", "grants", "add", "doc_1", "--principal", "user:a@b.com", "--role", "viewer"}, {"docs", "grants", "update", "doc_1", "gr_1", "--role", "editor"}, {"docs", "grants", "revoke", "doc_1", "gr_1"}, {"sa", "list"}, {"sa", "create", "bot"}, {"sa", "update", "sa_1", "--disable"}, {"sa", "key", "list", "sa_1"}, {"sa", "key", "create", "sa_1"}, {"sa", "key", "revoke", "sa_1", "sak_1"}, {"sa", "transfer", "sa_1", "--to", "new@example.com"}, {"sa", "transfers", "list"}, {"sa", "transfer", "accept", "xfer_1"}, {"sa", "transfer", "decline", "xfer_1"}, {"context", "list"}, {"context", "use", srv.URL}, {"skills", "update"}, {"open", "doc_1"}}
+	cmds := [][]string{{"auth", "whoami"}, {"docs", "list"}, {"docs", "list", `incident from:alice@example.com label:api,review in:"Product Specs"`}, {"docs", "labels", "list", "doc_1"}, {"docs", "labels", "set", "doc_1", "API,review"}, {"docs", "labels", "clear", "doc_1"}, {"docs", "create", html}, {"docs", "show", "doc_1"}, {"docs", "update", "doc_1", "--title", "New"}, {"docs", "versions", "list", "doc_1"}, {"docs", "versions", "show", "doc_1", "ver_1"}, {"docs", "versions", "html", "doc_1", "ver_1"}, {"docs", "pull", "doc_1", "--out", out}, {"docs", "push", "doc_1", html}, {"docs", "comments", "list", "doc_1"}, {"docs", "comments", "create", "doc_1", "--body", "hi", "--quote", "x", "--version", "ver_1"}, {"docs", "comments", "reply", "doc_1", "cmt_1", "--body", "reply"}, {"docs", "comments", "update", "doc_1", "cmt_1", "--status", "resolved"}, {"docs", "comments", "update", "doc_1", "cmt_1", "--body", "revised"}, {"docs", "comments", "delete", "doc_1", "cmt_1"}, {"docs", "comments", "resolve", "doc_1", "cmt_1"}, {"docs", "comments", "reopen", "doc_1", "cmt_1"}, {"docs", "grants", "list", "doc_1"}, {"docs", "grants", "requests", "doc_1"}, {"docs", "grants", "add", "doc_1", "--principal", "user:a@b.com", "--role", "viewer"}, {"docs", "grants", "update", "doc_1", "gr_1", "--role", "editor"}, {"docs", "grants", "revoke", "doc_1", "gr_1"}, {"sa", "list"}, {"sa", "create", "bot"}, {"sa", "update", "sa_1", "--name", "new-bot"}, {"sa", "update", "sa_1", "--disable"}, {"sa", "key", "list", "sa_1"}, {"sa", "key", "create", "sa_1"}, {"sa", "key", "revoke", "sa_1", "sak_1"}, {"sa", "transfer", "sa_1", "--to", "new@example.com"}, {"sa", "transfers", "list"}, {"sa", "transfer", "accept", "xfer_1"}, {"sa", "transfer", "decline", "xfer_1"}, {"context", "list"}, {"context", "use", srv.URL}, {"skills", "update"}, {"open", "doc_1"}}
 	for _, c := range cmds {
 		t.Run(strings.Join(c, " "), func(t *testing.T) {
 			if _, err := Execute(c); err != nil {
@@ -195,6 +206,7 @@ func TestCommandOutputsAreConversational(t *testing.T) {
 	}{
 		{[]string{"auth", "whoami"}, []string{"me@example.com", "server=" + srv.URL}},
 		{[]string{"docs", "create", html}, []string{"Created document", "doc_new", "Gave org-wide read-only access by default", "shared org-wide by default", "grants revoke doc_new gr_new"}},
+		{[]string{"docs", "create", html, "--folder-id", "fld_1"}, []string{"Created document", "Warning: This folder has active grants."}},
 		{[]string{"docs", "update", "doc_1", "--title", "New"}, []string{"Renamed document", "doc_1"}},
 		{[]string{"docs", "labels", "set", "doc_1", "API,review"}, []string{"Set labels", "api, review"}},
 		{[]string{"docs", "labels", "clear", "doc_1"}, []string{"Cleared labels", "doc_1"}},
@@ -208,6 +220,7 @@ func TestCommandOutputsAreConversational(t *testing.T) {
 		{[]string{"docs", "grants", "add", "doc_1", "--to", "a@b.com", "--role", "viewer"}, []string{"Shared", "a@b.com", "viewer"}},
 		{[]string{"docs", "grants", "add", "doc_1", "--everyone", "--role", "viewer"}, []string{"Shared", "viewer"}},
 		{[]string{"docs", "grants", "revoke", "doc_1", "gr_1"}, []string{"Revoked grant", "gr_1"}},
+		{[]string{"sa", "update", "sa_1", "--name", "new-bot"}, []string{"Updated service account", "sa_1"}},
 		{[]string{"sa", "update", "sa_1", "--disable"}, []string{"Disabled service account", "sa_1"}},
 		{[]string{"sa", "key", "create", "sa_1"}, []string{"Created key", "Copy this key"}},
 		{[]string{"sa", "key", "revoke", "sa_1", "sak_1"}, []string{"Revoked key", "sak_1"}},
@@ -215,6 +228,7 @@ func TestCommandOutputsAreConversational(t *testing.T) {
 		{[]string{"sa", "transfer", "accept", "xfer_1"}, []string{"Accepted transfer", "xfer_1"}},
 		{[]string{"sa", "transfer", "decline", "xfer_1"}, []string{"Declined transfer", "xfer_1"}},
 		{[]string{"open", "doc_1"}, []string{"doc_1"}},
+		{[]string{"docs", "list", "--limit", "1", "--offset", "5"}, []string{"doc_1", "Use --offset 6"}},
 		{[]string{"context", "use", srv.URL}, []string{"Switched to context"}},
 	}
 	for _, tc := range cases {

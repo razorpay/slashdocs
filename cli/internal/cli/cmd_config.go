@@ -15,7 +15,7 @@ func configCmd(g *globals, out io.Writer) *cobra.Command {
 	return &cobra.Command{
 		Use:   "config",
 		Short: "Show the connected server's deployment configuration",
-		Args:  exactArgs(0),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(g, out, func(c *Client) ([]byte, error) {
 				return c.do("GET", "/v1/config", nil, "")

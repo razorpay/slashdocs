@@ -71,6 +71,7 @@ type localComment struct {
 	Version    string          `json:"created_on_version_id,omitzero"`
 	CreatedAt  time.Time       `json:"created_at"`
 	ResolvedAt time.Time       `json:"resolved_at,omitzero"`
+	Edited     bool            `json:"edited,omitzero"`
 	Reactions  []localReaction `json:"reactions,omitzero"`
 	Replies    []*localComment `json:"replies,omitzero"`
 }
@@ -181,8 +182,12 @@ func (s *localDocs) list(r *http.Request, doc string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if status := r.URL.Query().Get("status"); status != "" {
+	switch status := r.URL.Query().Get("status"); status {
+	case "", "all":
+	case "open", "resolved":
 		t.Comments = slices.DeleteFunc(t.Comments, func(c *localComment) bool { return c.Status != status })
+	default:
+		return nil, localError{http.StatusBadRequest, "status must be open, resolved or all"}
 	}
 	return map[string][]*localComment{"items": s.view(t.Comments...)}, nil
 }
@@ -248,8 +253,8 @@ func (s *localDocs) patch(r *http.Request, doc string) (any, error) {
 		if c, _ = t.find(r.PathValue("comment")); c == nil {
 			return errLocalCommentNotFound
 		}
-		if in.Body != nil {
-			c.Body = *in.Body
+		if in.Body != nil && c.Body != *in.Body {
+			c.Body, c.Edited = *in.Body, true
 		}
 		switch {
 		case in.Status == "":

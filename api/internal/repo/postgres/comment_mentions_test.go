@@ -27,7 +27,7 @@ func newMentionFixture(t *testing.T) *mentionFixture {
 	ctx := context.Background()
 	store := newStore(t)
 	owner := auth.Principal{Type: auth.PrincipalUser, ID: "usr_mention_owner", Email: "mention-owner@example.com", Name: "Mention Owner"}
-	doc, ver, err := store.CreateDocument(ctx, owner, "Mention test", []byte("<html>mentions</html>"))
+	doc, ver, err := store.CreateDocument(ctx, owner, "Mention test", "", []byte("<html>mentions</html>"))
 	if err != nil {
 		t.Fatal(err)
 	}

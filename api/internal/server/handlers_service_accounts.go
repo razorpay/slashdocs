@@ -266,12 +266,54 @@ func (h handlers) patchServiceAccount(c *gin.Context) {
 		badRequest(c, "invalid body")
 		return
 	}
-	sa, err := h.deps.repository.UpdateServiceAccount(c.Request.Context(), c.Param("id"), in.Name, in.Disabled)
+	name, ok := h.serviceAccountRename(c, c.Param("id"), in.Name)
+	if !ok {
+		return
+	}
+	sa, err := h.deps.repository.UpdateServiceAccount(c.Request.Context(), c.Param("id"), name, in.Disabled)
 	if err != nil {
+		if errors.Is(err, repo.ErrConflict) {
+			c.JSON(http.StatusConflict, errorResponse("address_taken", "Someone already uses "+name+". Try a different address.", nil))
+			return
+		}
 		internalErr(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, sa)
+}
+
+// serviceAccountRename turns a requested name, a bare label or a full .bot
+// address, into the address to store. A bare label keeps the account's
+// domain. It returns "" when the name does not change, so that a client can
+// send back the current name, also one from before names were addresses.
+func (h handlers) serviceAccountRename(c *gin.Context, id, name string) (string, bool) {
+	if name == "" {
+		return "", true
+	}
+	sa, err := h.deps.repository.GetServiceAccount(c.Request.Context(), id)
+	if err != nil {
+		internalErr(c, err)
+		return "", false
+	}
+	if name == sa.Name {
+		return "", true
+	}
+	label, domain, full := bots.Split(name)
+	if !full {
+		label, domain = name, bots.GenerateDomain()
+		if _, current, ok := bots.Split(sa.Name); ok {
+			domain = current
+		}
+	}
+	if bots.ValidateLabel(label) != nil {
+		badRequest(c, "Use letters, numbers, and hyphens for the bot's name.")
+		return "", false
+	}
+	if bots.ValidateDomain(domain) != nil {
+		badRequest(c, "Addresses must end in .bot.")
+		return "", false
+	}
+	return bots.Compose(label, domain), true
 }
 
 // CreateServiceAccountKey godoc
