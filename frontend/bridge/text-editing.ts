@@ -326,6 +326,7 @@ export function startTextEditing(
     const complete = runs.length === places.length;
     if (!complete || (keep && !keep(ranges))) {
       steps.reverse().forEach(undoStep);
+      runs.forEach((run) => run.undo?.());
       observer.takeRecords();
       restore(before);
       return complete ? { ok: false, withdrawn: true } : { ok: false };

@@ -719,6 +719,70 @@ test("a push that changes nothing in the reader's view goes in with no banner, f
   await reader.context().close();
 });
 
+test("a push that changes only styles goes in with no banner unless it moves what the reader reads", async ({
+  page,
+  browser,
+  slashdocs,
+}) => {
+  const title = uniqueName("Coedit styles");
+  const html = documentHTML(title, 40).replace(
+    "</title>",
+    "</title><style>p { color: rgb(0, 0, 0); }</style>",
+  );
+  const document = await slashdocs.createDocument(title, html);
+  await slashdocs.shareWithAnyone(document.id, "viewer");
+  const path = `/app/d/${document.id}`;
+  await page.goto(path);
+  const reader = await reviewerOn(browser, path);
+  await expect(renderedDocument(reader).locator("#shared")).toBeVisible();
+  await mark(reader);
+  const banner = reader.getByRole("button", { name: "Show the latest" });
+  const s30 = renderedDocument(reader).locator("#s30");
+  await s30.evaluate((el) => el.scrollIntoView({ block: "center" }));
+  const before = await topOf(reader, "#s30");
+  const restyle = async (css: string) => {
+    const source = await latestSource(page, document.id);
+    await slashdocs.pushVersion(
+      document.id,
+      source.replace(/<style>.*<\/style>/, `<style>${css}</style>`),
+    );
+  };
+
+  // An agent changes a color: it goes in, and nothing moves.
+  await restyle("p { color: rgb(200, 0, 0); }");
+  await expect(s30).toHaveCSS("color", "rgb(200, 0, 0)");
+  await expect(banner).toHaveCount(0);
+  expect(await topOf(reader, "#s30")).toBe(before);
+  expect(await kept(reader)).toBe("yes");
+
+  // An agent makes the title above the view larger: the text of the reader
+  // stays where it is.
+  await restyle("p { color: rgb(200, 0, 0); } h1 { font-size: 120px; }");
+  await expect(renderedDocument(reader).locator("h1")).toHaveCSS("font-size", "120px");
+  await expect(banner).toHaveCount(0);
+  expect(Math.abs((await topOf(reader, "#s30")) - before)).toBeLessThanOrEqual(2);
+
+  // An agent makes the paragraph that the reader reads much larger. The
+  // text after it would move, so the change waits.
+  await restyle(
+    "p { color: rgb(200, 0, 0); } h1 { font-size: 120px; } #s30 { font-size: 48px; }",
+  );
+  await expect(banner).toBeVisible();
+  await expect(s30).toHaveCSS("font-size", "16px");
+  await banner.click();
+  await expect(s30).toHaveCSS("font-size", "48px");
+  await expect(banner).toHaveCount(0);
+
+  // An agent makes all the text larger: the view of the reader cannot stay.
+  await restyle("body { font-size: 24px; } p { color: rgb(200, 0, 0); }");
+  await expect(banner).toBeVisible();
+  await expect(renderedDocument(reader).locator("#s29")).toHaveCSS("font-size", "16px");
+  await banner.click();
+  await expect(renderedDocument(reader).locator("#s29")).toHaveCSS("font-size", "24px");
+  expect(await kept(reader)).toBe("yes");
+  await reader.context().close();
+});
+
 test("an editor who types while an agent pushes keeps the text of both", async ({
   page,
   slashdocs,
