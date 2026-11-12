@@ -36,6 +36,10 @@ hostnames match; local or throwaway setups can override this with
 `SLASHDOCS_ALLOW_UNSAFE_RENDER_ORIGIN=true`, accepting that uploaded documents
 can then script against the app origin.
 
+Direct visits to frontend pages on the render hostname redirect to the app
+hostname. Tokenized `/v/...` and `/print/...` document routes continue to run
+on the render hostname.
+
 ## Configure sign-in
 
 slashdocs authenticates humans through OpenID Connect. Pick one provider:
@@ -139,6 +143,21 @@ server-side URL. Discovery, token exchange, and JWKS fetches then use the
 internal URL while ID tokens are still validated against the public
 `SLASHDOCS_OIDC_ISSUER_URL`.
 
+Each user's identity key in `users.google_sub` comes from the exact issuer
+URL and the token `sub`. If you change `SLASHDOCS_OIDC_ISSUER_URL` (a new
+host, port, scheme, or trailing slash, or a backup restored into another
+deployment), the next sign-in of each user moves their existing account to the
+new key, matched by verified email. The server logs
+`relinked user to a new oidc identity` with the old and new keys. slashdocs
+does not relink an account between Google and a generic OIDC provider. That
+sign-in fails with `409 conflict` and the log names both keys. To move such
+an account on purpose, clear its key. The next sign-in with the same verified
+email then adopts the account:
+
+```sql
+UPDATE users SET google_sub = NULL WHERE email = 'person@example.com';
+```
+
 Example: a minimal [Dex](https://dexidp.io/) setup for local testing —
 
 ```yaml
@@ -177,9 +196,12 @@ slashdocs runs in one of two modes, set by `SLASHDOCS_DEPLOYMENT`:
 
 - **`public`** (default) — anyone who can authenticate with the identity
   provider can sign in. Sharing a document with "everyone" means _anyone with
-  the link_. People search finds only your contacts: the people you share
-  with and the people who share with you. Other users appear only when you
-  type their full email address.
+  the link_, and that includes readers who are not signed in: they can read
+  the document, its versions, and its comments. To comment or edit, the app
+  sends them to sign in first, whatever role the link gives. People search
+  finds only your contacts: the people you share with and the people who
+  share with you. Other users appear only when you type their full email
+  address.
 - **`org`** — login is gated to your organization's domains
   (`SLASHDOCS_ORG_DOMAINS`, a comma-separated list that supports multiple domains
   for acquisitions). Sharing with "everyone" then means _anyone in the org_,
@@ -453,6 +475,7 @@ Sealed Secrets, etc.).
 | `kvEvents.{mode,listenerDatabaseURL,existingSecret}`                       | Realtime KV events: `SLASHDOCS_KV_EVENTS_MODE` and the dedicated LISTEN connection URL (secret-backed). Rendered only when set. |
 | `commitSha`                                                                | Optional revision surfaced at `/commit.txt`.                                                                                    |
 | `ingress`                                                                  | Standard ingress block; supports multiple hosts.                                                                                |
+| `googleChat.{webhookSecret,webhookKey}`                                    | Google Chat webhook notifications: Secret holding the webhook URL.                                                              |
 | `extraEnv` / `extraEnvFrom`                                                | Append arbitrary env vars / envFrom sources.                                                                                    |
 | `resources`                                                                | CPU/memory requests and limits.                                                                                                 |
 | `livenessProbe` / `readinessProbe`                                         | HTTP probes against `/livez` and `/readyz`.                                                                                     |
@@ -533,6 +556,21 @@ Set either the `GOOGLE_OAUTH_*` pair or the `SLASHDOCS_OIDC_*` variables, never
 both. The redirect URI to register is
 `<SLASHDOCS_APP_ORIGIN>/v1/auth/google/callback` for Google and
 `<SLASHDOCS_APP_ORIGIN>/v1/auth/oidc/callback` for everything else.
+
+### Notifications
+
+Comment and access notifications are off unless one of these is set. When both
+are set, each provider delivers every notification. See
+[Comment notifications](comment-notifications.md) for provider setup.
+
+| Variable                            | Purpose                                                                                                                     |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `SLASHDOCS_SLACK_BOT_TOKEN`         | Slack bot token; DMs each recipient.                                                                                        |
+| `SLASHDOCS_GOOGLE_CHAT_WEBHOOK_URL` | Google Chat incoming webhook (`https://chat.googleapis.com/v1/spaces/…/messages?…`); posts every notification to one space. |
+
+The webhook URL and the Slack token both grant posting rights, so keep them in
+a secret store. The server needs outbound HTTPS to `chat.googleapis.com` or
+`slack.com`.
 
 ### Optional
 
@@ -651,6 +689,8 @@ down-migration manually if needed; the binary does not auto-rollback.
 - [ ] OAuth/OIDC redirect URIs registered at the IdP match `SLASHDOCS_APP_ORIGIN`.
 - [ ] `ALLOWED_OAUTH_DOMAINS` set if you don't want public sign-ups.
 - [ ] Postgres backups configured.
+- [ ] If notifications are on: each provider's secret in a secret manager, and
+      outbound HTTPS to each configured provider allowed.
 - [ ] Blob storage versioning / lifecycle rules configured.
 - [ ] `SLASHDOCS_COMMIT_SHA` baked into your image so `/commit.txt`
       reports the running build.

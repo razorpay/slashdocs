@@ -13,6 +13,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import { createCursorBatch } from "@/lib/live-cursors";
 import { principalColor, principalLabel, samePrincipal } from "@/lib/principals";
 import type { RemoteCursor } from "../../bridge/cursors";
+import { randomId } from "@/lib/uuid";
 
 // The server lists a viewer for 45 seconds after their last report.
 const PRESENCE_TTL = 45_000;
@@ -104,7 +105,7 @@ export function useDocumentStream({
   onRemoteDocumentChange: () => void;
 }) {
   const q = useQueryClient();
-  const [session] = useState(() => crypto.randomUUID());
+  const [session] = useState(() => randomId());
   const kvListeners = useRef(new Set<DocumentKVListener>());
   const [sessions, setSessions] = useState<ReadonlyMap<string, Viewer>>(new Map());
   const place = useRef<{ version: string; anchor?: Partial<Anchor> }>({ version });
@@ -197,15 +198,18 @@ export function useDocumentStream({
   }, []);
 
   // Report this viewer's place: at once on a version change, at most every
-  // REPORT_INTERVAL while scrolling, and as a heartbeat otherwise.
+  // REPORT_INTERVAL while scrolling, and as a heartbeat otherwise. Only a
+  // signed-in viewer reports.
   const lastReport = useRef(0);
   const pendingReport = useRef<number | undefined>(undefined);
+  const signedIn = !!principal;
   const report = useCallback(() => {
     window.clearTimeout(pendingReport.current);
     pendingReport.current = undefined;
     lastReport.current = Date.now();
+    if (!signedIn) return;
     api.postDocumentPresence(docId, { session, ...place.current }).catch(() => {});
-  }, [docId, session]);
+  }, [docId, session, signedIn]);
   const scheduleReport = useCallback(() => {
     if (pendingReport.current !== undefined) return;
     const wait = Math.max(0, lastReport.current + REPORT_INTERVAL - Date.now());
@@ -244,8 +248,10 @@ export function useDocumentStream({
   );
   useEffect(() => () => cursorBatch.stop(), [cursorBatch]);
   const moveCursor = useCallback(
-    (spot: CursorSpot | null) => cursorBatch.add(spot),
-    [cursorBatch],
+    (spot: CursorSpot | null) => {
+      if (signedIn) cursorBatch.add(spot);
+    },
+    [cursorBatch, signedIn],
   );
 
   // A new listener gets the newest point of every cursor at once.

@@ -297,9 +297,12 @@ func newApplicationServer(ctx context.Context, store *pgrepo.Store, blobs blob.S
 	if err != nil {
 		return nil, err
 	}
+	senders, err := loadNotificationSenders(os.Getenv)
+	if err != nil {
+		return nil, err
+	}
+	store.SetNotificationsEnabled(len(senders) > 0)
 	slackBotToken := os.Getenv("SLASHDOCS_SLACK_BOT_TOKEN")
-	sender := loadSlackSender(slackBotToken)
-	store.SetNotificationsEnabled(sender != nil)
 	linkPreviews, err := boolEnv("SLASHDOCS_SLACK_LINK_PREVIEWS", false)
 	if err != nil {
 		return nil, err
@@ -309,7 +312,7 @@ func newApplicationServer(ctx context.Context, store *pgrepo.Store, blobs blob.S
 		return nil, err
 	}
 	options := []server.Option{
-		server.WithCommentNotificationSender(sender),
+		server.WithNotificationSenders(senders),
 		server.WithRepository(store),
 		server.WithDocumentKVEvents(kvEvents),
 		server.WithAuthenticator(auth.DBAuthenticator{Resolver: store, SessionSecret: origins.sessionSecret}),

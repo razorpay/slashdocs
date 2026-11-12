@@ -22,18 +22,26 @@ import (
 //go:embed all:frontend_dist
 var frontendFS embed.FS
 
-func registerFrontendRoutes(r *gin.Engine, publicURL string) {
+func registerFrontendRoutes(r *gin.Engine, appOrigin, renderOrigin string) {
 	dist, err := fs.Sub(frontendFS, "frontend_dist")
 	if err != nil {
 		return
 	}
 	fileServer := http.FileServer(http.FS(dist))
-	publicURL = strings.TrimRight(publicURL, "/")
+	appOrigin = strings.TrimRight(appOrigin, "/")
 
 	r.GET("/assets/*filepath", gin.WrapH(http.StripPrefix("/assets/", http.FileServer(http.FS(subOrEmpty(dist, "assets"))))))
 	r.NoRoute(func(c *gin.Context) {
 		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
 			c.Status(http.StatusNotFound)
+			return
+		}
+		if appOrigin != "" && renderOrigin != "" && hostMatchesOrigin(c.Request.Host, renderOrigin) && !hostMatchesOrigin(c.Request.Host, appOrigin) {
+			if strings.HasPrefix(c.Request.URL.Path, "/v/") || strings.HasPrefix(c.Request.URL.Path, "/print/") {
+				c.Status(http.StatusNotFound)
+				return
+			}
+			c.Redirect(http.StatusTemporaryRedirect, appOrigin+c.Request.URL.RequestURI())
 			return
 		}
 		urlPath := strings.TrimPrefix(path.Clean(c.Request.URL.Path), "/")
@@ -46,7 +54,7 @@ func registerFrontendRoutes(r *gin.Engine, publicURL string) {
 			c.Status(http.StatusNotFound)
 			return
 		}
-		index = bytes.ReplaceAll(index, []byte("__SLASHDOCS_PUBLIC_URL_VALUE__"), []byte(publicURL))
+		index = bytes.ReplaceAll(index, []byte("__SLASHDOCS_PUBLIC_URL_VALUE__"), []byte(appOrigin))
 		c.Data(http.StatusOK, "text/html; charset=utf-8", index)
 	})
 }

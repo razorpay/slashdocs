@@ -15,9 +15,9 @@ const (
 	// server". On an org deployment the login gate scopes that set to the
 	// org's members. It is stored as a grant with an empty principal id.
 	PrincipalAnyone PrincipalType = "anyone"
-	// PrincipalAnonymous represents an unauthenticated caller. It is defined
-	// for forward compatibility (no-login access) but is never produced in
-	// this version: authentication is required on every route.
+	// PrincipalAnonymous represents an unauthenticated caller. A public
+	// deployment gives it to a caller without credentials on the routes that
+	// read a document, where only "anyone" grants apply to it.
 	PrincipalAnonymous PrincipalType = "anonymous"
 )
 

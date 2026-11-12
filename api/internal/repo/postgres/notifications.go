@@ -157,7 +157,7 @@ func (s *Store) enqueueDocumentAccessChanges(ctx context.Context, tx pgx.Tx, doc
 				WHEN queued.previous_role='' AND EXCLUDED.role<>'' THEN 'access_shared'
 				WHEN queued.previous_role<>'' AND EXCLUDED.role='' THEN 'access_removed'
 				ELSE 'access_updated' END,
-			role=EXCLUDED.role,attempts=0,available_at=now(),created_at=now()
+			role=EXCLUDED.role,attempts=0,available_at=now(),created_at=now(),finished_providers='{}'
 		RETURNING document_id,recipient_id,source
 	)
 	DELETE FROM document_access_notification_outbox queued
@@ -168,14 +168,16 @@ func (s *Store) enqueueDocumentAccessChanges(ctx context.Context, tx pgx.Tx, doc
 	return err
 }
 
-// RequestDocumentAccess deliberately returns no existence or owner detail. A
-// repeated request within 24 hours is accepted but does not notify again.
+// RequestDocumentAccess deliberately returns no existence or owner detail. It
+// always records the request, so that the people who manage access can see
+// it, and notifies the owner when notifications are enabled. A repeated
+// request within 24 hours is accepted but does not notify again.
 func (s *Store) RequestDocumentAccess(ctx context.Context, requester auth.Principal, documentID string) error {
 	if requester.Type != auth.PrincipalUser && requester.Type != auth.PrincipalServiceAccount {
 		return nil
 	}
 	role, err := s.RoleForDocument(ctx, requester, documentID)
-	if err != nil || role != repo.RoleNone || !s.notificationsEnabled {
+	if err != nil || role != repo.RoleNone {
 		return err
 	}
 	label := requester.Name
@@ -214,16 +216,43 @@ func (s *Store) RequestDocumentAccess(ctx context.Context, requester auth.Princi
 	INSERT INTO document_access_request_notification_outbox
 		(document_id,requester_type,requester_id,requester_label,recipient_id)
 	SELECT $1,$2,$3,$4,recipient.user_id FROM recipient
-	WHERE recipient.user_id IS NOT NULL AND NOT ($2='user' AND recipient.user_id=$3)
+	WHERE $5 AND recipient.user_id IS NOT NULL AND NOT ($2='user' AND recipient.user_id=$3)
 	AND NOT EXISTS(SELECT 1 FROM notification_preferences p WHERE p.principal_type='user' AND p.principal_id=recipient.user_id AND NOT p.enabled)
 	AND NOT EXISTS(SELECT 1 FROM document_notification_mutes m WHERE m.principal_type='user' AND m.principal_id=recipient.user_id AND m.document_id=$1)
 	ON CONFLICT(document_id,requester_type,requester_id) DO UPDATE SET
 		requester_label=excluded.requester_label,recipient_id=excluded.recipient_id,
-		attempts=0,available_at=now(),created_at=now()`, documentID, requester.Type, requester.ID, label)
+		attempts=0,available_at=now(),created_at=now(),finished_providers='{}'`, documentID, requester.Type, requester.ID, label, s.notificationsEnabled)
 	if err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// ListAccessRequests returns the requests for access to a document, the
+// newest first.
+func (s *Store) ListAccessRequests(ctx context.Context, documentID string) ([]repo.AccessRequest, error) {
+	rows, err := s.db.Query(ctx, `SELECT r.requester_type, r.requester_id,
+		COALESCE(u.email,''), COALESCE(u.name,sa.name,''), r.requested_at
+	FROM document_access_requests r
+	LEFT JOIN users u ON r.requester_type='user' AND u.id=r.requester_id
+	LEFT JOIN service_accounts sa ON r.requester_type='service_account' AND sa.id=r.requester_id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+	WHERE r.document_id=$1
+	ORDER BY r.requested_at DESC`, documentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []repo.AccessRequest{}
+	for rows.Next() {
+		var r repo.AccessRequest
+		var requestedAt time.Time
+		if err := rows.Scan(&r.Requester.Type, &r.Requester.ID, &r.Requester.Email, &r.Requester.Name, &requestedAt); err != nil {
+			return nil, err
+		}
+		r.RequestedAt = requestedAt.UTC().Format(time.RFC3339Nano)
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) NotificationPreferences(ctx context.Context, p auth.Principal, documentID string) (repo.NotificationPreferences, error) {
@@ -329,7 +358,7 @@ func (s *Store) enqueueNewCommentMentionNotifications(ctx context.Context, tx pg
 		WHERE c.id=$1 AND NOT (c.author_type='user' AND c.author_id=recipient.id)
 		AND NOT EXISTS(SELECT 1 FROM notification_preferences p WHERE p.principal_type='user' AND p.principal_id=recipient.id AND NOT p.enabled)
 		AND NOT EXISTS(SELECT 1 FROM document_notification_mutes m WHERE m.principal_type='user' AND m.principal_id=recipient.id AND m.document_id=d.id)
-		ON CONFLICT(comment_id,recipient_id) DO UPDATE SET reason='mention', available_at=LEAST(queued.available_at, now())`, commentID, recipientIDs)
+		ON CONFLICT(comment_id,recipient_id) DO UPDATE SET reason='mention', attempts=0, available_at=LEAST(queued.available_at, now()), finished_providers='{}'`, commentID, recipientIDs)
 	return err
 }
 
@@ -344,7 +373,7 @@ func (s *Store) ClaimCommentNotification(ctx context.Context) (*repo.CommentNoti
 		FROM (SELECT comment_id, recipient_id FROM comment_notification_outbox WHERE available_at<=now()
 		ORDER BY available_at FOR UPDATE SKIP LOCKED LIMIT 1) pending
 		WHERE o.comment_id=pending.comment_id AND o.recipient_id=pending.recipient_id
-		RETURNING o.comment_id,o.recipient_id,o.reason,o.attempts`).Scan(&n.CommentID, &n.RecipientID, &n.Reason, &n.Attempts)
+		RETURNING o.comment_id,o.recipient_id,o.reason,o.attempts,o.finished_providers`).Scan(&n.CommentID, &n.RecipientID, &n.Reason, &n.Attempts, &n.FinishedProviders)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -356,7 +385,7 @@ func (s *Store) FinishCommentNotification(ctx context.Context, n repo.CommentNot
 		_, err := s.db.Exec(ctx, `DELETE FROM comment_notification_outbox WHERE comment_id=$1 AND recipient_id=$2 AND attempts=$3`, n.CommentID, n.RecipientID, n.Attempts)
 		return err
 	}
-	_, err := s.db.Exec(ctx, `UPDATE comment_notification_outbox SET available_at=now()+$4*interval '1 second' WHERE comment_id=$1 AND recipient_id=$2 AND attempts=$3`, n.CommentID, n.RecipientID, n.Attempts, retryAfter.Seconds())
+	_, err := s.db.Exec(ctx, `UPDATE comment_notification_outbox SET available_at=now()+$4*interval '1 second',finished_providers=$5 WHERE comment_id=$1 AND recipient_id=$2 AND attempts=$3`, n.CommentID, n.RecipientID, n.Attempts, retryAfter.Seconds(), n.FinishedProviders)
 	return err
 }
 
@@ -369,8 +398,8 @@ func (s *Store) ClaimDocumentAccessNotification(ctx context.Context) (*repo.Docu
 		FROM (SELECT document_id, recipient_id, source FROM document_access_notification_outbox WHERE available_at<=now()
 		ORDER BY available_at FOR UPDATE SKIP LOCKED LIMIT 1) pending
 		WHERE o.document_id=pending.document_id AND o.recipient_id=pending.recipient_id AND o.source=pending.source
-		RETURNING o.document_id,o.recipient_id,o.source,o.reason,o.previous_role,o.role,o.attempts`).Scan(
-		&n.DocumentID, &n.RecipientID, &n.Source, &n.Reason, &n.PreviousRole, &n.Role, &n.Attempts)
+		RETURNING o.document_id,o.recipient_id,o.source,o.reason,o.previous_role,o.role,o.attempts,o.finished_providers`).Scan(
+		&n.DocumentID, &n.RecipientID, &n.Source, &n.Reason, &n.PreviousRole, &n.Role, &n.Attempts, &n.FinishedProviders)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -390,7 +419,7 @@ func (s *Store) FinishDocumentAccessNotification(ctx context.Context, n repo.Doc
 		_, err := s.db.Exec(ctx, `DELETE FROM document_access_notification_outbox WHERE document_id=$1 AND recipient_id=$2 AND source=$3 AND attempts=$4`, n.DocumentID, n.RecipientID, n.Source, n.Attempts)
 		return err
 	}
-	_, err := s.db.Exec(ctx, `UPDATE document_access_notification_outbox SET available_at=now()+$5*interval '1 second' WHERE document_id=$1 AND recipient_id=$2 AND source=$3 AND attempts=$4`, n.DocumentID, n.RecipientID, n.Source, n.Attempts, retryAfter.Seconds())
+	_, err := s.db.Exec(ctx, `UPDATE document_access_notification_outbox SET available_at=now()+$5*interval '1 second',finished_providers=$6 WHERE document_id=$1 AND recipient_id=$2 AND source=$3 AND attempts=$4`, n.DocumentID, n.RecipientID, n.Source, n.Attempts, retryAfter.Seconds(), n.FinishedProviders)
 	return err
 }
 
@@ -403,8 +432,8 @@ func (s *Store) ClaimDocumentAccessRequestNotification(ctx context.Context) (*re
 		FROM (SELECT document_id,requester_type,requester_id FROM document_access_request_notification_outbox
 			WHERE available_at<=now() ORDER BY available_at FOR UPDATE SKIP LOCKED LIMIT 1) pending
 		WHERE o.document_id=pending.document_id AND o.requester_type=pending.requester_type AND o.requester_id=pending.requester_id
-		RETURNING o.document_id,o.requester_type,o.requester_id,o.requester_label,o.recipient_id,o.attempts`).Scan(
-		&n.DocumentID, &n.RequesterType, &n.RequesterID, &n.RequesterLabel, &n.RecipientID, &n.Attempts)
+		RETURNING o.document_id,o.requester_type,o.requester_id,o.requester_label,o.recipient_id,o.attempts,o.finished_providers`).Scan(
+		&n.DocumentID, &n.RequesterType, &n.RequesterID, &n.RequesterLabel, &n.RecipientID, &n.Attempts, &n.FinishedProviders)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -417,8 +446,8 @@ func (s *Store) FinishDocumentAccessRequestNotification(ctx context.Context, n r
 			WHERE document_id=$1 AND requester_type=$2 AND requester_id=$3 AND attempts=$4`, n.DocumentID, n.RequesterType, n.RequesterID, n.Attempts)
 		return err
 	}
-	_, err := s.db.Exec(ctx, `UPDATE document_access_request_notification_outbox SET available_at=now()+$5*interval '1 second'
-		WHERE document_id=$1 AND requester_type=$2 AND requester_id=$3 AND attempts=$4`, n.DocumentID, n.RequesterType, n.RequesterID, n.Attempts, retryAfter.Seconds())
+	_, err := s.db.Exec(ctx, `UPDATE document_access_request_notification_outbox SET available_at=now()+$5*interval '1 second',finished_providers=$6
+		WHERE document_id=$1 AND requester_type=$2 AND requester_id=$3 AND attempts=$4`, n.DocumentID, n.RequesterType, n.RequesterID, n.Attempts, retryAfter.Seconds(), n.FinishedProviders)
 	return err
 }
 

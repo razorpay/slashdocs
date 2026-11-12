@@ -655,7 +655,7 @@ func TestPostgresListenerDeliversOnlyCommittedNotifications(t *testing.T) {
 func TestPostgresPatchNotifiesOnceAndNoOpDoesNotNotify(t *testing.T) {
 	store, databaseURL := openTestStore(t)
 	owner := auth.Principal{Type: auth.PrincipalUser, ID: "owner_notify", Email: "owner-notify@example.com", Name: "Owner"}
-	document, _, err := store.CreateDocument(context.Background(), owner, "notify", []byte("<html></html>"))
+	document, _, err := store.CreateDocument(context.Background(), owner, "notify", "", []byte("<html></html>"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -718,7 +718,7 @@ func TestPostgresPatchNotifiesOnceAndNoOpDoesNotNotify(t *testing.T) {
 func TestPostgresDeleteNotifiesAndClosesBrokerSubscribers(t *testing.T) {
 	store, databaseURL := openTestStore(t)
 	owner := auth.Principal{Type: auth.PrincipalUser, ID: "owner_delete_notify", Email: "owner-delete-notify@example.com", Name: "Owner"}
-	document, _, err := store.CreateDocument(context.Background(), owner, "delete notify", []byte("<html></html>"))
+	document, _, err := store.CreateDocument(context.Background(), owner, "delete notify", "", []byte("<html></html>"))
 	if err != nil {
 		t.Fatal(err)
 	}

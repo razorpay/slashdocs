@@ -1,8 +1,6 @@
 package server
 
 import (
-	"strings"
-
 	"github.com/razorpay/slashdocs/api/internal/auth"
 	"github.com/razorpay/slashdocs/api/internal/repo"
 )
@@ -64,6 +62,7 @@ type commentResponse struct {
 	CreatedOnVersionID string                    `json:"created_on_version_id"`
 	CreatedAt          string                    `json:"created_at,omitempty"`
 	ResolvedAt         string                    `json:"resolved_at,omitempty"`
+	Edited             bool                      `json:"edited,omitempty"`
 	ParentCommentID    string                    `json:"parent_comment_id,omitempty"`
 	Mentions           []commentMentionResponse  `json:"mentions"`
 	Reactions          []commentReactionResponse `json:"reactions"`
@@ -84,8 +83,8 @@ type commentReactionResponse struct {
 }
 
 func commentsJSON(items []repo.Comment, placementVersionID string, placementHTML []byte, viewer auth.Principal) []commentResponse {
-	// Stringify the version body once for all placement checks below.
-	haystack := string(placementHTML)
+	// Read the version body once for all placement checks below.
+	doc := newPlacementDoc(placementHTML)
 	roots := make([]repo.Comment, 0, len(items))
 	byID := map[string]int{}
 	for _, cm := range items {
@@ -111,19 +110,19 @@ func commentsJSON(items []repo.Comment, placementVersionID string, placementHTML
 	}
 	out := make([]commentResponse, 0, len(roots))
 	for _, cm := range roots {
-		out = append(out, commentJSON(cm, placementVersionID, haystack, viewer))
+		out = append(out, commentJSON(cm, placementVersionID, doc, viewer))
 	}
 	return out
 }
 
-// commentPlacement reports whether a comment's selected text still appears in
-// the given version, returning its placement status, a confidence score, and
-// the matched text. placementHTML is the already-stringified version body.
-func commentPlacement(cm repo.Comment, placementVersionID, placementHTML string) (status string, confidence float64, matched string) {
+// commentPlacement reports whether a comment's selected text can still be
+// placed on the given version, returning its placement status, a confidence
+// score, and the matched text. doc is the version body, or nil when unknown.
+func commentPlacement(cm repo.Comment, placementVersionID string, doc *placementDoc) (status string, confidence float64, matched string) {
 	status = placementAttached
 	confidence = 1.0
 	matched = cm.SelectedText
-	if placementVersionID != cm.VersionID && len(placementHTML) > 0 && !strings.Contains(placementHTML, cm.SelectedText) {
+	if placementVersionID != cm.VersionID && doc != nil && !placedOn(cm, doc) {
 		status = placementOrphaned
 		confidence = 0
 		matched = ""
@@ -139,13 +138,13 @@ func principalJSON(p auth.Principal) principalResponse {
 	return principalResponse{Type: p.Type, ID: p.ID, Email: p.Email, Name: p.Name, PictureURL: p.PictureURL}
 }
 
-func commentJSON(cm repo.Comment, placementVersionID, placementHTML string, viewer auth.Principal) commentResponse {
+func commentJSON(cm repo.Comment, placementVersionID string, doc *placementDoc, viewer auth.Principal) commentResponse {
 	out := commentBaseJSON(cm, viewer)
 	if cm.ParentCommentID == "" {
 		if placementVersionID == "" {
 			placementVersionID = cm.VersionID
 		}
-		status, confidence, matched := commentPlacement(cm, placementVersionID, placementHTML)
+		status, confidence, matched := commentPlacement(cm, placementVersionID, doc)
 		out.CurrentPlacement = &commentPlacementResponse{
 			VersionID:   placementVersionID,
 			Status:      status,
@@ -170,6 +169,7 @@ func commentBaseJSON(cm repo.Comment, viewer auth.Principal) commentResponse {
 		CreatedOnVersionID: cm.VersionID,
 		CreatedAt:          cm.CreatedAt,
 		ResolvedAt:         cm.ResolvedAt,
+		Edited:             cm.Edited,
 		ParentCommentID:    cm.ParentCommentID,
 		Mentions:           commentMentionsJSON(cm.Mentions),
 		Reactions:          commentReactionsJSON(cm.Reactions, viewer),

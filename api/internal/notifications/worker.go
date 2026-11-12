@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/razorpay/slashdocs/api/internal/auth"
@@ -42,9 +45,12 @@ type Message struct {
 	DirectAccess                                                   bool
 	Reply                                                          bool
 }
+
+// Worker delivers each queued message through every provider in Senders,
+// which maps a provider name to its sender.
 type Worker struct {
 	Store            Store
-	Sender           Sender
+	Senders          map[string]Sender
 	AppOrigin        string
 	ResolvePrincipal func(context.Context, *auth.Principal) *auth.Principal
 	nextFailureLog   time.Time
@@ -78,7 +84,7 @@ func (w *Worker) DeliverNextDocumentAccessRequest(ctx context.Context) error {
 	if err != nil || n == nil {
 		return err
 	}
-	retryAfter, err := w.deliverDocumentAccessRequest(ctx, *n)
+	retryAfter, err := w.deliverDocumentAccessRequest(ctx, n)
 	if err != nil {
 		var deliveryCode string
 		retryAfter, deliveryCode = notificationRetry(n.Attempts, err)
@@ -103,7 +109,7 @@ func (w *Worker) DeliverNextDocumentAccess(ctx context.Context) error {
 	if err != nil || n == nil {
 		return err
 	}
-	retryAfter, err := w.deliverDocumentAccess(ctx, *n)
+	retryAfter, err := w.deliverDocumentAccess(ctx, n)
 	if err != nil {
 		var deliveryCode string
 		retryAfter, deliveryCode = notificationRetry(n.Attempts, err)
@@ -119,7 +125,7 @@ func (w *Worker) DeliverNext(ctx context.Context) error {
 	if err != nil || n == nil {
 		return err
 	}
-	retryAfter, err := w.deliver(ctx, *n)
+	retryAfter, err := w.deliver(ctx, n)
 	if err != nil {
 		var deliveryCode string
 		retryAfter, deliveryCode = notificationRetry(n.Attempts, err)
@@ -128,7 +134,21 @@ func (w *Worker) DeliverNext(ctx context.Context) error {
 	return w.Store.FinishCommentNotification(ctx, *n, retryAfter)
 }
 
+// notificationRetry retries while any provider can still deliver. The logged
+// code names each failed provider.
 func notificationRetry(attempts int, err error) (time.Duration, string) {
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		var retryAfter time.Duration
+		var codes []string
+		for _, err := range joined.Unwrap() {
+			delay, code := notificationRetry(attempts, err)
+			if failed, ok := err.(providerError); ok {
+				code = failed.provider + ":" + code
+			}
+			retryAfter, codes = max(retryAfter, delay), append(codes, code)
+		}
+		return retryAfter, strings.Join(codes, ",")
+	}
 	delay := time.Duration(1<<min(attempts, 8)) * time.Second
 	code := "internal"
 	var delivery *DeliveryError
@@ -142,7 +162,7 @@ func notificationRetry(attempts int, err error) (time.Duration, string) {
 	return max(delay, delivery.RetryAfter), code
 }
 
-func (w *Worker) deliver(ctx context.Context, n repo.CommentNotification) (time.Duration, error) {
+func (w *Worker) deliver(ctx context.Context, n *repo.CommentNotification) (time.Duration, error) {
 	p, err := w.Store.ResolveUser(ctx, n.RecipientID)
 	if errors.Is(err, repo.ErrNotFound) {
 		return 0, nil
@@ -180,7 +200,7 @@ func (w *Worker) deliver(ctx context.Context, n repo.CommentNotification) (time.
 	return 0, w.sendComment(ctx, p.Email, n, c)
 }
 
-func (w *Worker) deliverDocumentAccess(ctx context.Context, n repo.DocumentAccessNotification) (time.Duration, error) {
+func (w *Worker) deliverDocumentAccess(ctx context.Context, n *repo.DocumentAccessNotification) (time.Duration, error) {
 	p, err := w.Store.ResolveUser(ctx, n.RecipientID)
 	if errors.Is(err, repo.ErrNotFound) {
 		return 0, nil
@@ -226,13 +246,13 @@ func (w *Worker) deliverDocumentAccess(ctx context.Context, n repo.DocumentAcces
 	if !allowed {
 		return 6 * time.Second, nil
 	}
-	return 0, w.Sender.Send(ctx, p.Email, Message{
+	return 0, w.send(ctx, &n.FinishedProviders, p.Email, Message{
 		Reason: n.Reason, Link: DocumentURL(w.AppOrigin, n.DocumentID), DocumentTitle: doc.Title,
 		PreviousRole: n.PreviousRole, Role: n.Role, DirectAccess: n.Source == "direct",
 	})
 }
 
-func (w *Worker) deliverDocumentAccessRequest(ctx context.Context, n repo.DocumentAccessRequestNotification) (time.Duration, error) {
+func (w *Worker) deliverDocumentAccessRequest(ctx context.Context, n *repo.DocumentAccessRequestNotification) (time.Duration, error) {
 	recipient, err := w.Store.ResolveUser(ctx, n.RecipientID)
 	if errors.Is(err, repo.ErrNotFound) {
 		return 0, nil
@@ -275,13 +295,13 @@ func (w *Worker) deliverDocumentAccessRequest(ctx context.Context, n repo.Docume
 	if !allowed {
 		return 6 * time.Second, nil
 	}
-	return 0, w.Sender.Send(ctx, recipient.Email, Message{
+	return 0, w.send(ctx, &n.FinishedProviders, recipient.Email, Message{
 		Reason: "access_requested", Link: DocumentURL(w.AppOrigin, n.DocumentID) + "?share=1",
 		DocumentTitle: doc.Title, Requester: n.RequesterLabel,
 	})
 }
 
-func (w *Worker) requesterStillDenied(ctx context.Context, n repo.DocumentAccessRequestNotification) (bool, error) {
+func (w *Worker) requesterStillDenied(ctx context.Context, n *repo.DocumentAccessRequestNotification) (bool, error) {
 	requester := auth.Principal{Type: auth.PrincipalType(n.RequesterType), ID: n.RequesterID}
 	if w.ResolvePrincipal != nil && requester.Type == auth.PrincipalUser {
 		requester = *w.ResolvePrincipal(ctx, &requester)
@@ -301,15 +321,44 @@ func (w *Worker) documentNotificationOwner(ctx context.Context, doc repo.Documen
 	return sa.Owner.ID, nil
 }
 
-func (w *Worker) sendComment(ctx context.Context, email string, n repo.CommentNotification, c repo.Comment) error {
-	message, err := w.message(ctx, n, c)
+func (w *Worker) sendComment(ctx context.Context, email string, n *repo.CommentNotification, c repo.Comment) error {
+	message, err := w.message(ctx, *n, c)
 	if errors.Is(err, repo.ErrNotFound) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	return w.Sender.Send(ctx, email, message)
+	return w.send(ctx, &n.FinishedProviders, email, message)
+}
+
+// providerError names the provider whose delivery failed.
+type providerError struct {
+	provider string
+	error
+}
+
+func (e providerError) Unwrap() error { return e.error }
+
+// send delivers through each provider not yet in finished. A provider is
+// finished when it delivers or fails permanently, so a retry never repeats a
+// message that a provider already showed to the recipient.
+func (w *Worker) send(ctx context.Context, finished *[]string, email string, message Message) error {
+	var errs []error
+	for _, provider := range slices.Sorted(maps.Keys(w.Senders)) {
+		if slices.Contains(*finished, provider) {
+			continue
+		}
+		err := w.Senders[provider].Send(ctx, email, message)
+		if err != nil {
+			errs = append(errs, providerError{provider, err})
+		}
+		var delivery *DeliveryError
+		if err == nil || errors.As(err, &delivery) && delivery.Permanent {
+			*finished = append(*finished, provider)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (w *Worker) message(ctx context.Context, n repo.CommentNotification, c repo.Comment) (Message, error) {

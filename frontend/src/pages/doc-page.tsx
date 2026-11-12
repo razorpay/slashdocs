@@ -1,22 +1,31 @@
 import { useTitle } from "@/lib/use-title";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import {
+  Navigate,
+  useLocation,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Check, KeyRound, Send } from "lucide-react";
 import { api, APIError, currentVersionID, docTitle, versionID } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
+import { useMe } from "@/lib/hooks";
+import { useSignInPath } from "@/lib/auth-state";
 import { textLinkFragment } from "../../bridge/text-link";
 import { Center, Skeleton } from "@/components/ui/misc";
 import { Button } from "@/components/ui/button";
 import { DocBar } from "./doc-bar";
 import { DocWorkspace } from "./doc-workspace";
+import { OlderVersionBanner } from "./doc-older-version-banner";
 import { cursorsShownStore } from "@/lib/live-cursors";
 import { useDocumentStream, type Viewer } from "./use-document-stream";
 
 function retryDocumentLoad(failureCount: number, error: Error) {
-  if (error instanceof APIError && (error.status === 403 || error.status === 404)) {
+  if (error instanceof APIError && [401, 403, 404].includes(error.status)) {
     return false;
   }
   return failureCount < 3;
@@ -52,7 +61,7 @@ function AccessDeniedState({ documentID }: { documentID: string }) {
       title="You don't have access to this document"
       description={
         sent
-          ? "The owner has been notified."
+          ? "People who can share this document will see your request."
           : "Send the owner a request to grant you access."
       }
     >
@@ -103,7 +112,7 @@ export function DocumentPage() {
     retry: retryDocumentLoad,
     meta: { suppressGlobalError: true },
   });
-  const me = useQuery({ queryKey: queryKeys.me(), queryFn: api.me });
+  const me = useMe();
   const versions = useQuery({
     queryKey: queryKeys.versions(id),
     queryFn: () => api.listVersions(id),
@@ -115,6 +124,11 @@ export function DocumentPage() {
   const closeShare = useCallback(() => setShareOpen(false), []);
   const nav = useNavigate();
   const location = useLocation();
+  const signInPath = useSignInPath();
+  // A signed-out reader of a document shared with anyone signs in to comment
+  // or edit.
+  const goToSignIn = useCallback(() => nav(signInPath), [nav, signInPath]);
+  const signIn = me.unauth ? goToSignIn : undefined;
   useTitle(doc.data ? docTitle(doc.data) : undefined);
 
   const versionItems = versions.data?.items || [];
@@ -173,6 +187,9 @@ export function DocumentPage() {
   }
   if (doc.error) {
     if (doc.error instanceof APIError) {
+      if (doc.error.status === 401) {
+        return <Navigate to={signInPath} replace />;
+      }
       if (doc.error.status === 403) {
         return <AccessDeniedState documentID={id} />;
       }
@@ -208,6 +225,8 @@ export function DocumentPage() {
       version={current}
       principal={me.data?.principal}
       home="/app/documents"
+      notifications={!signIn}
+      signIn={signIn}
       stream={stream}
       followedCursor={followedCursor}
       onDocumentClick={closeShare}
@@ -229,6 +248,15 @@ export function DocumentPage() {
           onFollowViewer={followViewer}
           shareOpen={shareOpen}
           onShareOpenChange={setShareOpen}
+        />
+      )}
+      banner={(floating) => (
+        <OlderVersionBanner
+          current={current}
+          latest={latest}
+          versions={versionItems}
+          onViewLatest={() => setSelectedVersion(latest)}
+          floating={floating}
         />
       )}
     />
