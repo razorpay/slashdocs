@@ -193,6 +193,34 @@ test("Done right after the last key saves the edit before Comment mode", async (
   expect(await latestSource(page, document.id)).toContain("The notes say why. Now.");
 });
 
+test("Undo and Redo work in Comment mode too, from the bar and from the document", async ({
+  page,
+  slashdocs,
+}) => {
+  const title = uniqueName("Undo");
+  const document = await slashdocs.createDocument(title, documentHTML(title));
+  await openEditable(page, document.id);
+  const tail = renderedDocument(page).locator("#tail");
+  await tail.click();
+  await page.keyboard.press("End");
+  await page.keyboard.type(" Now.");
+  await done(page).click();
+  await commentingText(page);
+
+  // The focus is on the bar after Done.
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(tail).toHaveText("The notes say why.");
+  await expect.poll(() => latestSource(page, document.id)).not.toContain("why. Now.");
+  await commentingText(page);
+
+  // And in the document, with no caret in it.
+  await renderedDocument(page).locator("h1").click();
+  await page.keyboard.press("ControlOrMeta+Shift+z");
+  await expect(tail).toHaveText("The notes say why. Now.");
+  await expect.poll(() => latestSource(page, document.id)).toContain("why. Now.");
+  await commentingText(page);
+});
+
 test("a sitting in Edit mode is one History entry, which says what changed", async ({
   page,
   slashdocs,

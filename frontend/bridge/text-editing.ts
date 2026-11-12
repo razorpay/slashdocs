@@ -102,6 +102,8 @@ const SCRIPT_EDIT = "[data-slashdocs-script-edit]";
 const PLAIN_INPUT =
   /^(insertText|insertReplacementText|insertCompositionText|insertFromPaste|delete(Content|Word|SoftLine|HardLine)(Backward|Forward)|deleteByCut|historyUndo|historyRedo)$/;
 
+// The inputs of Undo and Redo.
+const HISTORY = /^history(Undo|Redo)$/;
 const STYLE_ID = "slashdocs-text-editing-style";
 const EDITING_ATTR = "data-slashdocs-text-editing";
 // While the reader edits, the page shows that its text takes the caret: an
@@ -442,7 +444,7 @@ export function startTextEditing(
     closeNative();
     flush();
     const { type } = input;
-    if (type === "historyUndo" || type === "historyRedo") {
+    if (HISTORY.test(type)) {
       if (type === "historyUndo") revert(undos, redos);
       else revert(redos, undos);
       return true;
@@ -509,11 +511,13 @@ export function startTextEditing(
   };
   const onCompositionEnd = () => (composing = false);
   const onKeyDown = (event: KeyboardEvent) => {
-    if (!editing || !event.isTrusted || event.altKey) return;
+    if (!event.isTrusted || event.altKey) return;
     const target = elementOf(event.target as Node);
     if (!target || !body.contains(target) || target.closest("input,textarea,select"))
       return;
     const command = event.metaKey || event.ctrlKey;
+    // Undo and Redo also work in Comment mode, on the reader's own edits.
+    if (!editing && !(command && HISTORY.test(shortcut(event) ?? ""))) return;
     // Tab does not move the focus out of the document, where the next keys
     // go nowhere. In a table, it moves the caret from cell to cell.
     if (event.key === "Tab" && !command) {
