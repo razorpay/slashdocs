@@ -1,4 +1,4 @@
-import { type Page } from "@playwright/test";
+import { type Locator, type Page } from "@playwright/test";
 import { expect, reviewerOn, test, uniqueName } from "./fixtures";
 
 // The document bar keeps back, home and the title on the left, and every
@@ -73,4 +73,62 @@ test("Done takes the place of Edit, and the icons after it stay", async ({
   // The Esc key chip shows on a wide screen.
   await expect(done.getByText("Esc", { exact: true })).toBeVisible();
   expect((await comments.boundingBox())!.x).toBe(before.x);
+});
+
+const box = async (locator: Locator) => (await locator.boundingBox())!;
+
+test("a phone bar keeps the title, and gives 40px targets", async ({
+  page,
+  browser,
+  slashdocs,
+}) => {
+  const title = uniqueName("Phone bar title");
+  const document = await slashdocs.createDocument(title, `<h1>${title}</h1>`);
+  await slashdocs.shareWithAnyone(document.id, "viewer");
+  // The document waits on one approval, so its chip would be in the bar.
+  await page.route(`**/v1/documents/${document.id}`, async (route) => {
+    const response = await route.fetch();
+    const json = {
+      ...(await response.json()),
+      approval_status: "pending",
+      approval_summary: { approved: 0, total: 1, rejected: 0, pending: 1 },
+    };
+    await route.fulfill({ response, json });
+  });
+  const path = `/app/d/${document.id}`;
+  const reviewer = await reviewerOn(browser, path);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(path);
+
+  const more = page.getByRole("button", { name: "More" });
+  // More carries the badge of the approvals, as the bar has no room for them.
+  await expect(more.locator('span[aria-hidden="true"]')).toBeVisible();
+  await more.click();
+  await expect(page.getByRole("menuitem", { name: /Follow reviewer/ })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: /Approvals/ })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("group", { name: "People viewing this document" }),
+  ).toBeHidden();
+  await expect(page.getByRole("button", { name: /^Approvals: / })).toBeHidden();
+  await expect(page.getByRole("button", { name: "Account menu" })).toBeHidden();
+  // About 7px a letter: at least 12 letters of the title show.
+  expect(
+    (await box(page.getByRole("button", { name: /^Rename/ }))).width,
+  ).toBeGreaterThan(84);
+
+  const comments = page.getByRole("button", { name: "Comments" });
+  for (const target of [
+    page.getByRole("button", { name: "Edit", exact: true }),
+    page.getByRole("button", { name: "Share" }),
+    comments,
+    more,
+  ]) {
+    const { width, height } = await box(target);
+    expect(Math.min(width, height)).toBeGreaterThanOrEqual(40);
+  }
+  await comments.click();
+  const spot = page.getByRole("button", { name: "Comment on a spot" });
+  expect((await box(spot)).height).toBeGreaterThanOrEqual(40);
+  await reviewer.context().close();
 });

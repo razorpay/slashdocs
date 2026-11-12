@@ -1,5 +1,12 @@
-import { type FrameLocator, type Locator, type Page } from "@playwright/test";
-import { APP_ORIGIN, RENDER_ORIGIN, expect, test, uniqueName } from "./fixtures";
+import { type Locator, type Page } from "@playwright/test";
+import {
+  APP_ORIGIN,
+  RENDER_ORIGIN,
+  expect,
+  renderedDocument,
+  test,
+  uniqueName,
+} from "./fixtures";
 
 function documentHTML(heading: string, body = "Select this sentence for review.") {
   return `<!doctype html>
@@ -12,12 +19,6 @@ function documentHTML(heading: string, body = "Select this sentence for review."
     </main>
   </body>
 </html>`;
-}
-
-function renderedDocument(page: Page): FrameLocator {
-  return page
-    .frameLocator('iframe[title="Rendered document"]')
-    .frameLocator("iframe#slashdocs-doc");
 }
 
 function entryRow(page: Page, title: string): Locator {

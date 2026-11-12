@@ -1,17 +1,18 @@
-import { type FrameLocator, type Page } from "@playwright/test";
-import { expect, reviewerOn, startEditing, test, uniqueName } from "./fixtures";
+import { type Page } from "@playwright/test";
+import {
+  expect,
+  renderedDocument,
+  reviewerOn,
+  startEditing,
+  test,
+  uniqueName,
+} from "./fixtures";
 
 // A comment highlight stays on its own text while another person changes
 // that text live, as in Google Docs: it grows with typing in it, and when all
 // of its text goes, the comment shows as detached. It never goes to another
 // copy of its phrase. The server moves the stored anchor in the same way, so
 // a load finds the grown text too.
-
-function renderedDocument(page: Page): FrameLocator {
-  return page
-    .frameLocator('iframe[title="Rendered document"]')
-    .frameLocator("iframe#slashdocs-doc");
-}
 
 // select selects text in an element, as a drag does. Highlights can cut
 // the text into more than one node.

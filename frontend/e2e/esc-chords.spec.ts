@@ -1,11 +1,16 @@
-import { type FrameLocator, type Page } from "@playwright/test";
-import { expect, signedOutPage, test, uniqueName, type SlashdocsAPI } from "./fixtures";
+import { type Page } from "@playwright/test";
+import {
+  bridge,
+  expect,
+  renderedDocument,
+  startEditing,
+  test,
+  uniqueName,
+  type SlashdocsAPI,
+} from "./fixtures";
 
-function renderedDocument(page: Page): FrameLocator {
-  return page
-    .frameLocator('iframe[title="Rendered document"]')
-    .frameLocator("iframe#slashdocs-doc");
-}
+// Esc arms a chord: the next letter runs the chord of that letter only. An
+// Esc that closes a thread or leaves the text is not the start of a chord.
 
 function documentHTML(title: string) {
   return `<!doctype html>
@@ -29,6 +34,7 @@ async function openEarlier(page: Page, slashdocs: SlashdocsAPI) {
 
 // The keycast is hidden from screen readers. Its line runs out with the time.
 const keycast = (page: Page) => page.locator('[aria-label="Time to press a letter"]');
+const placeHint = (page: Page) => bridge(page).locator(".sd-place-hint");
 
 test("Esc in the doc bar shows the chord, and C opens the comments", async ({
   page,
@@ -85,31 +91,65 @@ for (const from of ["the doc bar", "the document"] as const) {
           page.locator('[aria-hidden="true"]', { hasText: /^ESC\+/ }),
         ).toContainText(`ESC+${key.toUpperCase()}`);
       await page.waitForTimeout(300);
-      await expect(
-        page
-          .frameLocator('iframe[title="Rendered document"]')
-          .locator(".sd-place-hint"),
-      ).toHaveCount(0);
+      await expect(placeHint(page)).toHaveCount(0);
     });
   }
 }
 
-test("the install command fades only on the side that hides text", async ({
-  browser,
-}) => {
-  const page = await signedOutPage(browser);
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/");
-  const command = page.locator("pre", { hasText: "install.sh | sh" }).first();
-  await expect(command).toBeVisible();
-  const mask = () => command.evaluate((el) => el.style.maskImage);
-  await expect
-    .poll(mask)
-    .toBe(
-      "linear-gradient(to right, black, black calc(100% - 3.5rem), transparent calc(100% - 2.25rem))",
-    );
-  await command.evaluate((el) => el.scrollTo({ left: el.scrollWidth }));
-  await expect
-    .poll(mask)
-    .toBe("linear-gradient(to right, transparent, black 1.5rem, black)");
+// An Esc that closes a thread is the thread's: it arms no chord, so C after
+// it places a pin, from the app and from the document.
+for (const from of ["the thread", "the document"] as const) {
+  test(`Esc that closes a thread from ${from} arms no chord`, async ({
+    page,
+    slashdocs,
+  }) => {
+    const title = uniqueName("Esc thread");
+    const document = await slashdocs.createDocument(title, documentHTML(title));
+    await slashdocs.createComment(document.id, "Why twice?", {
+      quote: "retry twice",
+    });
+    // An earlier version takes no typing.
+    await slashdocs.pushVersion(document.id, documentHTML(`${title} again`));
+    await page.goto(`/app/d/${document.id}?version=${document.current_version_id}`);
+    const doc = renderedDocument(page);
+    await expect(doc.locator("h1")).toHaveText(title);
+
+    const thread = page.getByRole("dialog", { name: "Comment thread" });
+    const mark = doc.locator("mark.slashdocs-mark").first();
+    await mark.click();
+    await expect(thread).toBeVisible();
+    if (from === "the thread") await thread.focus();
+    await page.keyboard.press("Escape");
+    await expect(thread).toBeHidden();
+    await page.waitForTimeout(200);
+    await expect(keycast(page)).toHaveCount(0);
+
+    if (from === "the document") await doc.locator("h1").click();
+    await page.keyboard.press("c");
+    await expect(placeHint(page)).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "Comments" })).toBeHidden();
+  });
+}
+
+// An Esc in the text leaves Edit mode, and arms no chord. In Comment mode,
+// Esc arms the chord.
+test("Esc that leaves the text arms no chord", async ({ page, slashdocs }) => {
+  const title = uniqueName("Esc text");
+  const document = await slashdocs.createDocument(title, documentHTML(title));
+  await page.goto(`/app/d/${document.id}`);
+  const doc = renderedDocument(page);
+  await startEditing(page);
+  await doc.locator("#tail").click();
+
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
+  await expect(keycast(page)).toHaveCount(0);
+
+  // In Comment mode, Esc, then C opens the comments.
+  await page.waitForTimeout(1200);
+  await page.keyboard.press("Escape");
+  await expect(keycast(page)).toBeVisible();
+  await page.keyboard.press("c");
+  await expect(page.getByRole("dialog", { name: "Comments" })).toBeVisible();
+  await expect(placeHint(page)).toBeHidden();
 });

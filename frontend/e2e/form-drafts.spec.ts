@@ -33,10 +33,7 @@ test("a reason survives a new version and a reload, and rejects the new version 
   browser,
   slashdocs,
 }) => {
-  const document = await slashdocs.createDocument(
-    uniqueName("Forms R10"),
-    html("One."),
-  );
+  const document = await slashdocs.createDocument(uniqueName("Forms"), html("One."));
   const path = `/app/d/${document.id}`;
   await page.goto(path);
   await addReviewer(page);
@@ -92,7 +89,7 @@ test("a reason survives a new version and a reload, and rejects the new version 
 test("a new folder name survives a reload, and Cancel discards it", async ({
   page,
 }) => {
-  const name = uniqueName("Forms R10 folder");
+  const name = uniqueName("Forms folder");
   await page.goto("/app/documents");
   await page.getByRole("button", { name: "New folder" }).click();
   await page.getByRole("textbox", { name: "Folder name" }).fill(name);

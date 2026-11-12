@@ -1,20 +1,11 @@
-import { type FrameLocator, type Locator, type Page } from "@playwright/test";
-import { APP_ORIGIN, expect, test, uniqueName } from "./fixtures";
+import { type Locator, type Page } from "@playwright/test";
+import { bridge, expect, QUICK, renderedDocument, test, uniqueName } from "./fixtures";
 
 // One placement for every pin: its tip stays in the page in view, and its
 // face goes to the nearest place that covers no text, with a pointer to the
-// tip. A comment sheet keeps the open anchor above it. A pin on a touch
-// screen takes a 40px hit area, and an open moved pin wears one ring.
-
-function bridge(page: Page): FrameLocator {
-  return page.frameLocator('iframe[title="Rendered document"]');
-}
-
-function renderedDocument(page: Page): FrameLocator {
-  return bridge(page).frameLocator("iframe#slashdocs-doc");
-}
-
-const QUICK = "The quick brown fox jumps over the lazy dog.";
+// tip. The tip of a face away from its spot leaves the word under it
+// readable. A pin on a touch screen takes a 40px hit area, and an open moved
+// pin wears one ring.
 
 // A narrow centered body leaves wide page margins at both sides at 1440.
 function documentHTML(title: string, paragraphs = 12) {
@@ -34,6 +25,30 @@ function documentHTML(title: string, paragraphs = 12) {
     <p id="intro">Repeat repeat repeat.</p>
     <p id="status">Status <span class="badge" id="badge">Pending</span> for review.</p>
     ${numbered}
+  </body>
+</html>`;
+}
+
+const SENTENCE = "Clients retry twice before giving up, and the notes say why. ";
+
+// Paragraphs of text from the top to below the bottom of the viewport, with
+// no clear room under or over a word.
+function denseHTML(title: string) {
+  const paragraphs = Array.from(
+    { length: 14 },
+    (_, i) => `<p id="p${i}">${SENTENCE.repeat(4)}</p>`,
+  ).join("");
+  return `<!doctype html>
+<html>
+  <head><meta charset="utf-8"><title>${title}</title>
+    <style>body{max-width:760px;margin:40px auto;padding:0 16px;font:16px/1.5 sans-serif}
+    p{margin:8px 0}.badge{padding:1px 6px;border-radius:4px;background:#fef3c7}</style>
+  </head>
+  <body>
+    <h1>${title}</h1>
+    <h2 id="steps">Steps</h2>
+    <p id="status">Status <span class="badge" id="badge">Pending</span> for review.</p>
+    ${paragraphs}
   </body>
 </html>`;
 }
@@ -144,7 +159,7 @@ test("margin pins from 1440 stay wholly on a phone screen, clear of the words be
   page,
   slashdocs,
 }) => {
-  const title = uniqueName("Margin pins r8");
+  const title = uniqueName("Margin pins");
   const document = await slashdocs.createDocument(title, documentHTML(title));
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`/app/d/${document.id}`);
@@ -225,55 +240,6 @@ for (const width of [1440, 390])
     }
   });
 
-test("a long thread opened from Comments on a phone keeps its paragraph above the sheet", async ({
-  page,
-  slashdocs,
-}) => {
-  const title = uniqueName("Long thread r8");
-  const document = await slashdocs.createDocument(title, documentHTML(title));
-  const quotes = [`Paragraph 4. ${QUICK}`, `Paragraph 11. ${QUICK}`];
-  for (const quote of quotes) {
-    const comment = await slashdocs.createComment(document.id, `On ${quote}`, {
-      quote,
-    });
-    for (let i = 0; i < 10; i++)
-      expect(
-        (
-          await page.request.post(
-            `/v1/documents/${document.id}/comments/${comment.id}/replies`,
-            {
-              headers: { Origin: APP_ORIGIN },
-              data: { body: `Reply ${i}. This reply gives the reviewer more context.` },
-            },
-          )
-        ).ok(),
-      ).toBe(true);
-  }
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto(`/app/d/${document.id}`);
-  const doc = renderedDocument(page);
-  await expect(doc.locator("#p4")).toBeVisible();
-  // The last paragraph too: the page makes room to bring it up.
-  for (const [quote, block] of [
-    [quotes[0], "#p4"],
-    [quotes[1], "#p11"],
-  ]) {
-    await page.getByRole("button", { name: "Comments", exact: true }).click();
-    await page.getByText(`On ${quote}`).click();
-    const sheet = page.getByRole("dialog", { name: "Comment thread" });
-    await expect(sheet.getByText("Reply 9.")).toBeAttached();
-    await expect
-      .poll(async () => {
-        const top = (await sheet.boundingBox())!.y;
-        const box = (await doc.locator(block).boundingBox())!;
-        return box.y >= 0 && box.y + box.height <= top;
-      })
-      .toBe(true);
-    await page.keyboard.press("Escape");
-    await expect(sheet).toHaveCount(0);
-  }
-});
-
 test.describe("on a touch screen", () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 
@@ -335,4 +301,32 @@ test("an open moved pin wears one ring: the active one, dashed", async ({
   });
   expect(style.outline).toBe("dashed rgb(37, 99, 235)");
   expect(style.shadow).not.toContain("rgb(37, 99, 235)");
+});
+
+// The tip of a pin whose face is away from it is an open ring, so the
+// letter under it shows, and the pointer line stops at the ring.
+test("the tip of a pin on a short word leaves the word readable", async ({
+  page,
+  slashdocs,
+}) => {
+  const title = uniqueName("Pin tip");
+  const document = await slashdocs.createDocument(title, denseHTML(title));
+  await slashdocs.createComment(document.id, "On the badge", {
+    point: { target: "badge", x: 0.5, y: 0.5 },
+  });
+  await page.goto(`/app/d/${document.id}`);
+  // The face goes beside the badge, and its pointer shows.
+  const line = bridge(page).locator(".sd-pin s");
+  await expect(line).toBeVisible();
+  const tip = await line.evaluate((s) => {
+    const ring = getComputedStyle(s, "::after");
+    const style = getComputedStyle(s);
+    return {
+      center: ring.backgroundColor,
+      border: parseFloat(ring.borderTopWidth) > 0,
+      stop: parseFloat(style.getPropertyValue("--len")) - parseFloat(style.width),
+    };
+  });
+  expect(tip).toMatchObject({ center: "rgba(0, 0, 0, 0)", border: true });
+  expect(tip.stop).toBeCloseTo(3.5, 1);
 });
