@@ -62,6 +62,17 @@ type VersionConflictError struct {
 func (e *VersionConflictError) Error() string        { return "version_conflict" }
 func (e *VersionConflictError) Is(target error) bool { return target == ErrVersionConflict }
 
+// EmailIdentityConflictError reports a sign-in whose identity key matches no
+// user while its verified email belongs to a user with another identity key,
+// for example after SLASHDOCS_OIDC_ISSUER_URL changed.
+type EmailIdentityConflictError struct {
+	Email            string
+	ExistingIdentity string
+	IncomingIdentity string
+}
+
+func (e *EmailIdentityConflictError) Error() string { return "email_identity_conflict" }
+
 var ErrAmbiguousPath = errors.New("ambiguous_path")
 
 type AmbiguousPathError struct {
@@ -123,6 +134,12 @@ type FolderEntry struct {
 	LastActive string    `json:"last_active,omitempty"`
 }
 
+// Page selects at most Limit items after the first Offset items of a list.
+type Page struct {
+	Limit  int32
+	Offset int32
+}
+
 // DocumentSearch filters documents. All values are lowercase, and empty
 // fields do not filter.
 type DocumentSearch struct {
@@ -154,6 +171,13 @@ type EffectiveAccessItem struct {
 	Principal     auth.Principal `json:"principal"`
 	EffectiveRole Role           `json:"effective_role"`
 	Sources       []AccessSource `json:"sources"`
+}
+
+// AccessRequest is a request for access to a document. A grant on the
+// document to the requester removes it.
+type AccessRequest struct {
+	Requester   auth.Principal `json:"requester"`
+	RequestedAt string         `json:"requested_at"`
 }
 
 type ServiceAccount struct {
@@ -348,9 +372,15 @@ type Repository interface {
 	NotificationPreferences(ctx context.Context, principal auth.Principal, documentID string) (NotificationPreferences, error)
 	SetNotificationPreferences(ctx context.Context, principal auth.Principal, documentID string, enabled bool) (NotificationPreferences, error)
 	RequestDocumentAccess(ctx context.Context, principal auth.Principal, documentID string) error
+	ListAccessRequests(ctx context.Context, documentID string) ([]AccessRequest, error)
 	ResolveBearerToken(ctx context.Context, tokenHash string) (auth.Principal, error)
 	ResolveUser(ctx context.Context, id string) (auth.Principal, error)
+	// UpsertGoogleUser returns *EmailIdentityConflictError when the email
+	// belongs to a user with another identity key.
 	UpsertGoogleUser(ctx context.Context, id, email, name, googleSub, pictureURL string) (auth.Principal, error)
+	// RelinkUserIdentity moves the user with identity key from to key to. It
+	// returns ErrNotFound when no user has key from, or a user already has key to.
+	RelinkUserIdentity(ctx context.Context, from, to string) error
 	CreateCLICredential(ctx context.Context, userID, name, tokenHash string) (string, error)
 	ListCLICredentials(ctx context.Context, userID string) ([]CLICredential, error)
 	RevokeCLICredential(ctx context.Context, userID, credentialID string) error
@@ -364,9 +394,13 @@ type Repository interface {
 	// folder itself last) with the principal's effective role at each level,
 	// resolved in one query. Returns ErrNotFound when the folder is missing.
 	FolderAccessChain(ctx context.Context, principal auth.Principal, folderID string) ([]FolderAccess, error)
-	CreateDocument(ctx context.Context, owner auth.Principal, title string, html []byte) (Document, Version, error)
-	ListDocuments(ctx context.Context, principal auth.Principal) ([]Document, error)
-	SearchDocuments(ctx context.Context, principal auth.Principal, search DocumentSearch, includeOrgWide bool, limit int32) ([]Document, error)
+	// CreateDocument puts the document in the folder, or at the root when
+	// folderID is empty. It returns ErrNotFound when the folder does not exist.
+	CreateDocument(ctx context.Context, owner auth.Principal, title, folderID string, html []byte) (Document, Version, error)
+	// ListDocuments and SearchDocuments return one page of documents, and
+	// whether more documents follow it.
+	ListDocuments(ctx context.Context, principal auth.Principal, page Page, includeLabels bool) ([]Document, bool, error)
+	SearchDocuments(ctx context.Context, principal auth.Principal, search DocumentSearch, includeOrgWide bool, page Page) ([]Document, bool, error)
 	// RecordDocumentOpened notes that a principal opened a document, so a
 	// broadly-shared ("anyone") document joins their workspace listing after
 	// first open. Idempotent.

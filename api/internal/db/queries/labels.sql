@@ -1,6 +1,11 @@
 -- name: ListDocumentLabels :many
 SELECT label FROM document_labels WHERE document_id=$1 ORDER BY label;
 
+-- name: ListLabelsForDocuments :many
+SELECT document_id, label FROM document_labels
+WHERE document_id = ANY(@document_ids::text[])
+ORDER BY document_id, label;
+
 -- name: DeleteDocumentLabels :exec
 DELETE FROM document_labels WHERE document_id=$1;
 

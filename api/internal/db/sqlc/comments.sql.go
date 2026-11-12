@@ -397,7 +397,7 @@ func (q *Queries) ListCommentMentions(ctx context.Context, commentIds []string) 
 
 const listComments = `-- name: ListComments :many
 SELECT id,document_id,created_on_version_id,author_type,author_id,author_email,author_name,body,selected_text,anchor_json,status,parent_comment_id,root_comment_id,created_at,resolved_at,edited
-FROM comments WHERE document_id= $1 AND ($2::text='' OR status= $2) AND ($3::text='' OR created_on_version_id= $3) ORDER BY created_at, id
+FROM comments c WHERE c.document_id= $1 AND ($2::text='' OR c.root_comment_id IN (SELECT thread.id FROM comments thread WHERE thread.status= $2)) AND ($3::text='' OR created_on_version_id= $3) ORDER BY created_at, id
 `
 
 type ListCommentsParams struct {

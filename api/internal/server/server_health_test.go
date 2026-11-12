@@ -261,9 +261,9 @@ type contextCheckingRepo struct {
 	sawMarker bool
 }
 
-func (r *contextCheckingRepo) ListDocuments(ctx context.Context, p auth.Principal) ([]repo.Document, error) {
+func (r *contextCheckingRepo) ListDocuments(ctx context.Context, p auth.Principal, page repo.Page, includeLabels bool) ([]repo.Document, bool, error) {
 	if ctx.Value(contextMarkerKey{}) == "seen" {
 		r.sawMarker = true
 	}
-	return r.Repository.ListDocuments(ctx, p)
+	return r.Repository.ListDocuments(ctx, p, page, includeLabels)
 }
