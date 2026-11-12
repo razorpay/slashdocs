@@ -152,9 +152,7 @@ test("an approver cannot approve while another person types, or a page that is b
   await chip(reviewer).click();
   await approve(reviewer).click();
   await expect(
-    reviewer.getByText(
-      "People are editing this document. Approve it when they are done.",
-    ),
+    reviewer.getByText("People are editing this document. Decide when they are done."),
   ).toBeVisible();
   expect(await approvedCount(page, document.id)).toBe(0);
 

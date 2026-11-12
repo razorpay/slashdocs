@@ -453,7 +453,7 @@ func TestApprovalsSealTheOpenVersionAndTheNextOperationResetsThem(t *testing.T) 
 	// person types.
 	rr := submitApproval(t, e, e.doc.ID, typed.VersionID, "approved", fixtureViewer)
 	assertStatus(t, rr, http.StatusConflict)
-	assertJSON(t, rr.Body.Bytes(), `{"error": {"code": "version_superseded", "message": "People are editing this document. Approve it when they are done."}}`)
+	assertJSON(t, rr.Body.Bytes(), `{"error": {"code": "version_superseded", "message": "People are editing this document. Decide when they are done."}}`)
 	// When the editor stopped for 10 seconds, it seals the open version and
 	// is for it, though the sitting is not over.
 	quiet(t, e)
@@ -538,7 +538,7 @@ func TestApprovalActionsNeedTheSeqThatTheApproverSaw(t *testing.T) {
 	for _, seq := range []int64{2, 3} {
 		rr := decide(seq)
 		assertStatus(t, rr, http.StatusConflict)
-		assertJSON(t, rr.Body.Bytes(), `{"error": {"code": "version_superseded", "message": "People are editing this document. Approve it when they are done."}}`)
+		assertJSON(t, rr.Body.Bytes(), `{"error": {"code": "version_superseded", "message": "People are editing this document. Decide when they are done."}}`)
 	}
 	if list := listApprovals(t, e, e.doc.ID, "", fixtureViewer); list.Items[0].Decision != nil {
 		t.Fatalf("approvals = %+v, want no decision", list)
