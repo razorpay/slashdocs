@@ -126,6 +126,8 @@ export function DocBar({
     onError: (e) => toast.error(errorMessage(e, "Delete failed")),
   });
   const { printDocument: exportPDF, signIn } = useDoc();
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [labelsOpen, setLabelsOpen] = useState(false);
   return (
     <DocBarFrame
       home="/app/documents"
@@ -163,13 +165,21 @@ export function DocBar({
         </Button>
       ) : null}
       <VersionHistoryDialog
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
         current={current}
         latest={latest}
         versions={versions}
         onSelectVersion={onSelectVersion}
       />
       {config.data?.labels_enabled === true ? (
-        <LabelsDialog docId={docId} labels={labels} canEdit={canEdit} />
+        <LabelsDialog
+          open={labelsOpen}
+          onOpenChange={setLabelsOpen}
+          docId={docId}
+          labels={labels}
+          canEdit={canEdit}
+        />
       ) : null}
       <Button
         asChild
@@ -248,6 +258,14 @@ export function DocBar({
           >
             <Maximize2 className="h-4 w-4" /> Full screen
           </DropdownItem>
+          <DropdownItem className="sm:hidden" onSelect={() => setHistoryOpen(true)}>
+            <GitBranch className="h-4 w-4" /> Version history
+          </DropdownItem>
+          {config.data?.labels_enabled === true ? (
+            <DropdownItem className="lg:hidden" onSelect={() => setLabelsOpen(true)}>
+              <Tag className="h-4 w-4" /> Document labels
+            </DropdownItem>
+          ) : null}
           <DropdownItem
             onSelect={() =>
               window.open(
@@ -390,42 +408,20 @@ function CursorsToggle() {
 }
 
 function LabelsDialog({
+  open,
+  onOpenChange,
   docId,
   labels,
   canEdit,
 }: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   docId: string;
   labels: string[];
   canEdit: boolean;
 }) {
-  const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState(labels.join(", "));
-  const qc = useQueryClient();
-  const save = useMutation({
-    mutationFn: () =>
-      api.replaceDocumentLabels(
-        docId,
-        draft
-          .split(",")
-          .map((label) => label.trim())
-          .filter(Boolean),
-      ),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.document(docId) });
-      qc.invalidateQueries({ queryKey: queryKeys.documents() });
-      setOpen(false);
-      toast.success("Labels updated.");
-    },
-    onError: (e) => toast.error(errorMessage(e, "Could not update labels")),
-  });
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (next) setDraft(labels.join(", "));
-      }}
-    >
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
         <Button
           variant="ghost"
@@ -445,44 +441,91 @@ function LabelsDialog({
             used from the documents search page.
           </DialogDescription>
         </DialogHeader>
-        <Input
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          placeholder="runbook, payments, onboarding"
-          disabled={!canEdit}
+        <LabelsForm
+          docId={docId}
+          labels={labels}
+          canEdit={canEdit}
+          onSaved={() => onOpenChange(false)}
         />
-        <DialogFooter>
-          {canEdit ? (
-            <Button onClick={() => save.mutate()} disabled={save.isPending}>
-              Save labels
-            </Button>
-          ) : null}
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
 
+// The form mounts each time the dialog opens, however it was opened, so the
+// draft always starts from the saved labels.
+function LabelsForm({
+  docId,
+  labels,
+  canEdit,
+  onSaved,
+}: {
+  docId: string;
+  labels: string[];
+  canEdit: boolean;
+  onSaved: () => void;
+}) {
+  const [draft, setDraft] = useState(labels.join(", "));
+  const qc = useQueryClient();
+  const save = useMutation({
+    mutationFn: () =>
+      api.replaceDocumentLabels(
+        docId,
+        draft
+          .split(",")
+          .map((label) => label.trim())
+          .filter(Boolean),
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.document(docId) });
+      qc.invalidateQueries({ queryKey: queryKeys.documents() });
+      onSaved();
+      toast.success("Labels updated.");
+    },
+    onError: (e) => toast.error(errorMessage(e, "Could not update labels")),
+  });
+  return (
+    <>
+      <Input
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        placeholder="runbook, payments, onboarding"
+        disabled={!canEdit}
+      />
+      <DialogFooter>
+        {canEdit ? (
+          <Button onClick={() => save.mutate()} disabled={save.isPending}>
+            Save labels
+          </Button>
+        ) : null}
+      </DialogFooter>
+    </>
+  );
+}
+
 function VersionHistoryDialog({
+  open,
+  onOpenChange,
   current,
   latest,
   versions,
   onSelectVersion,
 }: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   current: string;
   latest: string;
   versions: Version[];
   onSelectVersion: (versionID: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const sorted = [...versions].sort((a, b) => b.number - a.number);
   const select = (versionID: string) => {
     if (versionID === current) return;
     onSelectVersion(versionID);
-    setOpen(false);
+    onOpenChange(false);
   };
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
         <Button
           variant="ghost"
