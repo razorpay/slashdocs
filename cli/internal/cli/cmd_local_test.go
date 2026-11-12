@@ -188,6 +188,19 @@ func TestLocalComments(t *testing.T) {
 		}
 	}
 
+	if got := list(); got[0].Edited || got[0].Replies[0].Edited {
+		t.Fatal("status changes must not mark comments as edited")
+	}
+	for _, id := range []string{c.ID, reply.ID} {
+		w := l.do(http.MethodPatch, testApp, base+"/"+id, `{"body":"Updated"}`)
+		if w.Code != http.StatusOK || !decodeTest[localComment](t, w).Edited {
+			t.Fatalf("edit %s = %d %s", id, w.Code, w.Body)
+		}
+	}
+	if got := list(); !got[0].Edited || !got[0].Replies[0].Edited {
+		t.Fatal("edited state did not persist")
+	}
+
 	open := decodeTest[struct{ Items []localComment }](t, l.do(http.MethodGet, testApp, base+"?status=open", "")).Items
 	if len(open) != 0 {
 		t.Errorf("open comments = %+v, want none", open)
@@ -200,7 +213,7 @@ func TestLocalComments(t *testing.T) {
 		t.Errorf("reactions = %+v, want one heart from the viewer", r)
 	}
 	sidecar, err := os.ReadFile(filepath.Join(l.dir, "specs", ".release #2.html.slashdocs.json"))
-	if err != nil || strings.Contains(string(sidecar), `"count"`) || !strings.Contains(string(sidecar), `"body": "Because."`) {
+	if err != nil || strings.Contains(string(sidecar), `"count"`) || !strings.Contains(string(sidecar), `"body": "Updated"`) {
 		t.Errorf("sidecar = %s, %v; want the comments without viewer fields", sidecar, err)
 	}
 

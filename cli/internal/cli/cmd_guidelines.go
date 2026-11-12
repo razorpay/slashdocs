@@ -10,7 +10,7 @@ import (
 	"github.com/razorpay/slashdocs/internal/guidelines"
 )
 
-func guidelinesCmd(_ *globals, out io.Writer) *cobra.Command {
+func guidelinesCmd(g *globals, out io.Writer) *cobra.Command {
 	return &cobra.Command{
 		Use:   "guidelines [section] [sub-section...]",
 		Short: "Print HTML authoring guidelines",
@@ -21,8 +21,7 @@ func guidelinesCmd(_ *globals, out io.Writer) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_, err = fmt.Fprint(out, text)
-			return err
+			return render(out, g, []byte(text))
 		},
 	}
 }

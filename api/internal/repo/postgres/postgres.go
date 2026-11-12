@@ -98,6 +98,14 @@ func (s *Store) ResolveUser(ctx context.Context, id string) (auth.Principal, err
 }
 func (s *Store) UpsertGoogleUser(ctx context.Context, id, email, name, googleSub, pictureURL string) (auth.Principal, error) {
 	err := s.q.UpsertGoogleUser(ctx, dbsqlc.UpsertGoogleUserParams{ID: id, Email: email, Name: name, GoogleSub: pgtype.Text{String: googleSub, Valid: true}, PictureUrl: pictureURL})
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "users_email_key" {
+		existing, err := s.q.GetGoogleSubByEmail(ctx, email)
+		if err != nil {
+			return auth.Principal{}, err
+		}
+		return auth.Principal{}, &repo.EmailIdentityConflictError{Email: email, ExistingIdentity: existing.String, IncomingIdentity: googleSub}
+	}
 	if err != nil {
 		return auth.Principal{}, err
 	}
@@ -106,6 +114,16 @@ func (s *Store) UpsertGoogleUser(ctx context.Context, id, email, name, googleSub
 		return auth.Principal{}, err
 	}
 	return auth.Principal{Type: auth.PrincipalUser, ID: u.ID, Email: u.Email, Name: u.Name, PictureURL: u.PictureUrl}, nil
+}
+func (s *Store) RelinkUserIdentity(ctx context.Context, from, to string) error {
+	n, err := s.q.RelinkUserIdentity(ctx, dbsqlc.RelinkUserIdentityParams{FromSub: pgtype.Text{String: from, Valid: true}, ToSub: pgtype.Text{String: to, Valid: true}})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return repo.ErrNotFound
+	}
+	return nil
 }
 func (s *Store) UserByEmail(ctx context.Context, email string) (auth.Principal, error) {
 	u, err := s.q.GetSignedInUserByEmail(ctx, email)
@@ -420,6 +438,8 @@ func (s *Store) PrincipalExists(ctx context.Context, p auth.Principal) (bool, er
 		return false, nil
 	}
 }
+
+// CreateGrant changes access without creating or updating user profiles.
 func (s *Store) CreateGrant(ctx context.Context, resourceType, resourceID string, principal auth.Principal, role repo.Role, grantedBy auth.Principal) (repo.Grant, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -427,16 +447,6 @@ func (s *Store) CreateGrant(ctx context.Context, resourceType, resourceID string
 	}
 	defer rollback(ctx, tx)
 	q := s.q.WithTx(tx)
-	if grantedBy.Type == auth.PrincipalUser {
-		if err := upsertUser(ctx, q, grantedBy); err != nil {
-			return repo.Grant{}, err
-		}
-	}
-	if principal.Type == auth.PrincipalUser {
-		if err := upsertUser(ctx, q, principal); err != nil {
-			return repo.Grant{}, err
-		}
-	}
 	before, err := documentGrantAccessSnapshot(ctx, tx, resourceType, resourceID, principal)
 	if err != nil {
 		return repo.Grant{}, err
@@ -1264,11 +1274,11 @@ func (s *Store) UpdateComment(ctx context.Context, id string, update repo.Commen
 	if err != nil {
 		return repo.Comment{}, err
 	}
-	comment := commentFromUpdate(row)
-	effectiveBody, bodyChanged, err := commentBodyForUpdate(comment.Body, update.Body)
+	effectiveBody, bodyChanged, err := commentBodyForUpdate(row.Body, update.Body)
 	if err != nil {
 		return repo.Comment{}, err
 	}
+	comment := commentFromUpdate(row, bodyChanged)
 	previousMentionsByID, err := commentMentionsByID(ctx, q, []string{id})
 	if err != nil {
 		return repo.Comment{}, err
@@ -1672,7 +1682,7 @@ func docFromSearch(r dbsqlc.SearchDocumentsRow) repo.Document {
 	return d
 }
 func commentFromGet(r dbsqlc.GetCommentRow) repo.Comment {
-	c := repo.Comment{ID: r.ID, DocumentID: r.DocumentID, VersionID: r.CreatedOnVersionID, Author: auth.Principal{Type: auth.PrincipalType(r.AuthorType), ID: r.AuthorID, Email: r.AuthorEmail, Name: r.AuthorName}, Body: r.Body, SelectedText: r.SelectedText, Status: r.Status, RootCommentID: r.RootCommentID, CreatedAt: pgTimeRFC3339(r.CreatedAt), ResolvedAt: pgTimeRFC3339(r.ResolvedAt)}
+	c := repo.Comment{ID: r.ID, DocumentID: r.DocumentID, VersionID: r.CreatedOnVersionID, Author: auth.Principal{Type: auth.PrincipalType(r.AuthorType), ID: r.AuthorID, Email: r.AuthorEmail, Name: r.AuthorName}, Body: r.Body, SelectedText: r.SelectedText, Status: r.Status, RootCommentID: r.RootCommentID, CreatedAt: pgTimeRFC3339(r.CreatedAt), ResolvedAt: pgTimeRFC3339(r.ResolvedAt), Edited: r.Edited}
 	if r.ParentCommentID.Valid {
 		c.ParentCommentID = r.ParentCommentID.String
 	}
@@ -1682,15 +1692,15 @@ func commentFromGet(r dbsqlc.GetCommentRow) repo.Comment {
 	return c
 }
 func commentFromReply(r dbsqlc.GetCommentForReplyRow) repo.Comment {
-	c := repo.Comment{ID: r.ID, DocumentID: r.DocumentID, VersionID: r.CreatedOnVersionID, Author: auth.Principal{Type: auth.PrincipalType(r.AuthorType), ID: r.AuthorID, Email: r.AuthorEmail, Name: r.AuthorName}, Body: r.Body, SelectedText: r.SelectedText, Status: r.Status, RootCommentID: r.RootCommentID, CreatedAt: pgTimeRFC3339(r.CreatedAt), ResolvedAt: pgTimeRFC3339(r.ResolvedAt)}
+	c := repo.Comment{ID: r.ID, DocumentID: r.DocumentID, VersionID: r.CreatedOnVersionID, Author: auth.Principal{Type: auth.PrincipalType(r.AuthorType), ID: r.AuthorID, Email: r.AuthorEmail, Name: r.AuthorName}, Body: r.Body, SelectedText: r.SelectedText, Status: r.Status, RootCommentID: r.RootCommentID, CreatedAt: pgTimeRFC3339(r.CreatedAt), ResolvedAt: pgTimeRFC3339(r.ResolvedAt), Edited: r.Edited}
 	if r.ParentCommentID.Valid {
 		c.ParentCommentID = r.ParentCommentID.String
 	}
 	_ = json.Unmarshal(r.AnchorJson, &c.Anchor)
 	return c
 }
-func commentFromUpdate(r dbsqlc.GetCommentForUpdateRow) repo.Comment {
-	c := repo.Comment{ID: r.ID, DocumentID: r.DocumentID, VersionID: r.CreatedOnVersionID, Author: auth.Principal{Type: auth.PrincipalType(r.AuthorType), ID: r.AuthorID, Email: r.AuthorEmail, Name: r.AuthorName}, Body: r.Body, SelectedText: r.SelectedText, Status: r.Status, RootCommentID: r.RootCommentID, CreatedAt: pgTimeRFC3339(r.CreatedAt), ResolvedAt: pgTimeRFC3339(r.ResolvedAt)}
+func commentFromUpdate(r dbsqlc.GetCommentForUpdateRow, bodyChanged bool) repo.Comment {
+	c := repo.Comment{ID: r.ID, DocumentID: r.DocumentID, VersionID: r.CreatedOnVersionID, Author: auth.Principal{Type: auth.PrincipalType(r.AuthorType), ID: r.AuthorID, Email: r.AuthorEmail, Name: r.AuthorName}, Body: r.Body, SelectedText: r.SelectedText, Status: r.Status, RootCommentID: r.RootCommentID, CreatedAt: pgTimeRFC3339(r.CreatedAt), ResolvedAt: pgTimeRFC3339(r.ResolvedAt), Edited: r.Edited || bodyChanged}
 	if r.ParentCommentID.Valid {
 		c.ParentCommentID = r.ParentCommentID.String
 	}
@@ -1698,7 +1708,7 @@ func commentFromUpdate(r dbsqlc.GetCommentForUpdateRow) repo.Comment {
 	return c
 }
 func commentFromList(r dbsqlc.ListCommentsRow) repo.Comment {
-	c := repo.Comment{ID: r.ID, DocumentID: r.DocumentID, VersionID: r.CreatedOnVersionID, Author: auth.Principal{Type: auth.PrincipalType(r.AuthorType), ID: r.AuthorID, Email: r.AuthorEmail, Name: r.AuthorName}, Body: r.Body, SelectedText: r.SelectedText, Status: r.Status, RootCommentID: r.RootCommentID, CreatedAt: pgTimeRFC3339(r.CreatedAt), ResolvedAt: pgTimeRFC3339(r.ResolvedAt)}
+	c := repo.Comment{ID: r.ID, DocumentID: r.DocumentID, VersionID: r.CreatedOnVersionID, Author: auth.Principal{Type: auth.PrincipalType(r.AuthorType), ID: r.AuthorID, Email: r.AuthorEmail, Name: r.AuthorName}, Body: r.Body, SelectedText: r.SelectedText, Status: r.Status, RootCommentID: r.RootCommentID, CreatedAt: pgTimeRFC3339(r.CreatedAt), ResolvedAt: pgTimeRFC3339(r.ResolvedAt), Edited: r.Edited}
 	if r.ParentCommentID.Valid {
 		c.ParentCommentID = r.ParentCommentID.String
 	}

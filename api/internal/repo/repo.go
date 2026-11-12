@@ -62,6 +62,17 @@ type VersionConflictError struct {
 func (e *VersionConflictError) Error() string        { return "version_conflict" }
 func (e *VersionConflictError) Is(target error) bool { return target == ErrVersionConflict }
 
+// EmailIdentityConflictError reports a sign-in whose identity key matches no
+// user while its verified email belongs to a user with another identity key,
+// for example after SLASHDOCS_OIDC_ISSUER_URL changed.
+type EmailIdentityConflictError struct {
+	Email            string
+	ExistingIdentity string
+	IncomingIdentity string
+}
+
+func (e *EmailIdentityConflictError) Error() string { return "email_identity_conflict" }
+
 var ErrAmbiguousPath = errors.New("ambiguous_path")
 
 type AmbiguousPathError struct {
@@ -263,6 +274,7 @@ type Comment struct {
 	Replies         []Comment         `json:"replies,omitempty"`
 	CreatedAt       string            `json:"created_at,omitempty"`
 	ResolvedAt      string            `json:"resolved_at,omitempty"`
+	Edited          bool              `json:"edited,omitempty"`
 }
 
 // CommentReaction is one principal's acknowledgement of a comment with one
@@ -349,7 +361,12 @@ type Repository interface {
 	RequestDocumentAccess(ctx context.Context, principal auth.Principal, documentID string) error
 	ResolveBearerToken(ctx context.Context, tokenHash string) (auth.Principal, error)
 	ResolveUser(ctx context.Context, id string) (auth.Principal, error)
+	// UpsertGoogleUser returns *EmailIdentityConflictError when the email
+	// belongs to a user with another identity key.
 	UpsertGoogleUser(ctx context.Context, id, email, name, googleSub, pictureURL string) (auth.Principal, error)
+	// RelinkUserIdentity moves the user with identity key from to key to. It
+	// returns ErrNotFound when no user has key from, or a user already has key to.
+	RelinkUserIdentity(ctx context.Context, from, to string) error
 	CreateCLICredential(ctx context.Context, userID, name, tokenHash string) (string, error)
 	ListCLICredentials(ctx context.Context, userID string) ([]CLICredential, error)
 	RevokeCLICredential(ctx context.Context, userID, credentialID string) error
