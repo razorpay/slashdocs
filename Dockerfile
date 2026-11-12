@@ -13,7 +13,8 @@ WORKDIR /src/frontend
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend ./
-# Build the static app and iframe bridge bundles for embedding into the Go server image.
+# Build the static app and iframe bridge bundles for the Go server, and the
+# `slashdocs local` app for the CLI.
 RUN npm run build
 # Export the canonical bridge source fingerprint (all bridge sources plus
 # resolved production deps) for the Go stage, which has no Node runtime. This
@@ -34,7 +35,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . ./
 COPY --from=frontend /src/api/internal/server/frontend_dist ./api/internal/server/frontend_dist
-COPY --from=frontend /src/api/internal/server/bridge_dist ./api/internal/server/bridge_dist
+COPY --from=frontend /src/internal/render/bridge_dist ./internal/render/bridge_dist
+COPY --from=frontend /src/cli/internal/cli/local_dist ./cli/internal/cli/local_dist
 COPY --from=frontend /src/bridge.source.hash ./bridge.source.hash
 # Release builds get the CLI signing private key as a BuildKit secret and sign
 # each CLI binary. The CLI auto-updates only to binaries with a valid

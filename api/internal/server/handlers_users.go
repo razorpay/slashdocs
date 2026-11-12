@@ -15,7 +15,16 @@ func (h handlers) searchUsers(c *gin.Context) {
 		c.JSON(http.StatusOK, listResponse[auth.Principal]{Items: []auth.Principal{}})
 		return
 	}
-	items, err := h.deps.repository.SearchUsersByEmail(c.Request.Context(), q)
+	ctx := c.Request.Context()
+	// On a public server anyone can sign in, so a few letters must not list
+	// strangers. There, a partial query finds only the caller's contacts.
+	var items []auth.Principal
+	var err error
+	if h.deps.deployment == DeploymentOrg {
+		items, err = h.deps.repository.SearchUsersByEmail(ctx, q)
+	} else {
+		items, err = h.deps.repository.SearchContacts(ctx, *current(c), q)
+	}
 	if err != nil {
 		internalErr(c, err)
 		return

@@ -3,12 +3,17 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   api,
   type Anchor,
+  type CursorSpot,
+  type DocumentCursor,
   type DocumentKVEvent,
   type DocumentPresence,
   type Principal,
 } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
-import { samePrincipal } from "@/lib/principals";
+import { createCursorBatch } from "@/lib/live-cursors";
+import { principalColor, principalLabel, samePrincipal } from "@/lib/principals";
+import type { RemoteCursor } from "../../bridge/cursors";
+import { randomId } from "@/lib/uuid";
 
 // The server lists a viewer for 45 seconds after their last report.
 const PRESENCE_TTL = 45_000;
@@ -17,6 +22,7 @@ const REPORT_INTERVAL = 2_000;
 const RECONNECT_DELAY = 10_000;
 
 export type Viewer = {
+  session: string;
   principal: Principal;
   version?: string;
   anchor?: Partial<Anchor>;
@@ -24,9 +30,12 @@ export type Viewer = {
 };
 
 export type DocumentKVListener = (event: DocumentKVEvent) => void;
+export type CursorListener = (cursor: RemoteCursor) => void;
+
+const EVENT_KINDS = ["kv", "document", "comments", "presence", "cursor"] as const;
 
 type DocumentEventHandlers = Partial<
-  Record<"kv" | "document" | "comments" | "presence", DocumentKVListener>
+  Record<(typeof EVENT_KINDS)[number], DocumentKVListener>
 > & { open?: () => void };
 
 // useDocumentEvents holds one connection to the document event stream and
@@ -54,7 +63,7 @@ export function useDocumentEvents(
     );
     source.onopen = () => handlersRef.current.open?.();
     // KV changes are unnamed messages; other kinds are named events.
-    for (const kind of ["kv", "document", "comments", "presence"] as const) {
+    for (const kind of EVENT_KINDS) {
       source.addEventListener(kind === "kv" ? "message" : kind, (message) => {
         lastRevision.current = Math.max(
           lastRevision.current,
@@ -83,7 +92,7 @@ export function useDocumentEvents(
 
 // useDocumentStream is the document page's view of the event stream. It
 // passes KV changes to subscribers, refreshes comments and the document when
-// they change, and reports and tracks who is viewing.
+// they change, and reports and tracks who is viewing and where they point.
 export function useDocumentStream({
   docId,
   version,
@@ -96,9 +105,23 @@ export function useDocumentStream({
   onRemoteDocumentChange: () => void;
 }) {
   const q = useQueryClient();
-  const [session] = useState(() => crypto.randomUUID());
+  const [session] = useState(() => randomId());
   const kvListeners = useRef(new Set<DocumentKVListener>());
   const [sessions, setSessions] = useState<ReadonlyMap<string, Viewer>>(new Map());
+  const place = useRef<{ version: string; anchor?: Partial<Anchor> }>({ version });
+
+  // The newest point of each remote cursor, so that a frame that loads later
+  // can draw it. A cursor on another version than this one is hidden here.
+  const cursors = useRef(new Map<string, { cursor: RemoteCursor; version: string }>());
+  const cursorListeners = useRef(new Set<CursorListener>());
+  const shownCursor = useCallback(
+    (cursor: RemoteCursor, on: string) =>
+      on === place.current.version ? cursor : hiddenCursor(cursor),
+    [],
+  );
+  const emitCursor = useCallback((cursor: RemoteCursor) => {
+    cursorListeners.current.forEach((listener) => listener(cursor));
+  }, []);
 
   useDocumentEvents(
     docId,
@@ -121,6 +144,7 @@ export function useDocumentStream({
           if (presence.left) next.delete(key);
           else
             next.set(key, {
+              session: presence.session,
               principal: { ...viewer, picture_url: presence.picture_url },
               version: presence.version,
               anchor: presence.anchor,
@@ -129,9 +153,37 @@ export function useDocumentStream({
           return next;
         });
       },
+      cursor: (event) => {
+        const data = event.data as DocumentCursor | undefined;
+        const viewer = event.updated_by;
+        const last = data?.points?.at(-1);
+        if (!data || !last || data.session === session || !viewer) return;
+        if (samePrincipal(viewer, principal)) return;
+        const cursor = {
+          session: data.session,
+          name: principalLabel(viewer),
+          color: principalColor(viewer),
+          points: data.points,
+        };
+        cursors.current.set(data.session, {
+          cursor: { ...cursor, points: [last] },
+          version: data.version,
+        });
+        emitCursor(shownCursor(cursor, data.version));
+      },
     },
     session,
   );
+
+  // A cursor goes away with its viewer.
+  useEffect(() => {
+    const live = new Set([...sessions.values()].map((viewer) => viewer.session));
+    for (const [id, { cursor }] of cursors.current) {
+      if (live.has(id)) continue;
+      cursors.current.delete(id);
+      emitCursor(hiddenCursor(cursor, 1));
+    }
+  }, [sessions, emitCursor]);
 
   // Viewers whose tab closed without a goodbye drop out after the TTL.
   useEffect(() => {
@@ -146,16 +198,18 @@ export function useDocumentStream({
   }, []);
 
   // Report this viewer's place: at once on a version change, at most every
-  // REPORT_INTERVAL while scrolling, and as a heartbeat otherwise.
-  const place = useRef<{ version: string; anchor?: Partial<Anchor> }>({ version });
+  // REPORT_INTERVAL while scrolling, and as a heartbeat otherwise. Only a
+  // signed-in viewer reports.
   const lastReport = useRef(0);
   const pendingReport = useRef<number | undefined>(undefined);
+  const signedIn = !!principal;
   const report = useCallback(() => {
     window.clearTimeout(pendingReport.current);
     pendingReport.current = undefined;
     lastReport.current = Date.now();
+    if (!signedIn) return;
     api.postDocumentPresence(docId, { session, ...place.current }).catch(() => {});
-  }, [docId, session]);
+  }, [docId, session, signedIn]);
   const scheduleReport = useCallback(() => {
     if (pendingReport.current !== undefined) return;
     const wait = Math.max(0, lastReport.current + REPORT_INTERVAL - Date.now());
@@ -181,6 +235,45 @@ export function useDocumentStream({
     };
   }, [report]);
 
+  const cursorBatch = useMemo(
+    () =>
+      createCursorBatch((points) =>
+        api.postDocumentCursor(docId, {
+          session,
+          version: place.current.version,
+          points,
+        }),
+      ),
+    [docId, session],
+  );
+  useEffect(() => () => cursorBatch.stop(), [cursorBatch]);
+  const moveCursor = useCallback(
+    (spot: CursorSpot | null) => {
+      if (signedIn) cursorBatch.add(spot);
+    },
+    [cursorBatch, signedIn],
+  );
+
+  // A new listener gets the newest point of every cursor at once.
+  const subscribeCursors = useCallback(
+    (listener: CursorListener) => {
+      for (const { cursor, version } of cursors.current.values())
+        listener(shownCursor(cursor, version));
+      cursorListeners.current.add(listener);
+      return () => {
+        cursorListeners.current.delete(listener);
+      };
+    },
+    [shownCursor],
+  );
+
+  // The version that a viewer's cursor is on, while the cursor is in the
+  // document.
+  const cursorVersion = useCallback((id: string) => {
+    const entry = cursors.current.get(id);
+    return entry && !entry.cursor.points[0].hidden ? entry.version : undefined;
+  }, []);
+
   const subscribeKV = useCallback((listener: DocumentKVListener) => {
     kvListeners.current.add(listener);
     return () => {
@@ -201,5 +294,19 @@ export function useDocumentStream({
     return [...byPrincipal.values()];
   }, [sessions, principal]);
 
-  return { viewers, subscribeKV, reportViewport };
+  return {
+    viewers,
+    subscribeKV,
+    reportViewport,
+    moveCursor,
+    subscribeCursors,
+    cursorVersion,
+  };
+}
+
+// hiddenCursor replaces a cursor's points with one hidden point, at the time
+// of its last point plus after.
+function hiddenCursor(cursor: RemoteCursor, after = 0): RemoteCursor {
+  const t = (cursor.points.at(-1)?.t ?? 0) + after;
+  return { ...cursor, points: [{ t, path: "", x: 0, y: 0, hidden: true }] };
 }

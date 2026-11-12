@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   Bot,
@@ -28,23 +29,27 @@ import type { Principal } from "@/api";
 
 // The app bar sits on the page, as the landing header does, so the
 // RazorSense wash runs behind it. The negative margin starts the page under it.
-export function TopBar({ user }: { user: Principal }) {
+// The children are the actions on the right.
+export function TopBar({
+  home = "/app/documents",
+  children,
+}: {
+  home?: string;
+  children?: ReactNode;
+}) {
   return (
     <header className="relative z-30 -mb-14 flex h-14 items-center justify-between px-4 md:px-6">
-      <Link to="/app/documents" aria-label="slashdocs home">
+      <Link to={home} aria-label="slashdocs home">
         <Logo className="h-[18px] w-auto" />
       </Link>
-      <div className="flex items-center gap-2">
-        <GetStarted />
-        <AccountMenu user={user} />
-      </div>
+      <div className="flex items-center gap-2">{children}</div>
     </header>
   );
 }
 
 // Setup progress, while setup is open. It takes the RazorSense ring, as the
 // one thing on the bar that asks for attention.
-function GetStarted() {
+export function GetStarted() {
   const { state } = useOnboarding();
   if (!onboardingActive(state)) return null;
   const { done, total } = onboardingProgress(state);

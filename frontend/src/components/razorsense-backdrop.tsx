@@ -43,7 +43,10 @@ export function RazorSenseBackdrop({
         className,
       )}
     >
-      <RazorSense {...FRAMING[framing]} />
+      <RazorSense
+        assetsPath={`${import.meta.env.BASE_URL}razorsense`}
+        {...FRAMING[framing]}
+      />
       {dark && framing === "halo" && (
         <div className="absolute inset-0" style={{ background: DARK_SCRIM }} />
       )}

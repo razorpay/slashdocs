@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -171,9 +172,17 @@ type factoryResult struct {
 }
 
 type testListenerFactory struct {
-	mu      sync.Mutex
-	results []factoryResult
-	calls   int
+	mu       sync.Mutex
+	results  []factoryResult
+	calls    int
+	notified []string
+}
+
+func (f *testListenerFactory) Notify(_ context.Context, payload string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.notified = append(f.notified, payload)
+	return nil
 }
 
 func (f *testListenerFactory) Open(context.Context) (Listener, error) {
@@ -818,4 +827,65 @@ func openTestStore(t *testing.T) (*pgrepo.Store, string) {
 	}
 	t.Cleanup(store.Close)
 	return store, databaseURL
+}
+
+func TestBrokerRelaysThroughNotificationsToEveryReplica(t *testing.T) {
+	listener := newTestListener()
+	factory := &testListenerFactory{results: []factoryResult{{listener: listener}}}
+	broker, err := newBroker(context.Background(), Config{Mode: ModeNotify, Logger: testLogger()}, newTestSource(), factory, newManualClock())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(broker.Close)
+	events, unsubscribe, err := broker.Subscribe(context.Background(), "doc_relay")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(unsubscribe)
+
+	relayed := repo.DocumentKVEvent{DocumentID: "doc_relay", Kind: repo.DocumentEventCursor, Data: []byte(`{"session":"s"}`)}
+	if err := broker.Relay(context.Background(), relayed); err != nil {
+		t.Fatal(err)
+	}
+	factory.mu.Lock()
+	notified := append([]string(nil), factory.notified...)
+	factory.mu.Unlock()
+	if len(notified) != 1 || !strings.HasPrefix(notified[0], relayPayloadPrefix) {
+		t.Fatalf("notified = %q, want one relay payload", notified)
+	}
+	listener.results <- listenerResult{documentID: notified[0]}
+	if got := receiveEvent(t, events); got.Kind != repo.DocumentEventCursor || got.Revision != 0 || string(got.Data) != `{"session":"s"}` {
+		t.Fatalf("relayed event = %#v", got)
+	}
+
+	large := relayed
+	large.Data = []byte(`"` + strings.Repeat("x", maxRelayPayload) + `"`)
+	if err := broker.Relay(context.Background(), large); !errors.Is(err, errRelayTooLarge) {
+		t.Fatalf("large relay error = %v, want errRelayTooLarge", err)
+	}
+}
+
+func TestBrokerRelayInPollModeKeepsRoomForStoredEvents(t *testing.T) {
+	broker, err := newBroker(context.Background(), Config{Mode: ModePoll, PollInterval: time.Hour, Logger: testLogger()}, newTestSource(), nil, newManualClock())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(broker.Close)
+	events, unsubscribe, err := broker.Subscribe(context.Background(), "doc_relay")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(unsubscribe)
+
+	for range subscriberBuffer {
+		if err := broker.Relay(context.Background(), repo.DocumentKVEvent{DocumentID: "doc_relay", Kind: repo.DocumentEventCursor}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(events) != subscriberBuffer/2 {
+		t.Fatalf("buffered relayed events = %d, want %d", len(events), subscriberBuffer/2)
+	}
+	if got := receiveEvent(t, events); got.Kind != repo.DocumentEventCursor {
+		t.Fatalf("event = %#v, want a cursor event", got)
+	}
 }

@@ -1,10 +1,12 @@
 // Package kvevents coalesces persisted document events (KV changes and live
 // document, comment, and presence events) and fans them out to every SSE
-// subscriber in a server process.
+// subscriber in a server process. It also relays ephemeral events, such as
+// cursor moves, that are never stored.
 package kvevents
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -22,11 +24,17 @@ const (
 	listenerCloseWait   = 3 * time.Second
 	maxReconnectDelay   = 5 * time.Second
 	autoReconnectLimit  = 3
+	// relayPayloadPrefix marks a notification that carries a relayed event
+	// instead of the ID of a document with new stored events.
+	relayPayloadPrefix = "__slashdocs_relay__:"
+	// maxRelayPayload is the PostgreSQL limit on a notification payload.
+	maxRelayPayload = 7999
 )
 
 var (
 	errBrokerClosed     = errors.New("document KV event broker is closed")
 	errDocumentInactive = errors.New("document KV event subscription is inactive")
+	errRelayTooLarge    = errors.New("relayed document event is too large")
 )
 
 // Mode selects how a Broker learns that new persisted events are available.
@@ -66,14 +74,18 @@ type Source interface {
 // Subscriber is the event-stream surface consumed by the HTTP server.
 type Subscriber interface {
 	Subscribe(ctx context.Context, documentID string) (<-chan repo.DocumentKVEvent, func(), error)
+	Relay(ctx context.Context, event repo.DocumentKVEvent) error
 }
 
-// ListenerFactory opens a verified notification connection.
+// ListenerFactory opens a verified notification connection and sends
+// notifications to every listener.
 type ListenerFactory interface {
 	Open(ctx context.Context) (Listener, error)
+	Notify(ctx context.Context, payload string) error
 }
 
-// Listener waits for document IDs published on the notification channel.
+// Listener waits for payloads published on the notification channel: the ID
+// of a document with new stored events, or a relayed event.
 type Listener interface {
 	Wait(ctx context.Context) (string, error)
 	Close(ctx context.Context) error
@@ -487,6 +499,47 @@ func (b *Broker) publish(state *documentState, event repo.DocumentKVEvent) bool 
 	return true
 }
 
+// Relay sends an event that is not stored to the subscribers of its document.
+// In notify mode the event goes through PostgreSQL to every server replica.
+// In poll mode only the subscribers of this process get it.
+func (b *Broker) Relay(ctx context.Context, event repo.DocumentKVEvent) error {
+	if b.ActiveMode() != ModeNotify {
+		b.deliver(event)
+		return nil
+	}
+	raw, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	payload := relayPayloadPrefix + string(raw)
+	if len(payload) > maxRelayPayload {
+		return errRelayTooLarge
+	}
+	return b.listenerFactory.Notify(ctx, payload)
+}
+
+// deliver gives a relayed event to each subscriber with room for it. Relayed
+// events use at most half of a buffer, so they never fill it and disconnect a
+// subscriber that stored events must reach. A full subscriber misses the
+// event, which the next relayed event replaces.
+func (b *Broker) deliver(event repo.DocumentKVEvent) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	state := b.documents[event.DocumentID]
+	if state == nil {
+		return
+	}
+	for _, ch := range state.subs {
+		if len(ch) >= cap(ch)/2 {
+			continue
+		}
+		select {
+		case ch <- event:
+		default:
+		}
+	}
+}
+
 func (b *Broker) dropDocument(state *documentState) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -563,10 +616,16 @@ func (b *Broker) runListener(initial Listener) {
 	}()
 
 	for {
-		documentID, err := listener.Wait(b.ctx)
+		payload, err := listener.Wait(b.ctx)
 		if err == nil {
-			if documentID != "" && !IsProbePayload(documentID) {
-				b.markDirty(documentID)
+			switch raw, relayed := strings.CutPrefix(payload, relayPayloadPrefix); {
+			case relayed:
+				var event repo.DocumentKVEvent
+				if json.Unmarshal([]byte(raw), &event) == nil {
+					b.deliver(event)
+				}
+			case payload != "" && !IsProbePayload(payload):
+				b.markDirty(payload)
 			}
 			continue
 		}

@@ -177,3 +177,54 @@ func TestDocumentPresenceRejectsInvalidInput(t *testing.T) {
 	})
 	assertStatus(t, stream, http.StatusBadRequest)
 }
+
+func TestDocumentCursorRelaysToOpenStreams(t *testing.T) {
+	e := newTestEnv(t)
+	ts := httptest.NewServer(e.h)
+	defer ts.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	reader, _ := openLiveStream(ctx, t, ts, e.doc.ID, "?session=viewer-session", fixtureViewer)
+
+	body := `{"session":"editor-session","version":"` + e.ver.ID + `","points":[{"t":5,"path":"0.2","x":0.25,"y":1},{"t":21,"hidden":true}]}`
+	assertStatus(t, do(t, e.h, http.MethodPost, "/v1/documents/"+e.doc.ID+"/cursor", body, map[string]string{
+		"Content-Type":     "application/json",
+		"X-Test-Principal": principalHeader(fixtureEditor),
+	}), http.StatusNoContent)
+
+	got := readLiveEvent(t, reader)
+	if got.name != repo.DocumentEventCursor || got.id != "" || got.event.UpdatedBy.ID != fixtureEditor.ID {
+		t.Fatalf("event = %#v, want a cursor event without an id from the editor", got)
+	}
+	want := `{"session":"editor-session","version":"` + e.ver.ID + `","points":[{"t":5,"path":"0.2","x":0.25,"y":1},{"t":21,"path":"","x":0,"y":0,"hidden":true}]}`
+	if string(got.event.Data) != want {
+		t.Fatalf("cursor data = %s, want %s", got.event.Data, want)
+	}
+}
+
+func TestDocumentCursorRejectsInvalidInput(t *testing.T) {
+	e := newTestEnv(t)
+	point := func(p string) string { return `{"session":"viewer-session","points":[` + p + `]}` }
+	for _, tc := range []struct {
+		name string
+		p    auth.Principal
+		body string
+		want int
+	}{
+		{"stranger", fixtureStranger, point(`{"t":1}`), http.StatusForbidden},
+		{"no points", fixtureViewer, point(``), http.StatusBadRequest},
+		{"too many points", fixtureViewer, point(strings.Repeat(`{"t":1},`, 16) + `{"t":1}`), http.StatusBadRequest},
+		{"outside the element", fixtureViewer, point(`{"t":1,"x":1.5}`), http.StatusBadRequest},
+		{"bad path", fixtureViewer, point(`{"t":1,"path":"0..1"}`), http.StatusBadRequest},
+		{"deep path", fixtureViewer, point(`{"t":1,"path":"0` + strings.Repeat(".0", 64) + `"}`), http.StatusBadRequest},
+		{"negative time", fixtureViewer, point(`{"t":-1}`), http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rr := do(t, e.h, http.MethodPost, "/v1/documents/"+e.doc.ID+"/cursor", tc.body, map[string]string{
+				"Content-Type":     "application/json",
+				"X-Test-Principal": principalHeader(tc.p),
+			})
+			assertStatus(t, rr, tc.want)
+		})
+	}
+}

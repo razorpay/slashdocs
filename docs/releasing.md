@@ -67,6 +67,24 @@ update the two `secrets.*` references in `release.yml`.
 
 `GITHUB_TOKEN` is provided automatically and is used to create the GitHub Release.
 
+## Master images
+
+Each commit that lands on `master` and passes the tests is published as
+`razorpay/slashdocs:master` and `razorpay/slashdocs:sha-<commit>`, by the
+**Docker image** job in [`ci.yml`](../.github/workflows/ci.yml). Use them to try
+unreleased changes. Pull requests build the image but do not push it.
+
+- `:master` moves with every commit. `:latest` moves only with a stable release
+  tag.
+- Master images sign their CLI binaries with the
+  [CLI signing key](#cli-signing-keys), as releases do. Pull request builds get
+  only the public key, so they serve unsigned binaries.
+- A master build's version is the next patch after the latest stable tag, as a
+  pre-release that counts the commits since that tag, for example
+  `v0.2.1-master.12`. It ranks above the release before it and
+  below the next release. Thus a CLI that talks to a master server updates to
+  each new master build, and then to the next release.
+
 ## CLI signing keys
 
 The CLI updates itself from the server it talks to, and that server can be

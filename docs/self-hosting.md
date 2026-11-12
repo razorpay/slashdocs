@@ -124,8 +124,13 @@ SLASHDOCS_OIDC_PROVIDER_NAME=Okta
 The server discovers the provider's endpoints from the issuer at startup,
 requests the `openid email profile` scopes, and verifies ID tokens against the
 issuer's JWKS. The ID token must include non-empty `sub` and `email` claims;
-`name` and `picture` fill in the optional profile fields. When the provider
-includes `email_verified`, it must be true.
+`name` and `picture` fill in the optional profile fields. The ID token must
+also prove the email is verified: `email_verified` must be true. Entra ID never
+sends `email_verified`. In the Entra app registration, open **Token
+configuration**, add the optional ID-token claims `email` and `xms_edov`, and
+save. If the portal does not list `xms_edov`, add
+`{"name": "xms_edov", "essential": false}` under `optionalClaims.idToken` in
+the **Manifest**.
 
 If the server reaches the IdP at a different URL than browsers do (common with
 docker-compose, where the browser sees `http://localhost:5556` but containers
@@ -133,6 +138,21 @@ must dial `http://dex:5556`), set `SLASHDOCS_OIDC_INTERNAL_ISSUER_URL` to the
 server-side URL. Discovery, token exchange, and JWKS fetches then use the
 internal URL while ID tokens are still validated against the public
 `SLASHDOCS_OIDC_ISSUER_URL`.
+
+Each user's identity key in `users.google_sub` comes from the exact issuer
+URL and the token `sub`. If you change `SLASHDOCS_OIDC_ISSUER_URL` (a new
+host, port, scheme, or trailing slash, or a backup restored into another
+deployment), the next sign-in of each user moves their existing account to the
+new key, matched by verified email. The server logs
+`relinked user to a new oidc identity` with the old and new keys. slashdocs
+does not relink an account between Google and a generic OIDC provider. That
+sign-in fails with `409 conflict` and the log names both keys. To move such
+an account on purpose, clear its key. The next sign-in with the same verified
+email then adopts the account:
+
+```sql
+UPDATE users SET google_sub = NULL WHERE email = 'person@example.com';
+```
 
 Example: a minimal [Dex](https://dexidp.io/) setup for local testing —
 
@@ -172,16 +192,22 @@ slashdocs runs in one of two modes, set by `SLASHDOCS_DEPLOYMENT`:
 
 - **`public`** (default) — anyone who can authenticate with the identity
   provider can sign in. Sharing a document with "everyone" means _anyone with
-  the link_.
+  the link_, and that includes readers who are not signed in: they can read
+  the document, its versions, and its comments. To comment or edit, the app
+  sends them to sign in first, whatever role the link gives. People search
+  finds only your contacts: the people you share with and the people who
+  share with you. Other users appear only when you type their full email
+  address.
 - **`org`** — login is gated to your organization's domains
   (`SLASHDOCS_ORG_DOMAINS`, a comma-separated list that supports multiple domains
   for acquisitions). Sharing with "everyone" then means _anyone in the org_,
   because only org members can authenticate. Set `SLASHDOCS_ORG_NAME` to label the
-  org in the UI (e.g. "Anyone in Razorpay").
+  org in the UI (e.g. "Anyone in Razorpay"). People search finds every user
+  who has signed in.
 
 On an org deployment the org domains are the login gate, so you do not also
 need `ALLOWED_OAUTH_DOMAINS`. The document permission model is identical in both
-modes; only the login gate and the wording differ.
+modes; only the login gate, people search, and the wording differ.
 
 > For an `org` deployment, set the OAuth consent screen to **Internal** so
 > Google itself restricts sign-in to your Workspace organization, and set
@@ -560,6 +586,11 @@ The same per-document stream also carries document, comment, and presence
 events. Open viewers refresh comments, hear about new versions, and see who
 else is viewing, whichever replica served each request. Presence rows expire
 after ten minutes, so the event table does not grow with viewing time.
+
+Live cursors use the same stream but are never stored. In `notify` mode, each
+batch of pointer positions goes to every replica as a notification. In `poll`
+mode, a viewer sees only the cursors of viewers that the same replica serves.
+Thus, use `notify` when you run more than one replica.
 
 `notify` fails startup if LISTEN cannot be verified. It prefers the listener URL
 and otherwise uses `DATABASE_URL`, which is an explicit assertion by the

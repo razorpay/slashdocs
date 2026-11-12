@@ -136,6 +136,9 @@ func resolveStoredGrantPrincipal(ctx context.Context, r repo.Repository, princip
 		if principal.ID == "" {
 			return auth.Principal{}, errPrincipalIDRequired
 		}
+		if principal.Type == auth.PrincipalUser {
+			return r.ResolveUser(ctx, principal.ID)
+		}
 		exists, err := r.PrincipalExists(ctx, principal)
 		if err != nil {
 			return auth.Principal{}, err
@@ -182,7 +185,7 @@ type grantGrantedBy struct {
 // @Success 201 {object} createGrantResponse
 // @Router /v1/documents/{id}/grants [post]
 func (h handlers) createGrant(c *gin.Context) {
-	if !h.needDocRole(c, c.Param("id"), repo.RoleCommenter) {
+	if !h.needDocRole(c, c.Param("id"), repo.RoleEditor) {
 		return
 	}
 	p := current(c)
@@ -234,7 +237,7 @@ func (h handlers) createGrant(c *gin.Context) {
 // @Success 200 {object} repo.Grant
 // @Router /v1/documents/{id}/grants/{grant_id} [patch]
 func (h handlers) patchGrant(c *gin.Context) {
-	if !h.needDocRole(c, c.Param("id"), repo.RoleCommenter) {
+	if !h.needDocRole(c, c.Param("id"), repo.RoleEditor) {
 		return
 	}
 	var in struct {
@@ -270,7 +273,7 @@ func (h handlers) patchGrant(c *gin.Context) {
 // @Success 204
 // @Router /v1/documents/{id}/grants/{grant_id} [delete]
 func (h handlers) deleteGrant(c *gin.Context) {
-	if !h.needDocRole(c, c.Param("id"), repo.RoleCommenter) {
+	if !h.needDocRole(c, c.Param("id"), repo.RoleEditor) {
 		return
 	}
 	if err := h.deps.repository.DeleteGrant(c.Request.Context(), c.Param("id"), c.Param("grant_id"), *current(c)); err != nil {

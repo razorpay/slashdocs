@@ -115,6 +115,7 @@ func updateCLI(ctx context.Context, c *Client, force bool) (serverVersion, bool,
 	if err := installCLIUpdate(ctx, c, v.Version, asset); err != nil {
 		return v, false, skillRefreshed, err
 	}
+	restartLocal()
 	return v, true, skillRefreshed, nil
 }
 

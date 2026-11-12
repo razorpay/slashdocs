@@ -110,6 +110,7 @@ export type Comment = {
   };
   created_at?: string;
   resolved_at?: string;
+  edited?: boolean;
 };
 export type CommentPatch = {
   body?: string;
@@ -181,8 +182,9 @@ export type DocumentKVEvent = {
   changes: DocumentKVChange[];
   updated_at?: string;
   updated_by?: Principal;
-  // Stream events other than KV changes set kind; presence events carry data.
-  kind?: "kv" | "document" | "comments" | "presence";
+  // Stream events other than KV changes set kind; presence and cursor events
+  // carry data.
+  kind?: "kv" | "document" | "comments" | "presence" | "cursor";
   data?: unknown;
 };
 // A viewer's place in a document, published on the document event stream.
@@ -192,6 +194,18 @@ export type DocumentPresence = {
   anchor?: Partial<Anchor>;
   left?: boolean;
   picture_url?: string;
+};
+// A place in a rendered document: the element at a path of child indexes
+// under the body, and fractions of the width and height of that element.
+export type CursorSpot = { path: string; x: number; y: number };
+// A pointer position at time t, in milliseconds on the sender's clock. A
+// hidden point means that the pointer left the document.
+export type CursorPoint = CursorSpot & { t: number; hidden?: boolean };
+// A batch of pointer positions from one viewer session.
+export type DocumentCursor = {
+  session: string;
+  version: string;
+  points: CursorPoint[];
 };
 export type AccessSource = {
   resource_type: string;
@@ -378,6 +392,11 @@ export const api = {
     request<void>(`/v1/documents/${doc}/presence`, {
       method: "POST",
       body: JSON.stringify(presence),
+    }),
+  postDocumentCursor: (doc: string, cursor: DocumentCursor) =>
+    request<void>(`/v1/documents/${doc}/cursor`, {
+      method: "POST",
+      body: JSON.stringify(cursor),
     }),
   // emoji stays a string: the only caller forwards a slug the server sent, and
   // narrowing it here would need a cast that asserts what the wire does not

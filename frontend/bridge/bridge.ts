@@ -13,6 +13,8 @@ import {
   highlightRange,
   refreshSVGRects,
 } from "./highlight.ts";
+import { createCursorLayer, trackPointer } from "./cursors.ts";
+import { CHORD_KEYS } from "../src/lib/esc-chord.ts";
 import {
   reduceVimScroll,
   VIM_GLIDE_PX_PER_MS,
@@ -80,6 +82,9 @@ interface SlashdocsPublicAPI {
 declare global {
   interface Window {
     __SLASHDOCS_APP_ORIGIN__?: string;
+    // Set by the wrapper before the document loads and kept current by the
+    // bridge, so a document that reloads itself reads the live theme.
+    __slashdocsTheme?: string;
     __slashdocsKVHandlers?: KVHandlers;
     __slashdocsKVQueue?: QueuedKVOperation[];
     __slashdocsGitHubQueue?: Array<{
@@ -106,6 +111,7 @@ type Theme = "dark" | "light";
 (function bridge(): void {
   const appOrigin = window.__SLASHDOCS_APP_ORIGIN__ || "*";
   const frame = document.getElementById("slashdocs-doc") as HTMLIFrameElement;
+  const cursors = createCursorLayer(doc);
   let kvRequestID = 0;
   const kvPending: Record<string, KVPendingRequest> = {};
   let githubRequestID = 0;
@@ -1176,6 +1182,13 @@ type Theme = "dark" | "light";
   }
 
   let curTheme: Theme | null = null;
+  // The theme last announced to the current document. A document that reloads
+  // itself on a theme change (a common way to re-render a diagram) would
+  // reload forever if every load were announced. So the load right after an
+  // announcement counts as that reload and is skipped. Every other load is
+  // announced, because documents that only listen for the event need it.
+  let announcedTheme: Theme | null = null;
+  let reloadExpected = false;
   function initialTheme(): Theme | null {
     try {
       const t = new URLSearchParams(location.search).get("slashdocs_theme");
@@ -1188,11 +1201,17 @@ type Theme = "dark" | "light";
   function applyTheme(t: unknown): void {
     if (t !== "dark" && t !== "light") return;
     curTheme = t;
+    // The prelude in the document reads this before its own scripts run, and
+    // a document that reloads itself reads it again on the way back.
+    window.__slashdocsTheme = t;
     const d = doc();
     if (!d || !d.documentElement) return;
     for (const name of PUBLIC_NAMES) {
       d.documentElement.setAttribute(`data-${name}-theme`, t);
     }
+    if (d !== setupDoc || announcedTheme === t) return;
+    announcedTheme = t;
+    reloadExpected = true;
     try {
       dispatchPublicEvent(d.defaultView!, "theme", { detail: { theme: t } });
     } catch (e) {}
@@ -1669,6 +1688,10 @@ type Theme = "dark" | "light";
     });
     prepareHeadings(d);
     prepareLinks();
+    // The prelude already stamped the current theme on a reload, so only
+    // other loads get it announced.
+    announcedTheme = reloadExpected ? curTheme : null;
+    reloadExpected = false;
     applyTheme(curTheme);
     // Track the selection gesture so mutation repairs never run mid-drag
     // (they would make the browser stop rendering the native selection).
@@ -1724,7 +1747,7 @@ type Theme = "dark" | "light";
       if (selTimer) clearTimeout(selTimer);
       selTimer = setTimeout(selection, 350);
     });
-    const chordKeys = ["t", "f", "c", "h"];
+    const chordKeys: string[] = CHORD_KEYS.map((item) => item.key);
     let chordArmedAt = 0;
     let vimGArmed = false;
     let vimGTimer = 0;
@@ -1873,6 +1896,11 @@ type Theme = "dark" | "light";
     d.defaultView?.addEventListener("resize", scheduleCommentPositions);
     // Capture scrolls of nested containers too, not only the window.
     d.addEventListener("scroll", scheduleViewport, { capture: true, passive: true });
+    d.addEventListener("scroll", cursors.refresh, { capture: true, passive: true });
+    d.defaultView?.addEventListener("resize", cursors.refresh);
+    trackPointer(d, (spot) =>
+      parent.postMessage({ type: "slashdocs:pointer", spot }, targetOrigin()),
+    );
     parent.postMessage({ type: "slashdocs:ready" }, targetOrigin());
     scheduleViewport();
     hydrateKV();
@@ -1982,6 +2010,12 @@ type Theme = "dark" | "light";
       );
     } else if (e.data.type === "slashdocs:kv-event") {
       emitKVChange(e.data.detail || {});
+    } else if (e.data.type === "slashdocs:cursor") {
+      cursors.receive(e.data.cursor);
+    } else if (e.data.type === "slashdocs:clear-cursors") {
+      cursors.clear();
+    } else if (e.data.type === "slashdocs:follow-cursor") {
+      cursors.follow(String(e.data.session || ""));
     }
   });
 })();

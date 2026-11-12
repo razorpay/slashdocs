@@ -13,12 +13,14 @@ export function mcpApps(url: string): { id: Brand; label: string; href: string }
     {
       // Opens the add-connector dialog with the fields filled in. The
       // connector then syncs to the Claude desktop app and to Claude Code.
+      // claude.ai owns these parameter names. When it renames them, it opens
+      // a page without the dialog. To test the link, open it while logged in.
       id: "claude",
       label: "Claude",
-      href: `https://claude.ai/settings/connectors?${new URLSearchParams({
+      href: `https://claude.ai/customize/connectors?${new URLSearchParams({
         modal: "add-custom-connector",
-        mcpName: NAME,
-        mcpServerUrl: url,
+        connectorName: NAME,
+        connectorUrl: url,
       })}`,
     },
     {

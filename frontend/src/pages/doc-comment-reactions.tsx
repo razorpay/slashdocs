@@ -44,7 +44,7 @@ export function ReactionBar({
   children?: ReactNode;
 }) {
   const q = useQueryClient();
-  const { principal } = useDoc();
+  const { principal, signIn } = useDoc();
   const [picking, setPicking] = useState(false);
   const [preview, setPreview] = useState<string>();
   const [announcement, setAnnouncement] = useState("");
@@ -94,6 +94,7 @@ export function ReactionBar({
     });
   }
   const react = (emoji: string, reacted: boolean) => {
+    if (signIn) return signIn();
     if (toggle.isPending) return;
     setPicking(false);
     setAnnouncement("");
@@ -161,6 +162,7 @@ export function ReactionBar({
           modal={false}
           open={picking}
           onOpenChange={(open) => {
+            if (open && signIn) return signIn();
             if (open && toggle.isPending) return;
             if (open) interactedOutside.current = false;
             setPicking(open);

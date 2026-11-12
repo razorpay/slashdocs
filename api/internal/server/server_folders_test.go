@@ -68,12 +68,12 @@ func TestFolderAccessControl(t *testing.T) {
 		assertStatus(t, rr, http.StatusOK)
 	})
 
-	t.Run("commenter can manage folder grants", func(t *testing.T) {
+	t.Run("editor can manage folder grants", func(t *testing.T) {
 		e := newTestEnv(t)
 		folderID := createFolder(t, e, `{"title":"Shared"}`, owner)
 
 		rr := do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/grants",
-			`{"address":"`+otherEmail+`","role":"commenter"}`,
+			`{"address":"`+otherEmail+`","role":"editor"}`,
 			map[string]string{"X-Test-Principal": owner, "Content-Type": "application/json"})
 		assertStatus(t, rr, http.StatusCreated)
 
@@ -92,12 +92,12 @@ func TestFolderAccessControl(t *testing.T) {
 		assertStatus(t, rr, http.StatusNoContent)
 	})
 
-	t.Run("viewer cannot manage folder grants", func(t *testing.T) {
+	t.Run("commenter cannot manage folder grants", func(t *testing.T) {
 		e := newTestEnv(t)
 		folderID := createFolder(t, e, `{"title":"Shared"}`, owner)
 
 		rr := do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/grants",
-			`{"address":"`+otherEmail+`","role":"viewer"}`,
+			`{"address":"`+otherEmail+`","role":"commenter"}`,
 			map[string]string{"X-Test-Principal": owner, "Content-Type": "application/json"})
 		assertStatus(t, rr, http.StatusCreated)
 

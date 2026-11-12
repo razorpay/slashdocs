@@ -22,6 +22,7 @@ var mcpMetricMethods = map[mcp.MCPMethod]string{
 	mcp.MethodPing:                    "ping",
 	mcp.MethodToolsList:               "tools_list",
 	mcp.MethodToolsCall:               "tools_call",
+	mcp.MethodServerDiscover:          "server_discover",
 }
 
 type mcpMetricContextKey struct{}
@@ -338,7 +339,7 @@ func (w *mcpResponseWriter) Status() int {
 	return w.status
 }
 
-func mcpFallbackRequestLabels(method string, body *mcpRequestBody, status int) (string, string) {
+func mcpFallbackRequestLabels(method string, body *mcpRequestBody, status int, jsonRPCError bool) (string, string) {
 	if method != http.MethodPost {
 		if status >= http.StatusOK && status < http.StatusMultipleChoices {
 			return "transport", "success"
@@ -349,6 +350,8 @@ func mcpFallbackRequestLabels(method string, body *mcpRequestBody, status int) (
 	switch {
 	case status == http.StatusAccepted:
 		return metricMethod, "success"
+	case jsonRPCError && status >= http.StatusBadRequest && status < http.StatusInternalServerError:
+		return metricMethod, "protocol_error"
 	case status < http.StatusOK || status >= http.StatusMultipleChoices:
 		return metricMethod, "transport_error"
 	default:

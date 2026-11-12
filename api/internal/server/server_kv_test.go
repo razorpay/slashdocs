@@ -30,6 +30,8 @@ func (s *fixedKVSubscriber) Subscribe(_ context.Context, documentID string) (<-c
 	return s.events, func() {}, nil
 }
 
+func (s *fixedKVSubscriber) Relay(context.Context, repo.DocumentKVEvent) error { return nil }
+
 type failingBacklogRepository struct {
 	repo.Repository
 	calls int

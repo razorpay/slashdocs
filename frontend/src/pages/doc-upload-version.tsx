@@ -12,28 +12,41 @@ import {
   SheetContent,
   SheetHeader,
   SheetTitle,
-  SheetTrigger,
 } from "@/components/ui/sheet";
 import { HtmlFileInput, useStagedFile } from "@/components/ui/upload";
 import { api } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
 
-export function UploadVersionItem({
+// The menu item only asks for the sheet to open. The sheet is rendered by the
+// toolbar outside the dropdown, because a dropdown closes when the window loses
+// focus (opening the OS file picker does that) and unmounts everything inside.
+export function UploadVersionMenuItem({ onSelect }: { onSelect: () => void }) {
+  return (
+    <DropdownItem onSelect={onSelect} className="text-[var(--color-fg-muted)]">
+      <Upload className="h-3.5 w-3.5" /> Upload new version (backup)
+    </DropdownItem>
+  );
+}
+
+export function UploadVersionSheet({
   docId,
   baseVersion,
+  open,
+  onOpenChange,
 }: {
   docId: string;
   baseVersion: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
   const q = useQueryClient();
   const [summary, setSummary] = useState("");
   const { file, setFile, reset } = useStagedFile();
-  const [open, setOpen] = useState(false);
   const m = useMutation({
     mutationFn: () => api.createVersion(docId, baseVersion, summary, file!),
     onSuccess: () => {
       toast.success("Version uploaded.");
-      setOpen(false);
+      onOpenChange(false);
       setSummary("");
       reset();
       q.invalidateQueries({ queryKey: queryKeys.versions(docId) });
@@ -43,18 +56,7 @@ export function UploadVersionItem({
     onError: (e) => toast.error(errorMessage(e, "Upload failed")),
   });
   return (
-    <Sheet open={open} onOpenChange={setOpen}>
-      <SheetTrigger asChild>
-        <DropdownItem
-          onSelect={(e) => {
-            e.preventDefault();
-            setOpen(true);
-          }}
-          className="text-[var(--color-fg-muted)]"
-        >
-          <Upload className="h-3.5 w-3.5" /> Upload new version (backup)
-        </DropdownItem>
-      </SheetTrigger>
+    <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent>
         <SheetHeader>
           <SheetTitle>Upload new version</SheetTitle>
@@ -72,7 +74,7 @@ export function UploadVersionItem({
               value={summary}
               onChange={(e) => setSummary(e.target.value)}
             />
-            <HtmlFileInput onFile={setFile} />
+            <HtmlFileInput file={file} onFile={setFile} />
             <Button type="submit" disabled={!file || m.isPending}>
               {m.isPending ? "Uploading…" : "Upload version"}
             </Button>

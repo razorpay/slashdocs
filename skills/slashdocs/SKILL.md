@@ -50,6 +50,8 @@ format:
    syntax.
 5. Publish with the CLI.
 6. Return the printed slashdocs document URL.
+7. If the `ai-sessions` skill is installed, use it and follow its guidance to
+   link this session to the document.
 
 ### Updating an existing document
 
@@ -84,6 +86,25 @@ slashdocs docs labels list doc_123
 slashdocs docs labels set doc_123 api review-ready
 slashdocs docs labels clear doc_123
 ```
+
+## Local documents (`--local`)
+
+`--local` runs a command against slashdocs local, a limited version of
+slashdocs on this computer. It needs no server or login, and it starts by
+itself the first time:
+
+```bash
+slashdocs --local docs create report.html --title "Q3 plan"
+slashdocs --local docs comments list report.html
+```
+
+Use `--local` only when the user asks for local documents, or when the user
+has no slashdocs server and wants to try slashdocs. A local document ID is its
+path in the documents folder (default `~/slashdocs`). Local documents support
+comments, but not sharing, version history, full-text search, labels, or
+notifications.
+When the user wants to share a document or get reviews from the team, tell
+them that a slashdocs server does this, and publish there if they have one.
 
 ## MCP server (optional)
 

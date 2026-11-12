@@ -8,9 +8,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// A bounded per-principal budget for notification settings and link discovery.
-// This protects expensive HTML reads independently of Slack delivery limits.
-func activityRateLimit() gin.HandlerFunc {
+// A bounded per-principal budget of requests per minute for notification
+// settings, link discovery, and live viewer reports. This protects expensive
+// HTML reads independently of Slack delivery limits.
+func activityRateLimit(perMinute int) gin.HandlerFunc {
 	type window struct {
 		start time.Time
 		count int
@@ -34,7 +35,7 @@ func activityRateLimit() gin.HandlerFunc {
 			}
 		}
 		_, exists := windows[key]
-		allowed := w.count < 60 && (exists || len(windows) < 10000)
+		allowed := w.count < perMinute && (exists || len(windows) < 10000)
 		if allowed {
 			w.count++
 			windows[key] = w

@@ -29,10 +29,11 @@ backend: swagger frontend cli-assets
 		if [ "$${#bridge_source_hash}" -ne 64 ]; then echo "invalid bridge source hash" >&2; exit 1; fi && \
 		go build -ldflags "$(SERVER_LDFLAGS) -X github.com/razorpay/slashdocs/api/internal/server.BuildBridgeSourceHash=$$bridge_source_hash" -o bin/slashdocs-server ./api/cmd/slashdocs-server
 
-cli:
+# The CLI embeds the `slashdocs local` app, which the frontend build makes.
+cli: frontend
 	go build -ldflags "$(CLI_LDFLAGS)" -o bin/slashdocs ./cli
 
-cli-assets:
+cli-assets: frontend
 	mkdir -p api/internal/server/download_dist
 	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$(CLI_LDFLAGS)" -o api/internal/server/download_dist/slashdocs-darwin-arm64 ./cli
 	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(CLI_LDFLAGS)" -o api/internal/server/download_dist/slashdocs-darwin-amd64 ./cli
@@ -89,7 +90,7 @@ lint: bin/golangci-lint
 # disposable container via testcontainers, or the server named by
 # SLASHDOCS_TEST_DATABASE_URL (see api/internal/testdb).
 test: swagger frontend
-	go test ./api/... ./cli/...
+	go test ./api/... ./cli/... ./internal/...
 	cd frontend && npm test
 
 ci: build test lint

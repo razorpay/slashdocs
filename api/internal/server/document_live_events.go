@@ -16,18 +16,25 @@ import (
 )
 
 // Live document events ride the document KV event stream. Writes announce
-// "document" and "comments" events, and viewers publish "presence" events, so
-// every open viewer on every server replica sees them without polling.
+// "document" and "comments" events, viewers publish "presence" events, and
+// pointers relay "cursor" events, so every open viewer on every server replica
+// sees them without polling.
 
 const (
 	maxPresenceBytes       = 4 * 1024
 	maxPresenceQuoteRunes  = 512
 	maxPresenceContextLen  = 64
 	maxPresenceVersionSize = 64
+	maxCursorBytes         = 4 * 1024
+	maxCursorPoints        = 16
 	liveEventWriteTimeout  = 5 * time.Second
 )
 
-var presenceSessionPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{8,64}$`)
+var (
+	presenceSessionPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{8,64}$`)
+	// A cursor path holds at most 64 child indexes, separated by dots.
+	cursorPathPattern = regexp.MustCompile(`^(\d{1,5}(\.\d{1,5}){0,63})?$`)
+)
 
 // presence is one viewer session's place in a document: the version on screen
 // and a short passage near the top of the viewport. The server adds identity.
@@ -48,6 +55,64 @@ func (p presence) valid() bool {
 		len([]rune(a.Prefix)) <= maxPresenceContextLen &&
 		len([]rune(a.Suffix)) <= maxPresenceContextLen &&
 		a.StartOffset >= 0 && a.EndOffset >= a.StartOffset)
+}
+
+// cursor is a batch of pointer positions from one viewer session. A point
+// names an element by its child indexes under the document body, and a place
+// in that element as fractions of its width and height. A hidden point means
+// that the pointer left the document. T is the time of the point in
+// milliseconds on the clock of the session.
+type cursor struct {
+	Session string        `json:"session"`
+	Version string        `json:"version"`
+	Points  []cursorPoint `json:"points"`
+}
+
+type cursorPoint struct {
+	T      int64   `json:"t"`
+	Path   string  `json:"path"`
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Hidden bool    `json:"hidden,omitempty"`
+}
+
+func (c cursor) valid() bool {
+	if !presenceSessionPattern.MatchString(c.Session) || len(c.Version) > maxPresenceVersionSize ||
+		len(c.Points) == 0 || len(c.Points) > maxCursorPoints {
+		return false
+	}
+	for _, p := range c.Points {
+		if p.T < 0 || p.X < 0 || p.X > 1 || p.Y < 0 || p.Y > 1 || !cursorPathPattern.MatchString(p.Path) {
+			return false
+		}
+	}
+	return true
+}
+
+// postDocumentCursor relays pointer positions to the other viewers. The
+// positions are never stored: a viewer who is not connected misses them.
+func (h handlers) postDocumentCursor(c *gin.Context) {
+	docID := c.Param("id")
+	if !h.needDocRole(c, docID, repo.RoleViewer) {
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxCursorBytes)
+	var in cursor
+	if err := c.ShouldBindJSON(&in); err != nil || !in.valid() {
+		badRequest(c, "invalid cursor")
+		return
+	}
+	data, err := json.Marshal(in)
+	if err != nil {
+		internalErr(c, err)
+		return
+	}
+	event := repo.DocumentKVEvent{DocumentID: docID, Kind: repo.DocumentEventCursor, Data: data, UpdatedBy: current(c)}
+	if err := h.deps.documentKVEvents.Relay(c.Request.Context(), event); err != nil {
+		internalErr(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 func (h handlers) postDocumentPresence(c *gin.Context) {

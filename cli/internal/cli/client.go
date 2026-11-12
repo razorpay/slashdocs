@@ -2,15 +2,18 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"mime/multipart"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"time"
 )
@@ -24,17 +27,34 @@ var errNoServer = errors.New("no slashdocs server configured; pass --server <url
 // newHTTPClient builds an http.Client with explicit connection and overall
 // timeouts so a slow or unreachable server can never hang the CLI.
 func newHTTPClient(timeout time.Duration) *http.Client {
+	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
 	return &http.Client{
 		Timeout:       timeout,
 		CheckRedirect: keepCredentialsOnMove,
 		Transport: &http.Transport{
-			Proxy:               http.ProxyFromEnvironment,
-			DialContext:         (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+			Proxy: func(r *http.Request) (*url.URL, error) {
+				if isLoopbackHost(r.URL.Hostname()) {
+					return nil, nil // a proxy cannot reach this machine
+				}
+				return http.ProxyFromEnvironment(r)
+			},
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return dialer.DialContext(ctx, network, localhostAddr(addr))
+			},
 			ForceAttemptHTTP2:   true,
 			TLSHandshakeTimeout: 10 * time.Second,
 			IdleConnTimeout:     90 * time.Second,
 		},
 	}
+}
+
+// localhostAddr sends a *.localhost name to this machine, as RFC 6761 tells
+// and browsers do. The resolver of Go does not do it on all systems.
+func localhostAddr(addr string) string {
+	if host, port, err := net.SplitHostPort(addr); err == nil && isLocalhostName(host) {
+		return net.JoinHostPort("127.0.0.1", port)
+	}
+	return addr
 }
 
 var (
@@ -79,6 +99,10 @@ type Client struct {
 func client(g *globals) (*Client, error) {
 	srv := first(g.server, env("SLASHDOCS_SERVER"))
 	tok := first(g.token, env("SLASHDOCS_TOKEN"))
+	if g.local {
+		// slashdocs local needs no token, so no token goes to it.
+		return &Client{Base: srv, HTTP: apiHTTPClient}, nil
+	}
 	cfg, err := loadConfig()
 	if err != nil {
 		return nil, err
@@ -101,19 +125,40 @@ func client(g *globals) (*Client, error) {
 	return &Client{Base: normalizeServer(srv), Token: tok, HTTP: apiHTTPClient, saved: saved}, nil
 }
 
-// APIError represents a non-2xx response from the API.
+// APIError represents a non-2xx response from the API. Details are the
+// "details" of the error response, such as current_version_id on a
+// version_conflict.
 type APIError struct {
 	Status  int
 	Code    string
 	Message string
+	Details map[string]any
 	Body    string
 }
 
 func (e *APIError) Error() string {
+	text := fmt.Sprintf("api %d", e.Status)
 	if e.Code != "" {
-		return fmt.Sprintf("api %d %s: %s", e.Status, e.Code, e.Message)
+		text += " " + e.Code
 	}
-	return fmt.Sprintf("api %d: %s", e.Status, e.Message)
+	text += ": " + e.Message
+	if details := scalarDetails(e.Details); details != "" {
+		text += " (" + details + ")"
+	}
+	return text
+}
+
+// scalarDetails writes the scalar values of details as key=value pairs, in key
+// order, so the human error text names what a caller needs to recover.
+func scalarDetails(details map[string]any) string {
+	var parts []string
+	for _, k := range slices.Sorted(maps.Keys(details)) {
+		switch v := details[k].(type) {
+		case string, float64, bool:
+			parts = append(parts, fmt.Sprintf("%s=%v", k, v))
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 func (c *Client) do(method, path string, body io.Reader, ct string) ([]byte, error) {
@@ -145,13 +190,15 @@ func (c *Client) do(method, path string, body io.Reader, ct string) ([]byte, err
 		ae := &APIError{Status: res.StatusCode, Message: strings.TrimSpace(string(b)), Body: string(b)}
 		var payload struct {
 			Error struct {
-				Code    string `json:"code"`
-				Message string `json:"message"`
+				Code    string         `json:"code"`
+				Message string         `json:"message"`
+				Details map[string]any `json:"details"`
 			} `json:"error"`
 		}
 		if json.Unmarshal(b, &payload) == nil && payload.Error.Message != "" {
 			ae.Code = payload.Error.Code
 			ae.Message = payload.Error.Message
+			ae.Details = payload.Error.Details
 		}
 		return nil, ae
 	}

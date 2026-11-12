@@ -1,4 +1,4 @@
-package server
+package render
 
 import (
 	"reflect"
@@ -6,7 +6,7 @@ import (
 )
 
 func TestHeadingIDsReserveAllExplicitIDs(t *testing.T) {
-	items, err := extractHeadings([]byte(`<div id="rollout"></div><h2>Rollout</h2><h2 id="rollout-2">Explicit</h2><h2>Rollout</h2><h3>你好</h3><h3>Hello &amp; world</h3><template><h1>Ignored</h1></template>`))
+	items, err := Headings([]byte(`<div id="rollout"></div><h2>Rollout</h2><h2 id="rollout-2">Explicit</h2><h2>Rollout</h2><h3>你好</h3><h3>Hello &amp; world</h3><template><h1>Ignored</h1></template>`))
 	if err != nil {
 		t.Fatal(err)
 	}

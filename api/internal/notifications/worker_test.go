@@ -93,7 +93,7 @@ func TestOutboxDeliveryPreferencesAndAccess(t *testing.T) {
 		t.Fatal("delivery must delete its entry and link to the comment")
 	}
 
-	if got := sender.messages[0]; got.DocumentTitle != "Private" || got.Highlight != "Review" || got.Body != "@Owner" || got.Reply {
+	if got := sender.messages[0]; got.DocumentTitle != "Private" || got.Highlight != "Review" || got.Body != "@Owner" || got.Actor != author.Name || got.Reply {
 		t.Fatalf("wrong comment context: %+v", got)
 	}
 
@@ -233,7 +233,7 @@ func TestOutboxDeliveryPreferencesAndAccess(t *testing.T) {
 	if count() != 0 || !strings.Contains(sender.links[len(sender.links)-1], reply.ID) {
 		t.Fatal("reply notification missing")
 	}
-	if got := sender.messages[len(sender.messages)-1]; got.Highlight != "Review" || got.Body != "Reply" || !got.Reply {
+	if got := sender.messages[len(sender.messages)-1]; got.Highlight != "Review" || got.Body != "Reply" || got.Actor != author.Name || !got.Reply {
 		t.Fatalf("reply must include root highlight and reply body: %+v", got)
 	}
 
@@ -271,6 +271,26 @@ func TestOutboxDeliveryPreferencesAndAccess(t *testing.T) {
 	}
 	if count() != 0 {
 		t.Fatal("document mute must discard queued reply notifications")
+	}
+}
+
+func TestCommentActorFallbacks(t *testing.T) {
+	tests := []struct {
+		name   string
+		author auth.Principal
+		want   string
+	}{
+		{name: "name", author: auth.Principal{Name: "Asha", Email: "asha@example.com", ID: "usr_asha"}, want: "Asha"},
+		{name: "email", author: auth.Principal{Email: "asha@example.com", ID: "usr_asha"}, want: "asha@example.com"},
+		{name: "id", author: auth.Principal{ID: "usr_asha"}, want: "usr_asha"},
+		{name: "anonymous", author: auth.Principal{}, want: "Someone"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := commentActor(tt.author); got != tt.want {
+				t.Fatalf("commentActor() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

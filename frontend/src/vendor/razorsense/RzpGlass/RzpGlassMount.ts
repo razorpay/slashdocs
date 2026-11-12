@@ -29,6 +29,10 @@ const REF_RESOLUTION = { width: 3000, height: 2000 };
 // Default max pixel count (1920 * 1080 * 4 = 8,294,400 pixels)
 const DEFAULT_MAX_PIXEL_COUNT = 1920 * 1080 * 4;
 
+// The effect moves slowly, so 30 draws a second is enough. The margin absorbs
+// frame jitter, so 60 Hz and 120 Hz displays draw on every 2nd or 4th frame.
+const MIN_DRAW_INTERVAL = 1 / 30 - 0.005;
+
 // Default styles for the shader container
 const defaultStyle = `@layer rzp-glass {
   :where([data-rzp-glass]) {
@@ -125,13 +129,16 @@ export class RzpGlassMount {
   private hasBeenDisposed = false;
   private isInitialized = false;
   private resolutionChanged = true;
+  private isOnScreen = false;
+  private isFallback = false;
 
   // Visible UV bounds (where container clips the canvas)
   // vec4(minX, minY, maxX, maxY) - portion of canvas UV that's visible
   private visibleUvBounds: [number, number, number, number] = [0, 0, 1, 1];
 
-  // Resize handling
+  // Resize and visibility handling
   private resizeObserver: ResizeObserver | null = null;
+  private intersectionObserver: IntersectionObserver | null = null;
   private renderScale = 1;
   private parentWidth = 0;
   private parentHeight = 0;
@@ -211,6 +218,13 @@ export class RzpGlassMount {
     this.setupUniformLocations();
     this.setupResizeObserver();
 
+    // Draw only while the effect is on screen
+    this.intersectionObserver = new IntersectionObserver(([entry]) => {
+      this.isOnScreen = entry.isIntersecting;
+      this.updateRenderLoop();
+    });
+    this.intersectionObserver.observe(this.parentElement);
+
     // Visual viewport listener for zoom changes
     visualViewport?.addEventListener('resize', this.handleVisualViewportChange);
 
@@ -273,8 +287,7 @@ export class RzpGlassMount {
       // Initial resize
       this.handleResize();
 
-      // Start the render loop (runs continuously)
-      this.startRenderLoop();
+      this.updateRenderLoop();
     } catch (error) {
       console.error('RzpGlass: Failed to load assets', error);
       throw error;
@@ -522,30 +535,28 @@ export class RzpGlassMount {
       this.canvasElement.height = newHeight;
       this.resolutionChanged = true;
       this.gl.viewport(0, 0, newWidth, newHeight);
-
-      // Only render immediately when the loop isn't running — if it is,
-      // resolutionChanged=true is enough and the next RAF picks it up.
-      // Calling render() while the loop is active spawns a duplicate RAF chain.
-      if (this.rafId === null) {
-        this.render(performance.now());
-      }
+      // The next frame picks up resolutionChanged. A stopped loop draws
+      // nothing that a person can see, so it stays stopped.
     }
   };
 
   private handleDocumentVisibilityChange = (): void => {
+    this.updateRenderLoop();
     if (document.hidden) {
-      // Pause render loop when tab is hidden
-      this.stopRenderLoop();
       this.video?.pause();
-    } else {
-      // Resume render loop when tab is visible
-      this.startRenderLoop();
-      // Only resume video if not paused
-      if (!this.config.paused) {
-        this.video?.play().catch(() => {});
-      }
+    } else if (!this.config.paused) {
+      this.video?.play().catch(() => {});
     }
   };
+
+  /** Run the render loop only when a person can see its frames */
+  private updateRenderLoop(): void {
+    if (this.isInitialized && this.isOnScreen && !document.hidden && !this.isFallback) {
+      this.startRenderLoop();
+    } else {
+      this.stopRenderLoop();
+    }
+  }
 
   private setAllUniforms(): void {
     const gl = this.gl;
@@ -717,6 +728,7 @@ export class RzpGlassMount {
     if (this.rafId !== null) return; // Already running
     this.lastRenderTime = performance.now() * 0.001; // Initialize in seconds
     this.rafId = requestAnimationFrame(this.render);
+    this.performanceController?.start();
   }
 
   private stopRenderLoop(): void {
@@ -724,6 +736,7 @@ export class RzpGlassMount {
       cancelAnimationFrame(this.rafId);
       this.rafId = null;
     }
+    this.performanceController?.stop();
   }
 
   private render = (currentTime: number): void => {
@@ -743,8 +756,10 @@ export class RzpGlassMount {
     // Calculate delta time in seconds (framerate independent)
     const currentTimeSeconds = currentTime * 0.001; // Convert ms to seconds
     const deltaTime = currentTimeSeconds - this.lastRenderTime;
+    if (deltaTime < MIN_DRAW_INTERVAL) return;
     this.lastRenderTime = currentTimeSeconds;
-    this.currentFrame++; // Increment frame count every frame
+    // Count frames at 60 fps, whatever the draw rate, so frame-based animations keep their speed
+    this.currentFrame += deltaTime * 60;
 
     const usingStaticImage = !video && this.videoTexture !== null;
 
@@ -904,7 +919,8 @@ export class RzpGlassMount {
   }
 
   private handlePerformanceLevelChange = (level: PerformanceLevel): void => {
-    if (level === 0) {
+    this.isFallback = level === 0;
+    if (this.isFallback) {
       this.stopRenderLoop();
       this.canvasElement.style.display = 'none';
       return;
@@ -918,10 +934,7 @@ export class RzpGlassMount {
     if (this.canvasElement.style.display === 'none') {
       this.canvasElement.style.display = '';
     }
-    if (this.isInitialized) {
-      this.startRenderLoop();
-    }
-
+    this.updateRenderLoop();
     this.handleResize();
   };
 
@@ -972,6 +985,9 @@ export class RzpGlassMount {
       this.gl.getError();
     }
 
+    // Free the GPU memory now. Browsers keep only a few contexts alive.
+    this.gl.getExtension('WEBGL_lose_context')?.loseContext();
+
     // Clean up performance controller
     this.performanceController?.dispose();
     this.performanceController = null;
@@ -981,6 +997,8 @@ export class RzpGlassMount {
       this.resizeObserver.disconnect();
       this.resizeObserver = null;
     }
+    this.intersectionObserver?.disconnect();
+    this.intersectionObserver = null;
 
     visualViewport?.removeEventListener('resize', this.handleVisualViewportChange);
     document.removeEventListener('visibilitychange', this.handleDocumentVisibilityChange);

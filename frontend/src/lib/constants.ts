@@ -31,7 +31,7 @@ export const ROLE_RANK: Record<string, number> = {
 };
 
 export function canManageSharing(role?: string) {
-  return (ROLE_RANK[role || ""] || 0) >= ROLE_RANK.commenter;
+  return (ROLE_RANK[role || ""] || 0) >= ROLE_RANK.editor;
 }
 
 // GENERAL_ACCESS_NONE is the sentinel role for "no general access" (the

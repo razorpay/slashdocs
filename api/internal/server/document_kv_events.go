@@ -68,6 +68,14 @@ func (s *documentKVStream) sendBacklog() error {
 }
 
 func (s *documentKVStream) sendLive(event repo.DocumentKVEvent) error {
+	// A relayed event is not stored, so it has no revision to resume from.
+	if event.Revision == 0 {
+		if err := writeDocumentEventSSE(s.writer, event, false); err != nil {
+			return err
+		}
+		s.flusher.Flush()
+		return nil
+	}
 	if event.Revision <= s.lastSent {
 		return nil
 	}
@@ -158,6 +166,10 @@ func (h handlers) streamDocumentKVEvents(c *gin.Context) { //nolint:gocyclo // S
 		return
 	}
 	session := c.Query("session")
+	if current(c).Type == auth.PrincipalAnonymous {
+		// Other viewers do not see an anonymous reader.
+		session = ""
+	}
 	if session != "" && !presenceSessionPattern.MatchString(session) {
 		badRequest(c, "invalid presence session")
 		return
@@ -218,7 +230,7 @@ func (h handlers) streamDocumentKVEvents(c *gin.Context) { //nolint:gocyclo // S
 		flusher:    flusher,
 		repository: h.deps.repository,
 		authenticate: func(ctx context.Context) (*auth.Principal, error) {
-			return h.deps.authenticator.Authenticate(authRequest.Clone(ctx))
+			return h.deps.readerAuthenticator().Authenticate(authRequest.Clone(ctx))
 		},
 		principal:  *current(c),
 		documentID: docID,

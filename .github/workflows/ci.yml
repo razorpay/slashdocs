@@ -23,7 +23,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -76,7 +76,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -112,7 +112,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -125,7 +125,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       # Build the stack image once with the shared layer cache; the compose
       # stack reuses these layers instead of rebuilding the frontend and Go
@@ -152,7 +152,7 @@ jobs:
         run: npm ci --prefix frontend
 
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
@@ -166,7 +166,7 @@ jobs:
 
       - name: Upload Playwright report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report
           path: frontend/playwright-report/
@@ -177,28 +177,63 @@ jobs:
         run: scripts/e2e.sh down
 
   image:
-    name: Docker image (build only)
+    name: Docker image
     runs-on: ubuntu-latest
     needs: test
+    env:
+      # Each commit on master is published as razorpay/slashdocs:master and
+      # :sha-<commit>. Pull requests only build. Only a stable release tag
+      # moves :latest, in release.yml.
+      PUBLISH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+      # Published images sign their CLIs, as releases do. Pull requests run
+      # code that nobody reviewed yet, so they never get the private key.
+      SLASHDOCS_CLI_SIGNING_PRIVATE_KEY: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && secrets.SLASHDOCS_CLI_SIGNING_PRIVATE_KEY || '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # The version counts the commits since the latest release tag.
+          fetch-depth: 0
+
+      # A build is the next patch after the latest stable tag, as a pre-release
+      # that counts the commits since that tag, for example v0.2.1-master.12.
+      # Each master build thus ranks above the one before it and below the
+      # next release, so CLIs update in order.
+      - name: Version
+        id: version
+        run: |
+          tag=$(git tag --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
+          IFS=. read -r major minor patch <<<"${tag:-v0.0.0}"
+          count=$(git rev-list --count "${tag:+$tag..}HEAD")
+          echo "version=${major}.${minor}.$((patch + 1))-master.${count}" >>"$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to Docker Hub
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.PUBLIC_DOCKER_USERNAME }}
+          password: ${{ secrets.PUBLIC_DOCKER_PASSWORD }}
 
       # Proves the release Dockerfile builds for both platforms on every
-      # change. Nothing is pushed here; publishing happens only from
-      # release.yml when a maintainer pushes a `v*` tag.
+      # change.
       - name: Build multi-arch image
         uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
           platforms: linux/amd64,linux/arm64
-          push: false
+          push: ${{ env.PUBLISH == 'true' }}
+          tags: |
+            razorpay/slashdocs:master
+            razorpay/slashdocs:sha-${{ github.sha }}
           build-args: |
-            SLASHDOCS_VERSION=${{ github.sha }}
+            SLASHDOCS_VERSION=${{ steps.version.outputs.version }}
             SLASHDOCS_COMMIT_SHA=${{ github.sha }}
+            SLASHDOCS_CLI_SIGNING_PUBLIC_KEY=${{ vars.SLASHDOCS_CLI_SIGNING_PUBLIC_KEY }}
+          secret-envs: |
+            SLASHDOCS_CLI_SIGNING_PRIVATE_KEY=SLASHDOCS_CLI_SIGNING_PRIVATE_KEY
           cache-from: type=gha
           cache-to: type=gha,mode=max

@@ -11,6 +11,7 @@ import (
 
 	"github.com/razorpay/slashdocs/api/internal/auth"
 	"github.com/razorpay/slashdocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/internal/render"
 )
 
 // createVersionResponse is the payload of POST /v1/documents/{id}/versions.
@@ -200,12 +201,12 @@ func (h handlers) renderVersion(c *gin.Context) {
 	if appOrigin == "" {
 		appOrigin = "'self'"
 	}
-	c.Header("Content-Security-Policy", "default-src 'none'; img-src * data: blob:; media-src * data: blob:; font-src * data: blob:; style-src * 'unsafe-inline'; script-src * 'unsafe-inline' 'unsafe-eval'; connect-src *; frame-src *; worker-src * blob:; object-src 'none'; frame-ancestors "+appOrigin)
+	c.Header("Content-Security-Policy", render.CSP(appOrigin))
 	c.Header("Referrer-Policy", "no-referrer")
 	c.Header("X-Content-Type-Options", "nosniff")
 	observeHTML("render", len(b))
 	incRender("rendered", "success")
-	c.Data(http.StatusOK, "text/html; charset=utf-8", renderWrapperHTML(b, appOrigin))
+	c.Data(http.StatusOK, "text/html; charset=utf-8", render.Wrap(b, appOrigin))
 }
 
 func secureRenderCookie(c *gin.Context, appOrigin string) bool {

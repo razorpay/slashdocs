@@ -21,6 +21,7 @@ scripts
 
 frontend/node_modules
 frontend/dist
+frontend/dist-local
 frontend/*.tsbuildinfo
 frontend/e2e
 frontend/playwright.config.ts
@@ -28,8 +29,9 @@ frontend/playwright-report
 frontend/test-results
 frontend/tsconfig.e2e.json
 api/internal/server/frontend_dist
-api/internal/server/bridge_dist
+internal/render/bridge_dist
 api/internal/server/download_dist
+cli/internal/cli/local_dist
 .DS_Store
 .env
 .env.*

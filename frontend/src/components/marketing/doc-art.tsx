@@ -1,3 +1,5 @@
+import { useRef } from "react";
+import { useInView } from "framer-motion";
 import { Bot, Check } from "lucide-react";
 import { cn } from "@/lib/cn";
 
@@ -233,10 +235,15 @@ const SKETCH = ["Payment", "Webhook queue", "Delivery worker", "Merchant"];
 const HAND = { fontFamily: "'Chalkboard SE', 'Comic Sans MS', 'Segoe Print', cursive" };
 
 export function SketchArt() {
+  // SMIL runs on the main thread on every frame, also off screen, so the dot
+  // moves only while the drawing is in view.
+  const ref = useRef<SVGSVGElement>(null);
+  const inView = useInView(ref);
   return (
     <Stage>
       <Paper title="PR #4812 explainer: retry failed webhooks" version="v1">
         <svg
+          ref={ref}
           viewBox="0 0 640 230"
           className="h-auto w-full text-[var(--color-fg)]"
           style={HAND}
@@ -323,9 +330,11 @@ export function SketchArt() {
           <text x="395" y="208" fontSize="13" textAnchor="middle" fill="currentColor">
             retry at 1s · 4s · 16s · 64s
           </text>
-          <circle r="5" fill="var(--color-accent)" className="motion-reduce:hidden">
-            <animateMotion dur="4s" repeatCount="indefinite" path="M82 92 H540" />
-          </circle>
+          {inView && (
+            <circle r="5" fill="var(--color-accent)" className="motion-reduce:hidden">
+              <animateMotion dur="4s" repeatCount="indefinite" path="M82 92 H540" />
+            </circle>
+          )}
         </svg>
       </Paper>
     </Stage>

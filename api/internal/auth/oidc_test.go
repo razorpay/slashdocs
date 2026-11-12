@@ -215,15 +215,39 @@ func TestGoogleVerifierAcceptsOnlyDocumentedIssuerForms(t *testing.T) {
 	}
 }
 
-func TestOIDCExchangeRejectsUnverifiedEmail(t *testing.T) {
+func TestOIDCExchangeEmailVerification(t *testing.T) {
 	f := newFakeIssuer(t)
 	o := newFakeOIDC(t, f, auth.OIDCConfig{})
 
-	claims := f.idClaims()
-	claims["email_verified"] = false
-	f.idToken = f.signIDToken(t, claims)
-	if _, err := o.ExchangeAndVerify(context.Background(), "code-1"); err == nil {
-		t.Fatal("want an error for an unverified email, got nil")
+	for _, tc := range []struct {
+		name       string
+		claims     map[string]any // nil value deletes the claim
+		wantReject bool
+	}{
+		{name: "email_verified true", claims: map[string]any{"email_verified": true}},
+		{name: "email_verified string true", claims: map[string]any{"email_verified": "true"}},
+		{name: "email_verified false", claims: map[string]any{"email_verified": false}, wantReject: true},
+		{name: "email_verified false wins over xms_edov", claims: map[string]any{"email_verified": false, "xms_edov": true}, wantReject: true},
+		{name: "no claim", claims: map[string]any{"email_verified": nil}, wantReject: true},
+		{name: "Entra xms_edov true", claims: map[string]any{"email_verified": nil, "xms_edov": true}},
+		{name: "Entra xms_edov 1", claims: map[string]any{"email_verified": nil, "xms_edov": "1"}},
+		{name: "Entra xms_edov false", claims: map[string]any{"email_verified": nil, "xms_edov": false}, wantReject: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			claims := f.idClaims()
+			for k, v := range tc.claims {
+				if v == nil {
+					delete(claims, k)
+				} else {
+					claims[k] = v
+				}
+			}
+			f.idToken = f.signIDToken(t, claims)
+			_, err := o.ExchangeAndVerify(context.Background(), "code-1")
+			if gotReject := err != nil; gotReject != tc.wantReject {
+				t.Fatalf("error = %v, want reject = %t", err, tc.wantReject)
+			}
+		})
 	}
 }
 
@@ -248,22 +272,6 @@ func TestOIDCExchangeRejectsMissingSubject(t *testing.T) {
 	f.idToken = f.signIDToken(t, claims)
 	if _, err := o.ExchangeAndVerify(context.Background(), "code-1"); err == nil || err.Error() != "missing subject claim" {
 		t.Fatalf("error = %v, want missing subject claim", err)
-	}
-}
-
-func TestOIDCExchangeAcceptsEmailWithoutVerificationClaim(t *testing.T) {
-	f := newFakeIssuer(t)
-	o := newFakeOIDC(t, f, auth.OIDCConfig{})
-
-	claims := f.idClaims()
-	delete(claims, "email_verified")
-	f.idToken = f.signIDToken(t, claims)
-	u, err := o.ExchangeAndVerify(context.Background(), "code-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if u.Email != "reviewer@acme.com" {
-		t.Fatalf("email = %q, want reviewer@acme.com", u.Email)
 	}
 }
 

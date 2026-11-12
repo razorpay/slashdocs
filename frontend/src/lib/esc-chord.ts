@@ -4,12 +4,13 @@
 export const CHORD_WINDOW_MS = 800;
 export const CHORD_RESOLVED_MS = 600;
 
-export type ChordKey = "t" | "f" | "c" | "h";
+export type ChordKey = "t" | "f" | "c" | "m" | "h";
 
 export const CHORD_KEYS: ReadonlyArray<{ key: ChordKey; hint: string }> = [
   { key: "t", hint: "theme" },
   { key: "f", hint: "full screen" },
   { key: "c", hint: "comments" },
+  { key: "m", hint: "cursors" },
   { key: "h", hint: "home" },
 ];
 

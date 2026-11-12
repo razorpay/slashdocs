@@ -13,6 +13,7 @@ import { queryKeys } from "@/lib/queryKeys";
 import { matchesCommentFilter } from "@/lib/constants";
 import { Center } from "@/components/ui/misc";
 import { CHORD_KEYS } from "@/lib/esc-chord";
+import { cursorsShownStore, parseCursorSpot } from "@/lib/live-cursors";
 import { useDocumentExport } from "./use-document-export";
 import { useDoc } from "./doc-context";
 import { useBridgeHost } from "./use-bridge-host";
@@ -36,6 +37,7 @@ export function RenderFrame() {
     drafts,
     activeComment,
     startDraft,
+    signIn,
     handleDocCommentClick,
     setUnanchoredComments,
     setCommentPositions,
@@ -46,13 +48,17 @@ export function RenderFrame() {
     handleRenderedDocumentClick,
     subscribeDocumentKV,
     reportViewport,
+    moveCursor,
+    subscribeCursors,
+    followedCursor,
   } = useDoc();
+  const cursorsShown = cursorsShownStore.useStore();
   const versionRef = useRef(version);
   versionRef.current = version;
   const location = useLocation();
 
   const token = useQuery({
-    queryKey: queryKeys.render(version),
+    queryKey: queryKeys.render(docId, version),
     queryFn: () => api.renderToken(docId, version),
     staleTime: 4 * 60_000,
     enabled: !!version,
@@ -60,6 +66,7 @@ export function RenderFrame() {
   const { ref, frameSrc, frameOrigin, ready, postToFrame, deliverKV } = useBridgeHost(
     docId,
     token.data?.url,
+    signIn,
   );
   // Paint results from a frame that is navigating away (its WindowProxy
   // survives navigation) must not bring back the state reset below.
@@ -297,6 +304,9 @@ export function RenderFrame() {
       if (e.data?.type === "slashdocs:viewport") {
         reportViewport(textLinkAnchor(e.data.anchor) ?? undefined);
       }
+      if (e.data?.type === "slashdocs:pointer") {
+        moveCursor(parseCursorSpot(e.data.spot));
+      }
       if (
         e.data?.type === "slashdocs:copy-heading" &&
         typeof e.data.id === "string" &&
@@ -422,6 +432,7 @@ export function RenderFrame() {
     frameOrigin,
     startDraft,
     reportViewport,
+    moveCursor,
     handleDocCommentClick,
     handleRenderedDocumentClick,
     setUnanchoredComments,
@@ -433,6 +444,27 @@ export function RenderFrame() {
 
   // The page holds the event stream; the bridge host forwards its KV changes.
   useEffect(() => subscribeDocumentKV(deliverKV), [subscribeDocumentKV, deliverKV]);
+
+  // Other viewers' cursors, while the reader shows them.
+  useEffect(() => {
+    if (!ready || !cursorsShown) return;
+    const unsubscribe = subscribeCursors((cursor) =>
+      postToFrame({ type: "slashdocs:cursor", cursor }),
+    );
+    return () => {
+      unsubscribe();
+      postToFrame({ type: "slashdocs:clear-cursors" });
+    };
+  }, [ready, cursorsShown, subscribeCursors, postToFrame]);
+
+  // Go to a followed cursor once the frame shows its version. The effect above
+  // gave the frame the cursor first.
+  const followed = useRef(followedCursor);
+  useEffect(() => {
+    if (!ready || !followedCursor || followed.current === followedCursor) return;
+    followed.current = followedCursor;
+    postToFrame({ type: "slashdocs:follow-cursor", session: followedCursor.session });
+  }, [ready, followedCursor, postToFrame]);
 
   // Push fresh paint data once the frame is ready and whenever it changes.
   useEffect(() => {

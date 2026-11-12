@@ -131,6 +131,7 @@ export function ShareSheet({
   const invalidateAccess = () => {
     q.invalidateQueries({ queryKey: accessKey });
     q.invalidateQueries({ queryKey: queryKeys.folderAccessAll() });
+    q.invalidateQueries({ queryKey: queryKeys.userSearchAll() });
   };
 
   const m = useMutation({
@@ -296,8 +297,8 @@ export function ShareSheet({
   };
 
   const everyoneLabel = config.data?.everyone_label || "Everyone on this server";
-  const userPlaceholder =
-    config.data?.deployment === "public" ? "user@gmail.com" : "user@org.example";
+  const isPublic = config.data?.deployment === "public";
+  const userPlaceholder = isPublic ? "user@gmail.com" : "user@org.example";
   const resourceLabel = isFolder ? "folder" : "document";
 
   return (
@@ -357,7 +358,7 @@ export function ShareSheet({
                   </p>
                   <p className="mt-1 text-xs leading-5 text-[var(--color-fg-muted)]">
                     You can see who has access and copy the link, but you need at least
-                    commenter access to change sharing.
+                    editor access to change sharing.
                   </p>
                 </div>
               </div>
@@ -428,7 +429,9 @@ export function ShareSheet({
                   <p className="mt-1.5 text-[11px] text-[var(--color-fg-muted)]">
                     {shareMode === "groups"
                       ? "Select a server-verified organization group before sharing."
-                      : "Search existing slashdocs users by email, or add a bot by its address."}
+                      : isPublic
+                        ? "Enter a full email, or add a bot by its address. People you share with appear as you type."
+                        : "Search existing slashdocs users by email, or add a bot by its address."}
                   </p>
                   {shareMode === "groups" && selectedGroup ? (
                     <div className="mt-2 flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
@@ -500,8 +503,9 @@ export function ShareSheet({
                     !debouncedAddress.includes(BOT_DOMAIN_SUFFIX) &&
                     !userSearch.isFetching ? (
                     <div className="mt-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-2 text-xs text-[var(--color-fg-muted)]">
-                      No matching slashdocs users. They need to sign in once before you
-                      can share with them.
+                      {isPublic
+                        ? "None of your contacts match. Enter a full email to share with someone else. They need to sign in once first."
+                        : "No matching slashdocs users. They need to sign in once before you can share with them."}
                     </div>
                   ) : null}
                 </div>
