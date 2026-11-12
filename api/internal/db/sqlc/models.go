@@ -51,12 +51,13 @@ type CommentMention struct {
 }
 
 type CommentNotificationOutbox struct {
-	CommentID   string
-	RecipientID string
-	Reason      string
-	Attempts    int32
-	AvailableAt pgtype.Timestamptz
-	CreatedAt   pgtype.Timestamptz
+	CommentID         string
+	RecipientID       string
+	Reason            string
+	Attempts          int32
+	AvailableAt       pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	FinishedProviders []string
 }
 
 type CommentPlacement struct {
@@ -93,15 +94,16 @@ type Document struct {
 }
 
 type DocumentAccessNotificationOutbox struct {
-	DocumentID   string
-	RecipientID  string
-	Source       string
-	Reason       string
-	PreviousRole string
-	Role         string
-	Attempts     int32
-	AvailableAt  pgtype.Timestamptz
-	CreatedAt    pgtype.Timestamptz
+	DocumentID        string
+	RecipientID       string
+	Source            string
+	Reason            string
+	PreviousRole      string
+	Role              string
+	Attempts          int32
+	AvailableAt       pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	FinishedProviders []string
 }
 
 type DocumentAccessRequest struct {
@@ -112,14 +114,15 @@ type DocumentAccessRequest struct {
 }
 
 type DocumentAccessRequestNotificationOutbox struct {
-	DocumentID     string
-	RequesterType  string
-	RequesterID    string
-	RequesterLabel string
-	RecipientID    string
-	Attempts       int32
-	AvailableAt    pgtype.Timestamptz
-	CreatedAt      pgtype.Timestamptz
+	DocumentID        string
+	RequesterType     string
+	RequesterID       string
+	RequesterLabel    string
+	RecipientID       string
+	Attempts          int32
+	AvailableAt       pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	FinishedProviders []string
 }
 
 type DocumentKv struct {

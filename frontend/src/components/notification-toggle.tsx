@@ -22,7 +22,7 @@ export function NotificationToggle({ documentId }: { documentId?: string }) {
       toast.error(errorMessage(e, "Could not save notification settings")),
   });
   const enabled = prefs.data?.enabled ?? false;
-  const label = documentId ? "Notifications for this document" : "Slack notifications";
+  const label = documentId ? "Notifications for this document" : "Chat notifications";
   const disabled = prefs.isLoading || !!prefs.error || update.isPending;
   const title = prefs.error
     ? "Could not load notification settings"
@@ -51,7 +51,7 @@ export function NotificationToggle({ documentId }: { documentId?: string }) {
   return (
     <div className="flex items-center justify-between gap-6">
       <div>
-        <div className="text-sm font-medium">Slack notifications</div>
+        <div className="text-sm font-medium">Chat notifications</div>
         <p className="mt-1 text-sm text-[var(--color-fg-muted)]">
           Mentions and new comments on your documents. You can mute individual documents
           from their comments panel.
