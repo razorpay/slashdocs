@@ -21,7 +21,12 @@ func e2eMux(t *testing.T) *http.ServeMux {
 			if got := r.URL.Query().Get("q"); got != "" && got != `incident from:alice@example.com label:api,review in:"Product Specs"` {
 				t.Fatalf("document search query = %q", got)
 			}
-			writeTestJSON(t, w, map[string]any{"items": []any{map[string]any{"id": "doc_1", "title": "Doc", "current_version_id": "ver_1"}}})
+			// A request for a page has more documents after it.
+			page := r.URL.Query().Has("limit")
+			if page && (r.URL.Query().Get("limit") != "1" || r.URL.Query().Get("offset") != "5") {
+				t.Fatalf("document page = %q", r.URL.RawQuery)
+			}
+			writeTestJSON(t, w, map[string]any{"items": []any{map[string]any{"id": "doc_1", "title": "Doc", "current_version_id": "ver_1"}}, "has_more": page})
 		case "POST":
 			requireMultipart(t, r)
 			writeTestJSON(t, w, map[string]any{"id": "doc_new", "current_version_id": "ver_new", "default_grant": map[string]any{"grant_id": "gr_new", "principal": map[string]any{"type": "anyone"}, "role": "viewer"}})
@@ -217,6 +222,7 @@ func TestCommandOutputsAreConversational(t *testing.T) {
 		{[]string{"sa", "transfer", "accept", "xfer_1"}, []string{"Accepted transfer", "xfer_1"}},
 		{[]string{"sa", "transfer", "decline", "xfer_1"}, []string{"Declined transfer", "xfer_1"}},
 		{[]string{"open", "doc_1"}, []string{"doc_1"}},
+		{[]string{"docs", "list", "--limit", "1", "--offset", "5"}, []string{"doc_1", "Use --offset 6"}},
 		{[]string{"context", "use", srv.URL}, []string{"Switched to context"}},
 	}
 	for _, tc := range cases {

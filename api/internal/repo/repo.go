@@ -134,6 +134,12 @@ type FolderEntry struct {
 	LastActive string    `json:"last_active,omitempty"`
 }
 
+// Page selects at most Limit items after the first Offset items of a list.
+type Page struct {
+	Limit  int32
+	Offset int32
+}
+
 // DocumentSearch filters documents. All values are lowercase, and empty
 // fields do not filter.
 type DocumentSearch struct {
@@ -389,8 +395,10 @@ type Repository interface {
 	// resolved in one query. Returns ErrNotFound when the folder is missing.
 	FolderAccessChain(ctx context.Context, principal auth.Principal, folderID string) ([]FolderAccess, error)
 	CreateDocument(ctx context.Context, owner auth.Principal, title string, html []byte) (Document, Version, error)
-	ListDocuments(ctx context.Context, principal auth.Principal) ([]Document, error)
-	SearchDocuments(ctx context.Context, principal auth.Principal, search DocumentSearch, includeOrgWide bool, limit int32) ([]Document, error)
+	// ListDocuments and SearchDocuments return one page of documents, and
+	// whether more documents follow it.
+	ListDocuments(ctx context.Context, principal auth.Principal, page Page) ([]Document, bool, error)
+	SearchDocuments(ctx context.Context, principal auth.Principal, search DocumentSearch, includeOrgWide bool, page Page) ([]Document, bool, error)
 	// RecordDocumentOpened notes that a principal opened a document, so a
 	// broadly-shared ("anyone") document joins their workspace listing after
 	// first open. Idempotent.

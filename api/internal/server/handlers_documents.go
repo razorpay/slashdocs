@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -103,6 +104,39 @@ func (h handlers) createDocument(c *gin.Context) {
 	c.JSON(http.StatusCreated, createDocumentResponse{ID: d.ID, CurrentVersionID: d.CurrentVersionID, DefaultGrant: granted})
 }
 
+// documentListResponse is the payload of GET /v1/documents.
+type documentListResponse struct {
+	Items []repo.Document `json:"items"`
+	// HasMore reports that more documents follow this page.
+	HasMore bool `json:"has_more"`
+}
+
+const (
+	defaultDocumentPageSize = 25
+	maxDocumentPageSize     = 100
+)
+
+// documentPage reads the limit and offset query parameters. A limit above the
+// maximum gets the maximum, and has_more tells the client to ask again.
+func documentPage(c *gin.Context) (repo.Page, error) {
+	page := repo.Page{Limit: defaultDocumentPageSize}
+	if raw := c.Query("limit"); raw != "" {
+		limit, err := strconv.ParseInt(raw, 10, 32)
+		if err != nil || limit < 1 {
+			return page, errors.New("limit must be a positive integer")
+		}
+		page.Limit = int32(min(limit, maxDocumentPageSize))
+	}
+	if raw := c.Query("offset"); raw != "" {
+		offset, err := strconv.ParseInt(raw, 10, 32)
+		if err != nil || offset < 0 {
+			return page, errors.New("offset must be zero or a positive integer")
+		}
+		page.Offset = int32(offset)
+	}
+	return page, nil
+}
+
 // ListDocuments godoc
 // @Summary List documents
 // @Tags documents
@@ -112,7 +146,9 @@ func (h handlers) createDocument(c *gin.Context) {
 // @Param q query string false "Slack-style search of titles and text: words, \"phrases\", -word, from:, in:, label:, before:, after:, on:, and during:"
 // @Param tz query string false "IANA time zone for date modifiers; defaults to UTC"
 // @Param label query string false "Deprecated exact label filter; use q=label:<label>"
-// @Success 200 {object} listResponse[repo.Document]
+// @Param limit query int false "Page size: 25 by default, 100 at most"
+// @Param offset query int false "The number of documents to skip"
+// @Success 200 {object} documentListResponse
 // @Router /v1/documents [get]
 func (h handlers) listDocuments(c *gin.Context) {
 	if !requireResolvedGroupsForAggregate(c) {
@@ -125,6 +161,11 @@ func (h handlers) listDocuments(c *gin.Context) {
 		return
 	}
 	search, err := parseDocumentSearch(q, *current(c), time.Now().In(zone))
+	if err != nil {
+		badRequest(c, err.Error())
+		return
+	}
+	page, err := documentPage(c)
 	if err != nil {
 		badRequest(c, err.Error())
 		return
@@ -143,15 +184,15 @@ func (h handlers) listDocuments(c *gin.Context) {
 	}
 	if q != "" || len(search.Labels) > 0 {
 		includeOrgWide := h.deps.deployment == DeploymentOrg
-		items, err := h.deps.repository.SearchDocuments(c.Request.Context(), *current(c), search, includeOrgWide, 25)
+		items, more, err := h.deps.repository.SearchDocuments(c.Request.Context(), *current(c), search, includeOrgWide, page)
 		if err != nil {
 			internalErr(c, err)
 			return
 		}
-		c.JSON(http.StatusOK, listResponse[repo.Document]{Items: items})
+		c.JSON(http.StatusOK, documentListResponse{Items: items, HasMore: more})
 		return
 	}
-	items, err := h.deps.repository.ListDocuments(c.Request.Context(), *current(c))
+	items, more, err := h.deps.repository.ListDocuments(c.Request.Context(), *current(c), page)
 	if err != nil {
 		internalErr(c, err)
 		return
@@ -161,7 +202,7 @@ func (h handlers) listDocuments(c *gin.Context) {
 			items[i].Labels, _ = h.deps.repository.ListDocumentLabels(c.Request.Context(), items[i].ID)
 		}
 	}
-	c.JSON(http.StatusOK, listResponse[repo.Document]{Items: items})
+	c.JSON(http.StatusOK, documentListResponse{Items: items, HasMore: more})
 }
 
 // GetDocument godoc

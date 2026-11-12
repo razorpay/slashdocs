@@ -76,8 +76,10 @@ WHERE d.parent_folder_id IS NULL
        )
    )
   )
-ORDER BY d.updated_at DESC
-LIMIT 25;
+-- The ID orders documents with the same update time, so that pages do not
+-- overlap.
+ORDER BY d.updated_at DESC, d.id
+LIMIT $4 OFFSET $5;
 
 -- name: UpdateDocumentTitle :exec
 UPDATE documents SET title=$1,updated_at=now() WHERE id=$2;
@@ -95,15 +97,16 @@ UPDATE documents SET title=$1,updated_at=now() WHERE id=$2;
 -- and the sort touch no text. The index finds the documents that have the
 -- words. Whether they are in the order of a phrase is known from the text
 -- vector only, so that check runs on the sorted candidates, in order, until
--- LIMIT rows pass. Owners, folders, and snippets are joined after LIMIT.
--- matches is MATERIALIZED, so that the planner joins 25 rows.
+-- the page fills. Owners, folders, and snippets are joined after LIMIT.
+-- matches is MATERIALIZED, so that the planner joins one page of rows.
 --
 -- The two arms of matches keep the statement fast under a generic plan,
 -- which PostgreSQL may choose for a prepared statement after five runs. With
 -- the parameters unknown, "no words OR index match" cannot use the index and
 -- reads every document's vector. Each arm has a condition on the parameters
 -- only, which the executor checks once, so the arm that does not apply runs
--- nothing.
+-- nothing. Thus each arm can take the page itself. The ID orders documents
+-- that are otherwise equal, so that pages do not overlap.
 WITH search AS NOT MATERIALIZED (
   -- (SELECT ...) hides the words from the planner. When it sees them, it
   -- plans a sequential scan for a word that most documents have, and that
@@ -185,7 +188,7 @@ matches AS MATERIALIZED (
       CROSS JOIN search
       CROSS JOIN ranking
       WHERE numnode(search.words) > 0 AND c.search_vector @@ search.words
-      ORDER BY rank DESC, c.updated_at DESC, c.title
+      ORDER BY rank DESC, c.updated_at DESC, c.title, c.id
       -- OFFSET 0 keeps the planner from moving the condition below into
       -- this subquery, where it would run before the sort, on every
       -- candidate. The sort carries a reference to each vector, not the
@@ -194,8 +197,8 @@ matches AS MATERIALIZED (
     ) o
     CROSS JOIN search
     WHERE o.search_vector @@ search.match
-    ORDER BY o.rank DESC, o.updated_at DESC, o.title
-    LIMIT @row_limit
+    ORDER BY o.rank DESC, o.updated_at DESC, o.title, o.id
+    LIMIT @row_limit OFFSET @row_offset
   )
   UNION ALL
   (
@@ -204,11 +207,9 @@ matches AS MATERIALIZED (
     FROM candidates c
     CROSS JOIN search
     WHERE COALESCE(numnode(search.match), 0) = 0
-    ORDER BY c.updated_at DESC, c.title
-    LIMIT @row_limit
+    ORDER BY c.updated_at DESC, c.title, c.id
+    LIMIT @row_limit OFFSET @row_offset
   )
-  ORDER BY rank DESC, updated_at DESC, title
-  LIMIT @row_limit
 )
 -- Snippets are made after LIMIT, because ts_headline reads the whole text.
 SELECT d.id, d.title, d.current_version_id, d.owner_type, d.owner_id,
@@ -229,7 +230,7 @@ LEFT JOIN folders pf ON pf.id=d.parent_folder_id
 LEFT JOIN users u ON d.owner_type='user' AND u.id=d.owner_id
 LEFT JOIN service_accounts sa
   ON d.owner_type='service_account' AND sa.id=d.owner_id
-ORDER BY m.rank DESC, m.updated_at DESC, m.title;
+ORDER BY m.rank DESC, m.updated_at DESC, m.title, m.id;
 
 -- name: IndexDocuments :execrows
 -- The trigger on title sets search_vector. Servers that index at the same

@@ -826,18 +826,28 @@ func pgTimeRFC3339(ts pgtype.Timestamptz) string {
 	return ts.Time.UTC().Format(time.RFC3339Nano)
 }
 
-func (s *Store) ListDocuments(ctx context.Context, p auth.Principal) ([]repo.Document, error) {
-	rows, err := s.q.ListDocuments(ctx, dbsqlc.ListDocumentsParams{OwnerID: p.ID, OwnerType: string(p.Type), Column3: p.GoogleGroupIDs})
-	if err != nil {
-		return nil, err
+// pageOf trims rows to the page. The query asks for one row more than the
+// page, so that the row tells whether more rows follow.
+func pageOf[T any](rows []T, page repo.Page) ([]T, bool) {
+	if len(rows) > int(page.Limit) {
+		return rows[:page.Limit], true
 	}
+	return rows, false
+}
+
+func (s *Store) ListDocuments(ctx context.Context, p auth.Principal, page repo.Page) ([]repo.Document, bool, error) {
+	rows, err := s.q.ListDocuments(ctx, dbsqlc.ListDocumentsParams{OwnerID: p.ID, OwnerType: string(p.Type), Column3: p.GoogleGroupIDs, Limit: page.Limit + 1, Offset: page.Offset})
+	if err != nil {
+		return nil, false, err
+	}
+	rows, more := pageOf(rows, page)
 	out := make([]repo.Document, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, docFromList(r))
 	}
-	return out, nil
+	return out, more, nil
 }
-func (s *Store) SearchDocuments(ctx context.Context, p auth.Principal, search repo.DocumentSearch, includeOrgWide bool, limit int32) ([]repo.Document, error) {
+func (s *Store) SearchDocuments(ctx context.Context, p auth.Principal, search repo.DocumentSearch, includeOrgWide bool, page repo.Page) ([]repo.Document, bool, error) {
 	rows, err := s.q.SearchDocuments(ctx, dbsqlc.SearchDocumentsParams{
 		MatchQuery:     tsquery(search.Terms, " & "),
 		WordsQuery:     tsqueryWords(search.Terms),
@@ -852,23 +862,25 @@ func (s *Store) SearchDocuments(ctx context.Context, p auth.Principal, search re
 		OwnerType:      string(p.Type),
 		GoogleGroupIds: p.GoogleGroupIDs,
 		IncludeOrgWide: includeOrgWide,
-		RowLimit:       limit,
+		RowLimit:       page.Limit + 1,
+		RowOffset:      page.Offset,
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
+	rows, more := pageOf(rows, page)
 	out := make([]repo.Document, 0, len(rows))
 	for _, r := range rows {
 		d := docFromSearch(r)
 		if search.IncludeLabels {
 			d.Labels, err = s.q.ListDocumentLabels(ctx, r.ID)
 			if err != nil {
-				return nil, err
+				return nil, false, err
 			}
 		}
 		out = append(out, d)
 	}
-	return out, nil
+	return out, more, nil
 }
 func (s *Store) RecordDocumentOpened(ctx context.Context, documentID string, p auth.Principal) error {
 	return s.q.RecordWorkspaceEntry(ctx, dbsqlc.RecordWorkspaceEntryParams{
