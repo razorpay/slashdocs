@@ -76,7 +76,7 @@ func LiveUnfurl(card DocCard) map[string]any {
 // NeutralUnfurl names nothing, so private, missing and deleted docs look the same.
 func NeutralUnfurl() map[string]any {
 	return map[string]any{"blocks": []any{
-		mrkdwnSection("slashdocs document · Sign in to see if you have access"),
+		mrkdwnSection("SlashDocs document · Sign in to see if you have access"),
 	}}
 }
 

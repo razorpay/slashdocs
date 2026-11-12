@@ -13,7 +13,7 @@ import (
 	"golang.org/x/net/html/atom"
 )
 
-// Replacement replaces the bytes from Start to End of the source it was made
+// Replacement replaces the bytes from Start to End of the version it was made
 // on, which must be OldHTML, with NewHTML. Offsets count UTF-8 bytes, and End
 // is exclusive. Unlike an Edit, OldHTML need not be unique: the position
 // finds it.
@@ -24,7 +24,7 @@ type Replacement struct {
 	NewHTML string `json:"new_html"`
 }
 
-// Reasons a replacement does not fit its source, besides ReasonUnchanged and
+// Reasons a replacement does not fit its version, besides ReasonUnchanged and
 // ReasonInvalid.
 const (
 	ReasonRange    = "invalid_range"
@@ -34,7 +34,7 @@ const (
 	ReasonTags = "breaks_tags"
 )
 
-// ReplacementError reports the replacement that does not fit the source it
+// ReplacementError reports the replacement that does not fit the version it
 // was made on. Index counts from zero.
 type ReplacementError struct {
 	Index  int    `json:"index"`
@@ -44,9 +44,9 @@ type ReplacementError struct {
 func (e *ReplacementError) Error() string {
 	switch e.Reason {
 	case ReasonRange:
-		return fmt.Sprintf("replacement %d: start and end must be in order, after the replacement before, and on character boundaries of the source at the base seq", e.Index)
+		return fmt.Sprintf("replacement %d: start and end must be in order, after the replacement before, and on character boundaries of the base version", e.Index)
 	case ReasonMismatch:
-		return fmt.Sprintf("replacement %d: old_html is not the HTML from start to end of the source at the base seq", e.Index)
+		return fmt.Sprintf("replacement %d: old_html is not the HTML from start to end of the base version", e.Index)
 	case ReasonInvalid:
 		return fmt.Sprintf("replacement %d: old_html or new_html is not valid UTF-8", e.Index)
 	case ReasonUnchanged:

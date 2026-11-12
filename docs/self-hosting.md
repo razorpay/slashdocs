@@ -626,7 +626,6 @@ a secret store. The server needs outbound HTTPS to `chat.googleapis.com` or
 | `SLASHDOCS_MIGRATE`                         | `true`      | Run database migrations on boot. Set `false` to skip.                                                                                                                                                                                                                                               |
 | `SLASHDOCS_DEFAULT_DOC_PERMISSION`          | `private`   | Server-wide default sharing applied when a document is created: `viewer`, `commenter`, `editor`, or `private` (no grant). Non-private values require `SLASHDOCS_DEPLOYMENT=org`; requests may override per document via the `default_permission` form field.                                        |
 | `SLASHDOCS_FEATURED`                        | unset       | JSON object of sections that the Documents page shows above each user's own items. See [Featured sections](#featured-sections).                                                                                                                                                                     |
-| `SLASHDOCS_LABELS_ENABLED`                  | `false`     | Set `true` to turn on document labels: the labels API, `label:` in search, and labels in the UI.                                                                                                                                                                                                    |
 | `SLASHDOCS_KV_EVENTS_MODE`                  | `auto`      | `auto`, `notify`, or `poll`; controls how document KV streams discover persisted events.                                                                                                                                                                                                            |
 | `SLASHDOCS_KV_EVENTS_LISTENER_DATABASE_URL` | unset       | Direct or session-pooled URL to the same database for the dedicated LISTEN connection. Never use a transaction-pooling endpoint.                                                                                                                                                                    |
 | `SLASHDOCS_APPROVAL_WEBHOOK_URL`            | unset       | Webhook that receives [approval events](#approval-events). Unset turns them off.                                                                                                                                                                                                                    |
@@ -692,7 +691,7 @@ the webhook answers with a 2xx status.
 | `type`                     | When                                                                                                         |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | `approval.requested`       | The owner asks someone to approve                                                                            |
-| `approval.removed`         | The owner removes an approver, or an approver loses read access                                              |
+| `approval.removed`         | The owner removes an approver, an approver (or their bot) pushes a version, or an approver loses read access |
 | `approval.approved`        | An approver approves                                                                                         |
 | `approval.rejected`        | An approver rejects                                                                                          |
 | `approval.revoked`         | An approver revokes their decision                                                                           |
@@ -810,16 +809,10 @@ cached; the page never asks the directory.
 ## Storage notes
 
 `slashdocs` stores uploaded HTML versions in blob storage and metadata,
-comments, grants, sessions, and OAuth state in Postgres. Each create, push,
-upload, API edit or restore makes a new version. Typing in the browser makes
-no version: each edit is an operation, and Postgres keeps the operations in a
-log (`document_ops`). While people type, the newest version is open. Its blob
-is a snapshot, and the operations after it complete it. A server seals the
-open version 10 minutes after the last operation, or before the next push,
-upload, API edit, restore or approval. A sealed version is immutable. Thus one
-sitting of typing, by one person or by several, is one version. The log drops
-the text of an operation 10 minutes after the seal, and the operation when it
-is 7 days old. The UI shows the versions as the document's history. To find the source of
+comments, grants, sessions, and OAuth state in Postgres. Documents are
+versioned immutably; each push, edit or restore creates a new version. Edits
+in the browser save as the editor pauses, so a session of typing makes several
+versions. The UI shows them as the document's history. To find the source of
 an edit by position, the render adds a `data-slashdocs-source` attribute to
 each element of the document. The stored HTML never contains it.
 
@@ -842,35 +835,12 @@ Postgres migrations are applied automatically at startup unless
 roll back, deploy the previous image tag and pre-apply any matching
 down-migration manually if needed; the binary does not auto-rollback.
 
-### Rolling deploy to the release with live editing
-
-Migration 44 makes an edit an operation in a log, and a version a checkpoint.
-After it, a server of the release before cannot save a version:
-`versions.seq` has no default, so its insert fails and no version is saved.
-That server would otherwise save a stale snapshot and remove text that people
-typed. Thus the order of the deploy matters:
-
-1. If you set `SLASHDOCS_MIGRATE=false`, apply the migrations first.
-2. Deploy the new server image. The first new server applies the migration
-   when it starts. The image also carries the CLI of the same release (see
-   [The CLI ships with the server](releasing.md#the-cli-ships-with-the-server)).
-3. Let the rollout replace every old server with no pause. Keep this window
-   short.
-
-While old and new servers run side by side:
-
-- A create, a push or an upload that reaches an old server fails with a
-  server error (500). The agent or the person sends it again.
-- Typing that reaches an old server gets 404. The browser sends the text
-  again by itself, and no typed text is lost.
-- A page or a pull that an old server serves can miss the newest typing.
-- A reader whose page asks an old server for changes can see the "no access"
-  page. A reload shows the document.
-
-To roll back to the release before, apply the down migrations of this
-release (45 to 34) before you deploy the earlier image. The down migration of
-44 refuses while a version is open. The servers seal a version 10 minutes
-after its last edit, so apply it when nobody edited for that time.
+A rolling deploy to the release with live editing (migration 44) is safe.
+While old and new servers run side by side, an old server cannot save a
+version: its pushes and edits fail with a server error, and the agent or the
+person sends them again. The browser sends typed text again by itself, also
+when an old server answers that it has no route for it. No typed text is
+lost.
 
 ## Production checklist
 

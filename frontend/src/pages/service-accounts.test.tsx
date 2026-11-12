@@ -85,18 +85,18 @@ describe("ServiceAccountsPage", () => {
     vi.spyOn(api, "listServiceAccounts").mockResolvedValue({ items: [] });
     renderPage();
     await user.click(screen.getByRole("button", { name: "New bot" }));
-    await user.type(screen.getByRole("textbox", { name: "Name" }), "my-bot");
+    await user.type(screen.getByRole("textbox", { name: "Name" }), "r11-local");
     // Another tab saves the same draft first.
-    act(() => saveFieldDraft("bot-name", "their-bot"));
+    act(() => saveFieldDraft("bot-name", "r11-other"));
 
     expect(
       await screen.findByText("This draft changed in another tab. It now says:"),
     ).toBeInTheDocument();
-    expect(screen.getByText("their-bot")).toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("my-bot");
+    expect(screen.getByText("r11-other")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("r11-local");
     expect(screen.getByRole("button", { name: "Create bot" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Use the new text" }));
-    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("their-bot");
+    expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("r11-other");
     expect(screen.getByRole("button", { name: "Create bot" })).toBeEnabled();
   });
 
@@ -353,7 +353,7 @@ describe("one-time keys after the reader leaves Bots", () => {
 describe("the Bots list", () => {
   const bots = Array.from({ length: 13 }, (_, i) => ({
     id: `sa_${i}`,
-    name: `release-check-1793869941${i}@hearty.review.bot`,
+    name: `sol-r10-1793869941${i}@hearty.review.bot`,
   }));
   beforeEach(() => {
     vi.spyOn(api, "listServiceAccounts").mockResolvedValue({
@@ -370,11 +370,9 @@ describe("the Bots list", () => {
     window.matchMedia = () =>
       ({ matches: false, addEventListener() {}, removeEventListener() {} }) as never;
     renderPage();
-    const row = await screen.findByRole("button", {
-      name: /^release-check-17938699412\b/,
-    });
-    expect(row).toHaveAttribute("title", "release-check-17938699412@hearty.review.bot");
-    expect(within(row).getByText("release-check-17938699412")).toHaveClass("truncate");
+    const row = await screen.findByRole("button", { name: /^sol-r10-17938699412\b/ });
+    expect(row).toHaveAttribute("title", "sol-r10-17938699412@hearty.review.bot");
+    expect(within(row).getByText("sol-r10-17938699412")).toHaveClass("truncate");
     expect(within(row).getByText("@hearty.review.bot")).toBeInTheDocument();
   });
 
@@ -391,17 +389,15 @@ describe("the Bots list", () => {
     Element.prototype.scrollIntoView = scrolled;
     renderPage();
 
-    await screen.findByRole("button", { name: /^release-check-17938699410\b/ });
+    await screen.findByRole("button", { name: /^sol-r10-17938699410\b/ });
     // The first bot shows at once, with no jump.
     expect(scrolled).not.toHaveBeenCalled();
-    await user.click(
-      screen.getByRole("button", { name: /^release-check-17938699412\b/ }),
-    );
+    await user.click(screen.getByRole("button", { name: /^sol-r10-17938699412\b/ }));
     await waitFor(() =>
       expect(scrolled).toHaveBeenCalledWith({ block: "start", behavior: "smooth" }),
     );
     expect(document.activeElement).toHaveTextContent(
-      "release-check-17938699412@hearty.review.bot",
+      "sol-r10-17938699412@hearty.review.bot",
     );
     expect(screen.getByRole("button", { name: "New key" })).toBeInTheDocument();
   });
@@ -418,9 +414,7 @@ describe("the Bots list", () => {
     Element.prototype.scrollIntoView = scrolled;
     renderPage();
 
-    const first = await screen.findByRole("button", {
-      name: /^release-check-17938699410\b/,
-    });
+    const first = await screen.findByRole("button", { name: /^sol-r10-17938699410\b/ });
     expect(first).toHaveAttribute("aria-current", "true");
     await user.click(first);
     await waitFor(() => expect(scrolled).toHaveBeenCalledTimes(1));

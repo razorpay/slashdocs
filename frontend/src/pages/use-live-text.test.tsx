@@ -1837,49 +1837,27 @@ describe("a change of a start tag or a style", () => {
     expect(reload).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ["goes in place for a reader when the frame keeps it", { ok: true }, false],
-    ["waits behind the banner when the frame takes it out", { withdrawn: true }, true],
-    ["waits behind the banner when a script changed the style", {}, true],
-  ])("asks the frame first for a style change, and %s", async (_name, answer, held) => {
+  it("waits behind the banner for a reader when a style changes, and goes in place when they ask", async () => {
     vi.spyOn(api, "documentChanges").mockResolvedValue(
       changes(2, TAGGED, TAGGED.replace("p{}", "p{color:red}"), false),
     );
-    const { patch, frame, frameShows, reload, holdUpdate } = setup({
+    const { patch, patched, reload, holdUpdate, result } = setup({
       latest: 2,
       editing: false,
     });
-    patch.mockResolvedValueOnce({ ...frame, ok: false, stale: false, ...answer });
     await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(holdUpdate).toHaveBeenLastCalledWith({ authors: [asha] });
+    expect(patch).not.toHaveBeenCalled();
 
-    expect(patch).toHaveBeenCalledExactlyOnceWith(
-      [{ style: 0, html: "p{color:red}" }],
-      0,
-      true,
-      true,
-    );
-    expect(holdUpdate).toHaveBeenLastCalledWith(held ? { authors: [asha] } : undefined);
-    expect(frameShows).toHaveBeenCalledTimes(held ? 0 : 1);
-    expect(reload).not.toHaveBeenCalled();
-  });
-
-  it("loads the frame for a style that a script changed when the reader asks for the latest", async () => {
-    vi.spyOn(api, "documentChanges").mockResolvedValue(
-      changes(2, TAGGED, TAGGED.replace("p{}", "p{color:red}"), false),
-    );
-    const { patch, frame, reload, result } = setup({ latest: 2, editing: false });
-    patch.mockResolvedValue({ ...frame, ok: false, stale: false });
-    await act(() => vi.advanceTimersByTimeAsync(0));
-    expect(reload).not.toHaveBeenCalled();
-
+    patched([]);
     await act(() => result.current.showUpdate());
-    expect(patch).toHaveBeenLastCalledWith(
+    expect(patch).toHaveBeenCalledExactlyOnceWith(
       [{ style: 0, html: "p{color:red}" }],
       0,
       true,
       false,
     );
-    expect(reload).toHaveBeenCalledOnce();
+    expect(reload).not.toHaveBeenCalled();
   });
 });
 

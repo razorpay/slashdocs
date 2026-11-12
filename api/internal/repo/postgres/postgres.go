@@ -290,8 +290,8 @@ func (s *Store) RevokeCLICredential(ctx context.Context, userID, credentialID st
 }
 
 func (s *Store) RoleForDocument(ctx context.Context, p auth.Principal, documentID string) (repo.Role, error) {
-	role, err := roleForDocumentQ(ctx, s.q, p, documentID)
-	if errors.Is(err, repo.ErrNotFound) {
+	owner, err := s.q.GetDocumentOwner(ctx, documentID)
+	if errors.Is(err, pgx.ErrNoRows) {
 		// A missing document and an unshared one are the same permission
 		// verdict (RoleNone), not an error; errors are reserved for lookup
 		// faults so callers can map them to a 500 rather than a 403.
@@ -300,7 +300,20 @@ func (s *Store) RoleForDocument(ctx context.Context, p auth.Principal, documentI
 	if err != nil {
 		return "", err
 	}
-	return role, nil
+	best := repo.RoleNone
+	if string(p.Type) == owner.OwnerType && p.ID == owner.OwnerID {
+		best = repo.RoleOwner
+	}
+	inherited, err := s.q.ListDocumentInheritedRoles(ctx, documentID)
+	if err != nil {
+		return "", err
+	}
+	for _, g := range inherited {
+		if principalHasGrant(p, g.PrincipalType, g.PrincipalID) {
+			best = repo.MaxRole(best, repo.Role(g.Role))
+		}
+	}
+	return best, nil
 }
 
 func principalHasGrant(p auth.Principal, principalType, principalID string) bool {
@@ -847,13 +860,11 @@ func (s *Store) ListDocuments(ctx context.Context, p auth.Principal, page repo.P
 	return out, more, err
 }
 func (s *Store) SearchDocuments(ctx context.Context, p auth.Principal, search repo.DocumentSearch, includeOrgWide bool, page repo.Page) ([]repo.Document, bool, error) {
-	queries := searchQueries(search)
 	rows, err := s.q.SearchDocuments(ctx, dbsqlc.SearchDocumentsParams{
-		MatchQuery:     queries.match,
-		WordsQuery:     queries.words,
-		ExcludeQuery:   queries.exclude,
-		RankQuery:      queries.rank,
-		SnippetQuery:   queries.snippet,
+		MatchQuery:     tsquery(search.Terms, " & "),
+		WordsQuery:     tsqueryWords(search.Terms),
+		ExcludeQuery:   tsquery(search.ExcludedTerms, " | "),
+		RankQuery:      tsquery(search.Terms, " | "),
 		Owners:         search.Owners,
 		Folders:        search.Folders,
 		Labels:         search.Labels,

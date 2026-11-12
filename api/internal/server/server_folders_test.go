@@ -389,26 +389,8 @@ func TestFolderOwnerIsEditorOfContentsOthersOwn(t *testing.T) {
 	}
 	rr = do(t, e.h, http.MethodPatch, "/v1/documents/"+docID, `{"title":"Edited"}`, owner)
 	assertStatus(t, rr, http.StatusForbidden)
-	rr = do(t, e.h, http.MethodPatch, "/v1/folders/"+subID, `{"title":"Renamed by ancestor owner"}`, owner)
-	assertStatus(t, rr, http.StatusForbidden)
-	otherRootID := createFolder(t, e, `{"title":"Other root"}`, owner["X-Test-Principal"])
-	rr = do(t, e.h, http.MethodPatch, "/v1/folders/"+subID, `{"parent_folder_id":"`+otherRootID+`"}`, owner)
-	assertStatus(t, rr, http.StatusForbidden)
 	rr = do(t, e.h, http.MethodDelete, "/v1/folders/"+subID, "", owner)
 	assertStatus(t, rr, http.StatusForbidden)
-
-	// Search uses the same single-owner rule as mutation authorization: the
-	// owner of an ancestor sees this folder as an editor, never as its owner.
-	rr = do(t, e.h, http.MethodGet, "/v1/folders?q=Sub&min_role=editor", "", owner)
-	assertStatus(t, rr, http.StatusOK)
-	if !strings.Contains(rr.Body.String(), subID) {
-		t.Fatalf("editor search omitted descendant: %s", rr.Body.String())
-	}
-	rr = do(t, e.h, http.MethodGet, "/v1/folders?q=Sub&min_role=owner", "", owner)
-	assertStatus(t, rr, http.StatusOK)
-	if strings.Contains(rr.Body.String(), subID) {
-		t.Fatalf("owner search promoted ancestor ownership: %s", rr.Body.String())
-	}
 	rr = do(t, e.h, http.MethodGet, "/v1/documents?q=note", "", owner)
 	assertStatus(t, rr, http.StatusOK)
 	if !strings.Contains(rr.Body.String(), docID) {
@@ -429,11 +411,6 @@ func TestFolderOwnerIsEditorOfContentsOthersOwn(t *testing.T) {
 
 	// The folder owner can move the document out, and then has no role on it.
 	rr = do(t, e.h, http.MethodDelete, "/v1/folders/"+folderID+"/documents/"+docID, "", owner)
-	assertStatus(t, rr, http.StatusConflict)
-	if !strings.Contains(rr.Body.String(), "access_loss_confirmation_required") {
-		t.Fatalf("missing access-loss confirmation response: %s", rr.Body.String())
-	}
-	rr = do(t, e.h, http.MethodDelete, "/v1/folders/"+folderID+"/documents/"+docID+"?acknowledge_access_loss=true", "", owner)
 	assertStatus(t, rr, http.StatusNoContent)
 	rr = do(t, e.h, http.MethodGet, "/v1/documents/"+docID, "", owner)
 	assertStatus(t, rr, http.StatusForbidden)
@@ -558,9 +535,6 @@ func TestFolderAccessChangesHaveABudgetForEachPrincipal(t *testing.T) {
 	}
 }
 
-// A folder search with min_role lists only the folders where the caller has
-// that role, as the move dialog needs. Its breadcrumbs show no folder that
-// the caller cannot see.
 func TestFolderSearchMinRoleAndHiddenAncestors(t *testing.T) {
 	e := newTestEnv(t)
 	owner, other := principalHeader(fixtureOwner), principalHeader(fixtureStranger)
@@ -633,8 +607,6 @@ func TestFolderSearchMinRoleAndHiddenAncestors(t *testing.T) {
 	}
 }
 
-// GET /v1/documents/{id} says if the caller can move the document: an editor
-// of the document also needs editor on its folder, and the owner does not.
 func TestGetDocumentCanMove(t *testing.T) {
 	e := newTestEnv(t)
 	owner := map[string]string{"X-Test-Principal": principalHeader(fixtureOwner), "Content-Type": "application/json"}
@@ -653,28 +625,5 @@ func TestGetDocumentCanMove(t *testing.T) {
 	assertStatus(t, do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/documents", `{"document_id":"`+docID+`"}`, owner), http.StatusOK)
 	if canMove(other) || !canMove(owner) {
 		t.Errorf("can_move = %v for the editor and %v for the owner, want false and true", canMove(other), canMove(owner))
-	}
-}
-
-// A document search does not show the folder of a result when the caller
-// cannot see that folder.
-func TestDocumentSearchHidesUnseenParentFolder(t *testing.T) {
-	e := newTestEnv(t)
-	owner := map[string]string{"X-Test-Principal": principalHeader(fixtureOwner), "Content-Type": "application/json"}
-	folderID := createFolder(t, e, `{"title":"Secret folder"}`, owner["X-Test-Principal"])
-	docID, _ := e.createDocument("Quarterly zebra", "<p>x</p>", fixtureOwner)
-	assertStatus(t, do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/documents", `{"document_id":"`+docID+`"}`, owner), http.StatusOK)
-	assertStatus(t, do(t, e.h, http.MethodPost, "/v1/documents/"+docID+"/grants", `{"address":"`+fixtureStranger.Email+`","role":"viewer"}`, owner), http.StatusCreated)
-
-	search := func(headers map[string]string) string {
-		rr := do(t, e.h, http.MethodGet, "/v1/documents?q=zebra", "", headers)
-		assertStatus(t, rr, http.StatusOK)
-		return rr.Body.String()
-	}
-	if body := search(map[string]string{"X-Test-Principal": principalHeader(fixtureStranger)}); !strings.Contains(body, docID) || strings.Contains(body, "Secret folder") {
-		t.Errorf("stranger search = %s, want the document without its folder", body)
-	}
-	if body := search(owner); !strings.Contains(body, "Secret folder") {
-		t.Errorf("owner search = %s, want the folder", body)
 	}
 }

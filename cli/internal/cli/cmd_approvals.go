@@ -12,7 +12,7 @@ import (
 
 func approversCmd(g *globals, out io.Writer) *cobra.Command {
 	c := &cobra.Command{Use: "approvers", Short: "Manage who can approve a document"}
-	var address string
+	var address, principal string
 	add := &cobra.Command{
 		Use:   "add <doc_id>",
 		Short: "Assign an approver",
@@ -24,18 +24,27 @@ func approversCmd(g *globals, out io.Writer) *cobra.Command {
 			"  slashdocs docs approvers add doc_… --to qa-bot@brave.otter.bot",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if address == "" {
+			body := map[string]any{}
+			var target string
+			switch {
+			case address != "":
+				body["address"] = address
+				target = address
+			case principal != "":
+				body["principal"] = parsePrincipal(principal)
+				target = principal
+			default:
 				return usageError{errors.New("pass --to <email-or-bot-address>")}
 			}
-			body := map[string]any{"address": address}
 			return action(g, out, func(c *Client) ([]byte, error) {
 				return c.doJSON("POST", apiPath("/v1/documents/%s/approvers", args[0]), body)
 			}, func(m map[string]any) string {
-				return fmt.Sprintf("Assigned %s as an approver on %s.", address, args[0])
+				return fmt.Sprintf("Assigned %s as an approver on %s.", target, args[0])
 			})
 		},
 	}
 	add.Flags().StringVar(&address, "to", "", "email or bot address (e.g. reviewer@org.example)")
+	add.Flags().StringVar(&principal, "principal", "", "legacy: sa:<id> or user:<email>")
 	list := simplePath(g, out, "list", "GET", "/v1/documents/%s/approvers")
 	list.Use = "list <doc_id>"
 	list.Short = "List assigned approvers"

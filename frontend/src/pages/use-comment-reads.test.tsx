@@ -37,17 +37,13 @@ function setup(items: Comment[], active?: string) {
   return { ...view, client, mark, unread, reply };
 }
 
-it("marks the open thread read once its popover read it, and loads the inbox again", async () => {
+it("marks the open thread read once its popover read it", () => {
   const { result, mark, unread, client } = setup([thread("a"), thread("b")], "a");
-  const invalidate = vi.spyOn(client, "invalidateQueries");
   expect(unread()).toEqual([true, true]);
   act(() => result.current.readThread("a"));
   expect(unread()).toEqual([false, true]);
   expect(mark).toHaveBeenCalledExactlyOnceWith("doc_1", "a");
   expect(client.getQueryData<{ items: Comment[] }>(key)?.items[0].unread).toBe(false);
-  await vi.waitFor(() =>
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.inbox() }),
-  );
 });
 
 it("keeps the open thread read when a live reply comes into it", async () => {

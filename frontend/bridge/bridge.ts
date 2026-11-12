@@ -174,7 +174,7 @@ type Theme = "dark" | "light";
   // The document has open threads, so the app takes the keys that go from
   // one to the next.
   let threadKeys = false;
-  const THREAD_KEYS = ["n", "N"];
+  const THREAD_KEYS = [..."jknpJ"];
   let chordTimer: ReturnType<typeof setTimeout> | undefined;
   function armChord(armed: boolean): void {
     chordArmed = armed;
@@ -1008,12 +1008,11 @@ type Theme = "dark" | "light";
   // it back. Without this, unwrapping and re-wrapping the text nodes under
   // the selection makes the browser drop the native selection highlight
   // while the user is still selecting. With caret set, a collapsed selection
-  // is kept too. In Edit mode, it is the caret of the editor, so a paint
-  // keeps it.
+  // (the editor's caret) is kept too.
   function saveSelection(
     d: Document,
     body: HTMLElement,
-    caret = textEditing,
+    caret = false,
   ): SavedSelection | null {
     const sel = d.getSelection();
     if (!sel || (sel.isCollapsed && !caret) || sel.rangeCount < 1) return null;
@@ -2617,8 +2616,8 @@ type Theme = "dark" | "light";
       if (ev.key === "?" && !modified) {
         parent.postMessage({ type: "slashdocs:keydown", key: "?" }, targetOrigin());
       }
-      // While the document has open threads, N and Shift+N go from thread to
-      // thread in the app.
+      // While the document has open threads, J and K go from thread to
+      // thread in the app, with N and P, and Shift+J to the next unread one.
       if (threadKeys && !modified && THREAD_KEYS.includes(ev.key)) {
         ev.preventDefault();
         if (!ev.repeat)
@@ -2941,8 +2940,6 @@ type Theme = "dark" | "light";
         if (textEditing) d.body.focus({ preventScroll: true });
         placeCaret(d, e.data.caret);
       }
-    } else if (e.data.type === "slashdocs:history") {
-      textEditor?.run(e.data.redo === true ? "historyRedo" : "historyUndo");
     } else if (e.data.type === "slashdocs:vim-key") {
       const d = doc();
       const KeyboardEventCtor = d?.defaultView?.KeyboardEvent;

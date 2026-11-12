@@ -1,12 +1,9 @@
-import { type Page } from "@playwright/test";
+import { type FrameLocator, type Page } from "@playwright/test";
 import {
-  bridge,
   expect,
-  latestSource,
   notSaved,
   openEditable,
   openHistory,
-  renderedDocument,
   reviewerOn,
   startEditing,
   test,
@@ -16,6 +13,14 @@ import {
 // Each document opens in Comment mode. An editor starts Edit mode with E or
 // Edit in the bar, and leaves it with C, Done or one Esc, once their edits
 // are saved. The edits of one sitting in Edit mode are one History entry.
+
+function bridge(page: Page): FrameLocator {
+  return page.frameLocator('iframe[title="Rendered document"]');
+}
+
+function renderedDocument(page: Page): FrameLocator {
+  return bridge(page).frameLocator("iframe#slashdocs-doc");
+}
 
 // A script that changes the page all the time, as a live chart does.
 function documentHTML(title: string) {
@@ -41,6 +46,15 @@ const editingText = (page: Page) =>
     "contenteditable",
     "true",
   );
+// The live document on the server.
+async function latestSource(page: Page, id: string): Promise<string> {
+  const { current_version_id } = await (
+    await page.request.get(`/v1/documents/${id}`)
+  ).json();
+  return (
+    await page.request.get(`/v1/documents/${id}/versions/${current_version_id}/html`)
+  ).text();
+}
 // The entries of the open History, the newest first.
 const historyEntries = (page: Page) =>
   page
@@ -177,34 +191,6 @@ test("Done right after the last key saves the edit before Comment mode", async (
     .poll(() => latestSource(page, document.id))
     .toContain("before giving up. Twice.");
   expect(await latestSource(page, document.id)).toContain("The notes say why. Now.");
-});
-
-test("Undo and Redo work in Comment mode too, from the bar and from the document", async ({
-  page,
-  slashdocs,
-}) => {
-  const title = uniqueName("Undo");
-  const document = await slashdocs.createDocument(title, documentHTML(title));
-  await openEditable(page, document.id);
-  const tail = renderedDocument(page).locator("#tail");
-  await tail.click();
-  await page.keyboard.press("End");
-  await page.keyboard.type(" Now.");
-  await done(page).click();
-  await commentingText(page);
-
-  // The focus is on the bar after Done.
-  await page.keyboard.press("ControlOrMeta+z");
-  await expect(tail).toHaveText("The notes say why.");
-  await expect.poll(() => latestSource(page, document.id)).not.toContain("why. Now.");
-  await commentingText(page);
-
-  // And in the document, with no caret in it.
-  await renderedDocument(page).locator("h1").click();
-  await page.keyboard.press("ControlOrMeta+Shift+z");
-  await expect(tail).toHaveText("The notes say why. Now.");
-  await expect.poll(() => latestSource(page, document.id)).toContain("why. Now.");
-  await commentingText(page);
 });
 
 test("a sitting in Edit mode is one History entry, which says what changed", async ({

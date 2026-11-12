@@ -87,7 +87,7 @@ func readPastedCallback(in io.Reader, errOut io.Writer, state string, resultCh c
 	}
 }
 
-// sendCallbackResult keeps the first result. The login waits for only one.
+// sendCallbackResult keeps the first result; the login waits for only one.
 func sendCallbackResult(resultCh chan<- callbackResult, res callbackResult) {
 	select {
 	case resultCh <- res:

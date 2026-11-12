@@ -841,7 +841,7 @@ describe("undo after the text of other people came in", () => {
       return (seed >>> 8) % below;
     };
     let undone = 0;
-    for (let run = 0; run < 100; run++) {
+    for (let run = 0; run < 300; run++) {
       stop?.();
       const doc = await open("<p> a b c</p>");
       const p = document.querySelector("p")!;
@@ -902,7 +902,7 @@ describe("undo after the text of other people came in", () => {
       return (seed >>> 8) % below;
     };
     let undone = 0;
-    for (let run = 0; run < 50; run++) {
+    for (let run = 0; run < 200; run++) {
       stop?.();
       const doc = await open("<p> a b c</p>");
       const p = document.querySelector("p")!;
@@ -2432,38 +2432,4 @@ describe("a patch of a start tag or a style", () => {
     assert.isFalse(doc.editor.patch([{ style: at, html: "p { color: red }" }], 0).ok);
     assert.equal(style.textContent, "p { color: green } b { color: red }");
   });
-
-  test.each([
-    ["in the body", (d: Document) => d],
-    ["in the head", (d: Document) => d.head.append(d.querySelector("style")!)],
-  ])(
-    "takes a style and a start tag out again when the patch is not kept, with a style %s",
-    async (_where, script) => {
-      const doc = await open(
-        '<style>p { color: red }</style><p class="a">One</p>',
-        script,
-      );
-      const style = Array.from(document.querySelectorAll("style")).find((el) =>
-        el.textContent!.startsWith("p "),
-      )!;
-      const patches = [
-        { style: offset(doc.source, "<style>"), html: "p { color: blue }" },
-        { tag: offset(doc.source, "<p class"), html: '<p class="b">' },
-      ];
-      let seen: Range[] = [];
-      const patch = (keep: boolean) =>
-        doc.editor.patch(patches, 0, () => (ranges) => {
-          seen = ranges;
-          return keep;
-        });
-      assert.isTrue(patch(false).withdrawn);
-      // A change of looks has no new content.
-      assert.deepEqual(seen, []);
-      assert.equal(style.textContent, "p { color: red }");
-      assert.equal(document.querySelector("p")!.className, "a");
-      assert.isTrue(patch(true).ok);
-      assert.equal(style.textContent, "p { color: blue }");
-      assert.equal(document.querySelector("p")!.className, "b");
-    },
-  );
 });

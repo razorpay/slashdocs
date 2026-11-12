@@ -101,9 +101,7 @@ describe("DocumentPage", () => {
       [{ requester: { type: "user", id: "usr_reader" }, requested_at: "2026-11-01" }],
     );
     renderPage();
-    expect(
-      await screen.findByRole("button", { name: /Request sent/ }, { timeout: 3_000 }),
-    ).toBeDisabled();
+    expect(await screen.findByRole("button", { name: /Request sent/ })).toBeDisabled();
     expect(eventSource).not.toHaveBeenCalled();
     expect(calls.some((call) => call.url.includes("/presence"))).toBe(false);
   });

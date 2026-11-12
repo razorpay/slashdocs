@@ -1,9 +1,7 @@
-import { type Browser, type Page } from "@playwright/test";
+import { type Browser, type FrameLocator, type Page } from "@playwright/test";
 import {
   expect,
-  latestSource,
   openHistory,
-  renderedDocument,
   reviewerOn,
   startEditing,
   test,
@@ -16,6 +14,12 @@ import {
 // without a load of the frame.
 
 const SHOTS = process.env.SLASHDOCS_E2E_SHOTS;
+
+function renderedDocument(page: Page): FrameLocator {
+  return page
+    .frameLocator('iframe[title="Rendered document"]')
+    .frameLocator("iframe#slashdocs-doc");
+}
 
 function documentHTML(title: string, sections = 6) {
   const body = Array.from(
@@ -59,6 +63,15 @@ const mark = (page: Page) =>
     .evaluate((body) => void ((body as HTMLElement).dataset.e2eKept = "yes"));
 const kept = (page: Page) =>
   renderedDocument(page).locator("body").getAttribute("data-e2e-kept");
+
+async function latestSource(page: Page, id: string): Promise<string> {
+  const { current_version_id } = await (
+    await page.request.get(`/v1/documents/${id}`)
+  ).json();
+  return (
+    await page.request.get(`/v1/documents/${id}/versions/${current_version_id}/html`)
+  ).text();
+}
 
 // shot saves a picture of the page, after its motion ends.
 const shot = async (page: Page, name: string) => {
@@ -151,8 +164,8 @@ test("two people type in one paragraph at once, and both texts stay", async ({
   await reviewer.context().close();
 });
 
-// Both people type fast, with no pause, so each operation of one meets the
-// operations of the other. The words of each person stay whole and in their order. At one
+// Both people type fast, with no pause, so each save of one meets saves of
+// the other. The words of each person stay whole and in their order. At one
 // point, the words of the person who starts later come first: their caret
 // stays before the text that came in at it.
 const FIRST = " on the first of May, before the summer and the long break";
@@ -190,8 +203,8 @@ for (const [where, mine, theirs, merged] of [
 
     await placeCaret(page, "#shared", mine);
     await placeCaret(reviewer, "#shared", theirs);
-    // The reviewer starts after the first operation of the admin reaches the
-    // server, and types while the admin types on.
+    // The reviewer starts after the first save of the admin, and types
+    // while the admin types on.
     const first = page.keyboard.type(FIRST, { delay: 25 });
     await page.waitForResponse((r) => r.url().endsWith("/ops"));
     await Promise.all([first, reviewer.keyboard.type(LATER, { delay: 35 })]);
@@ -374,7 +387,7 @@ const selectNode = (page: Page, selector: string) =>
 
 // Each removal has the texts that the document then holds. The keys of the
 // person stay in their paragraph, which the removal keeps for them, and
-// their last key "Z" goes there too.
+// their last key "Z" is saved there too.
 const removals: [string, (reviewer: Page) => Promise<void>, string[]][] = [
   [
     "removes the paragraph",
@@ -706,70 +719,6 @@ test("a push that changes nothing in the reader's view goes in with no banner, f
   await reader.context().close();
 });
 
-test("a push that changes only styles goes in with no banner unless it moves what the reader reads", async ({
-  page,
-  browser,
-  slashdocs,
-}) => {
-  const title = uniqueName("Coedit styles");
-  const html = documentHTML(title, 40).replace(
-    "</title>",
-    "</title><style>p { color: rgb(0, 0, 0); }</style>",
-  );
-  const document = await slashdocs.createDocument(title, html);
-  await slashdocs.shareWithAnyone(document.id, "viewer");
-  const path = `/app/d/${document.id}`;
-  await page.goto(path);
-  const reader = await reviewerOn(browser, path);
-  await expect(renderedDocument(reader).locator("#shared")).toBeVisible();
-  await mark(reader);
-  const banner = reader.getByRole("button", { name: "Show the latest" });
-  const s30 = renderedDocument(reader).locator("#s30");
-  await s30.evaluate((el) => el.scrollIntoView({ block: "center" }));
-  const before = await topOf(reader, "#s30");
-  const restyle = async (css: string) => {
-    const source = await latestSource(page, document.id);
-    await slashdocs.pushVersion(
-      document.id,
-      source.replace(/<style>.*<\/style>/, `<style>${css}</style>`),
-    );
-  };
-
-  // An agent changes a color: it goes in, and nothing moves.
-  await restyle("p { color: rgb(200, 0, 0); }");
-  await expect(s30).toHaveCSS("color", "rgb(200, 0, 0)");
-  await expect(banner).toHaveCount(0);
-  expect(await topOf(reader, "#s30")).toBe(before);
-  expect(await kept(reader)).toBe("yes");
-
-  // An agent makes the title above the view larger: the text of the reader
-  // stays where it is.
-  await restyle("p { color: rgb(200, 0, 0); } h1 { font-size: 120px; }");
-  await expect(renderedDocument(reader).locator("h1")).toHaveCSS("font-size", "120px");
-  await expect(banner).toHaveCount(0);
-  expect(Math.abs((await topOf(reader, "#s30")) - before)).toBeLessThanOrEqual(2);
-
-  // An agent makes the paragraph that the reader reads much larger. The
-  // text after it would move, so the change waits.
-  await restyle(
-    "p { color: rgb(200, 0, 0); } h1 { font-size: 120px; } #s30 { font-size: 48px; }",
-  );
-  await expect(banner).toBeVisible();
-  await expect(s30).toHaveCSS("font-size", "16px");
-  await banner.click();
-  await expect(s30).toHaveCSS("font-size", "48px");
-  await expect(banner).toHaveCount(0);
-
-  // An agent makes all the text larger: the view of the reader cannot stay.
-  await restyle("body { font-size: 24px; } p { color: rgb(200, 0, 0); }");
-  await expect(banner).toBeVisible();
-  await expect(renderedDocument(reader).locator("#s29")).toHaveCSS("font-size", "16px");
-  await banner.click();
-  await expect(renderedDocument(reader).locator("#s29")).toHaveCSS("font-size", "24px");
-  expect(await kept(reader)).toBe("yes");
-  await reader.context().close();
-});
-
 test("an editor who types while an agent pushes keeps the text of both", async ({
   page,
   slashdocs,
@@ -884,7 +833,7 @@ test("an editor who types offline saves on return, and gets the text of the othe
   await page.context().setOffline(true);
   await placeCaret(page, "#shared", "starts here");
   await page.keyboard.type(" without a network", { delay: 30 });
-  // After some seconds the bar says why the text does not reach the server.
+  // After some seconds the bar says why the text does not save.
   const offline = page.getByText("Offline", { exact: true });
   await expect(offline).toBeVisible({ timeout: 15_000 });
   await placeCaret(reviewer, "#shared", "ends there");
@@ -921,8 +870,7 @@ test("an editor who got live changes in Comment mode, and then types, saves both
   await mark(page);
   await startEditing(reviewer);
   await placeCaret(reviewer, "#shared", "ends there");
-  // Each group of words goes to the server as the reviewer types it, and the
-  // reader gets it in place.
+  // Each pause saves, so the reader gets a patch for each group of words.
   let theirs = "ends there";
   for (const words of [" after the review", " of the plan", " in June"]) {
     await reviewer.keyboard.type(words, { delay: 30 });

@@ -11,7 +11,7 @@ it.each([
   [new APIError(403, "forbidden", "x"), "You do not have access to this part."],
   [new APIError(404, "not_found", "x"), "It was not found. It may have moved."],
   [
-    new APIError(503, "unavailable", "Raw server message"),
+    new APIError(503, "unavailable", "R10 raw message"),
     "Check your connection, then try again.",
   ],
   [new TypeError("Failed to fetch"), "Check your connection, then try again."],
@@ -23,7 +23,7 @@ it.each([
       <LoadError title="Could not load the history" error={error} query={query} />,
     );
     expect(screen.getByText(text)).toBeVisible();
-    expect(screen.queryByText("Raw server message")).toBeNull();
+    expect(screen.queryByText("R10 raw message")).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(query.refetch).toHaveBeenCalled();
   },

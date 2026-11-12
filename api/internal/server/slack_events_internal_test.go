@@ -2,7 +2,7 @@ package server
 
 import "testing"
 
-func TestParseDocumentLink(t *testing.T) {
+func TestParseSlashDocsLink(t *testing.T) {
 	h := handlers{deps: dependencies{appOrigin: "https://slashdocs.example", previousOrigins: []string{"https://aidocs.example/"}}}
 	cases := []struct {
 		url, doc, version string
@@ -26,7 +26,7 @@ func TestParseDocumentLink(t *testing.T) {
 		{url: "not a url"},
 	}
 	for _, tc := range cases {
-		doc, version, ok := h.parseDocumentLink(tc.url)
+		doc, version, ok := h.parseSlashDocsLink(tc.url)
 		if ok != tc.ok || doc != tc.doc || version != tc.version {
 			t.Errorf("%s: got (%q, %q, %v), want (%q, %q, %v)", tc.url, doc, version, ok, tc.doc, tc.version, tc.ok)
 		}

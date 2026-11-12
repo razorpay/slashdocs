@@ -85,7 +85,7 @@ function approvalsLabel(status: ApprovalStatus, approved?: number, total?: numbe
 
 // ApprovalStatusBadge is the aggregate-status chip of the approvals dialog.
 // Hidden entirely when the document has no assigned approvers.
-function ApprovalStatusBadge({
+export function ApprovalStatusBadge({
   status,
   approved,
   total,
@@ -303,7 +303,7 @@ function useDecide(docId: string, onDecided?: (d: Decision) => void) {
 // screen. It lives only in the approvals dialog, beside the approver's own
 // row, so the decision and what it currently says are read together. An open
 // Reject stays open when a new version comes, so that its reason stays.
-function ReviewActions({
+export function ReviewActions({
   className,
   onNavigate,
 }: {
@@ -339,8 +339,8 @@ function ReviewActions({
     onError: (e) => toast.error(errorMessage(e, "Could not revoke decision")),
   });
 
-  // The approver's own open comment threads: what a rejection is about, so
-  // they need not retype it.
+  // The reviewer's own open comment threads: what a request for changes is
+  // about, so they need not retype it.
   const mine = useMemo(
     () =>
       comments.filter(
@@ -461,7 +461,7 @@ function ReviewActions({
   );
 }
 
-// RejectDialog lists the approver's open comments, which go with the
+// RejectDialog lists the reviewer's open comments, which go with the
 // rejection, and takes an optional reason. With no comments the reason is
 // required: a bare rejection tells the author nothing.
 function RejectDialog({
@@ -489,9 +489,9 @@ function RejectDialog({
 
 // The form mounts each time the dialog opens. Its reason is a draft of the
 // document (`reject:<docId>`), written for the version that was the latest
-// when the approver started it. It stays through a close, a reload and a new
+// when the reviewer started it. It stays through a close, a reload and a new
 // version. A rejection is on that version only: after a new version, the
-// approver uses the reason for it, or discards it. A late rejection closes
+// reviewer uses the reason for it, or discards it. A late rejection closes
 // only the form that sent it, and clears only the reason that it sent.
 function RejectForm({
   comments,
@@ -615,7 +615,7 @@ function RejectForm({
 // Approvals renders the per-approver decision list for the version being
 // viewed, with decision actions for the signed-in approver and assignment
 // controls for the owner.
-function Approvals({ onClose }: { onClose?: () => void }) {
+export function Approvals({ onClose }: { onClose?: () => void }) {
   const { docId, version, principal } = useDoc();
   const invalidate = useInvalidateApprovals(docId);
   const doc = useQuery({

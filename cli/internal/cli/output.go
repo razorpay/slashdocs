@@ -251,13 +251,6 @@ func humanize(hint string, x any) string {
 		for _, it := range items {
 			row, _ := it.(map[string]any)
 			lines = append(lines, compactRow(row))
-			// A comment thread shows its replies below it, so that an agent
-			// reads the whole conversation.
-			replies, _ := value(row, "replies").([]any)
-			for _, r := range replies {
-				reply, _ := r.(map[string]any)
-				lines = append(lines, "  reply "+compactRow(reply))
-			}
 		}
 		return strings.Join(lines, "\n")
 	}
@@ -309,7 +302,7 @@ func compactRow(m map[string]any) string {
 			parts = append(parts, fmt.Sprintf("%s=%v", k, v))
 		}
 	}
-	for _, key := range []string{"owner", "principal", "created_by", "author", "approver"} {
+	for _, key := range []string{"owner", "principal", "created_by"} {
 		if p, ok := value(m, key).(map[string]any); ok {
 			if label := principalLabel(p); label != "" {
 				parts = append(parts, key+"="+label)
@@ -332,7 +325,7 @@ func compactRow(m map[string]any) string {
 }
 
 // pinLabel names the element of a point comment by its label, or else by its
-// target, or "element", or "page" for a point on the body. It is "" for a
+// target, or "element", or "page" for a point on the body; it is "" for a
 // text comment. The row shows the start of the element's text as
 // selected_text.
 func pinLabel(anchor any) string {

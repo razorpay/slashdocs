@@ -19,34 +19,12 @@ export const queryKeys = {
   foldersAll: () => ["folders"] as const,
   folders: (folderId?: string) => ["folders", folderId || "root"] as const,
   folder: (id: string) => ["folder", id] as const,
-  moveDestinationsAll: () => ["move-destinations"] as const,
-  moveDestinations: (type: "document" | "folder", id: string, reveal?: string) =>
-    ["move-destinations", type, id, "bootstrap", reveal || "initial"] as const,
-  moveDestinationChildren: (
-    type: "document" | "folder",
-    id: string,
-    parent: string | null,
-    cursor?: string,
-    anchor?: string,
-    direction?: "before" | "after",
-  ) =>
-    [
-      "move-destinations",
-      type,
-      id,
-      "children",
-      parent || "root",
-      cursor || (anchor && direction ? `${direction}:${anchor}` : "initial"),
-    ] as const,
-  moveDestinationSearch: (type: "document" | "folder", id: string, query: string) =>
-    ["move-destinations", type, id, "search", query] as const,
   // Prefix key matching folder access lists for every folder.
   folderAccessAll: () => ["folder-access"] as const,
   folderAccess: (id: string) => ["folder-access", id] as const,
   documentAccess: (id: string) => ["document-access", id] as const,
   documentAccessRequests: (id: string) => ["document-access-requests", id] as const,
   managedAccessRequests: () => ["access-requests"] as const,
-  inbox: () => ["inbox"] as const,
   pins: () => ["pins"] as const,
   featured: () => ["featured"] as const,
   // Prefix key matching every people search. Grants change who is a contact.

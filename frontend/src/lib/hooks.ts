@@ -32,7 +32,7 @@ export function useSelf(principal?: Principal): Principal | undefined {
 }
 
 // useDocumentRole is what the signed-in reader may do with a document. The
-// owner may do everything. Anyone else has the role their grants give. The
+// owner may do everything; anyone else has the role their grants give. The
 // grants are asked for only after the document loads with its owner, so a
 // document that does not open asks for nothing more.
 // When the grants do not load, the role is unknown, and `failed` is the query
@@ -73,17 +73,6 @@ export function useAccessRequests() {
   });
 }
 
-// useInbox is what waits on the reader. A read of a thread and a decision
-// load it again, so that the item leaves, and so does a return to the tab.
-export function useInbox() {
-  return useQuery({
-    queryKey: queryKeys.inbox(),
-    queryFn: api.inbox,
-    refetchOnWindowFocus: true,
-    meta: { suppressGlobalError: true },
-  });
-}
-
 // useDebounced is the value after it stays the same for `delay` ms.
 export function useDebounced<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -102,6 +91,8 @@ export function useLastDefined<T>(value: T | undefined): T | undefined {
   return value ?? last;
 }
 
+// useMounted is true while the component is on screen. A late result checks
+// it before it changes the view, so that it never moves a reader who left.
 // useWarnBeforeUnload asks the browser to confirm a reload or a close while
 // `when` holds, as when it would lose what the reader cannot get back.
 export function useWarnBeforeUnload(when: boolean) {
@@ -113,8 +104,6 @@ export function useWarnBeforeUnload(when: boolean) {
   }, [when]);
 }
 
-// useMounted is true while the component is on screen. A late result checks
-// it before it changes the view, so that it never moves a reader who left.
 export function useMounted() {
   const mounted = useRef(false);
   useEffect(() => {

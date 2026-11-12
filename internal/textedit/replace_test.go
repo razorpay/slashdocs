@@ -174,7 +174,7 @@ func TestChangeSummaryNamesWhatAReaderSeesChange(t *testing.T) {
 		{"words", at(base, "twice", "three times"), "Changed “twice” to “three times”"},
 		{"added words", at(base, "The end.", "The end. More words."), "Added “More words.”"},
 		{"removed words", at(base, " The end.", ""), "Removed “The end.”"},
-		// The editor sends the bytes that changed, which can start inside a tag.
+		// The editor saves the bytes that changed, which can start inside a tag.
 		{"paragraph", Replacement{Start: end - 1, End: end - 1, NewHTML: "><p>A new paragraph.</p"},
 			"Added a paragraph: “A new paragraph.”"},
 		{"list item", at(base, "</li></ul>", "</li><li>Write the notes</li></ul>"), "Added a list item: “Write the notes”"},

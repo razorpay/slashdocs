@@ -60,3 +60,20 @@ func TestSearchQueries(t *testing.T) {
 		}
 	}
 }
+
+func TestTsqueryWords(t *testing.T) {
+	for _, tc := range []struct {
+		terms []string
+		want  string
+	}{
+		{terms: nil, want: ""},
+		{terms: []string{"incident"}, want: "'incident':*"},
+		{terms: []string{"error budget", "q3"}, want: "'error':* & 'budget':* & 'q3':*"},
+		{terms: []string{" spaced   out "}, want: "'spaced':* & 'out':*"},
+		{terms: []string{"it's"}, want: "'it''s':*"},
+	} {
+		if got := tsqueryWords(tc.terms); got != tc.want {
+			t.Errorf("tsqueryWords(%q) = %q, want %q", tc.terms, got, tc.want)
+		}
+	}
+}

@@ -10,6 +10,5 @@ export function useInvalidateApprovals(docId: string) {
     q.invalidateQueries({ queryKey: queryKeys.approvers(docId) });
     q.invalidateQueries({ queryKey: queryKeys.document(docId) });
     q.invalidateQueries({ queryKey: queryKeys.documents() });
-    q.invalidateQueries({ queryKey: queryKeys.inbox() });
   };
 }

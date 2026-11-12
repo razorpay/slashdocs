@@ -37,15 +37,6 @@ func MaxRole(a, b Role) Role {
 var ErrNotFound = fmt.Errorf("not found: %w", auth.ErrNotFound)
 var ErrConflict = errors.New("conflict")
 var ErrForbidden = errors.New("forbidden")
-
-// ErrSourceChanged means the document's current parent no longer matches the
-// source supplied by a caller. It is intentionally distinct from a generic
-// conflict so HTTP/MCP callers can ask the user to refresh and retry.
-var ErrSourceChanged = errors.New("source_changed")
-
-// ErrAccessLossConfirmationRequired means a move to Documents would remove
-// the mover's editor access and must be explicitly acknowledged.
-var ErrAccessLossConfirmationRequired = errors.New("access_loss_confirmation_required")
 var ErrInvalidCommentBody = errors.New("invalid comment body")
 var ErrInvalidCommentMention = errors.New("invalid comment mention")
 
@@ -212,8 +203,8 @@ type Approval struct {
 	SHA256        string         `json:"sha256"`
 	Approver      auth.Principal `json:"approver"`
 	Decision      string         `json:"decision"`
-	// Note is the approver's explanation. It is optional, but a rejection
-	// without one needs open comments by the approver instead.
+	// Note is the reviewer's explanation. Optional; a rejection without one
+	// needs open comments by the reviewer instead.
 	Note      string `json:"note,omitempty"`
 	DecidedAt string `json:"decided_at,omitempty"`
 }
@@ -250,100 +241,12 @@ type FolderBreadcrumb struct {
 }
 
 type Folder struct {
-	ID                 string             `json:"id"`
-	Title              string             `json:"title"`
-	Owner              auth.Principal     `json:"owner"`
-	ParentFolderID     string             `json:"parent_folder_id,omitempty"`
-	Ancestors          []FolderBreadcrumb `json:"ancestors,omitempty"`
-	AncestorsTruncated bool               `json:"ancestors_truncated,omitempty"`
+	ID             string             `json:"id"`
+	Title          string             `json:"title"`
+	Owner          auth.Principal     `json:"owner"`
+	ParentFolderID string             `json:"parent_folder_id,omitempty"`
+	Ancestors      []FolderBreadcrumb `json:"ancestors,omitempty"`
 }
-
-// MoveSource is the canonical source expectation accepted by the move-to-
-// folder endpoint. A nil expectation preserves legacy request compatibility;
-// the repository still derives and authorizes the actual source transactionally.
-type MoveSource struct {
-	Kind     string
-	FolderID string
-}
-
-// MoveResult describes the committed move and whether the destination's
-// active grants warrant the existing permission warning.
-type MoveResult struct {
-	Moved             bool
-	PermissionWarning bool
-	AccessLost        bool
-}
-
-// MoveDestinationResource is the resource-scoped context for the move picker.
-// ActualSource is intentionally not serialized; handlers use it only to mint
-// the document's opaque source token.
-type MoveDestinationResource struct {
-	Type             string     `json:"type"`
-	ID               string     `json:"id"`
-	Title            string     `json:"title"`
-	CanMove          bool       `json:"can_move"`
-	CannotMoveReason string     `json:"cannot_move_reason,omitempty"`
-	Source           MoveSource `json:"-"`
-	SourceVisible    bool       `json:"-"`
-	Path             []string   `json:"-"`
-	PathRestricted   bool       `json:"-"`
-	WouldLoseAccess  bool       `json:"-"`
-}
-
-// MoveDestinationKey is the stable, case-insensitive title/id ordering used
-// by the move tree's keyset cursors.
-type MoveDestinationKey struct {
-	Title  string
-	ID     string
-	Before bool
-}
-
-// MoveDestinationNode is the only folder shape exposed by the move picker.
-// It deliberately omits ownership and grant metadata.
-type MoveDestinationNode struct {
-	ID                 string             `json:"id"`
-	Title              string             `json:"title"`
-	ParentID           *string            `json:"parent_id,omitempty"`
-	Access             string             `json:"access"`
-	Selectable         bool               `json:"selectable"`
-	Reason             string             `json:"reason,omitempty"`
-	Current            bool               `json:"current,omitempty"`
-	HasChildren        bool               `json:"has_children"`
-	CanCreateChild     bool               `json:"can_create_child"`
-	RestrictedParent   bool               `json:"restricted_parent,omitempty"`
-	Ancestors          []FolderBreadcrumb `json:"ancestors,omitempty"`
-	AncestorsTruncated bool               `json:"ancestors_truncated,omitempty"`
-}
-
-// MoveDestinationPage is a bounded, anchored window in one tree level.
-type MoveDestinationPage struct {
-	Items  []MoveDestinationNode
-	Before *MoveDestinationKey
-	After  *MoveDestinationKey
-}
-
-type MoveDestinationLevel struct {
-	Parent string
-	Page   MoveDestinationPage
-}
-
-type MoveDestinationBootstrap struct {
-	Resource       MoveDestinationResource
-	Path           []string
-	PathRestricted bool
-	Levels         []MoveDestinationLevel
-	Focus          string
-}
-
-// MoveDestinationSearchResult is a bounded global folder search.
-type MoveDestinationSearchResult struct {
-	Items   []MoveDestinationNode
-	HasMore bool
-}
-
-// MoveSourceVerifier is invoked only after the repository has locked the
-// document and authorized its actual source and requested destination.
-type MoveSourceVerifier func(MoveSource) bool
 
 // FolderAccess is one element of a folder's ancestor chain annotated with a
 // principal's effective role at that folder (RoleNone when they have no
@@ -386,7 +289,6 @@ type Page struct {
 // fields do not filter.
 type DocumentSearch struct {
 	Terms         []string // Every term is in the title or the text.
-	TitleTerms    []string // Every term is in the title.
 	ExcludedTerms []string // No term is in the title or the text.
 	Owners        []string // The owner's ID, email, or email name is one of these.
 	Folders       []string // A folder that holds the document has one of these titles or IDs.
@@ -429,23 +331,6 @@ type DocumentAccessRequest struct {
 	AccessRequest
 	DocumentID    string `json:"document_id"`
 	DocumentTitle string `json:"document_title"`
-}
-
-// InboxPage is how many items one read of an inbox gives at most.
-const InboxPage = 50
-
-// InboxItem is a thing that waits on a principal.
-type InboxItem struct {
-	// Kind is "approval" for a document to approve, or "thread" for a thread
-	// with a message to read.
-	Kind          string `json:"kind"`
-	DocumentID    string `json:"document_id"`
-	DocumentTitle string `json:"document_title"`
-	CommentID     string `json:"comment_id,omitempty"`
-	// From asked for the approval, or wrote the newest unread message, Body.
-	From auth.Principal `json:"from"`
-	Body string         `json:"body,omitempty"`
-	At   string         `json:"at"`
 }
 
 type ServiceAccount struct {
@@ -726,8 +611,8 @@ type CommentUpdate struct {
 	Body     *string
 	Status   string
 	Mentions *[]CommentMention
-	// Anchor moves a point comment. Callers validate it. A text comment
-	// follows its text through MoveAnchors, not through an update.
+	// Anchor moves a point comment, or follows the text of a text comment.
+	// Callers validate it.
 	Anchor *Anchor
 	// BaseBody, when set, is the body that the edit started from. The update
 	// fails with ErrConflict when the body is no longer this.
@@ -794,12 +679,6 @@ type Repository interface {
 	// ListManagedAccessRequests returns the requests for every document on
 	// which the principal manages access, the newest first.
 	ListManagedAccessRequests(ctx context.Context, principal auth.Principal) ([]DocumentAccessRequest, error)
-	// Inbox returns a page of what waits on the principal, the newest first,
-	// after offset items: the documents that they approve and did not decide
-	// on, and the open threads on their documents, that they wrote in, or that
-	// mention them, with a message by someone else after their last read or
-	// message. It does not check access to the documents.
-	Inbox(ctx context.Context, principal auth.Principal, offset int) ([]InboxItem, error)
 	ResolveBearerToken(ctx context.Context, tokenHash string) (auth.Principal, error)
 	ResolveUser(ctx context.Context, id string) (auth.Principal, error)
 	// UpsertGoogleUser returns *EmailIdentityConflictError when the email
@@ -970,14 +849,9 @@ type Repository interface {
 	// FolderMayBroadenAccess reports whether content of owner placed in the
 	// folder may become visible to others.
 	FolderMayBroadenAccess(ctx context.Context, folderID string, owner auth.Principal) (bool, error)
-	MoveDocumentToFolder(ctx context.Context, principal auth.Principal, folderID, documentID string, expectedSource ...*MoveSource) (MoveResult, error)
-	MoveDocumentToRoot(ctx context.Context, principal auth.Principal, folderID, documentID string, acknowledgeAccessLoss bool) (MoveResult, error)
-	MoveDestinationResource(ctx context.Context, principal auth.Principal, resourceType, resourceID string, includeOrgWide bool) (MoveDestinationResource, error)
-	BootstrapMoveDestinations(ctx context.Context, principal auth.Principal, resourceType, resourceID, revealFolderID string, limit int, includeOrgWide bool) (MoveDestinationBootstrap, error)
-	MoveDestinationPath(ctx context.Context, principal auth.Principal, resourceType, resourceID, targetFolderID string, includeOrgWide bool) ([]string, bool, error)
-	ListMoveDestinations(ctx context.Context, principal auth.Principal, resourceType, resourceID, parentFolderID string, after *MoveDestinationKey, anchorFolderID, anchorDirection string, limit int, includeOrgWide bool) (MoveDestinationPage, error)
-	SearchMoveDestinations(ctx context.Context, principal auth.Principal, resourceType, resourceID, query string, limit int, includeOrgWide bool) (MoveDestinationSearchResult, error)
-	MoveDocument(ctx context.Context, principal auth.Principal, documentID, destinationFolderID string, acknowledgeAccessLoss bool, verify MoveSourceVerifier) (MoveResult, MoveSource, bool, error)
+	// MoveDocumentToFolder reports whether the move may broaden access.
+	MoveDocumentToFolder(ctx context.Context, principal auth.Principal, folderID, documentID string) (bool, error)
+	MoveDocumentToRoot(ctx context.Context, folderID, documentID string) error
 	ListFolderDocuments(ctx context.Context, principal auth.Principal, folderID string) ([]Document, error)
 	ListEffectiveAccess(ctx context.Context, resourceType, resourceID string) ([]EffectiveAccessItem, error)
 	ListPins(ctx context.Context, principal auth.Principal) ([]Pin, error)
@@ -985,8 +859,8 @@ type Repository interface {
 	DeletePin(ctx context.Context, principal auth.Principal, resourceType, resourceID string) error
 	ListHiddenFeaturedItems(ctx context.Context, principal auth.Principal) ([]string, error)
 	HideFeaturedItem(ctx context.Context, principal auth.Principal, resourceID string) error
-	// CreateApprovalRequest assigns an approver. It returns ErrConflict when
-	// the approver is already assigned. It seals no version.
+	// CreateApprovalRequest assigns an approver; ErrConflict when already
+	// assigned. It seals no version.
 	// DeleteApprovalRequest removes the assignment and revokes all of that
 	// approver's decisions on the document.
 	CreateApprovalRequest(ctx context.Context, documentID string, approver, requestedBy auth.Principal) (ApprovalRequest, error)
@@ -997,18 +871,17 @@ type Repository interface {
 	// caller shows: it returns a *VersionConflictError when it is not the
 	// seq of the live document. With no seq, the decision is on the live
 	// document. It returns ErrEditing while the version is open and another
-	// person typed a moment ago. A decision on an open version that the
-	// seal removes, because it holds the text of the version before, is for
-	// that version.
-	// It upserts the approver's decision on the content of a version. The
-	// bool reports whether it made a new decision row (false = replaced). It
-	// returns ErrNotFound when the version is not part of the document, a
-	// *VersionConflictError when the content of the document changed since
-	// that version, and ErrForbidden when the caller is not an assigned
-	// approver.
+	// person typed a moment ago. A
+	// decision on an open version that the seal removes, because it holds
+	// the text of the version before, is for that version.
+	// CreateOrUpdateApproval upserts the approver's decision on the content of
+	// a version. The bool reports whether a new decision row was created
+	// (false = replaced). ErrNotFound when the version is not part of the
+	// document; a *VersionConflictError when the document's content changed
+	// since that version; ErrForbidden when they are not an assigned approver.
 	CreateOrUpdateApproval(ctx context.Context, documentID, versionID string, seq *int64, decision, note string, approver auth.Principal) (Approval, bool, error)
-	// DeleteApproval revokes the approver's own decision. It returns
-	// ErrForbidden when the decision belongs to someone else.
+	// DeleteApproval revokes the approver's own decision; ErrForbidden when the
+	// decision belongs to someone else.
 	DeleteApproval(ctx context.Context, documentID, approvalID string, approver auth.Principal) error
 	// ListApprovals returns the active decisions on the given content.
 	ListApprovals(ctx context.Context, documentID, sha256 string) ([]Approval, error)

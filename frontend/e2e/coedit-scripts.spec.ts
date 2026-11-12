@@ -1,18 +1,16 @@
-import { type Page } from "@playwright/test";
-import {
-  expect,
-  latestSource,
-  renderedDocument,
-  reviewerOn,
-  startEditing,
-  test,
-  uniqueName,
-} from "./fixtures";
+import { type FrameLocator, type Page } from "@playwright/test";
+import { expect, reviewerOn, startEditing, test, uniqueName } from "./fixtures";
 
 // A document whose own script makes some of its text. When another person
 // changes a string of that script, an attribute, or a style, the frame of an
 // editor shows the change in place: it does not load again, and the caret
 // of the editor stays where it was.
+
+function renderedDocument(page: Page): FrameLocator {
+  return page
+    .frameLocator('iframe[title="Rendered document"]')
+    .frameLocator("iframe#slashdocs-doc");
+}
 
 function documentHTML(title: string) {
   return `<!doctype html>
@@ -82,6 +80,15 @@ const caret = (page: Page) =>
       const { focusNode, focusOffset } = body.ownerDocument.getSelection()!;
       return [focusNode?.textContent, focusOffset];
     });
+
+async function latestSource(page: Page, id: string): Promise<string> {
+  const { current_version_id } = await (
+    await page.request.get(`/v1/documents/${id}`)
+  ).json();
+  return (
+    await page.request.get(`/v1/documents/${id}/versions/${current_version_id}/html`)
+  ).text();
+}
 
 test("a script string that one editor changes shows in place for the other, whose caret stays", async ({
   page,

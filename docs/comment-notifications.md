@@ -200,7 +200,7 @@ an **Open doc** button only when:
 3. nobody from another organization is in the conversation.
 
 Every other link, including one being typed or one in a private channel the bot
-has not joined, gets "slashdocs document · Sign in to see if you have access".
+has not joined, gets "SlashDocs document · Sign in to see if you have access".
 Slack keeps a card once posted, and does not preview links posted by apps.
 
 In the Slack app, subscribe to the bot event `link_shared` at

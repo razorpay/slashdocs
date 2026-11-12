@@ -12,9 +12,9 @@
 -- versions.seq then has no default. A server of the release before does
 -- not know the log: it would save a version on the snapshot of an open
 -- version and remove the text that people typed after it. During a rolling
--- deploy such a server cannot save a version: its create, push, upload or
--- restore fails with a server error, and nothing is lost. The browser sends
--- typed text again by itself. An agent or a person sends the write again.
+-- deploy such a server cannot save a version: its push or edit fails with a
+-- server error, and nothing is lost. The browser sends typed text again by
+-- itself. An agent or a person sends a push or an edit again.
 ALTER TABLE documents ADD COLUMN seq BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE versions ADD COLUMN seq BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE versions ALTER COLUMN seq DROP DEFAULT;
@@ -83,9 +83,8 @@ CREATE TABLE version_authors (
 -- from before this release, which keep their anchors.
 ALTER TABLE comments ADD COLUMN anchor_seq BIGINT;
 
--- versions.client_change_id is not used from this migration on. Only a
--- server with migration 39 and not this one writes it. A later migration
--- can drop it and its index.
+-- versions.client_change_id is not used from this release on. The next
+-- migration drops it and its index.
 
 -- +goose Down
 -- An open version has no content of its own, so the servers must seal every

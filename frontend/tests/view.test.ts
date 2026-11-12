@@ -336,34 +336,6 @@ describe("the view of a reader", () => {
     assert.equal(scroll, 400);
   });
 
-  // A change of looks, as of a style, has no new content: only what moves
-  // in the view counts.
-  test("does not change for a change of looks that moves nothing", () => {
-    scroll = 300;
-    const view = watchView(document);
-    assert.equal(view.settle([]), 0);
-    assert.equal(scroll, 300);
-  });
-
-  test("stays on its text when a change of looks makes the blocks above it larger", () => {
-    scroll = 300;
-    const view = watchView(document);
-    for (const i of [2, 3, 4]) resize(paragraph(i), 2);
-    assert.equal(view.settle([]), 0);
-    assert.equal(scroll, 360);
-  });
-
-  test("is not quiet when a change of looks makes the block that the reader reads larger", () => {
-    scroll = 300;
-    const view = watchView(document);
-    resize(paragraph(16), 4);
-    const share = view.settle([]);
-    // The block stays in place, and the eight blocks of the view after it
-    // move by three lines.
-    assert.equal(share, (8 * LINE) / 200);
-    assert.isAtLeast(share, QUIET_SHARE);
-  });
-
   test("goes back to its scroll when the change is taken out", () => {
     scroll = 300;
     const view = watchView(document);

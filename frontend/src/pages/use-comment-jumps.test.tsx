@@ -51,24 +51,19 @@ function setup(more: Partial<DocContextValue> = {}, ready = true) {
 it("goes to the next and previous open thread in document order", () => {
   const { jump, post } = setup({ activeComment: "middle" });
   expect(post).toHaveBeenCalledWith({ type: "slashdocs:thread-keys", on: true });
-  fireEvent.keyDown(document, { key: "n" });
-  expect(jump).toHaveBeenLastCalledWith("late");
-  fireEvent.keyDown(document, { key: "N", shiftKey: true });
-  expect(jump).toHaveBeenLastCalledWith("early");
-});
-
-it("leaves J and K to scroll the document", () => {
-  const { jump } = setup({ activeComment: "middle" });
   fireEvent.keyDown(document, { key: "j" });
-  fireEvent.keyDown(document, { key: "k" });
-  expect(jump).not.toHaveBeenCalled();
+  expect(jump).toHaveBeenLastCalledWith("late");
+  fireEvent.keyDown(document, { key: "p" });
+  expect(jump).toHaveBeenLastCalledWith("early");
+  fireEvent.keyDown(document, { key: "J", shiftKey: true });
+  expect(jump).toHaveBeenLastCalledWith("late");
 });
 
 it("leaves the keys to fields and to keys with modifiers", () => {
   const { jump } = setup();
   const field = document.body.appendChild(document.createElement("textarea"));
-  fireEvent.keyDown(field, { key: "n" });
-  fireEvent.keyDown(document, { key: "N", metaKey: true });
+  fireEvent.keyDown(field, { key: "j" });
+  fireEvent.keyDown(document, { key: "k", metaKey: true });
   fireEvent.keyDown(document, { key: "n", repeat: true });
   expect(jump).not.toHaveBeenCalled();
 });

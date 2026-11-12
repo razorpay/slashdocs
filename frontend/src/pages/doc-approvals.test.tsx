@@ -60,7 +60,7 @@ type PostedDecision = {
 };
 
 // The message of the server for a decision while people type.
-const EDITING = "People are editing this document. Decide when they are done.";
+const EDITING = "People are editing this document. Approve it when they are done.";
 
 function installFetch(options: FetchOptions = {}, posted: PostedDecision[] = []) {
   const calls: string[] = [];

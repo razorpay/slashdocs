@@ -1,16 +1,20 @@
-import { type Page } from "@playwright/test";
+import { type FrameLocator, type Page } from "@playwright/test";
 import {
   expect,
-  latestSource,
   notSaved,
   openEditable,
   openHistory,
-  renderedDocument,
   reviewerOn,
   startEditing,
   test,
   uniqueName,
 } from "./fixtures";
+
+function renderedDocument(page: Page): FrameLocator {
+  return page
+    .frameLocator('iframe[title="Rendered document"]')
+    .frameLocator("iframe#slashdocs-doc");
+}
 
 // Four cards start with the same label, so only the position of a label can
 // tell them apart.
@@ -68,6 +72,17 @@ async function placeCaret(
       },
       { target, collapse: options.collapse ?? false },
     );
+}
+
+async function latestSource(page: Page, id: string): Promise<string> {
+  const document = await page.request.get(`/v1/documents/${id}`);
+  const { current_version_id } = (await document.json()) as {
+    current_version_id: string;
+  };
+  const source = await page.request.get(
+    `/v1/documents/${id}/versions/${current_version_id}/html`,
+  );
+  return source.text();
 }
 
 // versions lists what the History holds of each version, the oldest first.
@@ -398,7 +413,7 @@ test("keeps the highlights of other paragraphs while the editor types", async ({
   await placeCaret(page, "#intro", "owners");
   await page.keyboard.type("readers");
   // Only the paragraph that takes the typing loses its highlight, until the
-  // server has the text.
+  // save.
   expect(
     await renderedDocument(page).locator("#tail mark.slashdocs-mark").count(),
   ).toBe(1);

@@ -44,14 +44,14 @@ import { api, type FolderEntry } from "@/api";
 import { canManageSharing } from "@/lib/constants";
 import { queryKeys } from "@/lib/queryKeys";
 import { samePrincipal } from "@/lib/principals";
-import { folderSortStore, viewModeStore } from "@/lib/view-mode";
+import { viewModeStore } from "@/lib/view-mode";
 import { ShareSheet } from "@/pages/doc-share-sheet";
 import { Sheet, SheetTrigger } from "@/components/ui/sheet";
 import { DRAG_TYPE, type ActiveDrag } from "@/components/browse/drag";
 import { BrowseDragOverlay } from "@/components/browse/drag-overlay";
 import { UnifiedGrid } from "@/components/browse/unified-grid";
 import { UnifiedTable } from "@/components/browse/unified-table";
-import { SortOrderToggle, ViewModeToggle } from "@/components/browse/view-mode-toggle";
+import { ViewModeToggle } from "@/components/browse/view-mode-toggle";
 import {
   AccessWarningDialog,
   NewFolderDialog,
@@ -256,7 +256,6 @@ function FolderView({ id }: { id: string }) {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <SortOrderToggle folderId={id} />
             <ViewModeToggle />
             <Button
               variant="outline"
@@ -378,7 +377,7 @@ function FolderView({ id }: { id: string }) {
             }
           />
         ) : (
-          <FolderContents folderId={id} items={visibleItems} pinnedIds={pinnedIds} />
+          <FolderContents items={visibleItems} pinnedIds={pinnedIds} />
         )}
         {readme ? <FolderReadme document={readme} /> : null}
 
@@ -492,19 +491,16 @@ function FolderReadme({
 }
 
 function FolderContents({
-  folderId,
   items,
   pinnedIds,
 }: {
-  folderId: string;
   items: FolderEntry[];
   pinnedIds: Set<string>;
 }) {
   const me = useQuery({ queryKey: queryKeys.me(), queryFn: api.me });
   const viewMode = viewModeStore.useStore();
-  const order = folderSortStore.useStore()[folderId];
 
-  const entries = sortEntries(items, pinnedIds, order);
+  const entries = sortEntries(items, pinnedIds);
 
   return viewMode === "list" ? (
     <UnifiedTable

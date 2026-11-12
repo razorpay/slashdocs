@@ -262,23 +262,3 @@ test("a comment that comes back with the anchor that the server moved keeps its 
   expect(posted.at(-1)).toMatchObject({ results: [{ id: "c5", anchored: true }] });
   expect(marks("c5")).toEqual([mark]);
 });
-
-test("a new comment on the text at the caret of an editor leaves the caret where it is", async () => {
-  fromApp({ type: "slashdocs:text-editing", on: true });
-  await type("d", "MORE-OFF", "XX");
-  fromApp({ type: "slashdocs:text-collect", requestId: "t" });
-  // Another person posts a comment on the text around the caret.
-  fromApp({
-    type: "slashdocs:paint",
-    comments: [comment("c6", "d", "MORE-OFFXXLINE")],
-  });
-  expect(marked("c6")).toEqual({ in: ["d"], text: "MORE-OFFXXLINE" });
-  const caret = d.getSelection()!;
-  const before = d.createRange();
-  before.setStart(d.getElementById("d")!, 0);
-  before.setEnd(caret.focusNode!, caret.focusOffset);
-  expect([caret.isCollapsed, before.toString()]).toEqual([
-    true,
-    "Typing here hotel and MORE-OFFXX",
-  ]);
-});

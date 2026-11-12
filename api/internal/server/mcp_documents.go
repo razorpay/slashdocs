@@ -46,7 +46,7 @@ func registerMCPDocumentTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 func registerMCPDocumentCRUDTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 	server.AddTool(mcp.NewTool("list_documents", readOnlyOptions(
 		mcp.WithDescription("List documents visible to the caller, or search their titles and text. Documents with the words in the title come first, then the latest. The result is one page: has_more is true when more documents follow, and offset gets the next page."),
-		mcp.WithString("query", mcp.Description("Optional Slack-style search of titles and text: words, \"phrases\", -word, title:, from:, in:, label:, before:, after:, on:, and during:. title:word or title:\"a phrase\" matches the title only.")),
+		mcp.WithString("query", mcp.Description("Optional Slack-style search of titles and text: words, \"phrases\", -word, from:, in:, label:, before:, after:, on:, and during:.")),
 		mcp.WithNumber("limit", mcp.Description("Optional page size: 25 by default, 100 at most.")),
 		mcp.WithNumber("offset", mcp.Description("Optional number of documents to skip.")),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -198,7 +198,6 @@ func registerMCPDocumentMoveTool(server *mcpserver.MCPServer, api mcpAPIAdapter)
 		mcpDocumentID(),
 		mcp.WithString("folder_id", mcp.Description("Destination folder ID (fld_…).")),
 		mcp.WithBoolean("to_root", mcp.Description("Move the document to the workspace root.")),
-		mcp.WithBoolean("acknowledge_access_loss", mcp.Description("Confirm that moving to the workspace root may remove your edit access.")),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		documentID, invalid := mcpRequired(request, "document_id")
 		if invalid != nil {
@@ -225,11 +224,7 @@ func registerMCPDocumentMoveTool(server *mcpserver.MCPServer, api mcpAPIAdapter)
 		if document.ParentFolderID == "" {
 			return mcp.NewToolResultError("document is already at the workspace root"), nil
 		}
-		path := "/v1/folders/" + document.ParentFolderID + "/documents/" + documentID
-		if request.GetBool("acknowledge_access_loss", false) {
-			path += "?acknowledge_access_loss=true"
-		}
-		return api.delete(ctx, path, mcpParams("id", document.ParentFolderID, "doc_id", documentID), api.handlers.moveDocToRoot)
+		return api.delete(ctx, "/v1/folders/"+document.ParentFolderID+"/documents/"+documentID, mcpParams("id", document.ParentFolderID, "doc_id", documentID), api.handlers.moveDocToRoot)
 	})
 }
 

@@ -44,8 +44,7 @@ func TestChangeSummaryOfASitting(t *testing.T) {
 		changes []string
 		want    string
 	}{
-		// A sentence with a new paragraph, two people in five paragraphs, and
-		// text typed in a word.
+		// The three lines that the product test found false.
 		{"a sentence and a new paragraph", []string{"refunds stayed flat.</p>", "refunds stayed flat. Disputes went down too.</p>\n<p>The finance team signed the numbers on Monday.</p>"},
 			"Edited the introduction"},
 		{"two people in five paragraphs", []string{

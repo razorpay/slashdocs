@@ -12,7 +12,7 @@ import (
 	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
-// The server serves the built page. The source page is checked too, because
+// The server serves the built page; the source page is checked too, because
 // the built page exists only after a frontend build.
 func TestShellTitleMatchesTheWebApp(t *testing.T) {
 	check := func(name string, index []byte) {

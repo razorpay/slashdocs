@@ -1,11 +1,9 @@
 package server
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -43,9 +41,43 @@ func (h handlers) needFolderChain(c *gin.Context, id string, need repo.Role) ([]
 	return chain, true
 }
 
-// canMoveDoc reports whether the caller may take doc out of its current
-// folder. The owner can always recover their document; other editors must
-// also be able to edit the source folder they are removing it from.
+// needDocMove makes sure the caller can move a document to folder to ("" is
+// the root). The caller needs editor on the document. Like Google Drive's
+// canRemoveChildren, the caller also needs editor on the folder that the
+// document leaves, because the move removes the access that folder gives.
+// The owner skips that check, so no one can trap a document away from them.
+func (h handlers) needDocMove(c *gin.Context, docID, to string) bool {
+	doc, err := h.deps.repository.GetDocument(c.Request.Context(), docID)
+	if err != nil {
+		if errors.Is(err, repo.ErrNotFound) {
+			notFound(c)
+			return false
+		}
+		internalErr(c, err)
+		return false
+	}
+	role, err := h.deps.repository.RoleForDocument(c.Request.Context(), *current(c), docID)
+	if err != nil {
+		internalErr(c, err)
+		return false
+	}
+	if doc.ParentFolderID == to && atLeast(role, repo.RoleEditor) {
+		return true
+	}
+	canMove, err := h.canMoveDoc(c, doc, role)
+	switch {
+	case err != nil:
+		internalErr(c, err)
+	case !canMove && groupMembershipUnavailable(current(c)):
+		groupMembershipUnavailableResponse(c)
+	case !canMove:
+		forbidden(c, "editor role on the document and on its folder is required")
+	}
+	return err == nil && canMove
+}
+
+// canMoveDoc reports whether the caller, with role on doc, may take doc out
+// of its folder: see needDocMove.
 func (h handlers) canMoveDoc(c *gin.Context, doc repo.Document, role repo.Role) (bool, error) {
 	switch {
 	case !atLeast(role, repo.RoleEditor):
@@ -62,16 +94,6 @@ type folderListResponse struct {
 	Folder  *repo.Folder       `json:"folder"`
 	Items   []repo.FolderEntry `json:"items"`
 	HasMore bool               `json:"has_more"`
-}
-
-type accessResponse struct {
-	Items          []repo.EffectiveAccessItem `json:"items"`
-	CurrentRole    repo.Role                  `json:"current_role"`
-	CanonicalOwner bool                       `json:"canonical_owner"`
-}
-
-func samePrincipal(a, b auth.Principal) bool {
-	return a.Type != "" && a.Type == b.Type && a.ID != "" && a.ID == b.ID
 }
 
 // permissionWarning flags a move that may broaden who can see the moved
@@ -149,56 +171,16 @@ func (h handlers) createFolder(c *gin.Context) {
 	}
 	c.JSON(http.StatusCreated, f)
 }
-
-// listFolders godoc
-// @Summary List or search folders
-// @Description With no parameters, lists the folders and documents at the root of the caller. With folder_id or path, lists the contents of that folder. With q or min_role, searches the folders that the caller can see by title, at most 25: min_role keeps only the folders on which the caller has at least that role, and min_role with no q lists every such folder, for a picker such as the move dialog.
-// @Tags folders
-// @Security bearerAuth
-// @Security cookieAuth
-// @Param folder_id query string false "Folder ID to list"
-// @Param path query string false "Folder path to list, such as /A/B"
-// @Param q query string false "Words of a folder title"
-// @Param min_role query string false "Least role of the caller on each folder of a search" Enums(viewer, commenter, editor, owner)
-// @Success 200 {object} folderListResponse
-// @Failure 404 {object} errorEnvelope
-// @Failure 409 {object} ambiguousPathResponse "ambiguous_path: more than one folder has a name of the path"
-// @Router /v1/folders [get]
 func (h handlers) listFolders(c *gin.Context) {
 	if !requireResolvedGroupsForAggregate(c) {
 		return
 	}
-	// An explicitly supplied q (including q=) is the autocomplete/search
-	// contract. A request without q retains the workspace browsing behavior.
-	q, hasQuery := c.GetQuery("q")
-	minRoleRaw := c.Query("min_role")
-	if hasQuery || minRoleRaw != "" {
-		h.searchFolders(c, q)
+	// A search with min_role and no q lists every folder with that role, for
+	// a picker such as the move dialog.
+	if q, minRole := c.Query("q"), repo.Role(c.Query("min_role")); q != "" || minRole != "" {
+		h.searchFolders(c, q, minRole)
 		return
 	}
-	h.browseFolders(c)
-}
-
-func (h handlers) searchFolders(c *gin.Context, q string) {
-	includeOrgWide := h.deps.deployment == DeploymentOrg
-	minRole, ok := parseFolderSearchRole(c.Query("min_role"))
-	if !ok {
-		badRequest(c, "invalid min_role")
-		return
-	}
-	folders, err := h.deps.repository.SearchFoldersByTitle(c.Request.Context(), *current(c), q, includeOrgWide, minRole, 25)
-	if err != nil {
-		internalErr(c, err)
-		return
-	}
-	items := make([]repo.FolderEntry, 0, len(folders))
-	for i := range folders {
-		items = append(items, repo.FolderEntry{Type: "folder", Folder: &folders[i]})
-	}
-	c.JSON(http.StatusOK, folderListResponse{Items: items, HasMore: len(folders) >= 25})
-}
-
-func (h handlers) browseFolders(c *gin.Context) {
 	folderID := c.Query("folder_id")
 	if folderID != "" {
 		if !h.needFolderRole(c, folderID, repo.RoleViewer) {
@@ -230,15 +212,24 @@ func (h handlers) browseFolders(c *gin.Context) {
 			return
 		}
 	}
-	if folder != nil {
-		chain, err := h.deps.repository.FolderAccessChain(c.Request.Context(), *current(c), folder.ID)
-		if err != nil {
-			internalErr(c, err)
-			return
-		}
-		filterVisibleFolderAncestors(folder, chain)
-	}
 	c.JSON(http.StatusOK, folderListResponse{Folder: folder, Items: items, HasMore: has})
+}
+func (h handlers) searchFolders(c *gin.Context, q string, minRole repo.Role) {
+	if _, known := roleRank[minRole]; minRole != "" && !known {
+		badRequest(c, "invalid min_role")
+		return
+	}
+	includeOrgWide := h.deps.deployment == DeploymentOrg
+	folders, err := h.deps.repository.SearchFoldersByTitle(c.Request.Context(), *current(c), q, includeOrgWide, minRole, 25)
+	if err != nil {
+		internalErr(c, err)
+		return
+	}
+	items := make([]repo.FolderEntry, 0, len(folders))
+	for i := range folders {
+		items = append(items, repo.FolderEntry{Type: "folder", Folder: &folders[i]})
+	}
+	c.JSON(http.StatusOK, folderListResponse{Items: items, HasMore: len(folders) >= 25})
 }
 func (h handlers) getFolder(c *gin.Context) {
 	p := current(c)
@@ -260,56 +251,8 @@ func (h handlers) getFolder(c *gin.Context) {
 	if p.Type != f.Owner.Type || p.ID != f.Owner.ID {
 		_ = h.deps.repository.RecordFolderOpened(c.Request.Context(), f.ID, *p)
 	}
-	filterVisibleFolderAncestors(&f, chain)
+	f.Ancestors = repo.VisibleAncestors(chain)
 	c.JSON(http.StatusOK, f)
-}
-
-func parseFolderSearchRole(raw string) (repo.Role, bool) {
-	switch raw {
-	case "", string(repo.RoleViewer):
-		if raw == "" {
-			return repo.RoleNone, true
-		}
-		return repo.RoleViewer, true
-	case string(repo.RoleCommenter):
-		return repo.RoleCommenter, true
-	case string(repo.RoleEditor):
-		return repo.RoleEditor, true
-	case string(repo.RoleOwner):
-		return repo.RoleOwner, true
-	default:
-		return repo.RoleNone, false
-	}
-}
-
-// filterVisibleFolderAncestors keeps the root-first contiguous suffix nearest
-// the requested folder. Any hidden prefix is represented only by the boolean;
-// hidden ids/titles are never serialized.
-func filterVisibleFolderAncestors(f *repo.Folder, chain []repo.FolderAccess) {
-	if f == nil || len(f.Ancestors) == 0 || len(chain) == 0 {
-		return
-	}
-	roles := make(map[string]repo.Role, len(chain))
-	for _, a := range chain {
-		roles[a.ID] = a.Role
-	}
-	visibleFrom := len(f.Ancestors)
-	for i := len(f.Ancestors) - 1; i >= 0; i-- {
-		if atLeast(roles[f.Ancestors[i].ID], repo.RoleViewer) {
-			visibleFrom = i
-		} else {
-			break
-		}
-	}
-	if visibleFrom > 0 {
-		f.AncestorsTruncated = true
-		if visibleFrom == len(f.Ancestors) {
-			// The immediate parent is part of the hidden prefix. Keep its id
-			// out of the additive legacy field as well as breadcrumbs.
-			f.ParentFolderID = ""
-		}
-	}
-	f.Ancestors = f.Ancestors[visibleFrom:]
 }
 func (h handlers) patchFolder(c *gin.Context) {
 	if !h.needFolderRole(c, c.Param("id"), repo.RoleOwner) {
@@ -373,7 +316,7 @@ func folderParentUpdate(raw json.RawMessage) (*string, error) {
 func respondFolderUpdateError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, repo.ErrConflict):
-		c.JSON(http.StatusConflict, errorResponse("conflict", "The folder cannot be moved there. The destination may already contain that name, or the move may create an invalid folder hierarchy.", nil))
+		c.JSON(http.StatusConflict, errorResponse("conflict", "A folder with that name already exists in the destination.", nil))
 	case errors.Is(err, repo.ErrNotFound):
 		notFound(c)
 	default:
@@ -400,18 +343,18 @@ func (h handlers) deleteFolder(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// accessResponse is the payload of GET /v1/{documents,folders}/{id}/access.
+// current_role describes the CALLER: the share sheet gates its controls on it
+// (canManageSharing(current_role)), so a response without it renders sharing
+// read-only for every non-owner regardless of their actual role.
+type accessResponse struct {
+	Items       []repo.EffectiveAccessItem `json:"items"`
+	CurrentRole repo.Role                  `json:"current_role"`
+}
+
 func (h handlers) folderAccess(c *gin.Context) {
 	chain, ok := h.needFolderChain(c, c.Param("id"), repo.RoleViewer)
 	if !ok {
-		return
-	}
-	folder, err := h.deps.repository.GetFolder(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		if errors.Is(err, repo.ErrNotFound) {
-			notFound(c)
-			return
-		}
-		internalErr(c, err)
 		return
 	}
 	items, err := h.deps.repository.ListEffectiveAccess(c.Request.Context(), "folder", c.Param("id"))
@@ -419,7 +362,7 @@ func (h handlers) folderAccess(c *gin.Context) {
 		internalErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, accessResponse{Items: items, CurrentRole: chain[len(chain)-1].Role, CanonicalOwner: samePrincipal(*current(c), folder.Owner)})
+	c.JSON(http.StatusOK, accessResponse{Items: items, CurrentRole: chain[len(chain)-1].Role})
 }
 func (h handlers) documentAccess(c *gin.Context) {
 	if !h.needDocRole(c, c.Param("id"), repo.RoleViewer) {
@@ -430,21 +373,12 @@ func (h handlers) documentAccess(c *gin.Context) {
 		internalErr(c, err)
 		return
 	}
-	document, err := h.deps.repository.GetDocument(c.Request.Context(), c.Param("id"))
-	if err != nil {
-		if errors.Is(err, repo.ErrNotFound) {
-			notFound(c)
-			return
-		}
-		internalErr(c, err)
-		return
-	}
 	items, err := h.deps.repository.ListEffectiveAccess(c.Request.Context(), "document", c.Param("id"))
 	if err != nil {
 		internalErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, accessResponse{Items: items, CurrentRole: role, CanonicalOwner: samePrincipal(*current(c), document.Owner)})
+	c.JSON(http.StatusOK, accessResponse{Items: items, CurrentRole: role})
 }
 
 func (h handlers) listFolderDocs(c *gin.Context) {
@@ -461,24 +395,13 @@ func (h handlers) listFolderDocs(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, listResponse[repo.Document]{Items: docs})
 }
-
-// moveDocToFolder godoc
-// @Summary Move a document into a folder
-// @Description The caller needs the editor role on the document and on the folder. The caller also needs the editor role on the folder that the document leaves, unless the caller owns the document. permission_warning is set when the folder gives access to more people than the document had.
-// @Tags folders
-// @Security bearerAuth
-// @Security cookieAuth
-// @Param id path string true "Folder ID"
-// @Param body body object{document_id=string} true "The document to move"
-// @Success 200 {object} moveDocResponse
-// @Failure 403 {object} errorEnvelope
-// @Failure 404 {object} errorEnvelope
-// @Router /v1/folders/{id}/documents [post]
 func (h handlers) moveDocToFolder(c *gin.Context) {
 	folderID := c.Param("id")
+	if !h.needFolderRole(c, folderID, repo.RoleEditor) {
+		return
+	}
 	var in struct {
-		DocumentID     string          `json:"document_id"`
-		ExpectedSource json.RawMessage `json:"expected_source"`
+		DocumentID string `json:"document_id"`
 	}
 	if !requireJSON(c) {
 		return
@@ -487,109 +410,39 @@ func (h handlers) moveDocToFolder(c *gin.Context) {
 		badRequest(c, "invalid document")
 		return
 	}
-	expectedSource, err := parseExpectedMoveSource(in.ExpectedSource)
+	if !h.needDocMove(c, in.DocumentID, folderID) {
+		return
+	}
+	mayBroaden, err := h.deps.repository.MoveDocumentToFolder(c.Request.Context(), *current(c), folderID, in.DocumentID)
 	if err != nil {
-		badRequest(c, "invalid expected_source")
+		if errors.Is(err, repo.ErrNotFound) {
+			notFound(c)
+			return
+		}
+		internalErr(c, err)
 		return
 	}
-	if !requireResolvedGroupsForAggregate(c) {
-		return
-	}
-	result, err := h.deps.repository.MoveDocumentToFolder(c.Request.Context(), *current(c), folderID, in.DocumentID, expectedSource)
-	if err != nil {
-		respondDocumentMoveError(c, err)
-		return
-	}
-	if result.Moved {
-		h.accessChanged(c, in.DocumentID)
-	}
-	out := moveDocResponse{DocumentID: in.DocumentID, FolderID: folderID, Moved: result.Moved}
-	if result.PermissionWarning {
+	h.accessChanged(c, in.DocumentID)
+	out := moveDocResponse{DocumentID: in.DocumentID, FolderID: folderID, Moved: true}
+	if mayBroaden {
 		out.PermissionWarning = mayBroadenAccessWarning(folderDocumentWarningMessage)
 	}
 	c.JSON(http.StatusOK, out)
 }
-
-// moveDocToRoot godoc
-// @Summary Move a document out of a folder to the root
-// @Description The caller needs the editor role on the document, and on the folder that it leaves unless the caller owns the document.
-// @Tags folders
-// @Security bearerAuth
-// @Security cookieAuth
-// @Param id path string true "Folder ID"
-// @Param doc_id path string true "Document ID"
-// @Success 204
-// @Failure 403 {object} errorEnvelope
-// @Failure 404 {object} errorEnvelope
-// @Router /v1/folders/{id}/documents/{doc_id} [delete]
 func (h handlers) moveDocToRoot(c *gin.Context) {
-	if !requireResolvedGroupsForAggregate(c) {
+	if !h.needDocMove(c, c.Param("doc_id"), "") {
 		return
 	}
-	acknowledgeAccessLoss := false
-	if raw, present := c.GetQuery("acknowledge_access_loss"); present {
-		var err error
-		acknowledgeAccessLoss, err = strconv.ParseBool(raw)
-		if err != nil {
-			badRequest(c, "invalid acknowledge_access_loss")
+	if err := h.deps.repository.MoveDocumentToRoot(c.Request.Context(), c.Param("id"), c.Param("doc_id")); err != nil {
+		if errors.Is(err, repo.ErrNotFound) {
+			notFound(c)
 			return
 		}
-	}
-	if _, err := h.deps.repository.MoveDocumentToRoot(c.Request.Context(), *current(c), c.Param("id"), c.Param("doc_id"), acknowledgeAccessLoss); err != nil {
-		respondDocumentMoveError(c, err)
+		internalErr(c, err)
 		return
 	}
 	h.accessChanged(c, c.Param("doc_id"))
 	c.Status(http.StatusNoContent)
-}
-
-func parseExpectedMoveSource(raw json.RawMessage) (*repo.MoveSource, error) {
-	if len(raw) == 0 {
-		return nil, nil
-	}
-	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		return nil, errors.New("null expected_source")
-	}
-	var in struct {
-		Kind     string `json:"kind"`
-		FolderID string `json:"folder_id"`
-	}
-	if err := json.Unmarshal(raw, &in); err != nil {
-		return nil, err
-	}
-	switch in.Kind {
-	case "root":
-		if in.FolderID != "" {
-			return nil, errors.New("root source cannot have folder_id")
-		}
-		return &repo.MoveSource{Kind: "root"}, nil
-	case "folder":
-		if in.FolderID == "" {
-			return nil, errors.New("folder source needs folder_id")
-		}
-		return &repo.MoveSource{Kind: "folder", FolderID: in.FolderID}, nil
-	default:
-		return nil, errors.New("unknown source kind")
-	}
-}
-
-func respondDocumentMoveError(c *gin.Context, err error) {
-	switch {
-	case errors.Is(err, repo.ErrSourceChanged):
-		c.JSON(http.StatusConflict, errorResponse("source_changed", "document source changed; refresh and retry", nil))
-	case errors.Is(err, repo.ErrAccessLossConfirmationRequired):
-		c.JSON(http.StatusConflict, errorResponse("access_loss_confirmation_required", "moving to Documents will remove your edit access", nil))
-	case errors.Is(err, repo.ErrForbidden):
-		if groupMembershipUnavailable(current(c)) {
-			groupMembershipUnavailableResponse(c)
-			return
-		}
-		forbidden(c, "editor role on the document and move source/destination is required")
-	case errors.Is(err, repo.ErrNotFound):
-		notFound(c)
-	default:
-		internalErr(c, err)
-	}
 }
 
 // CreateFolderGrant godoc

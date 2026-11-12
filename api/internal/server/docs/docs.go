@@ -1416,7 +1416,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "Applies exact find-and-replace edits to the live document on the server and saves the result as a new version. Each old_string must occur exactly once. The edits apply in order, and either all apply or none do. The HTML is never parsed, so everything else stays byte-for-byte the same. When the edits together leave the document as it is, the response is 200 with unchanged set and the current version.",
+                "description": "Applies exact find-and-replace edits to the live document on the server and saves the result as a new version. Each old_string must occur exactly once; edits apply in order and either all apply or none do. The HTML is never parsed, so everything else stays byte-for-byte the same. When the edits together leave the document as it is, the response is 200 with unchanged set and the current version.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1443,12 +1443,6 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/server.editDocumentResponse"
-                        }
-                    },
                     "201": {
                         "description": "Created",
                         "schema": {
@@ -2152,12 +2146,6 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/server.createVersionResponse"
-                        }
-                    },
                     "201": {
                         "description": "Created",
                         "schema": {
@@ -2172,185 +2160,6 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "Conflict",
-                        "schema": {
-                            "$ref": "#/definitions/server.errorEnvelope"
-                        }
-                    }
-                }
-            }
-        },
-        "/v1/folders": {
-            "get": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    },
-                    {
-                        "cookieAuth": []
-                    }
-                ],
-                "description": "With no parameters, lists the folders and documents at the root of the caller. With folder_id or path, lists the contents of that folder. With q or min_role, searches the folders that the caller can see by title, at most 25: min_role keeps only the folders on which the caller has at least that role, and min_role with no q lists every such folder, for a picker such as the move dialog.",
-                "tags": [
-                    "folders"
-                ],
-                "summary": "List or search folders",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Folder ID to list",
-                        "name": "folder_id",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Folder path to list, such as /A/B",
-                        "name": "path",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Words of a folder title",
-                        "name": "q",
-                        "in": "query"
-                    },
-                    {
-                        "enum": [
-                            "viewer",
-                            "commenter",
-                            "editor",
-                            "owner"
-                        ],
-                        "type": "string",
-                        "description": "Least role of the caller on each folder of a search",
-                        "name": "min_role",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/server.folderListResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/server.errorEnvelope"
-                        }
-                    },
-                    "409": {
-                        "description": "ambiguous_path: more than one folder has a name of the path",
-                        "schema": {
-                            "$ref": "#/definitions/server.ambiguousPathResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/v1/folders/{id}/documents": {
-            "post": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    },
-                    {
-                        "cookieAuth": []
-                    }
-                ],
-                "description": "The caller needs the editor role on the document and on the folder. The caller also needs the editor role on the folder that the document leaves, unless the caller owns the document. permission_warning is set when the folder gives access to more people than the document had.",
-                "tags": [
-                    "folders"
-                ],
-                "summary": "Move a document into a folder",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Folder ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "The document to move",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "type": "object",
-                            "properties": {
-                                "document_id": {
-                                    "type": "string"
-                                }
-                            }
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/server.moveDocResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/server.errorEnvelope"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/server.errorEnvelope"
-                        }
-                    }
-                }
-            }
-        },
-        "/v1/folders/{id}/documents/{doc_id}": {
-            "delete": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    },
-                    {
-                        "cookieAuth": []
-                    }
-                ],
-                "description": "The caller needs the editor role on the document, and on the folder that it leaves unless the caller owns the document.",
-                "tags": [
-                    "folders"
-                ],
-                "summary": "Move a document out of a folder to the root",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Folder ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Document ID",
-                        "name": "doc_id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "204": {
-                        "description": "No Content"
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/server.errorEnvelope"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
@@ -2482,37 +2291,6 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/server.errorEnvelope"
-                        }
-                    }
-                }
-            }
-        },
-        "/v1/me/inbox": {
-            "get": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    },
-                    {
-                        "cookieAuth": []
-                    }
-                ],
-                "description": "The newest first, at most 50: each document that the caller approves and did not decide on (kind approval), and each open thread on a document of the caller, that they wrote in, or that mentions them, with a message by someone else after their last read or message (kind thread). It holds only documents that the caller can read now.",
-                "tags": [
-                    "documents"
-                ],
-                "summary": "List what waits on the caller",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/server.listResponse-repo_InboxItem"
-                        }
-                    },
-                    "429": {
-                        "description": "Too Many Requests",
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
@@ -3035,10 +2813,6 @@ const docTemplate = `{
                 "approval_summary": {
                     "$ref": "#/definitions/repo.ApprovalSummary"
                 },
-                "can_move": {
-                    "description": "CanMove is set by GET /v1/documents/{id}: the caller may move it.",
-                    "type": "boolean"
-                },
                 "current_version_id": {
                     "type": "string"
                 },
@@ -3129,29 +2903,6 @@ const docTemplate = `{
                 }
             }
         },
-        "repo.Folder": {
-            "type": "object",
-            "properties": {
-                "ancestors": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/repo.FolderBreadcrumb"
-                    }
-                },
-                "id": {
-                    "type": "string"
-                },
-                "owner": {
-                    "$ref": "#/definitions/auth.Principal"
-                },
-                "parent_folder_id": {
-                    "type": "string"
-                },
-                "title": {
-                    "type": "string"
-                }
-            }
-        },
         "repo.FolderBreadcrumb": {
             "type": "object",
             "properties": {
@@ -3159,23 +2910,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "title": {
-                    "type": "string"
-                }
-            }
-        },
-        "repo.FolderEntry": {
-            "type": "object",
-            "properties": {
-                "document": {
-                    "$ref": "#/definitions/repo.Document"
-                },
-                "folder": {
-                    "$ref": "#/definitions/repo.Folder"
-                },
-                "last_active": {
-                    "type": "string"
-                },
-                "type": {
                     "type": "string"
                 }
             }
@@ -3203,38 +2937,6 @@ const docTemplate = `{
                 },
                 "role": {
                     "$ref": "#/definitions/repo.Role"
-                }
-            }
-        },
-        "repo.InboxItem": {
-            "type": "object",
-            "properties": {
-                "at": {
-                    "type": "string"
-                },
-                "body": {
-                    "type": "string"
-                },
-                "comment_id": {
-                    "type": "string"
-                },
-                "document_id": {
-                    "type": "string"
-                },
-                "document_title": {
-                    "type": "string"
-                },
-                "from": {
-                    "description": "From asked for the approval, or wrote the newest unread message, Body.",
-                    "allOf": [
-                        {
-                            "$ref": "#/definitions/auth.Principal"
-                        }
-                    ]
-                },
-                "kind": {
-                    "description": "Kind is \"approval\" for a document to approve, or \"thread\" for a thread\nwith a message to read.",
-                    "type": "string"
                 }
             }
         },
@@ -3377,20 +3079,6 @@ const docTemplate = `{
                 },
                 "sha256": {
                     "type": "string"
-                }
-            }
-        },
-        "server.ambiguousPathResponse": {
-            "type": "object",
-            "properties": {
-                "candidates": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/repo.Folder"
-                    }
-                },
-                "error": {
-                    "$ref": "#/definitions/server.errorBody"
                 }
             }
         },
@@ -4028,23 +3716,6 @@ const docTemplate = `{
                 }
             }
         },
-        "server.folderListResponse": {
-            "type": "object",
-            "properties": {
-                "folder": {
-                    "$ref": "#/definitions/repo.Folder"
-                },
-                "has_more": {
-                    "type": "boolean"
-                },
-                "items": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/repo.FolderEntry"
-                    }
-                }
-            }
-        },
         "server.googleGroupSearchItem": {
             "type": "object",
             "properties": {
@@ -4209,17 +3880,6 @@ const docTemplate = `{
                 }
             }
         },
-        "server.listResponse-repo_InboxItem": {
-            "type": "object",
-            "properties": {
-                "items": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/repo.InboxItem"
-                    }
-                }
-            }
-        },
         "server.listResponse-repo_OwnershipTransfer": {
             "type": "object",
             "properties": {
@@ -4339,23 +3999,6 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
-                }
-            }
-        },
-        "server.moveDocResponse": {
-            "type": "object",
-            "properties": {
-                "document_id": {
-                    "type": "string"
-                },
-                "folder_id": {
-                    "type": "string"
-                },
-                "moved": {
-                    "type": "boolean"
-                },
-                "permission_warning": {
-                    "$ref": "#/definitions/server.permissionWarning"
                 }
             }
         },

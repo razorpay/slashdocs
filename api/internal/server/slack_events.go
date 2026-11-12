@@ -27,8 +27,8 @@ import (
 )
 
 // Slack link previews. A link gets the live card only on an org deployment,
-// for a doc the whole org can open, in a conversation without outsiders.
-// Anything else, including errors, gets the neutral card.
+// for a doc the whole org can open, in a conversation without outsiders;
+// anything else, including errors, gets the neutral card.
 
 const (
 	slackSignatureMaxAge  = 5 * time.Minute
@@ -123,7 +123,7 @@ func (h handlers) slackEvents(c *gin.Context) {
 	}()
 }
 
-// postedByThisBot guards against our own messages. Slack should not send them.
+// postedByThisBot guards against our own messages; Slack should not send them.
 func postedByThisBot(env slackEnvelope) bool {
 	for _, a := range env.Authorizations {
 		if a.IsBot && a.UserID != "" && a.UserID == env.Event.User {
@@ -151,7 +151,7 @@ func (h handlers) unfurlLinks(ctx context.Context, event slackLinkEvent) {
 	unfurls := map[string]any{}
 	var docIDs []string
 	for _, link := range event.Links {
-		docID, versionID, ok := h.parseDocumentLink(link.URL)
+		docID, versionID, ok := h.parseSlashDocsLink(link.URL)
 		if !ok {
 			continue
 		}
@@ -236,9 +236,9 @@ func (h handlers) shownVersion(ctx context.Context, doc repo.Document, versionID
 
 var docIDPattern = regexp.MustCompile(`^doc_[a-z0-9]{1,64}$`)
 
-// parseDocumentLink returns the doc and ?version= ids of a document link on
+// parseSlashDocsLink returns the doc and ?version= ids of a document link on
 // the app origin or a previous origin.
-func (h handlers) parseDocumentLink(raw string) (docID, versionID string, ok bool) {
+func (h handlers) parseSlashDocsLink(raw string) (docID, versionID string, ok bool) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
 		return "", "", false

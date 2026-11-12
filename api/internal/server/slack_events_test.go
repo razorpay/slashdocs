@@ -245,7 +245,7 @@ func TestSlackEventsGiveLiveCardsOnlyToOrgWideDocs(t *testing.T) {
 			t.Errorf("org card missing %q: %s", want, org)
 		}
 	}
-	if p := card("private"); strings.Contains(p, "fixture") || !strings.Contains(p, "slashdocs document") {
+	if p := card("private"); strings.Contains(p, "fixture") || !strings.Contains(p, "SlashDocs document") {
 		t.Errorf("private card leaks or is not neutral: %s", p)
 	}
 	if a := card("aidocs"); !strings.Contains(a, "Org plan") || !strings.Contains(a, "https://docs.example/app/d/") || strings.Contains(a, "aidocs.example") {
@@ -260,7 +260,7 @@ func TestSlackEventsGiveLiveCardsOnlyToOrgWideDocs(t *testing.T) {
 	if f := card("folderDoc"); !strings.Contains(f, "Folder doc") {
 		t.Errorf("folder-inherited org-wide doc should be live: %s", f)
 	}
-	if g := card("groupDoc"); strings.Contains(g, "Group only plan") || !strings.Contains(g, "slashdocs document") {
+	if g := card("groupDoc"); strings.Contains(g, "Group only plan") || !strings.Contains(g, "SlashDocs document") {
 		t.Errorf("a Google-group-only doc must get the neutral card: %s", g)
 	}
 	for _, name := range []string{"folderLink", "foreign"} {
@@ -287,7 +287,7 @@ func TestSlackEventsUseNeutralCardsWhenOutsidersMightSee(t *testing.T) {
 			link := "https://docs.example/app/d/" + doc.ID
 			assertStatus(t, postSlack(t, e.h, linkEvent(tc.channel, tc.source, link), time.Now(), nil), http.StatusOK)
 			text := cardText(t, u.next(t).unfurls[link])
-			if strings.Contains(text, "Org plan") || !strings.Contains(text, "slashdocs document") {
+			if strings.Contains(text, "Org plan") || !strings.Contains(text, "SlashDocs document") {
 				t.Fatalf("card must be neutral: %s", text)
 			}
 			u.mu.Lock()

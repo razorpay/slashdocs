@@ -115,16 +115,3 @@ func TestPushSaysWhenTheSavedVersionHoldsEditsOfOtherPeople(t *testing.T) {
 		}
 	}
 }
-
-func TestHumanizeShowsTheRepliesOfAThread(t *testing.T) {
-	t.Parallel()
-	alice := map[string]any{"type": "user", "id": "usr_1", "name": "Alice"}
-	list := map[string]any{"items": []any{map[string]any{
-		"id": "cmt_1", "status": "open", "body": "Why three?", "author": alice,
-		"replies": []any{map[string]any{"id": "cmt_2", "body": "Data says so.", "author": map[string]any{"type": "service_account", "id": "sa_1", "name": "writer-bot"}}},
-	}}}
-	want := "id=cmt_1  status=open  body=Why three?  author=Alice\n  reply id=cmt_2  body=Data says so.  author=writer-bot"
-	if got := humanize("", list); got != want {
-		t.Fatalf("humanize()\n got: %q\nwant: %q", got, want)
-	}
-}

@@ -56,9 +56,9 @@ export const rise: MotionProps = {
 const fadeFor = (seconds: number, reduced: boolean | null) =>
   reduced ? Math.min(seconds, 0.1) : seconds;
 
-// The content of a popover gives way to the next thread's, as N and Shift+N
-// go to it: the new content fades in over the old, which goes at once, so
-// that the popover never holds two threads.
+// The content of a popover gives way to the next thread's, as J and K go to
+// it: the new content fades in over the old, which goes at once, so that the
+// popover never holds two threads.
 export const fadeIn = (reduced: boolean | null): MotionProps => ({
   initial: { opacity: 0 },
   animate: {
@@ -84,9 +84,9 @@ export const rowOut = (reduced: boolean | null): MotionProps => ({
   transition: { layout: { duration: 0.18, ease: [0.23, 1, 0.32, 1] } },
 });
 
-// A new label fades in where the old one was. The old one goes at once, so
-// that two labels never show together in a control that changes its size.
+// One label gives way to another in the same place.
 export const swap: MotionProps = {
   initial: { opacity: 0 },
   animate: { opacity: 1, transition: { duration: 0.2, ease: "easeOut" } },
+  exit: { opacity: 0, transition: { duration: 0.12, ease: "easeIn" } },
 };

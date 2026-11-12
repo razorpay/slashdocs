@@ -80,8 +80,8 @@ func TestEditDocumentReplacesTextAndKeepsTheRest(t *testing.T) {
 	}
 }
 
-// The agent endpoint keeps its response exactly, beside the operations of
-// the browser editor.
+// The agent endpoint keeps its response exactly, beside the browser's
+// source edits.
 func TestEditDocumentResponseKeepsItsFields(t *testing.T) {
 	e := newTestEnv(t)
 	docID, verID := e.createDocument("Edits", editFixtureHTML, fixtureOwner)

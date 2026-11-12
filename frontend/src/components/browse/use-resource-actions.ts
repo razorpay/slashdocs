@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { api, APIError, type MoveDestination } from "@/api";
+import { api, APIError } from "@/api";
 import { errorMessage } from "@/lib/errors";
 import { useMounted } from "@/lib/hooks";
 import { queryKeys } from "@/lib/queryKeys";
@@ -75,12 +75,6 @@ export type Move = {
   from?: string;
   to: string | null;
   toTitle?: string;
-  // Documents moved from the picker use the server's opaque source token.
-  // Drag-and-drop resolves this token from the same destination read model
-  // before it moves, so it cannot bypass access-loss confirmation.
-  sourceToken?: string;
-  acknowledgeAccessLoss?: boolean;
-  offerUndo?: boolean;
 };
 
 // Move mutation shared by drag and drop and the Move dialog. A move that
@@ -91,108 +85,40 @@ export function useMoveResource() {
   const mounted = useMounted();
   const [warning, setWarning] = useState<string | null>(null);
   const move = useMutation({
-    mutationFn: async ({
-      type,
-      id,
-      from,
-      to,
-      sourceToken,
-      acknowledgeAccessLoss,
-    }: Move) => {
+    // The result is the warning, if the server gives one.
+    mutationFn: async ({ type, id, from, to }: Move) => {
       if (type === "folder") {
-        return {
-          warning: (await api.updateFolder(id, undefined, to)).permission_warning
-            ?.message,
-          // Folder PATCH does not return a concurrency-safe source token.
-          // Do not offer an Undo that could move a restricted folder to root.
-          legacyUndo: false,
-        };
+        return (await api.updateFolder(id, undefined, to)).permission_warning?.message;
       }
-      const destination: MoveDestination = to
-        ? { kind: "folder", folder_id: to }
-        : { kind: "root" };
-      let resolvedSourceToken = sourceToken;
-      if (!resolvedSourceToken) {
-        const bootstrap = await api.getMoveDestinations("document", id);
-        const actualSource = bootstrap.resource.source;
-        const sourceStillMatches = from
-          ? actualSource.kind === "folder" && actualSource.folder_id === from
-          : actualSource.kind === "root";
-        if (!sourceStillMatches)
-          throw new APIError(409, "source_changed", "current location changed");
-        resolvedSourceToken = actualSource.token;
-      }
-      if (!resolvedSourceToken) throw new Error("Move source is unavailable");
-      const result = acknowledgeAccessLoss
-        ? await api.moveDocument(id, destination, resolvedSourceToken, true)
-        : await api.moveDocument(id, destination, resolvedSourceToken);
-      return {
-        warning:
-          result.permission_warning?.message ||
-          (result.access_lost
-            ? "Moved to Documents. You no longer have edit access to this document."
-            : undefined),
-        undo: result.undo,
-      };
+      if (to)
+        return (await api.moveDocumentToFolder(to, id)).permission_warning?.message;
+      await api.moveDocumentToRoot(from!, id);
     },
-    onSuccess: (result, { type, id, from, to, toTitle, offerUndo = true }) => {
+    onSuccess: (warning, { type, id, from, to, toTitle }) => {
       qc.invalidateQueries({ queryKey: queryKeys.foldersAll() });
       qc.invalidateQueries({ queryKey: queryKeys.documents() });
       qc.invalidateQueries({ queryKey: queryKeys.pins() });
-      qc.invalidateQueries({ queryKey: queryKeys.moveDestinationsAll() });
       qc.invalidateQueries({
         queryKey: type === "folder" ? queryKeys.folder(id) : queryKeys.document(id),
       });
-      if (result.warning && mounted.current) setWarning(result.warning);
-      else if (result.warning)
-        toast.warning(result.warning, { duration: Infinity, closeButton: true });
-      else {
-        const undoDestination = result.undo?.destination;
+      if (warning && mounted.current) setWarning(warning);
+      else if (warning)
+        toast.warning(warning, { duration: Infinity, closeButton: true });
+      else
         toast.success(toTitle ? `Moved to ${toTitle}.` : "Moved.", {
-          action:
-            offerUndo && (result.undo || result.legacyUndo)
-              ? {
-                  label: "Undo",
-                  onClick: () =>
-                    move.mutate({
-                      type,
-                      id,
-                      from: to ?? undefined,
-                      to: result.undo
-                        ? undoDestination?.kind === "folder"
-                          ? undoDestination.folder_id
-                          : null
-                        : (from ?? null),
-                      sourceToken: result.undo?.source_token,
-                      offerUndo: false,
-                    }),
-                }
-              : undefined,
+          action: {
+            label: "Undo",
+            onClick: () =>
+              move.mutate({ type, id, from: to ?? undefined, to: from ?? null }),
+          },
         });
-      }
     },
-    onError: (e, { type, id, sourceToken, offerUndo = true }) => {
-      if (
-        type === "document" &&
-        e instanceof APIError &&
-        e.code === "access_loss_confirmation_required"
-      ) {
-        // The picker renders this warning inline. Drag-and-drop and Undo have
-        // no inline confirmation surface, so never fail silently there.
-        if (!sourceToken || !offerUndo)
-          toast.error("Use Move to folder to review and confirm this move.");
-        return;
-      }
-      if (type === "document" && e instanceof APIError && e.code === "source_changed") {
-        qc.invalidateQueries({ queryKey: queryKeys.document(id) });
-        qc.invalidateQueries({ queryKey: queryKeys.foldersAll() });
-      }
+    onError: (e) =>
       toast.error(
         e instanceof APIError && e.status === 403
           ? "You cannot move it there. Ask for edit access to the folder."
           : errorMessage(e, "Move failed"),
-      );
-    },
+      ),
   });
   return { move, warning, clearWarning: () => setWarning(null) };
 }

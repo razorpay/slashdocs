@@ -65,16 +65,8 @@ type Changes = [found: Splice[], marked: Splice[]];
 
 // What a morph did to a run: the ranges of the new content and a collapsed
 // range at each place where content went, the texts of the run before and
-// after, and the changes of all the text of the run. A change of looks, as
-// of a start tag or a style, has no new content. undo takes out a change
-// that the observer of the body does not see.
-export type Morphed = {
-  ranges: Range[];
-  was: Texts;
-  now: Texts;
-  changes: Changes;
-  undo?: () => void;
-};
+// after, and the changes of all the text of the run.
+export type Morphed = { ranges: Range[]; was: Texts; now: Texts; changes: Changes };
 
 // What a morph has of its patch. added records the new content: node, or
 // its text from one offset to another. went records the place of a node,
@@ -97,7 +89,9 @@ type Morph = {
 export function morph(place: Place, patch: Patch): Morphed | null {
   if ("in" in patch) return morphChildren(place, patch.html, patch.marks);
   const { in: element, sourceOf } = place;
-  const done: Morphed = { ranges: [], was: [], now: [], changes: [[], []] };
+  const range = element.ownerDocument.createRange();
+  range.selectNodeContents(element);
+  const done: Morphed = { ranges: [range], was: [], now: [], changes: [[], []] };
   if ("tag" in patch) {
     const inert = element.ownerDocument.implementation.createHTMLDocument("");
     const template = inert.createElement("template");
@@ -123,12 +117,7 @@ export function morph(place: Place, patch: Patch): Morphed | null {
     return null;
   style.textContent = patch.html;
   styled.set(style, patch.html);
-  // A style in the head is outside the body that the observer sees.
-  const undo = () => {
-    if (style.textContent !== text) style.textContent = text;
-    styled.set(style, text);
-  };
-  return { ...done, undo };
+  return done;
 }
 
 // sheetOf gives the sheet of text as the window of style reads it, with no

@@ -2,8 +2,8 @@
 // document back into its HTML source, by position. The pieces of a region
 // refer to the nodes of the version source by offset, so every node that did
 // not change keeps its exact source bytes, and only new content is written
-// as new HTML. An operation is then the difference between two such sources,
-// as replacements at UTF-8 byte offsets of the source at its base seq.
+// as new HTML. The save is then the difference between two such sources, as
+// replacements at UTF-8 byte offsets of the version that the server holds.
 
 import type { DefaultTreeAdapterTypes as P } from "parse5";
 import {

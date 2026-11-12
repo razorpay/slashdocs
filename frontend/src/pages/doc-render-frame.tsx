@@ -52,8 +52,7 @@ const FORWARDED_KEYS = new Set<string>([
   "e",
   ...CHORD_KEYS.map((item) => item.key),
   // The keys that go from thread to thread.
-  "n",
-  "N",
+  ..."jknpJ",
 ]);
 const VIM_KEYS = new Set(["j", "k", "g", "G"]);
 
@@ -374,10 +373,6 @@ export function RenderFrame({
   // after the scroll, so that the flash is where they look.
   useEffect(() => {
     if (!ready) return;
-    // A load takes the focus out of the frame, and the browser can stop a
-    // frame that takes it back with no key or click in it. Thus the app
-    // gives the focus back to the frame before the frame puts the caret.
-    if (restoreCaret.current) ref.current?.focus({ preventScroll: true });
     if (restoreTop.current !== undefined)
       postToFrame({
         type: "slashdocs:scroll-to",
@@ -387,23 +382,6 @@ export function RenderFrame({
     restoreTop.current = undefined;
     restoreCaret.current = null;
     postToFrame({ type: "slashdocs:show-changes" });
-  }, [ready, postToFrame, ref]);
-
-  // Undo and Redo of the reader's edits work in both modes, also with the
-  // focus on the bar, as on Done after Edit mode. A field keeps its own.
-  useEffect(() => {
-    if (!ready) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      const key = event.key.toLowerCase();
-      const undo = key === "z" && !event.shiftKey;
-      const redo = (key === "z" && event.shiftKey) || (key === "y" && !event.shiftKey);
-      const command = (event.metaKey || event.ctrlKey) && !event.altKey;
-      if (!command || !(undo || redo) || typingOrInLayer(event)) return;
-      event.preventDefault();
-      postToFrame({ type: "slashdocs:history", redo });
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
   }, [ready, postToFrame]);
 
   // Vim scrolling works whether focus is inside the rendered document or on

@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { AccountMenu, GetStarted, InboxMenu } from "./topbar";
+import { AccessRequestsMenu, AccountMenu, GetStarted } from "./topbar";
 
 describe("AccountMenu", () => {
   afterEach(() => {
@@ -48,133 +48,97 @@ function Location() {
   return <p>{pathname + search}</p>;
 }
 
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-const ask = {
-  document_id: "doc_1",
-  document_title: "Plan",
-  requester: { type: "user", id: "usr_ana", name: "Ana" },
-  requested_at: new Date().toISOString(),
-};
-
-// stubLists answers the inbox and the requests for access.
-function stubLists(inbox: () => Response, requests: () => Response) {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (url: string) =>
-      String(url).endsWith("/v1/me/inbox") ? inbox() : requests(),
-    ),
-  );
-}
-
-function renderInbox(client = new QueryClient()) {
-  render(
-    <QueryClientProvider client={client}>
-      <TooltipProvider>
-        <MemoryRouter initialEntries={["/app/documents"]}>
-          <Routes>
-            <Route path="/app/documents" element={<InboxMenu />} />
-            <Route path="/app/d/:id" element={<Location />} />
-          </Routes>
-        </MemoryRouter>
-      </TooltipProvider>
-    </QueryClientProvider>,
-  );
-}
-
-describe("InboxMenu", () => {
+describe("AccessRequestsMenu", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
   });
 
-  it("lists what waits on the reader, and opens each in its place", async () => {
-    const now = new Date().toISOString();
-    const raj = { type: "user", id: "usr_raj", name: "Raj" };
-    stubLists(
-      () =>
-        json({
-          items: [
-            {
-              kind: "thread",
-              document_id: "doc_2",
-              document_title: "Spec",
-              comment_id: "cmt_1",
-              from: raj,
-              body: "Why three?",
-              at: now,
-            },
-            {
-              kind: "approval",
-              document_id: "doc_3",
-              document_title: "Launch",
-              from: raj,
-              at: now,
-            },
-          ],
-        }),
-      () => json({ items: [ask] }),
+  it("lists the requests across documents and opens the share sheet", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              items: [
+                {
+                  document_id: "doc_1",
+                  document_title: "Plan",
+                  requester: { type: "user", id: "usr_ana", name: "Ana" },
+                  requested_at: new Date().toISOString(),
+                },
+              ],
+            }),
+            { headers: { "Content-Type": "application/json" } },
+          ),
+      ),
     );
     const user = userEvent.setup();
-    renderInbox();
-
-    await user.click(await screen.findByRole("button", { name: "Inbox, 3 items" }));
-    // Each row starts with the initial of its person.
-    expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual([
-      "RLaunchRaj asked just now",
-      "RRaj on SpecWhy three?",
-      "AAna asks for PlanAsked just now",
-    ]);
-    await user.click(screen.getByRole("menuitem", { name: /Raj on Spec/ }));
-    expect(await screen.findByText("/app/d/doc_2?comment=cmt_1")).toBeInTheDocument();
-  });
-
-  it("opens the approvals of a document to approve, and the share sheet of a request", async () => {
-    stubLists(
-      () =>
-        json({
-          items: [
-            {
-              kind: "approval",
-              document_id: "doc_3",
-              document_title: "Launch",
-              from: { type: "user", id: "usr_raj" },
-              at: new Date().toISOString(),
-            },
-          ],
-        }),
-      () => json({ items: [] }),
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <TooltipProvider>
+          <MemoryRouter initialEntries={["/app/documents"]}>
+            <Routes>
+              <Route path="/app/documents" element={<AccessRequestsMenu />} />
+              <Route path="/app/d/:id" element={<Location />} />
+            </Routes>
+          </MemoryRouter>
+        </TooltipProvider>
+      </QueryClientProvider>,
     );
-    const user = userEvent.setup();
-    renderInbox();
-    await user.click(await screen.findByRole("button", { name: "Inbox, 1 item" }));
-    await user.click(screen.getByRole("menuitem", { name: /Launch/ }));
-    expect(await screen.findByText("/app/d/doc_3?approvals=1")).toBeInTheDocument();
+
+    await user.click(
+      await screen.findByRole("button", { name: "1 request for access" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: /Ana asks for Plan/ }),
+    );
+    expect(await screen.findByText("/app/d/doc_1?share=1")).toBeInTheDocument();
   });
 
-  it("shows nothing when nothing waits", async () => {
-    const fetch = vi.fn(async () => json({ items: [] }));
-    vi.stubGlobal("fetch", fetch);
-    renderInbox();
-    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
-    expect(screen.queryByRole("button")).toBeNull();
-  });
-
-  it("marks a list that did not load, and loads both on Retry", async () => {
+  it("marks a list that did not load, and loads it on Retry", async () => {
     let fail = true;
-    stubLists(
-      () => json({ items: [] }),
-      () =>
-        fail ? json({ error: { code: "unavailable" } }, 503) : json({ items: [ask] }),
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        fail
+          ? new Response(JSON.stringify({ error: { code: "unavailable" } }), {
+              status: 503,
+              headers: { "Content-Type": "application/json" },
+            })
+          : new Response(
+              JSON.stringify({
+                items: [
+                  {
+                    document_id: "doc_1",
+                    document_title: "Plan",
+                    requester: { type: "user", id: "usr_ana", name: "Ana" },
+                    requested_at: new Date().toISOString(),
+                  },
+                ],
+              }),
+              { headers: { "Content-Type": "application/json" } },
+            ),
+      ),
     );
     const user = userEvent.setup();
-    renderInbox(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+    render(
+      <QueryClientProvider
+        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+      >
+        <TooltipProvider>
+          <MemoryRouter>
+            <AccessRequestsMenu />
+          </MemoryRouter>
+        </TooltipProvider>
+      </QueryClientProvider>,
+    );
 
-    await user.click(await screen.findByRole("button", { name: "Inbox did not load" }));
-    expect(screen.getByText("Could not load the inbox.")).toBeVisible();
+    await user.click(
+      await screen.findByRole("button", { name: "Requests for access did not load" }),
+    );
+    expect(screen.getByText("Could not load the requests for access.")).toBeVisible();
     fail = false;
     await user.click(screen.getByRole("menuitem", { name: "Retry" }));
     expect(
@@ -182,7 +146,7 @@ describe("InboxMenu", () => {
     ).toBeVisible();
     // The open menu hides the rest of the page from the accessibility tree.
     expect(
-      screen.getByRole("button", { name: "Inbox, 1 item", hidden: true }),
+      screen.getByRole("button", { name: "1 request for access", hidden: true }),
     ).toBeVisible();
   });
 });

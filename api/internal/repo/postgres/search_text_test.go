@@ -179,33 +179,6 @@ func TestPostgresSearchRanksTitlesThenLatest(t *testing.T) {
 	if want := []string{inTitle.ID}; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("results = %v, want %v", got, want)
 	}
-
-	// A title term finds the start of a title word, and no match in the text.
-	for _, tc := range []struct {
-		search repo.DocumentSearch
-		want   []string
-	}{
-		{repo.DocumentSearch{TitleTerms: []string{"roll"}}, []string{partialTitle.ID, inTitle.ID}},
-		{repo.DocumentSearch{TitleTerms: []string{"rollout plan"}}, []string{inTitle.ID}},
-		{repo.DocumentSearch{TitleTerms: []string{"plan rollout"}}, nil},
-		{repo.DocumentSearch{Terms: []string{"steps"}, TitleTerms: []string{"rollout"}}, []string{partialTitle.ID}},
-	} {
-		results, _, err = store.SearchDocuments(ctx, owner, tc.search, false, repo.Page{Limit: 25})
-		if err != nil {
-			t.Fatal(err)
-		}
-		got = got[:0]
-		for _, r := range results {
-			got = append(got, r.ID)
-		}
-		if strings.Join(got, ",") != strings.Join(tc.want, ",") {
-			t.Errorf("title search %+v = %v, want %v", tc.search, got, tc.want)
-		}
-	}
-	// A title term does not take the snippet of the text words away.
-	if len(results) != 1 || !strings.Contains(results[0].Snippet, "\x02Steps") {
-		t.Errorf("snippet = %+v, want Steps marked", results)
-	}
 }
 
 func TestPostgresSearchPages(t *testing.T) {

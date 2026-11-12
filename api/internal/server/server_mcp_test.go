@@ -412,11 +412,6 @@ func TestMCPDocumentAndFolderToolParity(t *testing.T) {
 		t.Fatalf("second page = %s, %v, want no documents", second.Text, err)
 	}
 	assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "list_documents", map[string]any{"query": "parity", "limit": 1}), docID)
-	// title: searches the title only, and "first" is in the text.
-	assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "list_documents", map[string]any{"query": "title:parity"}), docID)
-	if inText := assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "list_documents", map[string]any{"query": "title:first"}), "items"); strings.Contains(inText.Text, docID) {
-		t.Fatalf("title:first = %s, want no match in the text", inText.Text)
-	}
 	assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "rename_document", map[string]any{
 		"document_id": docID, "title": "Renamed through MCP",
 	}), "Renamed through MCP")

@@ -64,7 +64,7 @@ const MAX_LABEL = 128;
 const MIN_PIN_BOX = 8;
 // The page spot of a pin is at most this many pixels into the page.
 const MAX_PAGE = 10_000_000;
-// A press that moves less than this opens a pin. More drags it.
+// A press that moves less than this opens a pin; more drags it.
 const PRESS_SLOP = 4;
 // Pins closer than this on screen merge into one cluster.
 export const CLUSTER_RADIUS = 28;

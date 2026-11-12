@@ -317,7 +317,7 @@ func (s *Server) routes(deps dependencies) {
 	v1.GET("/auth/oidc/callback", h.oauthCallback)
 	v1.POST("/auth/cli/exchange", h.cliExchange)
 	v1.POST("/auth/logout", h.logout)
-	// Slack link previews. Public, because Slack cannot sign in. Every request
+	// Slack link previews. Public, because Slack cannot sign in; every request
 	// must carry a valid Slack signature instead (see verifySlackSignature).
 	if deps.slackUnfurler != nil {
 		v1.POST("/slack/events", verifySlackSignature(deps.slackSigningSecret, time.Now), h.slackEvents)
@@ -328,10 +328,11 @@ func (s *Server) routes(deps dependencies) {
 	reader := v1.Group("", requireAuth(deps.readerAuthenticator(), deps.appOrigin, deps.googleGroupResolver))
 	reader.GET("/documents/:id", h.getDocument)
 	reader.GET("/documents/:id/versions", h.listVersions)
-	// A browser that follows live edits asks for the changes when the event
-	// of an operation does not carry it, or when it missed an event. A read
-	// of the source at a seq costs as much as a read of the changes does, so
-	// the two share one budget.
+	// A browser that follows live edits asks for the changes after each
+	// operation of another person, and an editor writes many operations a
+	// second.
+	// A read of the source at a seq costs as much as a read of the changes
+	// does, so the two share one budget.
 	followLimit := activityRateLimit(1200)
 	reader.GET("/documents/:id/changes", followLimit, h.documentChanges)
 	reader.GET("/documents/:id/versions/:version_id", h.getVersion)
@@ -345,9 +346,6 @@ func (s *Server) routes(deps dependencies) {
 	// Every route below requires authentication.
 	authed := v1.Group("", requireAuth(deps.authenticator, deps.appOrigin, deps.googleGroupResolver))
 	activityLimit := activityRateLimit(60)
-	// Move-tree reads and mutations have an isolated budget so expanding a
-	// large hierarchy cannot starve unrelated document activity.
-	moveDestinationLimit := activityRateLimit(120)
 	// Separate budgets: presence heartbeats and cursor moves must not starve
 	// other activity. A moving cursor reports about 12 times a second.
 	presenceLimit := activityRateLimit(60)
@@ -356,21 +354,15 @@ func (s *Server) routes(deps dependencies) {
 	// blob. Decisions have their own budget, so that other activity and
 	// typing never block them.
 	decisionLimit := activityRateLimit(60)
-	// An editor writes many operations a second.
-	opsLimit := activityRateLimit(1200)
-	// A comment update changes the body or the status of a comment, or moves
-	// a point comment. The server moves text anchors itself, off the request
-	// (followLater). Comment updates have their own budget, so that other
-	// activity does not block them.
+	// A text anchor makes the server read the live document. The page of a
+	// person who types moves the anchor of each comment in the text after
+	// each pause of a second, so comment updates have a budget large enough
+	// for typing.
 	commentLimit := activityRateLimit(300)
 	// A change of access wakes the open streams of each document that it
 	// affects, and a change of a folder wakes all open streams.
 	accessLimit := activityRateLimit(30)
-	// One read of the inbox can read many pages: it skips the items of
-	// documents that the caller can no longer read.
-	inboxLimit := activityRateLimit(60)
 	authed.GET("/me", h.me)
-	authed.GET("/me/inbox", inboxLimit, h.inbox)
 	authed.GET("/users", h.searchUsers)
 	authed.GET("/google-groups", h.searchGoogleGroups)
 	authed.GET("/auth/cli/credentials", h.listCLICredentials)
@@ -405,8 +397,7 @@ func (s *Server) routes(deps dependencies) {
 	authed.DELETE("/documents/:id/approvals/:approval_id", h.deleteApproval)
 	authed.POST("/documents/:id/versions", h.createVersion)
 	authed.POST("/documents/:id/edits", h.editDocument)
-	authed.POST("/documents/:id/ops", opsLimit, h.appendOperation)
-	authed.POST("/documents/:id/move", moveDestinationLimit, h.moveDocument)
+	authed.POST("/documents/:id/ops", activityRateLimit(1200), h.appendOperation)
 	authed.POST("/documents/:id/versions/:version_id/restore", h.restoreVersion)
 	authed.GET("/documents/:id/labels", h.listDocumentLabels)
 	authed.PUT("/documents/:id/labels", h.replaceDocumentLabels)
@@ -429,9 +420,6 @@ func (s *Server) routes(deps dependencies) {
 	authed.PUT("/documents/:id/comments/:comment_id/read", h.markCommentThreadRead)
 	authed.POST("/folders", h.createFolder)
 	authed.GET("/folders", h.listFolders)
-	authed.GET("/move-destinations", moveDestinationLimit, h.moveDestinations)
-	authed.GET("/move-destinations/children", moveDestinationLimit, h.moveDestinationChildren)
-	authed.GET("/move-destinations/search", moveDestinationLimit, h.searchMoveDestinations)
 	authed.GET("/folders/:id", h.getFolder)
 	authed.PATCH("/folders/:id", accessLimit, h.patchFolder)
 	authed.DELETE("/folders/:id", accessLimit, h.deleteFolder)

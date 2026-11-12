@@ -29,11 +29,7 @@ import {
 import { DocumentSearchInput } from "@/components/browse/document-search-input";
 import { FeaturedItems } from "@/components/browse/featured-items";
 import { sortEntries } from "@/components/browse/sort-entries";
-import {
-  folderSearchText,
-  hasDocumentSearchOperators,
-  searchTokens,
-} from "@/lib/search-query";
+import { hasDocumentSearchOperators, searchTokens } from "@/lib/search-query";
 import {
   DndContext,
   PointerSensor,
@@ -87,8 +83,7 @@ export function DocumentsPage() {
   const structuredSearch = hasDocumentSearchOperators(debouncedQ);
   const rootFolders = useQuery({
     queryKey: [...queryKeys.folders(), debouncedQ],
-    queryFn: () =>
-      api.listFolders(undefined, undefined, folderSearchText(debouncedQ) || undefined),
+    queryFn: () => api.listFolders(undefined, undefined, debouncedQ || undefined),
     placeholderData: (prev) => prev,
     enabled: !structuredSearch,
     // The page shows the error.
@@ -177,14 +172,9 @@ export function DocumentsPage() {
     const [dragType, dragId] = (active.id as string).split(":", 2);
     const targetFolderId = (over.id as string).replace("drop:", "");
     if (dragType === DRAG_TYPE.folder && dragId === targetFolderId) return;
-    const draggedDocument =
-      dragType === DRAG_TYPE.folder
-        ? undefined
-        : documents.find((document) => docID(document) === dragId);
     move.mutate({
       type: dragType === DRAG_TYPE.folder ? "folder" : "document",
       id: dragId,
-      from: draggedDocument?.parent_folder_id || undefined,
       to: targetFolderId,
       toTitle: folders.find((f) => f.id === targetFolderId)?.title,
     });

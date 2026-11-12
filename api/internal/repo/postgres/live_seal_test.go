@@ -389,10 +389,10 @@ func TestASealJoinsALimitedCountOfSummaries(t *testing.T) {
 }
 
 // An agent pulls the open version while a person types. The person types
-// more and stops. The background task seals the version at a later seq, and
-// the agent pushes with the seq of its pull. The base is the document at
-// that seq, and not the content of the version: else the push takes out the
-// text that the person typed after the pull.
+// more and is done, so the version is sealed at a later seq, and the agent
+// pushes with the seq of its pull. The base is the document at that seq, and
+// not the content of the version: else the push takes out the text that the
+// person typed after the pull.
 func TestPushFromAPullOfAnOpenVersionKeepsTheTextTypedAfterIt(t *testing.T) {
 	ctx := context.Background()
 	store := newStore(t)
@@ -693,10 +693,10 @@ func TestHistoryShowsOneRowForASittingThatAPushCut(t *testing.T) {
 		return got
 	}
 	// A push on the live document.
-	push := func(on repo.OperationResult, from, to string) repo.Version {
+	push := func(on repo.OperationResult, old, new string) repo.Version {
 		t.Helper()
 		v, _, err := store.SaveVersion(ctx, doc.ID, on.VersionID, &on.Seq, liveOwner, func(base []byte) ([]byte, string, error) {
-			return []byte(strings.Replace(string(base), from, to, 1)), "", nil
+			return []byte(strings.Replace(string(base), old, new, 1)), "", nil
 		})
 		if err != nil {
 			t.Fatal(err)

@@ -102,10 +102,6 @@ definitions:
         type: string
       approval_summary:
         $ref: '#/definitions/repo.ApprovalSummary'
-      can_move:
-        description: 'CanMove is set by GET /v1/documents/{id}: the caller may move
-          it.'
-        type: boolean
       current_version_id:
         type: string
       id:
@@ -174,37 +170,11 @@ definitions:
       version_id:
         type: string
     type: object
-  repo.Folder:
-    properties:
-      ancestors:
-        items:
-          $ref: '#/definitions/repo.FolderBreadcrumb'
-        type: array
-      id:
-        type: string
-      owner:
-        $ref: '#/definitions/auth.Principal'
-      parent_folder_id:
-        type: string
-      title:
-        type: string
-    type: object
   repo.FolderBreadcrumb:
     properties:
       id:
         type: string
       title:
-        type: string
-    type: object
-  repo.FolderEntry:
-    properties:
-      document:
-        $ref: '#/definitions/repo.Document'
-      folder:
-        $ref: '#/definitions/repo.Folder'
-      last_active:
-        type: string
-      type:
         type: string
     type: object
   repo.Grant:
@@ -223,29 +193,6 @@ definitions:
         type: string
       role:
         $ref: '#/definitions/repo.Role'
-    type: object
-  repo.InboxItem:
-    properties:
-      at:
-        type: string
-      body:
-        type: string
-      comment_id:
-        type: string
-      document_id:
-        type: string
-      document_title:
-        type: string
-      from:
-        allOf:
-        - $ref: '#/definitions/auth.Principal'
-        description: From asked for the approval, or wrote the newest unread message,
-          Body.
-      kind:
-        description: |-
-          Kind is "approval" for a document to approve, or "thread" for a thread
-          with a message to read.
-        type: string
     type: object
   repo.NotificationPreferences:
     properties:
@@ -353,15 +300,6 @@ definitions:
         type: boolean
       sha256:
         type: string
-    type: object
-  server.ambiguousPathResponse:
-    properties:
-      candidates:
-        items:
-          $ref: '#/definitions/repo.Folder'
-        type: array
-      error:
-        $ref: '#/definitions/server.errorBody'
     type: object
   server.approvalListItem:
     properties:
@@ -801,17 +739,6 @@ definitions:
       error:
         $ref: '#/definitions/server.errorBody'
     type: object
-  server.folderListResponse:
-    properties:
-      folder:
-        $ref: '#/definitions/repo.Folder'
-      has_more:
-        type: boolean
-      items:
-        items:
-          $ref: '#/definitions/repo.FolderEntry'
-        type: array
-    type: object
   server.googleGroupSearchItem:
     properties:
       email:
@@ -916,13 +843,6 @@ definitions:
           $ref: '#/definitions/repo.DocumentAccessRequest'
         type: array
     type: object
-  server.listResponse-repo_InboxItem:
-    properties:
-      items:
-        items:
-          $ref: '#/definitions/repo.InboxItem'
-        type: array
-    type: object
   server.listResponse-repo_OwnershipTransfer:
     properties:
       items:
@@ -1000,17 +920,6 @@ definitions:
         type: string
       name:
         type: string
-    type: object
-  server.moveDocResponse:
-    properties:
-      document_id:
-        type: string
-      folder_id:
-        type: string
-      moved:
-        type: boolean
-      permission_warning:
-        $ref: '#/definitions/server.permissionWarning'
     type: object
   server.notificationPreferencesRequest:
     properties:
@@ -2077,10 +1986,10 @@ paths:
       - application/json
       description: Applies exact find-and-replace edits to the live document on the
         server and saves the result as a new version. Each old_string must occur exactly
-        once. The edits apply in order, and either all apply or none do. The HTML
-        is never parsed, so everything else stays byte-for-byte the same. When the
-        edits together leave the document as it is, the response is 200 with unchanged
-        set and the current version.
+        once; edits apply in order and either all apply or none do. The HTML is never
+        parsed, so everything else stays byte-for-byte the same. When the edits together
+        leave the document as it is, the response is 200 with unchanged set and the
+        current version.
       parameters:
       - description: Document ID
         in: path
@@ -2094,10 +2003,6 @@ paths:
         schema:
           $ref: '#/definitions/server.editDocumentRequest'
       responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/server.editDocumentResponse'
         "201":
           description: Created
           schema:
@@ -2584,10 +2489,6 @@ paths:
         schema:
           $ref: '#/definitions/server.restoreVersionRequest'
       responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/server.createVersionResponse'
         "201":
           description: Created
           schema:
@@ -2606,127 +2507,6 @@ paths:
       summary: Restore version
       tags:
       - versions
-  /v1/folders:
-    get:
-      description: 'With no parameters, lists the folders and documents at the root
-        of the caller. With folder_id or path, lists the contents of that folder.
-        With q or min_role, searches the folders that the caller can see by title,
-        at most 25: min_role keeps only the folders on which the caller has at least
-        that role, and min_role with no q lists every such folder, for a picker such
-        as the move dialog.'
-      parameters:
-      - description: Folder ID to list
-        in: query
-        name: folder_id
-        type: string
-      - description: Folder path to list, such as /A/B
-        in: query
-        name: path
-        type: string
-      - description: Words of a folder title
-        in: query
-        name: q
-        type: string
-      - description: Least role of the caller on each folder of a search
-        enum:
-        - viewer
-        - commenter
-        - editor
-        - owner
-        in: query
-        name: min_role
-        type: string
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/server.folderListResponse'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/server.errorEnvelope'
-        "409":
-          description: 'ambiguous_path: more than one folder has a name of the path'
-          schema:
-            $ref: '#/definitions/server.ambiguousPathResponse'
-      security:
-      - bearerAuth: []
-      - cookieAuth: []
-      summary: List or search folders
-      tags:
-      - folders
-  /v1/folders/{id}/documents:
-    post:
-      description: The caller needs the editor role on the document and on the folder.
-        The caller also needs the editor role on the folder that the document leaves,
-        unless the caller owns the document. permission_warning is set when the folder
-        gives access to more people than the document had.
-      parameters:
-      - description: Folder ID
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: The document to move
-        in: body
-        name: body
-        required: true
-        schema:
-          properties:
-            document_id:
-              type: string
-          type: object
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/server.moveDocResponse'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/server.errorEnvelope'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/server.errorEnvelope'
-      security:
-      - bearerAuth: []
-      - cookieAuth: []
-      summary: Move a document into a folder
-      tags:
-      - folders
-  /v1/folders/{id}/documents/{doc_id}:
-    delete:
-      description: The caller needs the editor role on the document, and on the folder
-        that it leaves unless the caller owns the document.
-      parameters:
-      - description: Folder ID
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Document ID
-        in: path
-        name: doc_id
-        required: true
-        type: string
-      responses:
-        "204":
-          description: No Content
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/server.errorEnvelope'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/server.errorEnvelope'
-      security:
-      - bearerAuth: []
-      - cookieAuth: []
-      summary: Move a document out of a folder to the root
-      tags:
-      - folders
   /v1/folders/{id}/grants:
     post:
       parameters:
@@ -2807,28 +2587,6 @@ paths:
       summary: Current principal
       tags:
       - auth
-  /v1/me/inbox:
-    get:
-      description: 'The newest first, at most 50: each document that the caller approves
-        and did not decide on (kind approval), and each open thread on a document
-        of the caller, that they wrote in, or that mentions them, with a message by
-        someone else after their last read or message (kind thread). It holds only
-        documents that the caller can read now.'
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/server.listResponse-repo_InboxItem'
-        "429":
-          description: Too Many Requests
-          schema:
-            $ref: '#/definitions/server.errorEnvelope'
-      security:
-      - bearerAuth: []
-      - cookieAuth: []
-      summary: List what waits on the caller
-      tags:
-      - documents
   /v1/me/notifications:
     get:
       responses:

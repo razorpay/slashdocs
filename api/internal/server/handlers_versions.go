@@ -184,7 +184,7 @@ const errHTMLNotUTF8 = "the HTML file must be valid UTF-8"
 
 // EditDocument godoc
 // @Summary Edit document text
-// @Description Applies exact find-and-replace edits to the live document on the server and saves the result as a new version. Each old_string must occur exactly once. The edits apply in order, and either all apply or none do. The HTML is never parsed, so everything else stays byte-for-byte the same. When the edits together leave the document as it is, the response is 200 with unchanged set and the current version.
+// @Description Applies exact find-and-replace edits to the live document on the server and saves the result as a new version. Each old_string must occur exactly once; edits apply in order and either all apply or none do. The HTML is never parsed, so everything else stays byte-for-byte the same. When the edits together leave the document as it is, the response is 200 with unchanged set and the current version.
 // @Tags versions
 // @Security bearerAuth
 // @Security cookieAuth
@@ -192,7 +192,6 @@ const errHTMLNotUTF8 = "the HTML file must be valid UTF-8"
 // @Param id path string true "Document ID"
 // @Param body body editDocumentRequest true "Edits"
 // @Success 201 {object} editDocumentResponse
-// @Success 200 {object} editDocumentResponse
 // @Failure 409 {object} errorEnvelope
 // @Failure 422 {object} errorEnvelope
 // @Router /v1/documents/{id}/edits [post]
@@ -389,7 +388,6 @@ type restoreVersionRequest struct {
 // @Param version_id path string true "Version ID to restore"
 // @Param body body restoreVersionRequest false "Change summary"
 // @Success 201 {object} createVersionResponse
-// @Success 200 {object} createVersionResponse
 // @Failure 400 {object} errorEnvelope
 // @Failure 409 {object} errorEnvelope
 // @Router /v1/documents/{id}/versions/{version_id}/restore [post]

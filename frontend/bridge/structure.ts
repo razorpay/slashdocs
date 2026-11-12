@@ -1036,7 +1036,7 @@ function paragraphs(d: Document, text: string): DocumentFragment {
 
 // sanitize keeps the allowed elements of pasted HTML, and of their
 // attributes only a safe href.
-function sanitize(d: Document, html: string): DocumentFragment {
+export function sanitize(d: Document, html: string): DocumentFragment {
   const parsed = new d.defaultView!.DOMParser().parseFromString(html, "text/html");
   const fragment = d.createDocumentFragment();
   clean(d, parsed.body, fragment);

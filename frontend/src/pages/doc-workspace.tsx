@@ -91,8 +91,6 @@ export type DocBarControls = {
   threads: ThreadCount;
   onToggleComments: () => void;
   onShowShortcuts: () => void;
-  moveOpen: boolean;
-  onMoveOpenChange: (open: boolean) => void;
 };
 
 // DocWorkspace is a rendered document with its comments: their popovers, the
@@ -111,7 +109,6 @@ export function DocWorkspace({
   onUnfollowCursor,
   onDocumentClick,
   canEdit = false,
-  canMove = false,
   editing = false,
   onEditingChange = noop,
   frameShows = noop,
@@ -146,8 +143,6 @@ export function DocWorkspace({
   onDocumentClick?: () => void;
   // The reader may edit the version on screen.
   canEdit?: boolean;
-  // The reader may remove this document from its current folder.
-  canMove?: boolean;
   // Edit mode, which the page keeps. Each document opens in Comment mode.
   editing?: boolean;
   onEditingChange?: (editing: boolean) => void;
@@ -260,7 +255,6 @@ export function DocWorkspace({
     if (!listOpen) setCrowded(false);
   }, [listOpen]);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const [moveOpen, setMoveOpen] = useState(false);
   const [showFullscreenHint, setShowFullscreenHint] = useState(false);
   const [chordLabel, setChordLabel] = useState<string>();
   const nav = useNavigate();
@@ -273,13 +267,6 @@ export function DocWorkspace({
     setJump({ id });
   }, []);
   useCommentLink(docId, comments, jumpToComment);
-
-  useEffect(() => {
-    setActiveComment(undefined);
-    setListOpen(false);
-    setPlacingPin(false);
-    setMoveOpen(false);
-  }, [docId]);
 
   const handleRenderedDocumentClick = useCallback(() => {
     onDocumentClick?.();
@@ -462,13 +449,8 @@ export function DocWorkspace({
 
   const cursorsShown = cursorsShownStore.useStore();
   const chordKeys = useMemo<ChordKey[]>(
-    () =>
-      fullscreen
-        ? ["t", "f", "m", "h"]
-        : canMove
-          ? ["t", "f", "c", "m", "v", "h"]
-          : ["t", "f", "c", "m", "h"],
-    [canMove, fullscreen],
+    () => (fullscreen ? ["t", "f", "m", "h"] : ["t", "f", "c", "m", "h"]),
+    [fullscreen],
   );
   const runChord = useCallback(
     (key: ChordKey) => {
@@ -492,11 +474,6 @@ export function DocWorkspace({
       if (key === "m") {
         setChordLabel(cursorsShown ? "Cursors hidden" : "Cursors shown");
         cursorsShownStore.write(!cursorsShown);
-        return;
-      }
-      if (key === "v") {
-        setChordLabel("Move to folder");
-        setMoveOpen(true);
         return;
       }
       setChordLabel("Documents");
@@ -706,15 +683,22 @@ export function DocWorkspace({
       )}
       <CommentMap comments={shownComments} />
       <Keycast state={chord} available={chordKeys} label={chordLabel} />
+      {/* In Edit mode an accent edge runs along the top of the document, red
+          while a change cannot save. It grows from the left and shrinks
+          back, by its transform alone. */}
+      <div
+        aria-hidden="true"
+        className={cn(
+          "pointer-events-none absolute inset-x-0 top-0 z-10 h-0.5 origin-left bg-[var(--color-accent)] transition-[scale,background-color] duration-200 ease-out motion-reduce:transition-none",
+          !editing && "scale-x-0 duration-150",
+          saveState === "refused" && "bg-[var(--color-danger)]",
+        )}
+      />
     </>
   );
   return (
     <DocProvider value={ctx}>
-      <ShortcutsDialog
-        open={shortcutsOpen}
-        onOpenChange={setShortcutsOpen}
-        available={chordKeys}
-      />
+      <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
       {fullscreen ? (
         <div className="flex h-full flex-col">
           {banner}
@@ -746,8 +730,6 @@ export function DocWorkspace({
             threads,
             onToggleComments: toggleComments,
             onShowShortcuts: () => setShortcutsOpen(true),
-            moveOpen,
-            onMoveOpenChange: setMoveOpen,
           })}
           {banner}
           <section className="relative min-w-0 flex-1 overflow-hidden bg-[var(--color-surface-muted)]">

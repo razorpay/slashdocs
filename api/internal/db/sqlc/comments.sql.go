@@ -511,8 +511,8 @@ type MoveAnchorsParams struct {
 	Anchors [][]byte
 }
 
-// Moves the anchors of text comments to seq, each one only while it is still
-// on its seq in was.
+// Moves the anchors of text comments to seq, each one when it is still on
+// its seq was.
 func (q *Queries) MoveAnchors(ctx context.Context, arg MoveAnchorsParams) error {
 	_, err := q.db.Exec(ctx, moveAnchors,
 		arg.Seq,

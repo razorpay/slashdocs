@@ -409,7 +409,7 @@ func TestOperationFailsCleanly(t *testing.T) {
 	assertJSON(t, body, `{
 	  "error": {
 	    "code": "edit_failed",
-	    "message": "replacement 1: old_html is not the HTML from start to end of the source at the base seq",
+	    "message": "replacement 1: old_html is not the HTML from start to end of the base version",
 	    "details": { "index": 1, "reason": "old_html_mismatch" }
 	  }
 	}`)

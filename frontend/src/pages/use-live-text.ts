@@ -407,10 +407,11 @@ export function useLiveText(options: {
       let op = s.unsent;
       try {
         op ??= await compose(s);
+        const answering = op && api.sendOps(opts.current.docId, op.body);
         if (op) {
           const at = s.text!;
           const before = at.head.version;
-          const answer = await api.sendOps(opts.current.docId, op.body);
+          const answer = (await answering)!;
           // The server holds the text of the operation.
           s.unsent = undefined;
           at.shown = op.screen;
@@ -553,8 +554,8 @@ export function useLiveText(options: {
           // The frame already shows the patches of the text that it holds.
           const patches = without(wanted.patches, base, before?.source);
           const codes = without(wanted.codes, base, before?.source);
-          // A script text can change all that the reader sees.
-          if (ask && codes.length) return "held";
+          // A style or script text can change all that the reader sees.
+          if (ask && (codes.length || patches.some((p) => "style" in p))) return "held";
           const strings = await stringPatches(s, codes, taken, opts.current.probe);
           if (!strings) return "failed";
           patches.push(...strings);
@@ -577,9 +578,7 @@ export function useLiveText(options: {
           if (result.withdrawn) return "held";
           // A key came between the take and the patch.
           if (result.stale) continue;
-          // The patch does not fit, as for a style that a script changed,
-          // and the frame must load. A load is never a small change.
-          if (!result.ok) return ask ? "held" : "failed";
+          if (!result.ok) return "failed";
 
           at.outside = outsideAfter(at.outside, base, patches);
           for (const tag of wanted.tags) at.made.add(tag);

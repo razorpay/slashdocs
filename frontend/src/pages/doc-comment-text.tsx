@@ -385,7 +385,7 @@ export function CommentBody({
   );
 }
 
-// Only web URLs become links. Comment text always goes through React escaping.
+// Only web URLs become links; comment text always goes through React escaping.
 function CommentText({ text }: { text: string }) {
   return text.split(/(https?:\/\/[^\s<>"]+)/gi).map((part, index) => {
     if (!/^https?:\/\//i.test(part)) return part;

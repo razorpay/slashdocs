@@ -263,7 +263,7 @@ function wholeWords(base: string, sides: Change[][]): Merged[] {
 // takes out the end of "it. ", the full stop of "this." would also go.
 //
 // Another insertion or deletion that is in the text that the other side
-// changes moves on, out of that text (see moveOut). When the other person
+// changes moves on, out of that text (see clear). When the other person
 // changes "this." to "this!", ". Remove it" would leave the full stop.
 function aligned(base: string, sides: Merged[][]): Merged[][] {
   const [a, b] = sides;
@@ -282,11 +282,11 @@ function aligned(base: string, sides: Merged[][]): Merged[][] {
       // An insertion moves first, and a deletion moves when the insertion
       // cannot.
       if (x.start === x.end) {
-        a[i] = moveOut(base, a, i, y);
-        b[j] = moveOut(base, b, j, a[i]);
+        a[i] = clear(base, a, i, y);
+        b[j] = clear(base, b, j, a[i]);
       } else {
-        b[j] = moveOut(base, b, j, x);
-        a[i] = moveOut(base, a, i, b[j]);
+        b[j] = clear(base, b, j, x);
+        a[i] = clear(base, a, i, b[j]);
       }
     }
     const [ends, other] = [a[i].end, b[j].end];
@@ -310,10 +310,10 @@ function toward(base: string, side: Merged[], i: number, other: Change): Merged 
   return moved.start <= other.end && other.start <= moved.end ? moved : side[i];
 }
 
-// moveOut moves the insertion or deletion side[i] on, to the first place out
+// clear moves the insertion or deletion side[i] on, to the first place out
 // of the text that other changes. It stays where it is when it has no such
 // place: at a place between, its text would go in in another order.
-function moveOut(base: string, side: Merged[], i: number, other: Change): Merged {
+function clear(base: string, side: Merged[], i: number, other: Change): Merged {
   const moved = slide(
     base,
     side,

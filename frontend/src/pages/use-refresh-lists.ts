@@ -3,11 +3,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/queryKeys";
 import { useInvalidateApprovals } from "./use-invalidate-approvals";
 
-// The lists refresh at most this often.
+// The lists refresh at most this often while new versions come.
 const REFRESH_MS = 2_000;
 
-// useRefreshLists gives the function to call when a version of a document
-// opens or the server seals it.
+// useRefreshLists gives the function to call on each new version of a
+// document.
 // It refreshes what lists the versions of the document and their approvals:
 // at once for the first change, and then at most each REFRESH_MS. The last
 // change always refreshes.

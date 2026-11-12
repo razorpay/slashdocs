@@ -104,7 +104,7 @@ export type DocContextValue = {
   // The thread or draft whose popover is open.
   activeComment?: string;
   setActiveComment: Dispatch<SetStateAction<string | undefined>>;
-  // Opens a thread that the reader went to, as from a link, the list or N.
+  // Opens a thread that the reader went to, as from a link, the list or J/K.
   jumpToComment: (id: string) => void;
   // The last jump, a new object each time, so the same thread pulses again.
   jump?: { id: string };

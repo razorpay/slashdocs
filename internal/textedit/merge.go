@@ -527,7 +527,7 @@ func whole(base Text, a, b []Replacement) ([]Replacement, []Replacement) {
 // out the end of "it. ", the full stop of "this." would also go.
 //
 // Another insertion or deletion that is in the text that the other list
-// changes moves on, out of that text (moveOut). When the other writer changes
+// changes moves on, out of that text (clear). When the other writer changes
 // "this." to "this!", ". Remove it" would leave the full stop.
 func aligned(base Text, a, b []Replacement) ([]Replacement, []Replacement) {
 	a, b = slices.Clone(a), slices.Clone(b)
@@ -546,11 +546,11 @@ func aligned(base Text, a, b []Replacement) ([]Replacement, []Replacement) {
 			// An insertion moves first, and a deletion moves when the
 			// insertion cannot.
 			if a[i].Start == a[i].End {
-				moveOut(base, a, i, b[j])
-				moveOut(base, b, j, a[i])
+				clear(base, a, i, b[j])
+				clear(base, b, j, a[i])
 			} else {
-				moveOut(base, b, j, a[i])
-				moveOut(base, a, i, b[j])
+				clear(base, b, j, a[i])
+				clear(base, a, i, b[j])
 			}
 		}
 		x, y := a[i].End, b[j].End
@@ -576,10 +576,10 @@ func toward(base Text, rs []Replacement, i int, o Replacement) {
 	}
 }
 
-// moveOut moves the insertion or deletion rs[i] on, to the first place out of
+// clear moves the insertion or deletion rs[i] on, to the first place out of
 // the text that y changes. It stays where it is when it has no such place:
 // at a place between, its text would go in in another order.
-func moveOut(base Text, rs []Replacement, i int, y Replacement) {
+func clear(base Text, rs []Replacement, i int, y Replacement) {
 	r := slide(base, rs, i, func(r Replacement) bool { return r.inside(y) }, func(Replacement) bool { return false })
 	if !r.inside(y) {
 		rs[i] = r

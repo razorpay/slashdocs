@@ -61,14 +61,12 @@ instead of creating a duplicate. Use the CLI help to find the current push/updat
 syntax and include a short summary of what changed. Write one change per line;
 the document's history shows a multi-line summary as a list. Pull the
 document with `slashdocs docs pull <id> --out <file>` before you edit it, and
-push that file: the CLI records which state of the document the file holds
-(its version and seq), and the push sends it. A push of a file with no
-recorded state is refused. People with the editor role also edit the document
-live in the browser (words, paragraphs, lists, bold, italic and links), several
-at once. When they changed other text after your pull, the server merges your
-push with their edits, and the CLI writes the merged version into your file.
-When they changed the same text, the push is refused and their text stays:
-pull again, and make your change again. A browser edit
+push that file: the CLI records which state of the document the file holds, so
+the server keeps the edits that other people made after your pull. A push of a
+file with no recorded state is refused. People with the
+editor role also edit the document in the browser (words, paragraphs, lists,
+bold, italic and links), and their edits save as they type, so pull or read the
+HTML again before you edit a document that people work on. A browser edit
 changes only the HTML of the element that the person edited. Text that a script
 shows can change in the browser only when it is exactly one string in an inline
 script or in a `<script type="application/json">` block. Thus, keep text that
@@ -99,27 +97,6 @@ point comment with `pin=`. A point whose element is gone in a later version
 has the placement status `moved`, and viewers show it at its old spot in the
 page.
 
-### Waiting for a review
-
-Right after you publish for review, run `slashdocs docs wait <doc_id>`, in the
-background if your tool has a time limit. It returns the open threads with new
-messages when the reviewer stops writing for 2 minutes, and an approval or a
-rejection at once. Change the document or answer in each thread, reply in each
-thread with what you did, push, and run `wait` again. Each wait gives only
-feedback that is new to you, and never your own replies. Stop when the
-document is approved, or when the person tells you to stop.
-
-### Approvals
-
-For a formal sign-off, use the approval workflow, not state that the
-document keeps itself. Run `slashdocs guidelines review approvals` for the
-rules. The owner asks for approval with `slashdocs docs approvers add <doc_id>
---to <email>`, and `slashdocs docs approvals list <doc_id>` shows the
-decisions. An approver decides with `slashdocs docs approve` or
-`slashdocs docs reject`. A version with changed content asks the approvers
-again. While other people type in the document, the server refuses a
-decision: decide when they are done.
-
 ### Searching and labels
 
 Use the same Slack-style search language as the web application:
@@ -132,8 +109,7 @@ slashdocs docs list 'rollout -draft from:me after:last week' --json
 Every word must appear in the title or the text of the latest version.
 Documents with the words in the title come first, then the latest. A word
 also matches longer words that start with it. `"quoted text"` matches the words in order, and `-word`
-excludes documents that contain the word. `title:word` (or
-`title:"a phrase"`) matches in the title only. `from:` (an email, the name
+excludes documents that contain the word. `from:` (an email, the name
 before the @, or `me`), `in:` (a folder or any folder above the document),
 `label:`, `before:`, `after:`, `on:`, and `during:` narrow the results. Repeat
 `from:` or `in:` to match any of the values. A date is a day (`25-09-26`,

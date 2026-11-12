@@ -105,7 +105,7 @@ function zoomOf(el: Element): number {
 
 // elementAt gives the document element under a point in the viewport that
 // every viewer has, at most MAX_PATH_DEPTH deep, or the body.
-function elementAt(d: Document, x: number, y: number): Element | null {
+export function elementAt(d: Document, x: number, y: number): Element | null {
   return sharedElement(d, d.elementFromPoint(x, y));
 }
 
@@ -406,7 +406,7 @@ export function trackPointer(
 
 // createCursorChat lets a viewer type a short message at their cursor, as in
 // Figma: "/" opens a field by the pointer, and others see the text live at
-// this viewer's cursor. Enter keeps it a few seconds. Esc clears it. The field
+// this viewer's cursor. Enter keeps it a few seconds; Esc clears it. The field
 // lives in the bridge window, over the document, and lets the pointer through.
 export function createCursorChat(
   d: Document,

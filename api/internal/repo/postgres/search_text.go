@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"slices"
 	"strings"
 	"unicode"
 
@@ -13,7 +12,6 @@ import (
 
 	"github.com/razorpay/slashdocs/api/internal/blob"
 	dbsqlc "github.com/razorpay/slashdocs/api/internal/db/sqlc"
-	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
 // maxSearchTextBytes keeps a version's tsvector below the PostgreSQL limit of
@@ -77,58 +75,30 @@ var hiddenElements = map[string]bool{"script": true, "style": true, "template": 
 
 func isSeparator(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }
 
-// tsqueries are the PostgreSQL tsquery texts of a search.
-type tsqueries struct {
-	// match finds documents with every term, and a phrase matches its words
-	// in order.
-	match string
-	// words finds the same documents and more, as it matches the words of
-	// every term in any order: a phrase "error budget" becomes 'error':* &
-	// 'budget':*. Search finds these documents in the index and checks the
-	// order of the words, which reads a document's text vector, on the sorted
-	// candidates only.
-	words string
-	// exclude finds documents with any excluded term.
-	exclude string
-	// rank orders matches by the terms in their titles.
-	rank string
-	// snippet marks the terms in the text, so it has no title terms.
-	snippet string
-}
-
-// searchQueries returns the tsquery texts of a search. A title term matches
-// title words only. The search vector gives title words weight A.
-func searchQueries(search repo.DocumentSearch) tsqueries {
-	terms := slices.Concat(tsqueryTerms(search.Terms, ""), tsqueryTerms(search.TitleTerms, "A"))
-	words := slices.Concat(tsqueryTerms(splitWords(search.Terms), ""), tsqueryTerms(splitWords(search.TitleTerms), "A"))
-	return tsqueries{
-		match:   strings.Join(terms, " & "),
-		words:   strings.Join(words, " & "),
-		exclude: strings.Join(tsqueryTerms(search.ExcludedTerms, ""), " | "),
-		rank:    strings.Join(tsqueryTerms(slices.Concat(search.Terms, search.TitleTerms), ""), " | "),
-		snippet: strings.Join(tsqueryTerms(search.Terms, ""), " & "),
-	}
-}
-
-// tsqueryTerms returns a tsquery operand for each term, which matches words
-// that start with the term and have the weight ("" is any weight). Quoting
-// makes every term a literal.
-func tsqueryTerms(terms []string, weight string) []string {
+// tsquery returns PostgreSQL tsquery text that matches words that start with
+// each term, joined with op. Quoting makes every term a literal, and a quoted
+// phrase matches its words in order.
+func tsquery(terms []string, op string) string {
 	quoted := make([]string, len(terms))
 	for i, term := range terms {
-		quoted[i] = "'" + tsqueryEscaper.Replace(term) + "':*" + weight
+		quoted[i] = "'" + tsqueryEscaper.Replace(term) + "':*"
 	}
-	return quoted
+	return strings.Join(quoted, op)
 }
 
 var tsqueryEscaper = strings.NewReplacer(`\`, `\\`, `'`, `''`)
 
-func splitWords(terms []string) []string {
+// tsqueryWords returns tsquery text that matches the words of every term in
+// any order: a phrase "error budget" becomes 'error':* & 'budget':*. Every
+// document that tsquery(terms, " & ") matches, this matches too. Search
+// finds these documents in the index and checks the order of the words, which
+// reads a document's text vector, on the sorted candidates only.
+func tsqueryWords(terms []string) string {
 	var words []string
 	for _, term := range terms {
 		words = append(words, strings.Fields(term)...)
 	}
-	return words
+	return tsquery(words, " & ")
 }
 
 // IndexVersions gives search text to current versions that were created

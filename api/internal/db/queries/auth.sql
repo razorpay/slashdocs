@@ -35,6 +35,9 @@ SELECT google_sub FROM users WHERE email=$1;
 UPDATE users SET google_sub = @to_sub
 WHERE users.google_sub = @from_sub AND NOT EXISTS (SELECT 1 FROM users taken WHERE taken.google_sub = @to_sub);
 
+-- name: GetUserByEmail :one
+SELECT id,email,name,picture_url FROM users WHERE email=$1;
+
 -- name: GetSignedInUserByEmail :one
 SELECT id,email,name,picture_url FROM users WHERE email=$1 AND google_sub IS NOT NULL;
 

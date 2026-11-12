@@ -1,5 +1,11 @@
-import { type Page } from "@playwright/test";
-import { expect, renderedDocument, startEditing, test, uniqueName } from "./fixtures";
+import { type FrameLocator, type Page } from "@playwright/test";
+import { expect, startEditing, test, uniqueName } from "./fixtures";
+
+function renderedDocument(page: Page): FrameLocator {
+  return page
+    .frameLocator('iframe[title="Rendered document"]')
+    .frameLocator("iframe#slashdocs-doc");
+}
 
 // listedThread finds a thread in the comments list, which the bar opens.
 async function listedThread(page: Page, body: string) {
