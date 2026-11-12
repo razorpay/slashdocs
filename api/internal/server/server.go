@@ -362,8 +362,11 @@ func (s *Server) routes(deps dependencies) {
 	// A change of access wakes the open streams of each document that it
 	// affects, and a change of a folder wakes all open streams.
 	accessLimit := activityRateLimit(30)
+	// One read of the inbox can read many pages: it skips the items of
+	// documents that the caller can no longer read.
+	inboxLimit := activityRateLimit(60)
 	authed.GET("/me", h.me)
-	authed.GET("/me/inbox", h.inbox)
+	authed.GET("/me/inbox", inboxLimit, h.inbox)
 	authed.GET("/users", h.searchUsers)
 	authed.GET("/google-groups", h.searchGoogleGroups)
 	authed.GET("/auth/cli/credentials", h.listCLICredentials)

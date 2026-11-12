@@ -157,3 +157,23 @@ func TestInboxReadsPastUnreadableDocuments(t *testing.T) {
 	}
 	wantInbox(t, e, fixtureCommenter, "thread:"+e.doc.ID+":"+e.cmt.ID)
 }
+
+// One read of the inbox can read many pages, so each principal has a budget
+// of reads.
+func TestInboxHasABudgetForEachPrincipal(t *testing.T) {
+	e := newTestEnv(t)
+	read := func(p auth.Principal) int {
+		return do(t, e.h, http.MethodGet, "/v1/me/inbox", "", map[string]string{"X-Test-Principal": principalHeader(p)}).Code
+	}
+	for i := range 60 {
+		if got := read(fixtureViewer); got != http.StatusOK {
+			t.Fatalf("read %d: status = %d, want 200", i, got)
+		}
+	}
+	if got := read(fixtureViewer); got != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", got)
+	}
+	if got := read(fixtureCommenter); got != http.StatusOK {
+		t.Fatalf("another principal: status = %d, want 200", got)
+	}
+}

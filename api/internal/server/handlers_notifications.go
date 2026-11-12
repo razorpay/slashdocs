@@ -183,6 +183,7 @@ func (h handlers) declineDocumentAccessRequest(c *gin.Context) {
 // @Security bearerAuth
 // @Security cookieAuth
 // @Success 200 {object} listResponse[repo.InboxItem]
+// @Failure 429 {object} errorEnvelope
 // @Router /v1/me/inbox [get]
 func (h handlers) inbox(c *gin.Context) {
 	ctx, p := c.Request.Context(), *current(c)
