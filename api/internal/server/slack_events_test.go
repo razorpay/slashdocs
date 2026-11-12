@@ -130,7 +130,7 @@ func cardText(t *testing.T, card any) string {
 func orgDoc(t *testing.T, e *testEnv) (doc repo.Document, v1, v2 repo.Version) {
 	t.Helper()
 	ctx := context.Background()
-	doc, v1, err := e.store.CreateDocument(ctx, fixtureOwner, "Org plan <!channel>",
+	doc, v1, err := e.store.CreateDocument(ctx, fixtureOwner, "Org plan <!channel>", "",
 		[]byte(`<html><head><title>Org plan</title></head><body><h1>Org plan</h1><p>First version summary.</p></body></html>`))
 	if err != nil {
 		t.Fatal(err)
@@ -191,7 +191,7 @@ func TestSlackEventsGiveLiveCardsOnlyToOrgWideDocs(t *testing.T) {
 	if _, err := e.store.CreateGrant(ctx, "folder", folder.ID, auth.Principal{Type: auth.PrincipalAnyone}, repo.RoleViewer, fixtureOwner); err != nil {
 		t.Fatal(err)
 	}
-	inFolder, _, err := e.store.CreateDocument(ctx, fixtureOwner, "Folder doc", []byte(`<p>Folder body.</p>`))
+	inFolder, _, err := e.store.CreateDocument(ctx, fixtureOwner, "Folder doc", "", []byte(`<p>Folder body.</p>`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +203,7 @@ func TestSlackEventsGiveLiveCardsOnlyToOrgWideDocs(t *testing.T) {
 	if err := e.store.UpsertGoogleGroup(ctx, group); err != nil {
 		t.Fatal(err)
 	}
-	groupDoc, _, err := e.store.CreateDocument(ctx, fixtureOwner, "Group only plan", []byte(`<p>Group body.</p>`))
+	groupDoc, _, err := e.store.CreateDocument(ctx, fixtureOwner, "Group only plan", "", []byte(`<p>Group body.</p>`))
 	if err != nil {
 		t.Fatal(err)
 	}
