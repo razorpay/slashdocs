@@ -429,6 +429,11 @@ func TestFolderOwnerIsEditorOfContentsOthersOwn(t *testing.T) {
 
 	// The folder owner can move the document out, and then has no role on it.
 	rr = do(t, e.h, http.MethodDelete, "/v1/folders/"+folderID+"/documents/"+docID, "", owner)
+	assertStatus(t, rr, http.StatusConflict)
+	if !strings.Contains(rr.Body.String(), "access_loss_confirmation_required") {
+		t.Fatalf("missing access-loss confirmation response: %s", rr.Body.String())
+	}
+	rr = do(t, e.h, http.MethodDelete, "/v1/folders/"+folderID+"/documents/"+docID+"?acknowledge_access_loss=true", "", owner)
 	assertStatus(t, rr, http.StatusNoContent)
 	rr = do(t, e.h, http.MethodGet, "/v1/documents/"+docID, "", owner)
 	assertStatus(t, rr, http.StatusForbidden)

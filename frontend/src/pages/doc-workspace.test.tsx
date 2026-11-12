@@ -65,7 +65,12 @@ function Bar({
 
 function renderWorkspace(
   entry: string,
-  props: { principal?: Principal; signIn?: () => void; canEdit?: boolean },
+  props: {
+    principal?: Principal;
+    signIn?: () => void;
+    canEdit?: boolean;
+    canMove?: boolean;
+  },
 ) {
   render(
     <QueryClientProvider client={new QueryClient()}>
@@ -554,16 +559,20 @@ it("asks the server for nothing when Edit mode ends, and when the page goes", as
 
 it("opens Move with Esc V only for an editor outside full screen", async () => {
   const user = userEvent.setup();
-  renderWorkspace("/app/d/doc-1", { principal: reader, canEdit: true });
+  renderWorkspace("/app/d/doc-1", {
+    principal: reader,
+    canEdit: true,
+    canMove: true,
+  });
 
   expect(screen.getByText("Move closed")).toBeInTheDocument();
   await user.keyboard("{Escape}v");
   expect(await screen.findByText("Move open")).toBeInTheDocument();
 });
 
-it("does not offer Esc V to a reader or in full screen", async () => {
+it("does not offer Esc V without move permission or in full screen", async () => {
   const user = userEvent.setup();
-  renderWorkspace("/app/d/doc-1", { principal: reader });
+  renderWorkspace("/app/d/doc-1", { principal: reader, canEdit: true });
   await user.keyboard("{Escape}v");
   expect(screen.getByText("Move closed")).toBeInTheDocument();
   cleanup();
@@ -571,6 +580,7 @@ it("does not offer Esc V to a reader or in full screen", async () => {
   renderWorkspace("/app/d/doc-1?fullscreen=1", {
     principal: reader,
     canEdit: true,
+    canMove: true,
   });
   await user.keyboard("{Escape}v");
   expect(screen.queryByText("Move open")).toBeNull();

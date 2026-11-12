@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -42,43 +43,9 @@ func (h handlers) needFolderChain(c *gin.Context, id string, need repo.Role) ([]
 	return chain, true
 }
 
-// needDocMove makes sure the caller can move a document to folder to ("" is
-// the root). The caller needs editor on the document. Like Google Drive's
-// canRemoveChildren, the caller also needs editor on the folder that the
-// document leaves, because the move removes the access that folder gives.
-// The owner skips that check, so no one can trap a document away from them.
-func (h handlers) needDocMove(c *gin.Context, docID, to string) bool {
-	doc, err := h.deps.repository.GetDocument(c.Request.Context(), docID)
-	if err != nil {
-		if errors.Is(err, repo.ErrNotFound) {
-			notFound(c)
-			return false
-		}
-		internalErr(c, err)
-		return false
-	}
-	role, err := h.deps.repository.RoleForDocument(c.Request.Context(), *current(c), docID)
-	if err != nil {
-		internalErr(c, err)
-		return false
-	}
-	if doc.ParentFolderID == to && atLeast(role, repo.RoleEditor) {
-		return true
-	}
-	canMove, err := h.canMoveDoc(c, doc, role)
-	switch {
-	case err != nil:
-		internalErr(c, err)
-	case !canMove && groupMembershipUnavailable(current(c)):
-		groupMembershipUnavailableResponse(c)
-	case !canMove:
-		forbidden(c, "editor role on the document and on its folder is required")
-	}
-	return err == nil && canMove
-}
-
-// canMoveDoc reports whether the caller, with role on doc, may take doc out
-// of its folder: see needDocMove.
+// canMoveDoc reports whether the caller may take doc out of its current
+// folder. The owner can always recover their document; other editors must
+// also be able to edit the source folder they are removing it from.
 func (h handlers) canMoveDoc(c *gin.Context, doc repo.Document, role repo.Role) (bool, error) {
 	switch {
 	case !atLeast(role, repo.RoleEditor):
@@ -272,23 +239,6 @@ func (h handlers) browseFolders(c *gin.Context) {
 		filterVisibleFolderAncestors(folder, chain)
 	}
 	c.JSON(http.StatusOK, folderListResponse{Folder: folder, Items: items, HasMore: has})
-}
-func (h handlers) searchFolders(c *gin.Context, q string, minRole repo.Role) {
-	if _, known := roleRank[minRole]; minRole != "" && !known {
-		badRequest(c, "invalid min_role")
-		return
-	}
-	includeOrgWide := h.deps.deployment == DeploymentOrg
-	folders, err := h.deps.repository.SearchFoldersByTitle(c.Request.Context(), *current(c), q, includeOrgWide, minRole, 25)
-	if err != nil {
-		internalErr(c, err)
-		return
-	}
-	items := make([]repo.FolderEntry, 0, len(folders))
-	for i := range folders {
-		items = append(items, repo.FolderEntry{Type: "folder", Folder: &folders[i]})
-	}
-	c.JSON(http.StatusOK, folderListResponse{Items: items, HasMore: len(folders) >= 25})
 }
 func (h handlers) getFolder(c *gin.Context) {
 	p := current(c)
@@ -576,7 +526,16 @@ func (h handlers) moveDocToRoot(c *gin.Context) {
 	if !requireResolvedGroupsForAggregate(c) {
 		return
 	}
-	if _, err := h.deps.repository.MoveDocumentToRoot(c.Request.Context(), *current(c), c.Param("id"), c.Param("doc_id")); err != nil {
+	acknowledgeAccessLoss := false
+	if raw, present := c.GetQuery("acknowledge_access_loss"); present {
+		var err error
+		acknowledgeAccessLoss, err = strconv.ParseBool(raw)
+		if err != nil {
+			badRequest(c, "invalid acknowledge_access_loss")
+			return
+		}
+	}
+	if _, err := h.deps.repository.MoveDocumentToRoot(c.Request.Context(), *current(c), c.Param("id"), c.Param("doc_id"), acknowledgeAccessLoss); err != nil {
 		respondDocumentMoveError(c, err)
 		return
 	}
@@ -618,6 +577,8 @@ func respondDocumentMoveError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, repo.ErrSourceChanged):
 		c.JSON(http.StatusConflict, errorResponse("source_changed", "document source changed; refresh and retry", nil))
+	case errors.Is(err, repo.ErrAccessLossConfirmationRequired):
+		c.JSON(http.StatusConflict, errorResponse("access_loss_confirmation_required", "moving to Documents will remove your edit access", nil))
 	case errors.Is(err, repo.ErrForbidden):
 		if groupMembershipUnavailable(current(c)) {
 			groupMembershipUnavailableResponse(c)

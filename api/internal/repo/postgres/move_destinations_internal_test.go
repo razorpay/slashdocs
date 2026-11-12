@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/razorpay/slashdocs/api/internal/auth"
@@ -82,6 +83,59 @@ func TestMoveDestinationHasChildrenIsPerParentBeyondFiveHundredRows(t *testing.T
 	}
 	if !nodes[0].HasChildren || !nodes[1].HasChildren {
 		t.Fatalf("has_children must be correct per parent: %+v", nodes)
+	}
+}
+
+func TestMoveDestinationSearchFiltersAccessAndSubtreeBeforeLimit(t *testing.T) {
+	ctx := context.Background()
+	store, err := Connect(ctx, testdb.New(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store.Close)
+	principal := auth.Principal{Type: auth.PrincipalUser, ID: "usr_search_complete"}
+	if _, err := store.db.Exec(ctx, `INSERT INTO documents(id,title,owner_type,owner_id)
+		VALUES('doc_search_complete','Search resource','user',$1)`, principal.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(ctx, `INSERT INTO folders(id,title,owner_type,owner_id)
+		SELECT 'fld_hidden_'||g::text,'Common '||lpad(g::text,4,'0'),'user','usr_other'
+		FROM generate_series(1,250) g`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(ctx, `INSERT INTO folders(id,title,owner_type,owner_id)
+		VALUES('fld_accessible_last','Common zzz accessible','user',$1)`, principal.ID); err != nil {
+		t.Fatal(err)
+	}
+	result, err := store.SearchMoveDestinations(ctx, principal, "document", "doc_search_complete", "Common", 25, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsMoveDestination(result.Items, "fld_accessible_last") {
+		t.Fatalf("accessible match after 250 inaccessible matches was omitted: %+v", result.Items)
+	}
+
+	if _, err := store.db.Exec(ctx, `INSERT INTO folders(id,title,owner_type,owner_id) VALUES
+		('fld_moving','Moving resource','user',$1),
+		('fld_outside_last','Excluded common zzz outside','user',$1)`, principal.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(ctx, `INSERT INTO folders(id,title,owner_type,owner_id,parent_folder_id)
+		SELECT 'fld_excluded_'||g::text,'Excluded common '||lpad(g::text,4,'0'),'user',$1,'fld_moving'
+		FROM generate_series(1,250) g`, principal.ID); err != nil {
+		t.Fatal(err)
+	}
+	result, err = store.SearchMoveDestinations(ctx, principal, "folder", "fld_moving", "Excluded common", 25, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsMoveDestination(result.Items, "fld_outside_last") {
+		t.Fatalf("accessible match after 250 excluded descendants was omitted: %+v", result.Items)
+	}
+	for _, item := range result.Items {
+		if strings.HasPrefix(item.ID, "fld_excluded_") {
+			t.Fatalf("moving folder descendant leaked into destinations: %+v", item)
+		}
 	}
 }
 

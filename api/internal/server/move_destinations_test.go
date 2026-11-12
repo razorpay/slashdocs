@@ -219,6 +219,41 @@ func TestMoveDocumentToRootRequiresAccessLossAcknowledgement(t *testing.T) {
 	}
 }
 
+func TestLegacyMoveDocumentToRootRequiresAccessLossAcknowledgement(t *testing.T) {
+	e := newTestEnv(t)
+	owner := principalHeader(fixtureOwner)
+	editor := principalHeader(fixtureStranger)
+	source := createFolder(t, e, `{"title":"Legacy inherited editor source"}`, owner)
+	if _, err := e.store.CreateGrant(context.Background(), "folder", source, fixtureStranger, repo.RoleEditor, fixtureOwner); err != nil {
+		t.Fatal(err)
+	}
+	docID, _ := e.createDocument("Legacy access loss", "<p>doc</p>", fixtureOwner)
+	placed := do(t, e.h, http.MethodPost, "/v1/folders/"+source+"/documents", `{"document_id":"`+docID+`"}`, map[string]string{
+		"X-Test-Principal": owner, "Content-Type": "application/json",
+	})
+	assertStatus(t, placed, http.StatusOK)
+
+	withoutAck := do(t, e.h, http.MethodDelete, "/v1/folders/"+source+"/documents/"+docID, "", map[string]string{
+		"X-Test-Principal": editor,
+	})
+	assertStatus(t, withoutAck, http.StatusConflict)
+	if !strings.Contains(withoutAck.Body.String(), "access_loss_confirmation_required") {
+		t.Fatalf("unexpected response: %s", withoutAck.Body.String())
+	}
+
+	withAck := do(t, e.h, http.MethodDelete, "/v1/folders/"+source+"/documents/"+docID+"?acknowledge_access_loss=true", "", map[string]string{
+		"X-Test-Principal": editor,
+	})
+	assertStatus(t, withAck, http.StatusNoContent)
+	current, err := e.store.GetDocument(context.Background(), docID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.ParentFolderID != "" {
+		t.Fatalf("parent=%q want root", current.ParentFolderID)
+	}
+}
+
 func TestMoveDocumentToRootRechecksAccessLossAfterBootstrap(t *testing.T) {
 	e := newTestEnv(t)
 	owner := principalHeader(fixtureOwner)

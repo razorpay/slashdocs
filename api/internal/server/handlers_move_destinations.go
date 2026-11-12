@@ -289,10 +289,6 @@ func (h handlers) moveDocument(c *gin.Context) {
 		return h.verifyMoveSourceToken(request.SourceToken, principal, documentID, source)
 	})
 	if err != nil {
-		if errors.Is(err, repo.ErrAccessLossConfirmationRequired) {
-			c.JSON(http.StatusConflict, errorResponse("access_loss_confirmation_required", "moving to Documents will remove your edit access", nil))
-			return
-		}
 		respondDocumentMoveError(c, err)
 		return
 	}

@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"sort"
 	"testing"
@@ -26,6 +27,7 @@ func TestMoveDestinationPerformanceEvidence(t *testing.T) {
 	t.Cleanup(store.Close)
 	principal := auth.Principal{Type: auth.PrincipalUser, ID: "usr_perf"}
 	ordinary := auth.Principal{Type: auth.PrincipalUser, ID: "usr_ordinary"}
+	deep := auth.Principal{Type: auth.PrincipalUser, ID: "usr_deep"}
 
 	seedStarted := time.Now()
 	if _, err := store.db.Exec(ctx, `INSERT INTO folders(id,title,owner_type,owner_id)
@@ -54,7 +56,35 @@ func TestMoveDestinationPerformanceEvidence(t *testing.T) {
 		('perf_doc_ordinary','Ordinary bootstrap',$2,'user')`, principal.ID, ordinary.ID); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("dataset folders=50002 org-wide-grants=5000 seed=%s postgres=17-alpine", time.Since(seedStarted))
+	deepParent := ""
+	for depth := 1; depth <= folderMaxDepth; depth++ {
+		anchorID := fmt.Sprintf("perf_deep_%02d", depth)
+		anchorTitle := fmt.Sprintf("Depth %02d sibling 050 anchor", depth)
+		if _, err := store.db.Exec(ctx, `INSERT INTO folders(id,title,owner_type,owner_id,parent_folder_id)
+			VALUES($1,$2,'user',$3,NULLIF($4,''))`, anchorID, anchorTitle, ordinary.ID, deepParent); err != nil {
+			t.Fatal(err)
+		}
+		if deepParent != "" {
+			if _, err := store.db.Exec(ctx, `INSERT INTO folders(id,title,owner_type,owner_id,parent_folder_id)
+				SELECT $1||'_'||g::text,$2||lpad(g::text,3,'0'),'user',$3,$4
+				FROM generate_series(1,100) g WHERE g<>50`, fmt.Sprintf("perf_deep_sibling_%02d", depth), fmt.Sprintf("Depth %02d sibling ", depth), ordinary.ID, deepParent); err != nil {
+				t.Fatal(err)
+			}
+		}
+		deepParent = anchorID
+	}
+	if _, err := store.db.Exec(ctx, `INSERT INTO resource_grants(id,resource_type,resource_id,principal_type,principal_id,role,granted_by_type,granted_by_user_id)
+		VALUES('perf_deep_grant','folder','perf_deep_01','user',$1,'editor','user',$2)`, deep.ID, ordinary.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(ctx, `INSERT INTO documents(id,title,owner_id,owner_type,parent_folder_id)
+		VALUES('perf_doc_deep','Deep bootstrap',$1,'user',$2)`, ordinary.ID, deepParent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(ctx, `ANALYZE folders; ANALYZE resource_grants`); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("dataset folders=51403 org-wide-grants=5000 depth=15 seed=%s postgres=17-alpine", time.Since(seedStarted))
 
 	r := store.moveDestinationReader()
 	moveCtx := moveDestinationContext{
@@ -79,7 +109,7 @@ func TestMoveDestinationPerformanceEvidence(t *testing.T) {
 		t.Logf("%s samples=%d p50=%s p90=%s p95=%s max=%s", name, sampleCount, samples[49], samples[89], samples[94], samples[99])
 	}
 	measure("root-heavy", func() error {
-		_, err := r.page(ctx, principal, moveCtx, "", nil, "", 50)
+		_, err := store.ListMoveDestinations(ctx, principal, "document", "perf_doc_heavy", "", nil, "", "", 50, true)
 		return err
 	})
 	measure("bootstrap-heavy", func() error {
@@ -88,6 +118,10 @@ func TestMoveDestinationPerformanceEvidence(t *testing.T) {
 	})
 	measure("bootstrap-ordinary", func() error {
 		_, err := store.BootstrapMoveDestinations(ctx, ordinary, "document", "perf_doc_ordinary", "", 50, true)
+		return err
+	})
+	measure("bootstrap-depth-15", func() error {
+		_, err := store.BootstrapMoveDestinations(ctx, deep, "document", "perf_doc_deep", "", 50, true)
 		return err
 	})
 	measure("children-page-1", func() error {
@@ -99,7 +133,7 @@ func TestMoveDestinationPerformanceEvidence(t *testing.T) {
 		return err
 	})
 	measure("search-ab", func() error {
-		_, _, err := r.searchCandidates(ctx, "12", 200, nil)
+		_, err := store.SearchMoveDestinations(ctx, principal, "document", "perf_doc_heavy", "12", 200, true)
 		return err
 	})
 
@@ -113,13 +147,17 @@ func TestMoveDestinationPerformanceEvidence(t *testing.T) {
 
 	if err := store.db.QueryRow(ctx, `EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON)
 		WITH RECURSIVE eligible AS MATERIALIZED (
-		  SELECT DISTINCT f.id,f.title,f.parent_folder_id,lower(f.title) COLLATE "C" AS sort_key
+		  SELECT f.id,f.title,f.parent_folder_id,lower(f.title) COLLATE "C" AS sort_key
 		  FROM folders f
-		  WHERE (f.owner_type=$1::text AND f.owner_id=$2::text) OR EXISTS (
-		    SELECT 1 FROM resource_grants g WHERE g.resource_type='folder' AND g.resource_id=f.id AND g.revoked_at IS NULL
-		      AND ((g.principal_type=$1::text AND g.principal_id=$2::text)
-		        OR (g.principal_type='google_group' AND g.principal_id=ANY($3::text[]))
-		        OR ($4::boolean AND g.principal_type='anyone')))
+		  WHERE f.owner_type=$1::text AND f.owner_id=$2::text
+		  UNION
+		  SELECT f.id,f.title,f.parent_folder_id,lower(f.title) COLLATE "C" AS sort_key
+		  FROM resource_grants g
+		  JOIN folders f ON f.id=g.resource_id
+		  WHERE g.resource_type='folder' AND g.revoked_at IS NULL
+		    AND ((g.principal_type=$1::text AND g.principal_id=$2::text)
+		      OR (g.principal_type='google_group' AND g.principal_id=ANY($3::text[]))
+		      OR ($4::boolean AND g.principal_type='anyone'))
 		), ancestry(entry_id,id,parent_folder_id,depth) AS (
 		  SELECT e.id,e.id,e.parent_folder_id,0 FROM eligible e WHERE e.parent_folder_id IS NOT NULL
 		  UNION ALL

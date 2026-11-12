@@ -177,9 +177,14 @@ export function DocumentsPage() {
     const [dragType, dragId] = (active.id as string).split(":", 2);
     const targetFolderId = (over.id as string).replace("drop:", "");
     if (dragType === DRAG_TYPE.folder && dragId === targetFolderId) return;
+    const draggedDocument =
+      dragType === DRAG_TYPE.folder
+        ? undefined
+        : documents.find((document) => docID(document) === dragId);
     move.mutate({
       type: dragType === DRAG_TYPE.folder ? "folder" : "document",
       id: dragId,
+      from: draggedDocument?.parent_folder_id || undefined,
       to: targetFolderId,
       toTitle: folders.find((f) => f.id === targetFolderId)?.title,
     });

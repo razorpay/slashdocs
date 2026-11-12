@@ -412,7 +412,7 @@ func (s *Store) SearchFoldersByTitle(ctx context.Context, p auth.Principal, quer
 		GoogleGroupIds: p.GoogleGroupIDs,
 		IncludeOrgWide: includeOrgWide,
 		Query:          query,
-		MinRoleRank:    roleRankForSearch(minRole),
+		MinRole:        string(minRole),
 		RowLimit:       limit,
 	})
 	if err != nil {
@@ -752,7 +752,7 @@ func (s *Store) MoveDocumentToFolder(ctx context.Context, p auth.Principal, fold
 	return result, nil
 }
 
-func (s *Store) MoveDocumentToRoot(ctx context.Context, p auth.Principal, folderID, docID string) (repo.MoveResult, error) {
+func (s *Store) MoveDocumentToRoot(ctx context.Context, p auth.Principal, folderID, docID string, acknowledgeAccessLoss bool) (repo.MoveResult, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return repo.MoveResult{}, err
@@ -777,6 +777,14 @@ func (s *Store) MoveDocumentToRoot(ctx context.Context, p auth.Principal, folder
 	} else if err != nil {
 		return repo.MoveResult{}, err
 	}
+	directRole, err := directRoleForDocumentQ(ctx, q, p, docID)
+	if err != nil {
+		return repo.MoveResult{}, err
+	}
+	accessLost := !roleAtLeast(directRole, repo.RoleEditor)
+	if accessLost && !acknowledgeAccessLoss {
+		return repo.MoveResult{}, repo.ErrAccessLossConfirmationRequired
+	}
 	moved, err := q.MoveDocumentToRoot(ctx, dbsqlc.MoveDocumentToRootParams{DocumentID: docID, FolderID: folderID})
 	if err != nil {
 		return repo.MoveResult{}, err
@@ -787,7 +795,7 @@ func (s *Store) MoveDocumentToRoot(ctx context.Context, p auth.Principal, folder
 	if err := tx.Commit(ctx); err != nil {
 		return repo.MoveResult{}, err
 	}
-	return repo.MoveResult{Moved: true}, nil
+	return repo.MoveResult{Moved: true, AccessLost: accessLost}, nil
 }
 
 func (s *Store) ListFolderDocuments(ctx context.Context, _ auth.Principal, folderID string) ([]repo.Document, error) {

@@ -198,6 +198,7 @@ func registerMCPDocumentMoveTool(server *mcpserver.MCPServer, api mcpAPIAdapter)
 		mcpDocumentID(),
 		mcp.WithString("folder_id", mcp.Description("Destination folder ID (fld_…).")),
 		mcp.WithBoolean("to_root", mcp.Description("Move the document to the workspace root.")),
+		mcp.WithBoolean("acknowledge_access_loss", mcp.Description("Confirm that moving to the workspace root may remove your edit access.")),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		documentID, invalid := mcpRequired(request, "document_id")
 		if invalid != nil {
@@ -224,7 +225,11 @@ func registerMCPDocumentMoveTool(server *mcpserver.MCPServer, api mcpAPIAdapter)
 		if document.ParentFolderID == "" {
 			return mcp.NewToolResultError("document is already at the workspace root"), nil
 		}
-		return api.delete(ctx, "/v1/folders/"+document.ParentFolderID+"/documents/"+documentID, mcpParams("id", document.ParentFolderID, "doc_id", documentID), api.handlers.moveDocToRoot)
+		path := "/v1/folders/" + document.ParentFolderID + "/documents/" + documentID
+		if request.GetBool("acknowledge_access_loss", false) {
+			path += "?acknowledge_access_loss=true"
+		}
+		return api.delete(ctx, path, mcpParams("id", document.ParentFolderID, "doc_id", documentID), api.handlers.moveDocToRoot)
 	})
 }
 

@@ -363,6 +363,7 @@ export function DocumentPage() {
       onUnfollowCursor={unfollow}
       onDocumentClick={closeShare}
       canEdit={canEdit}
+      canMove={!!doc.data.can_move}
       editing={editing}
       onEditingChange={setEditing}
       frameShows={frameShows}

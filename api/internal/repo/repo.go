@@ -971,7 +971,7 @@ type Repository interface {
 	// folder may become visible to others.
 	FolderMayBroadenAccess(ctx context.Context, folderID string, owner auth.Principal) (bool, error)
 	MoveDocumentToFolder(ctx context.Context, principal auth.Principal, folderID, documentID string, expectedSource ...*MoveSource) (MoveResult, error)
-	MoveDocumentToRoot(ctx context.Context, principal auth.Principal, folderID, documentID string) (MoveResult, error)
+	MoveDocumentToRoot(ctx context.Context, principal auth.Principal, folderID, documentID string, acknowledgeAccessLoss bool) (MoveResult, error)
 	MoveDestinationResource(ctx context.Context, principal auth.Principal, resourceType, resourceID string, includeOrgWide bool) (MoveDestinationResource, error)
 	BootstrapMoveDestinations(ctx context.Context, principal auth.Principal, resourceType, resourceID, revealFolderID string, limit int, includeOrgWide bool) (MoveDestinationBootstrap, error)
 	MoveDestinationPath(ctx context.Context, principal auth.Principal, resourceType, resourceID, targetFolderID string, includeOrgWide bool) ([]string, bool, error)

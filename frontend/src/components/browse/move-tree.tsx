@@ -258,11 +258,14 @@ export function MoveTree({
                 )}
               >
                 {node?.has_children ? (
-                  <span
-                    aria-hidden="true"
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    aria-label={expanded ? `Collapse ${title}` : `Expand ${title}`}
                     onClick={(event) => {
                       event.stopPropagation();
                       dispatch({ type: "focus", id: node.id });
+                      event.currentTarget.parentElement?.focus({ preventScroll: true });
                       void setExpanded(node.id, !expanded);
                     }}
                     className="-ms-2 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-[var(--color-fg-muted)] active:scale-[0.96]"
@@ -272,7 +275,7 @@ export function MoveTree({
                     ) : (
                       <ChevronRight className="h-4 w-4" />
                     )}
-                  </span>
+                  </button>
                 ) : (
                   <span className="w-5 shrink-0" aria-hidden="true" />
                 )}

@@ -76,8 +76,8 @@ export type Move = {
   to: string | null;
   toTitle?: string;
   // Documents moved from the picker use the server's opaque source token.
-  // Drag-and-drop keeps using the legacy expected-source endpoints until it
-  // adopts the same destination read model.
+  // Drag-and-drop resolves this token from the same destination read model
+  // before it moves, so it cannot bypass access-loss confirmation.
   sourceToken?: string;
   acknowledgeAccessLoss?: boolean;
   offerUndo?: boolean;
@@ -103,38 +103,37 @@ export function useMoveResource() {
         return {
           warning: (await api.updateFolder(id, undefined, to)).permission_warning
             ?.message,
-          legacyUndo: true,
+          // Folder PATCH does not return a concurrency-safe source token.
+          // Do not offer an Undo that could move a restricted folder to root.
+          legacyUndo: false,
         };
       }
-      if (sourceToken) {
-        const destination: MoveDestination = to
-          ? { kind: "folder", folder_id: to }
-          : { kind: "root" };
-        const result = acknowledgeAccessLoss
-          ? await api.moveDocument(id, destination, sourceToken, true)
-          : await api.moveDocument(id, destination, sourceToken);
-        return {
-          warning:
-            result.permission_warning?.message ||
-            (result.access_lost
-              ? "Moved to Documents. You no longer have access to this document."
-              : undefined),
-          undo: result.undo,
-        };
+      const destination: MoveDestination = to
+        ? { kind: "folder", folder_id: to }
+        : { kind: "root" };
+      let resolvedSourceToken = sourceToken;
+      if (!resolvedSourceToken) {
+        const bootstrap = await api.getMoveDestinations("document", id);
+        const actualSource = bootstrap.resource.source;
+        const sourceStillMatches = from
+          ? actualSource.kind === "folder" && actualSource.folder_id === from
+          : actualSource.kind === "root";
+        if (!sourceStillMatches)
+          throw new APIError(409, "source_changed", "current location changed");
+        resolvedSourceToken = actualSource.token;
       }
-      if (to)
-        return {
-          warning: (
-            await api.moveDocumentToFolder(
-              to,
-              id,
-              from ? { kind: "folder", folder_id: from } : { kind: "root" },
-            )
-          ).permission_warning?.message,
-          legacyUndo: true,
-        };
-      await api.moveDocumentToRoot(from!, id);
-      return { legacyUndo: true };
+      if (!resolvedSourceToken) throw new Error("Move source is unavailable");
+      const result = acknowledgeAccessLoss
+        ? await api.moveDocument(id, destination, resolvedSourceToken, true)
+        : await api.moveDocument(id, destination, resolvedSourceToken);
+      return {
+        warning:
+          result.permission_warning?.message ||
+          (result.access_lost
+            ? "Moved to Documents. You no longer have edit access to this document."
+            : undefined),
+        undo: result.undo,
+      };
     },
     onSuccess: (result, { type, id, from, to, toTitle, offerUndo = true }) => {
       qc.invalidateQueries({ queryKey: queryKeys.foldersAll() });
@@ -172,13 +171,18 @@ export function useMoveResource() {
         });
       }
     },
-    onError: (e, { type, id }) => {
+    onError: (e, { type, id, sourceToken, offerUndo = true }) => {
       if (
         type === "document" &&
         e instanceof APIError &&
         e.code === "access_loss_confirmation_required"
-      )
+      ) {
+        // The picker renders this warning inline. Drag-and-drop and Undo have
+        // no inline confirmation surface, so never fail silently there.
+        if (!sourceToken || !offerUndo)
+          toast.error("Use Move to folder to review and confirm this move.");
         return;
+      }
       if (type === "document" && e instanceof APIError && e.code === "source_changed") {
         qc.invalidateQueries({ queryKey: queryKeys.document(id) });
         qc.invalidateQueries({ queryKey: queryKeys.foldersAll() });

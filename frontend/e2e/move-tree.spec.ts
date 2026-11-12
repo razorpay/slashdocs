@@ -174,7 +174,7 @@ test("Esc V opens the move tree and supports pagination, search reveal, and acce
     "aria-expanded",
     "true",
   );
-  await expect(tree.getByRole("treeitem", { name: "B", exact: true })).toHaveAttribute(
+  await expect(tree.getByRole("treeitem").filter({ hasText: /^B$/ })).toHaveAttribute(
     "aria-expanded",
     "true",
   );
@@ -204,12 +204,14 @@ test("Esc V opens the move tree and supports pagination, search reveal, and acce
 
   await tree.getByRole("treeitem", { name: "Documents" }).click();
   await expect(
-    dialog.getByText(/Moving to Documents will remove your access/),
+    dialog.getByText(/Moving to Documents will remove your edit access/),
   ).toBeVisible();
   await dialog.getByRole("button", { name: "Move and lose access" }).click();
   await expect(dialog).toBeHidden();
   await expect(
-    page.getByText("Moved to Documents. You no longer have access to this document."),
+    page.getByText(
+      "Moved to Documents. You no longer have edit access to this document.",
+    ),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
   expect(moves).toEqual([
@@ -230,9 +232,8 @@ test("the move tree is a bottom sheet with mobile-sized controls", async ({
   const document = await slashdocs.createDocument(title, documentHTML(title));
   await mockMoveTree(page, document.id, title);
   await page.goto(`/app/d/${document.id}`);
-  await expect(page.getByRole("button", { name: "More", exact: true })).toBeVisible();
-  await page.keyboard.press("Escape");
-  await page.keyboard.press("v");
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.getByRole("menuitem", { name: /Move to folder/ }).click();
 
   const dialog = page.getByRole("dialog", { name: `Move “${title}”` });
   await expect(dialog).toBeVisible();

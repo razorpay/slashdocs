@@ -266,8 +266,8 @@ export function MoveDialog({
               role="alert"
               className="mx-5 mb-3 shrink-0 rounded-md border border-[var(--color-warning)]/40 bg-[var(--color-warning)]/10 px-3 py-2 text-sm md:mx-6"
             >
-              Moving to Documents will remove your access to this document. You may not
-              be able to open it again.
+              Moving to Documents will remove your edit access to this document. You may
+              not be able to edit it afterward.
             </p>
           ) : null}
           <DialogFooter className="mt-0 shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface)] px-5 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] pt-4 md:px-6 md:pb-4">

@@ -20,6 +20,13 @@ type moveDestinationCandidate struct {
 	sortKey  string
 }
 
+type moveDestinationCandidatePage struct {
+	parent                  string
+	items                   []moveDestinationCandidate
+	hasBefore, hasAfter     bool
+	knownBefore, knownAfter bool
+}
+
 type moveDestinationContext struct {
 	resource       repo.MoveDestinationResource
 	currentFolder  string
@@ -52,6 +59,9 @@ func (s *Store) BootstrapMoveDestinations(ctx context.Context, p auth.Principal,
 		return repo.MoveDestinationBootstrap{}, err
 	}
 	defer rollback(ctx, tx)
+	if _, err := tx.Exec(ctx, `SET LOCAL jit=off`); err != nil {
+		return repo.MoveDestinationBootstrap{}, err
+	}
 	r := moveDestinationReader{raw: tx, q: s.q.WithTx(tx), s: s}
 	moveCtx, err := r.context(ctx, p, resourceType, resourceID, includeOrgWide)
 	if err != nil {
@@ -80,13 +90,40 @@ func (s *Store) BootstrapMoveDestinations(ctx context.Context, p auth.Principal,
 			parents[i] = path[i-1]
 		}
 	}
-	levels := make([]repo.MoveDestinationLevel, len(parents))
+	candidatePages := make([]moveDestinationCandidatePage, len(parents))
+	allCandidateIDs := make([]string, 0, len(parents)*limit)
 	for i := range parents {
-		page, pageErr := r.page(ctx, p, moveCtx, parents[i], nil, anchors[i], limit)
+		page, pageErr := r.candidatePage(ctx, p, moveCtx, parents[i], nil, anchors[i], limit)
 		if pageErr != nil {
 			return repo.MoveDestinationBootstrap{}, pageErr
 		}
-		levels[i] = repo.MoveDestinationLevel{Parent: parents[i], Page: page}
+		candidatePages[i] = page
+		allCandidateIDs = append(allCandidateIDs, candidateIDs(page.items)...)
+	}
+	chains, err := r.accessChains(ctx, p, allCandidateIDs)
+	if err != nil {
+		return repo.MoveDestinationBootstrap{}, err
+	}
+	allNodes := make([]repo.MoveDestinationNode, 0, len(allCandidateIDs))
+	levelStarts := make([]int, len(candidatePages)+1)
+	for i, candidatePage := range candidatePages {
+		levelStarts[i] = len(allNodes)
+		nodes := moveDestinationNodes(candidatePage.items, chains, candidatePage.parent, moveCtx)
+		if len(nodes) != len(candidatePage.items) {
+			return repo.MoveDestinationBootstrap{}, repo.ErrNotFound
+		}
+		allNodes = append(allNodes, nodes...)
+	}
+	levelStarts[len(candidatePages)] = len(allNodes)
+	if err := r.populateHasChildren(ctx, p, allNodes, moveCtx); err != nil {
+		return repo.MoveDestinationBootstrap{}, err
+	}
+	levels := make([]repo.MoveDestinationLevel, len(candidatePages))
+	for i, candidatePage := range candidatePages {
+		levels[i] = repo.MoveDestinationLevel{
+			Parent: candidatePage.parent,
+			Page:   candidatePage.materialize(allNodes[levelStarts[i]:levelStarts[i+1]]),
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return repo.MoveDestinationBootstrap{}, err
@@ -236,6 +273,29 @@ func (s *Store) MoveDestinationPath(ctx context.Context, p auth.Principal, resou
 }
 
 func (s *Store) ListMoveDestinations(ctx context.Context, p auth.Principal, resourceType, resourceID, parentFolderID string, after *repo.MoveDestinationKey, anchorFolderID, anchorDirection string, limit int, includeOrgWide bool) (repo.MoveDestinationPage, error) {
+	if parentFolderID == "" {
+		tx, err := s.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+		if err != nil {
+			return repo.MoveDestinationPage{}, err
+		}
+		defer rollback(ctx, tx)
+		if _, err := tx.Exec(ctx, `SET LOCAL jit=off`); err != nil {
+			return repo.MoveDestinationPage{}, err
+		}
+		r := moveDestinationReader{raw: tx, q: s.q.WithTx(tx), s: s}
+		moveCtx, err := r.context(ctx, p, resourceType, resourceID, includeOrgWide)
+		if err != nil {
+			return repo.MoveDestinationPage{}, err
+		}
+		page, err := r.list(ctx, p, moveCtx, parentFolderID, after, anchorFolderID, anchorDirection, limit)
+		if err != nil {
+			return repo.MoveDestinationPage{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return repo.MoveDestinationPage{}, err
+		}
+		return page, nil
+	}
 	r := s.moveDestinationReader()
 	moveCtx, err := r.context(ctx, p, resourceType, resourceID, includeOrgWide)
 	if err != nil {
@@ -307,26 +367,35 @@ func (s *Store) SearchMoveDestinations(ctx context.Context, p auth.Principal, re
 	if err != nil {
 		return repo.MoveDestinationSearchResult{}, err
 	}
-	candidateLimit := limit * 8
-	if candidateLimit < 200 {
-		candidateLimit = 200
-	}
-	if candidateLimit > 1000 {
-		candidateLimit = 1000
-	}
-	candidates, candidatesTruncated, err := r.searchCandidates(ctx, query, candidateLimit, moveCtx.excluded)
+	rows, err := r.q.SearchMoveDestinationFoldersByTitle(ctx, dbsqlc.SearchMoveDestinationFoldersByTitleParams{
+		PrincipalType:     string(p.Type),
+		PrincipalID:       p.ID,
+		GoogleGroupIds:    p.GoogleGroupIDs,
+		IncludeOrgWide:    includeOrgWide,
+		Query:             escapeMoveDestinationSearch(query),
+		ExcludedFolderIds: moveDestinationExcludedIDs(moveCtx.excluded),
+		RowLimit:          int32(limit + 1),
+	})
 	if err != nil {
 		return repo.MoveDestinationSearchResult{}, err
+	}
+	candidates := make([]moveDestinationCandidate, 0, len(rows))
+	for _, row := range rows {
+		candidates = append(candidates, moveDestinationCandidate{
+			id: row.ID, title: row.Title, parentID: row.ParentFolderID,
+			sortKey: strings.ToLower(row.Title),
+		})
+	}
+	hasMore := len(candidates) > limit
+	if hasMore {
+		candidates = candidates[:limit]
 	}
 	chains, err := r.accessChains(ctx, p, candidateIDs(candidates))
 	if err != nil {
 		return repo.MoveDestinationSearchResult{}, err
 	}
-	items := make([]repo.MoveDestinationNode, 0, limit+1)
+	items := make([]repo.MoveDestinationNode, 0, len(candidates))
 	for _, candidate := range candidates {
-		if _, excluded := moveCtx.excluded[candidate.id]; excluded {
-			continue
-		}
 		chain := chains[candidate.id]
 		if !moveDestinationDiscoverable(chain, includeOrgWide) {
 			continue
@@ -334,13 +403,6 @@ func (s *Store) SearchMoveDestinations(ctx context.Context, p auth.Principal, re
 		node := moveDestinationNode(candidate, chain, moveCtx)
 		node.Ancestors, node.AncestorsTruncated = moveDestinationSafeBreadcrumbs(chain, includeOrgWide)
 		items = append(items, node)
-		if len(items) == limit+1 {
-			break
-		}
-	}
-	hasMore := len(items) > limit || candidatesTruncated
-	if hasMore {
-		items = items[:limit]
 	}
 	if err := r.populateHasChildren(ctx, p, items, moveCtx); err != nil {
 		return repo.MoveDestinationSearchResult{}, err
@@ -423,13 +485,22 @@ func (s *Store) MoveDocument(ctx context.Context, p auth.Principal, documentID, 
 }
 
 func (r moveDestinationReader) page(ctx context.Context, p auth.Principal, moveCtx moveDestinationContext, parent string, key *repo.MoveDestinationKey, anchorID string, limit int) (repo.MoveDestinationPage, error) {
+	candidatePage, err := r.candidatePage(ctx, p, moveCtx, parent, key, anchorID, limit)
+	if err != nil {
+		return repo.MoveDestinationPage{}, err
+	}
+	return r.materializePage(ctx, p, moveCtx, candidatePage)
+}
+
+func (r moveDestinationReader) candidatePage(ctx context.Context, p auth.Principal, moveCtx moveDestinationContext, parent string, key *repo.MoveDestinationKey, anchorID string, limit int) (moveDestinationCandidatePage, error) {
+	page := moveDestinationCandidatePage{parent: parent}
 	if limit <= 0 {
-		return repo.MoveDestinationPage{}, nil
+		return page, nil
 	}
 	if anchorID == "" {
 		candidates, err := r.levelCandidates(ctx, p, parent, key, "", limit+1, moveCtx)
 		if err != nil {
-			return repo.MoveDestinationPage{}, err
+			return page, err
 		}
 		before := key != nil && key.Before
 		hasExtra := len(candidates) > limit
@@ -439,25 +510,14 @@ func (r moveDestinationReader) page(ctx context.Context, p auth.Principal, moveC
 		if before {
 			reverseMoveDestinationCandidates(candidates)
 		}
-		return r.materializePage(ctx, p, moveCtx, parent, candidates, before && hasExtra, !before && hasExtra, key != nil && !before, key != nil && before)
+		page.items = candidates
+		page.hasBefore, page.hasAfter = before && hasExtra, !before && hasExtra
+		page.knownBefore, page.knownAfter = key != nil && !before, key != nil && before
+		return page, nil
 	}
-	anchorRows, err := r.levelCandidates(ctx, p, parent, nil, anchorID, 1, moveCtx)
-	if err != nil || len(anchorRows) != 1 {
-		if err != nil {
-			return repo.MoveDestinationPage{}, err
-		}
-		return repo.MoveDestinationPage{}, repo.ErrNotFound
-	}
-	anchor := anchorRows[0]
-	beforeKey := &repo.MoveDestinationKey{Title: anchor.sortKey, ID: anchor.id, Before: true}
-	afterKey := &repo.MoveDestinationKey{Title: anchor.sortKey, ID: anchor.id}
-	beforeRows, err := r.levelCandidates(ctx, p, parent, beforeKey, "", limit+1, moveCtx)
+	anchor, beforeRows, afterRows, err := r.anchoredCandidateWindow(ctx, p, parent, anchorID, limit+1, moveCtx)
 	if err != nil {
-		return repo.MoveDestinationPage{}, err
-	}
-	afterRows, err := r.levelCandidates(ctx, p, parent, afterKey, "", limit+1, moveCtx)
-	if err != nil {
-		return repo.MoveDestinationPage{}, err
+		return page, err
 	}
 	beforeTake := minInt(limit/2, len(beforeRows))
 	afterTake := minInt(limit-1-beforeTake, len(afterRows))
@@ -468,35 +528,41 @@ func (r moveDestinationReader) page(ctx context.Context, p auth.Principal, moveC
 	reverseMoveDestinationCandidates(selectedBefore)
 	candidates := append(selectedBefore, anchor)
 	candidates = append(candidates, afterRows[:afterTake]...)
-	return r.materializePage(ctx, p, moveCtx, parent, candidates, len(beforeRows) > beforeTake, len(afterRows) > afterTake, false, false)
+	page.items = candidates
+	page.hasBefore, page.hasAfter = len(beforeRows) > beforeTake, len(afterRows) > afterTake
+	return page, nil
 }
 
-func (r moveDestinationReader) materializePage(ctx context.Context, p auth.Principal, moveCtx moveDestinationContext, parent string, candidates []moveDestinationCandidate, hasBefore, hasAfter, knownBefore, knownAfter bool) (repo.MoveDestinationPage, error) {
-	chains, err := r.accessChains(ctx, p, candidateIDs(candidates))
+func (r moveDestinationReader) materializePage(ctx context.Context, p auth.Principal, moveCtx moveDestinationContext, candidatePage moveDestinationCandidatePage) (repo.MoveDestinationPage, error) {
+	chains, err := r.accessChains(ctx, p, candidateIDs(candidatePage.items))
 	if err != nil {
 		return repo.MoveDestinationPage{}, err
 	}
-	nodes := moveDestinationNodes(candidates, chains, parent, moveCtx)
-	if len(nodes) != len(candidates) {
+	nodes := moveDestinationNodes(candidatePage.items, chains, candidatePage.parent, moveCtx)
+	if len(nodes) != len(candidatePage.items) {
 		return repo.MoveDestinationPage{}, repo.ErrNotFound
 	}
 	if err := r.populateHasChildren(ctx, p, nodes, moveCtx); err != nil {
 		return repo.MoveDestinationPage{}, err
 	}
+	return candidatePage.materialize(nodes), nil
+}
+
+func (candidatePage moveDestinationCandidatePage) materialize(nodes []repo.MoveDestinationNode) repo.MoveDestinationPage {
 	page := repo.MoveDestinationPage{Items: nodes}
-	byID := make(map[string]moveDestinationCandidate, len(candidates))
-	for _, candidate := range candidates {
+	byID := make(map[string]moveDestinationCandidate, len(candidatePage.items))
+	for _, candidate := range candidatePage.items {
 		byID[candidate.id] = candidate
 	}
-	if len(nodes) > 0 && (hasBefore || knownBefore) {
+	if len(nodes) > 0 && (candidatePage.hasBefore || candidatePage.knownBefore) {
 		first := byID[nodes[0].ID]
 		page.Before = &repo.MoveDestinationKey{Title: first.sortKey, ID: first.id, Before: true}
 	}
-	if len(nodes) > 0 && (hasAfter || knownAfter) {
+	if len(nodes) > 0 && (candidatePage.hasAfter || candidatePage.knownAfter) {
 		last := byID[nodes[len(nodes)-1].ID]
 		page.After = &repo.MoveDestinationKey{Title: last.sortKey, ID: last.id}
 	}
-	return page, nil
+	return page
 }
 
 func (r moveDestinationReader) levelCandidates(ctx context.Context, p auth.Principal, parent string, key *repo.MoveDestinationKey, anchorID string, limit int, moveCtx moveDestinationContext) ([]moveDestinationCandidate, error) {
@@ -504,6 +570,115 @@ func (r moveDestinationReader) levelCandidates(ctx context.Context, p auth.Princ
 		return r.rootCandidates(ctx, p, key, anchorID, limit, moveCtx)
 	}
 	return r.childCandidates(ctx, parent, key, anchorID, limit, moveCtx.excluded)
+}
+
+func (r moveDestinationReader) anchoredCandidateWindow(ctx context.Context, p auth.Principal, parent, anchorID string, limit int, moveCtx moveDestinationContext) (moveDestinationCandidate, []moveDestinationCandidate, []moveDestinationCandidate, error) {
+	if parent == "" {
+		return r.rootAnchoredCandidateWindow(ctx, p, anchorID, limit, moveCtx)
+	}
+	return r.childAnchoredCandidateWindow(ctx, parent, anchorID, limit, moveCtx.excluded)
+}
+
+func (r moveDestinationReader) childAnchoredCandidateWindow(ctx context.Context, parent, anchorID string, limit int, excluded map[string]struct{}) (moveDestinationCandidate, []moveDestinationCandidate, []moveDestinationCandidate, error) {
+	rows, err := r.raw.Query(ctx, `WITH base AS MATERIALIZED (
+		SELECT f.id,f.title,COALESCE(f.parent_folder_id,'') AS parent_folder_id,
+		       lower(f.title) COLLATE "C" AS sort_key
+		FROM folders f
+		WHERE f.parent_folder_id=$1::text AND NOT (f.id=ANY($2::text[]))
+	), anchor AS (
+		SELECT * FROM base WHERE id=$3::text
+	), before_rows AS (
+		SELECT b.*,-1 AS side FROM base b CROSS JOIN anchor a
+		WHERE (b.sort_key,b.id) < (a.sort_key,a.id)
+		ORDER BY b.sort_key DESC,b.id DESC LIMIT $4
+	), after_rows AS (
+		SELECT b.*,1 AS side FROM base b CROSS JOIN anchor a
+		WHERE (b.sort_key,b.id) > (a.sort_key,a.id)
+		ORDER BY b.sort_key,b.id LIMIT $4
+	)
+	SELECT id,title,parent_folder_id,sort_key,side FROM before_rows
+	UNION ALL SELECT id,title,parent_folder_id,sort_key,0 FROM anchor
+	UNION ALL SELECT id,title,parent_folder_id,sort_key,side FROM after_rows`, parent, moveDestinationExcludedIDs(excluded), anchorID, limit)
+	if err != nil {
+		return moveDestinationCandidate{}, nil, nil, err
+	}
+	defer rows.Close()
+	return scanAnchoredCandidateWindow(rows)
+}
+
+func (r moveDestinationReader) rootAnchoredCandidateWindow(ctx context.Context, p auth.Principal, anchorID string, limit int, moveCtx moveDestinationContext) (moveDestinationCandidate, []moveDestinationCandidate, []moveDestinationCandidate, error) {
+	rows, err := r.raw.Query(ctx, `WITH RECURSIVE eligible AS MATERIALIZED (
+		SELECT f.id,f.title,f.parent_folder_id,lower(f.title) COLLATE "C" AS sort_key
+		FROM folders f
+		WHERE f.owner_type=$1::text AND f.owner_id=$2::text
+		  AND NOT (f.id=ANY($5::text[]))
+		UNION
+		SELECT f.id,f.title,f.parent_folder_id,lower(f.title) COLLATE "C" AS sort_key
+		FROM resource_grants g
+		JOIN folders f ON f.id=g.resource_id
+		WHERE g.resource_type='folder' AND g.revoked_at IS NULL
+		  AND NOT (f.id=ANY($5::text[]))
+		  AND ((g.principal_type=$1::text AND g.principal_id=$2::text)
+		    OR (g.principal_type='google_group' AND g.principal_id=ANY($3::text[]))
+		    OR ($4::boolean AND g.principal_type='anyone'))
+	), ancestry(entry_id,id,parent_folder_id,depth) AS (
+		SELECT e.id,e.id,e.parent_folder_id,0 FROM eligible e WHERE e.parent_folder_id IS NOT NULL
+		UNION ALL
+		SELECT a.entry_id,f.id,f.parent_folder_id,a.depth+1
+		FROM ancestry a JOIN folders f ON f.id=a.parent_folder_id
+		WHERE a.depth < $8::int
+	), roots AS (
+		SELECT e.* FROM eligible e WHERE e.parent_folder_id IS NULL
+		UNION ALL
+		SELECT e.* FROM eligible e WHERE e.parent_folder_id IS NOT NULL AND NOT EXISTS (
+		  SELECT 1 FROM ancestry a JOIN eligible ancestor ON ancestor.id=a.id
+		  WHERE a.entry_id=e.id AND a.depth>0)
+	), numbered AS MATERIALIZED (
+		SELECT r.*,row_number() OVER (ORDER BY r.sort_key,r.id) AS position
+		FROM roots r
+	), anchor AS MATERIALIZED (
+		SELECT position FROM numbered WHERE id=$6::text
+	)
+	SELECT n.id,n.title,COALESCE(n.parent_folder_id,''),n.sort_key,
+	       CASE WHEN n.position<a.position THEN -1 WHEN n.position>a.position THEN 1 ELSE 0 END AS side
+	FROM numbered n CROSS JOIN anchor a
+	WHERE n.position BETWEEN GREATEST(1,a.position-$7::int) AND a.position+$7::int
+	ORDER BY n.position`, string(p.Type), p.ID, p.GoogleGroupIDs, moveCtx.includeOrgWide, moveDestinationExcludedIDs(moveCtx.excluded), anchorID, limit, folderMaxDepth)
+	if err != nil {
+		return moveDestinationCandidate{}, nil, nil, err
+	}
+	defer rows.Close()
+	anchor, before, after, err := scanAnchoredCandidateWindow(rows)
+	reverseMoveDestinationCandidates(before)
+	return anchor, before, after, err
+}
+
+func scanAnchoredCandidateWindow(rows pgx.Rows) (moveDestinationCandidate, []moveDestinationCandidate, []moveDestinationCandidate, error) {
+	var anchor moveDestinationCandidate
+	before, after := []moveDestinationCandidate{}, []moveDestinationCandidate{}
+	anchorCount := 0
+	for rows.Next() {
+		var candidate moveDestinationCandidate
+		var side int
+		if err := rows.Scan(&candidate.id, &candidate.title, &candidate.parentID, &candidate.sortKey, &side); err != nil {
+			return moveDestinationCandidate{}, nil, nil, err
+		}
+		switch side {
+		case -1:
+			before = append(before, candidate)
+		case 0:
+			anchor, anchorCount = candidate, anchorCount+1
+		case 1:
+			after = append(after, candidate)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return moveDestinationCandidate{}, nil, nil, err
+	}
+	if anchorCount != 1 {
+		return moveDestinationCandidate{}, nil, nil, repo.ErrNotFound
+	}
+	return anchor, before, after, nil
 }
 
 func (r moveDestinationReader) childCandidates(ctx context.Context, parent string, key *repo.MoveDestinationKey, anchorID string, limit int, excluded map[string]struct{}) ([]moveDestinationCandidate, error) {
@@ -539,14 +714,19 @@ func (r moveDestinationReader) rootCandidates(ctx context.Context, p auth.Princi
 		}
 	}
 	query := fmt.Sprintf(`WITH RECURSIVE eligible AS MATERIALIZED (
-		SELECT DISTINCT f.id,f.title,f.parent_folder_id,lower(f.title) COLLATE "C" AS sort_key
+		SELECT f.id,f.title,f.parent_folder_id,lower(f.title) COLLATE "C" AS sort_key
 		FROM folders f
-		WHERE NOT (f.id=ANY($5::text[])) AND (
-		  (f.owner_type=$1::text AND f.owner_id=$2::text) OR EXISTS (
-		    SELECT 1 FROM resource_grants g WHERE g.resource_type='folder' AND g.resource_id=f.id AND g.revoked_at IS NULL
-		      AND ((g.principal_type=$1::text AND g.principal_id=$2::text)
-		        OR (g.principal_type='google_group' AND g.principal_id=ANY($3::text[]))
-		        OR ($4::boolean AND g.principal_type='anyone'))))
+		WHERE f.owner_type=$1::text AND f.owner_id=$2::text
+		  AND NOT (f.id=ANY($5::text[]))
+		UNION
+		SELECT f.id,f.title,f.parent_folder_id,lower(f.title) COLLATE "C" AS sort_key
+		FROM resource_grants g
+		JOIN folders f ON f.id=g.resource_id
+		WHERE g.resource_type='folder' AND g.revoked_at IS NULL
+		  AND NOT (f.id=ANY($5::text[]))
+		  AND ((g.principal_type=$1::text AND g.principal_id=$2::text)
+		    OR (g.principal_type='google_group' AND g.principal_id=ANY($3::text[]))
+		    OR ($4::boolean AND g.principal_type='anyone'))
 	), ancestry(entry_id,id,parent_folder_id,depth) AS (
 		SELECT e.id,e.id,e.parent_folder_id,0 FROM eligible e WHERE e.parent_folder_id IS NOT NULL
 		UNION ALL
@@ -598,27 +778,6 @@ func escapeMoveDestinationSearch(value string) string {
 	value = strings.ReplaceAll(value, `\`, `\\`)
 	value = strings.ReplaceAll(value, `%`, `\%`)
 	return strings.ReplaceAll(value, `_`, `\_`)
-}
-
-func (r moveDestinationReader) searchCandidates(ctx context.Context, query string, limit int, excluded map[string]struct{}) ([]moveDestinationCandidate, bool, error) {
-	rows, err := r.raw.Query(ctx, `SELECT f.id,f.title,COALESCE(f.parent_folder_id,''),lower(f.title) COLLATE "C"
-		FROM folders f
-		WHERE f.title ILIKE '%' || $1::text || '%' ESCAPE E'\\'
-		  AND NOT (f.id=ANY($2::text[]))
-		ORDER BY lower(f.title) COLLATE "C",f.id LIMIT $3`, escapeMoveDestinationSearch(query), moveDestinationExcludedIDs(excluded), limit+1)
-	if err != nil {
-		return nil, false, err
-	}
-	defer rows.Close()
-	items, err := scanMoveDestinationCandidates(rows)
-	if err != nil {
-		return nil, false, err
-	}
-	hasMore := len(items) > limit
-	if hasMore {
-		items = items[:limit]
-	}
-	return items, hasMore, nil
 }
 
 func scanMoveDestinationCandidates(rows pgx.Rows) ([]moveDestinationCandidate, error) {

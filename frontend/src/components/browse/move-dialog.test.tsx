@@ -261,9 +261,7 @@ describe("MoveDialog", () => {
     expect(locked).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByRole("treeitem", { name: "Shared child" })).toBeNull();
 
-    const chevron = locked.querySelector<HTMLElement>("span[aria-hidden='true']");
-    expect(chevron).not.toBeNull();
-    await user.click(chevron!);
+    await user.click(within(locked).getByRole("button", { name: "Expand Finance" }));
     await waitFor(() => expect(locked).toHaveFocus());
     expect(await screen.findByRole("treeitem", { name: "Shared child" })).toBeVisible();
   });
@@ -290,9 +288,7 @@ describe("MoveDialog", () => {
     renderMove();
 
     const parent = await screen.findByRole("treeitem", { name: "Parent" });
-    const chevron = parent.querySelector<HTMLElement>("span[aria-hidden='true']");
-    expect(chevron).not.toBeNull();
-    await user.click(chevron!);
+    await user.click(within(parent).getByRole("button", { name: "Expand Parent" }));
     const tree = screen.getByRole("tree", { name: "Move destination folders" });
     const loading = within(tree).getByRole("treeitem", {
       name: "Loading folders…",
@@ -845,7 +841,7 @@ describe("MoveDialog", () => {
     await user.click(await screen.findByRole("treeitem", { name: "Documents" }));
     expect(
       screen.getByText(
-        "Moving to Documents will remove your access to this document. You may not be able to open it again.",
+        "Moving to Documents will remove your edit access to this document. You may not be able to edit it afterward.",
       ),
     ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Move and lose access" }));
@@ -874,7 +870,7 @@ describe("MoveDialog", () => {
     await user.click(screen.getByRole("button", { name: "Move to Documents" }));
     expect(
       await screen.findByText(
-        "Moving to Documents will remove your access to this document. You may not be able to open it again.",
+        "Moving to Documents will remove your edit access to this document. You may not be able to edit it afterward.",
       ),
     ).toBeVisible();
     expect(onOpenChange).not.toHaveBeenCalledWith(false);

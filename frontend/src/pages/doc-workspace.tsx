@@ -111,6 +111,7 @@ export function DocWorkspace({
   onUnfollowCursor,
   onDocumentClick,
   canEdit = false,
+  canMove = false,
   editing = false,
   onEditingChange = noop,
   frameShows = noop,
@@ -145,6 +146,8 @@ export function DocWorkspace({
   onDocumentClick?: () => void;
   // The reader may edit the version on screen.
   canEdit?: boolean;
+  // The reader may remove this document from its current folder.
+  canMove?: boolean;
   // Edit mode, which the page keeps. Each document opens in Comment mode.
   editing?: boolean;
   onEditingChange?: (editing: boolean) => void;
@@ -462,10 +465,10 @@ export function DocWorkspace({
     () =>
       fullscreen
         ? ["t", "f", "m", "h"]
-        : canEdit
+        : canMove
           ? ["t", "f", "c", "m", "v", "h"]
           : ["t", "f", "c", "m", "h"],
-    [canEdit, fullscreen],
+    [canMove, fullscreen],
   );
   const runChord = useCallback(
     (key: ChordKey) => {
