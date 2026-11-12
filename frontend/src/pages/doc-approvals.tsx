@@ -85,7 +85,7 @@ function approvalsLabel(status: ApprovalStatus, approved?: number, total?: numbe
 
 // ApprovalStatusBadge is the aggregate-status chip of the approvals dialog.
 // Hidden entirely when the document has no assigned approvers.
-export function ApprovalStatusBadge({
+function ApprovalStatusBadge({
   status,
   approved,
   total,
@@ -303,7 +303,7 @@ function useDecide(docId: string, onDecided?: (d: Decision) => void) {
 // screen. It lives only in the approvals dialog, beside the approver's own
 // row, so the decision and what it currently says are read together. An open
 // Reject stays open when a new version comes, so that its reason stays.
-export function ReviewActions({
+function ReviewActions({
   className,
   onNavigate,
 }: {
@@ -615,7 +615,7 @@ function RejectForm({
 // Approvals renders the per-approver decision list for the version being
 // viewed, with decision actions for the signed-in approver and assignment
 // controls for the owner.
-export function Approvals({ onClose }: { onClose?: () => void }) {
+function Approvals({ onClose }: { onClose?: () => void }) {
   const { docId, version, principal } = useDoc();
   const invalidate = useInvalidateApprovals(docId);
   const doc = useQuery({

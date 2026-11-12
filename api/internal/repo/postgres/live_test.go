@@ -192,11 +192,6 @@ func TestTheTaskSealsAVersionWhenTheTypingStopped(t *testing.T) {
 	}
 }
 
-// The log keeps the replacements of the operations of a version for 10
-// minutes after its seal. A seq from before then is stale, and History still
-// has the authors. The rows stay for 7 days: an editor whose answer was lost
-// sends the operation again after a long time, and learns that the document
-// has it.
 // One person changes a tag that another one takes out at the same time. The
 // change of the tag goes with the tag, in both orders, and the server takes
 // both operations.
@@ -229,6 +224,11 @@ func TestAChangeOfATagThatAnotherPersonTakesOutGoesWithIt(t *testing.T) {
 	}
 }
 
+// The log keeps the replacements of the operations of a version for 10
+// minutes after its seal. A seq from before then is stale, and History still
+// has the authors. The rows stay for 7 days: an editor whose answer was lost
+// sends the operation again after a long time, and learns that the document
+// has it.
 func TestOldOperationsLoseTheirReplacementsAndThenGo(t *testing.T) {
 	ctx := context.Background()
 	store := newStore(t)

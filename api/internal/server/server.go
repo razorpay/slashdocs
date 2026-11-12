@@ -317,7 +317,7 @@ func (s *Server) routes(deps dependencies) {
 	v1.GET("/auth/oidc/callback", h.oauthCallback)
 	v1.POST("/auth/cli/exchange", h.cliExchange)
 	v1.POST("/auth/logout", h.logout)
-	// Slack link previews. Public, because Slack cannot sign in; every request
+	// Slack link previews. Public, because Slack cannot sign in. Every request
 	// must carry a valid Slack signature instead (see verifySlackSignature).
 	if deps.slackUnfurler != nil {
 		v1.POST("/slack/events", verifySlackSignature(deps.slackSigningSecret, time.Now), h.slackEvents)
@@ -328,9 +328,9 @@ func (s *Server) routes(deps dependencies) {
 	reader := v1.Group("", requireAuth(deps.readerAuthenticator(), deps.appOrigin, deps.googleGroupResolver))
 	reader.GET("/documents/:id", h.getDocument)
 	reader.GET("/documents/:id/versions", h.listVersions)
-	// A browser that follows live edits asks for the changes after each
-	// operation of another person, and an editor writes many operations a
-	// second.
+	// A browser that follows live edits asks for the changes when the event
+	// of an operation does not carry it, or when it missed an event, and an
+	// editor writes many operations a second.
 	// A read of the source at a seq costs as much as a read of the changes
 	// does, so the two share one budget.
 	followLimit := activityRateLimit(1200)
@@ -354,10 +354,10 @@ func (s *Server) routes(deps dependencies) {
 	// blob. Decisions have their own budget, so that other activity and
 	// typing never block them.
 	decisionLimit := activityRateLimit(60)
-	// A text anchor makes the server read the live document. The page of a
-	// person who types moves the anchor of each comment in the text after
-	// each pause of a second, so comment updates have a budget large enough
-	// for typing.
+	// A comment update changes the body or the status of a comment, or moves
+	// a point comment. The server moves text anchors itself, off the request
+	// (followLater). Comment updates have their own budget, so that other
+	// activity does not block them.
 	commentLimit := activityRateLimit(300)
 	// A change of access wakes the open streams of each document that it
 	// affects, and a change of a folder wakes all open streams.

@@ -74,8 +74,8 @@ FROM comments c JOIN documents d ON d.id = c.document_id
 WHERE c.document_id = @document_id AND c.anchor_seq < d.seq;
 
 -- name: MoveAnchors :exec
--- Moves the anchors of text comments to seq, each one when it is still on
--- its seq was.
+-- Moves the anchors of text comments to seq, each one only while it is still
+-- on its seq in was.
 UPDATE comments c SET anchor_json = m.anchor_json, selected_text = m.anchor_json->>'quote', anchor_seq = @seq::bigint
 FROM (SELECT unnest(@ids::text[]) AS id, unnest(@was::bigint[]) AS was, unnest(@anchors::jsonb[]) AS anchor_json) m
 WHERE c.id = m.id AND c.anchor_seq = m.was;

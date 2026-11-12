@@ -57,8 +57,8 @@ func TestCommentPlacementOnRepeatedText(t *testing.T) {
 		{"paragraph unchanged", searchOwnerComment, ownersV1, placementAttached},
 		{"paragraph moved", searchOwnerComment, "<p>Payments: the owner is TBD until finance replies.</p><p>Notes.</p><p>Search: the owner is TBD until the vendor replies.</p>", placementAttached},
 		{"unique quote, context rewritten", launchComment, "<p>Completely new intro text here.</p><p>The launch date is 14 November.</p><p>Totally different closing words.</p>", placementAttached},
-		// Neither copy is at the stored position; the nearer one's context
-		// scores just below the floor and the farther one's clears it.
+		// Neither copy is at the stored position. The context of the nearer
+		// one scores just below the floor, and that of the farther one clears it.
 		{"a farther copy whose context agrees", repo.Comment{VersionID: "ver_1", SelectedText: "TBD", Anchor: repo.Anchor{Quote: "TBD", Prefix: "Owner for the payments team: ", Suffix: " until finance replies here.", StartOffset: 27, EndOffset: 30}}, "<p>Owner for the payment group: TBD until the vendor replies.</p><p>Owner for payments: TBD until finance says so.</p>", placementAttached},
 		// The viewer reads the rendered text, so markup inside the quote and
 		// entities do not hide it, and text that only looks like it does not

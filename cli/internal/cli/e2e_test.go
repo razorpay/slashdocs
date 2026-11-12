@@ -577,9 +577,6 @@ func TestCreateInvalidDefaultPermissionEnv(t *testing.T) {
 	}
 }
 
-// TestWhoamiServiceAccountParity locks in that whoami renders a service
-// account's name (its bot address) and status, matching the detail shown for
-// human users rather than collapsing to a bare type=service_account row.
 func TestCreateWithoutIDDoesNotPrintBrokenURL(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/documents" {
@@ -608,6 +605,9 @@ func TestCreateWithoutIDDoesNotPrintBrokenURL(t *testing.T) {
 	}
 }
 
+// TestWhoamiServiceAccountParity locks in that whoami renders a service
+// account's name (its bot address) and status, matching the detail shown for
+// human users rather than collapsing to a bare type=service_account row.
 func TestWhoamiServiceAccountParity(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/me" {

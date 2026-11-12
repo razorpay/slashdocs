@@ -96,7 +96,7 @@ export type DocumentEvent = {
   authors?: Principal[];
   prev_seq?: number;
   changes?: DocumentChanges;
-  // The people are done: the version is now a part of the history.
+  // The server sealed the version: its content no longer changes.
   sealed?: boolean;
   // A restore of an earlier state made the change, and updated_by is the
   // person who restored.
@@ -195,8 +195,8 @@ export type CommentPatch = {
   body?: string;
   status?: string;
   mentions?: CommentMention[];
-  // Moves a point comment to a new spot, or gives a text comment the anchor
-  // of its text after the reader typed in it.
+  // Moves a point comment to a new spot. The server moves the anchor of a
+  // text comment itself.
   anchor?: Anchor;
   // The body that an edit started from. The server refuses the edit with 409
   // when the body is no longer this.

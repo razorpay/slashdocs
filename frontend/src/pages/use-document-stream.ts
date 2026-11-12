@@ -372,7 +372,7 @@ function hiddenCursor(cursor: RemoteCursor, after = 0): RemoteCursor {
 // documentEvent reads what a document event tells of the document, or
 // nothing when it names no seq. Each event of an operation names its
 // author, and whether they typed it. A small operation comes with its
-// event. The event of a version that is done says so, and the event of a
+// event. The event of a sealed version says so, and the event of a
 // restore names the person who restored.
 function documentEvent(event: DocumentKVEvent): DocumentEvent | undefined {
   const data = event.data as

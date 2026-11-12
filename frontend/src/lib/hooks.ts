@@ -102,8 +102,6 @@ export function useLastDefined<T>(value: T | undefined): T | undefined {
   return value ?? last;
 }
 
-// useMounted is true while the component is on screen. A late result checks
-// it before it changes the view, so that it never moves a reader who left.
 // useWarnBeforeUnload asks the browser to confirm a reload or a close while
 // `when` holds, as when it would lose what the reader cannot get back.
 export function useWarnBeforeUnload(when: boolean) {
@@ -115,6 +113,8 @@ export function useWarnBeforeUnload(when: boolean) {
   }, [when]);
 }
 
+// useMounted is true while the component is on screen. A late result checks
+// it before it changes the view, so that it never moves a reader who left.
 export function useMounted() {
   const mounted = useRef(false);
   useEffect(() => {

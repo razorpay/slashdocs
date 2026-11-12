@@ -105,7 +105,7 @@ function zoomOf(el: Element): number {
 
 // elementAt gives the document element under a point in the viewport that
 // every viewer has, at most MAX_PATH_DEPTH deep, or the body.
-export function elementAt(d: Document, x: number, y: number): Element | null {
+function elementAt(d: Document, x: number, y: number): Element | null {
   return sharedElement(d, d.elementFromPoint(x, y));
 }
 

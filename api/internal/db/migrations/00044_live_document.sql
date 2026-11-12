@@ -83,8 +83,9 @@ CREATE TABLE version_authors (
 -- from before this release, which keep their anchors.
 ALTER TABLE comments ADD COLUMN anchor_seq BIGINT;
 
--- versions.client_change_id is not used from this release on. The next
--- migration drops it and its index.
+-- versions.client_change_id is not used from this migration on. A server
+-- that does not have this migration still writes it during a deploy, so a
+-- later migration drops it and its index.
 
 -- +goose Down
 -- An open version has no content of its own, so the servers must seal every
