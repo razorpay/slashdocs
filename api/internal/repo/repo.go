@@ -42,6 +42,10 @@ var ErrForbidden = errors.New("forbidden")
 // source supplied by a caller. It is intentionally distinct from a generic
 // conflict so HTTP/MCP callers can ask the user to refresh and retry.
 var ErrSourceChanged = errors.New("source_changed")
+
+// ErrAccessLossConfirmationRequired means a move to Documents would remove
+// the mover's editor access and must be explicitly acknowledged.
+var ErrAccessLossConfirmationRequired = errors.New("access_loss_confirmation_required")
 var ErrInvalidCommentBody = errors.New("invalid comment body")
 var ErrInvalidCommentMention = errors.New("invalid comment mention")
 
@@ -267,7 +271,79 @@ type MoveSource struct {
 type MoveResult struct {
 	Moved             bool
 	PermissionWarning bool
+	AccessLost        bool
 }
+
+// MoveDestinationResource is the resource-scoped context for the move picker.
+// ActualSource is intentionally not serialized; handlers use it only to mint
+// the document's opaque source token.
+type MoveDestinationResource struct {
+	Type             string     `json:"type"`
+	ID               string     `json:"id"`
+	Title            string     `json:"title"`
+	CanMove          bool       `json:"can_move"`
+	CannotMoveReason string     `json:"cannot_move_reason,omitempty"`
+	Source           MoveSource `json:"-"`
+	SourceVisible    bool       `json:"-"`
+	Path             []string   `json:"-"`
+	PathRestricted   bool       `json:"-"`
+	WouldLoseAccess  bool       `json:"-"`
+}
+
+// MoveDestinationKey is the stable, case-insensitive title/id ordering used
+// by the move tree's keyset cursors.
+type MoveDestinationKey struct {
+	Title  string
+	ID     string
+	Before bool
+}
+
+// MoveDestinationNode is the only folder shape exposed by the move picker.
+// It deliberately omits ownership and grant metadata.
+type MoveDestinationNode struct {
+	ID                 string             `json:"id"`
+	Title              string             `json:"title"`
+	ParentID           *string            `json:"parent_id,omitempty"`
+	Access             string             `json:"access"`
+	Selectable         bool               `json:"selectable"`
+	Reason             string             `json:"reason,omitempty"`
+	Current            bool               `json:"current,omitempty"`
+	HasChildren        bool               `json:"has_children"`
+	CanCreateChild     bool               `json:"can_create_child"`
+	RestrictedParent   bool               `json:"restricted_parent,omitempty"`
+	Ancestors          []FolderBreadcrumb `json:"ancestors,omitempty"`
+	AncestorsTruncated bool               `json:"ancestors_truncated,omitempty"`
+}
+
+// MoveDestinationPage is a bounded, anchored window in one tree level.
+type MoveDestinationPage struct {
+	Items  []MoveDestinationNode
+	Before *MoveDestinationKey
+	After  *MoveDestinationKey
+}
+
+type MoveDestinationLevel struct {
+	Parent string
+	Page   MoveDestinationPage
+}
+
+type MoveDestinationBootstrap struct {
+	Resource       MoveDestinationResource
+	Path           []string
+	PathRestricted bool
+	Levels         []MoveDestinationLevel
+	Focus          string
+}
+
+// MoveDestinationSearchResult is a bounded global folder search.
+type MoveDestinationSearchResult struct {
+	Items   []MoveDestinationNode
+	HasMore bool
+}
+
+// MoveSourceVerifier is invoked only after the repository has locked the
+// document and authorized its actual source and requested destination.
+type MoveSourceVerifier func(MoveSource) bool
 
 // FolderAccess is one element of a folder's ancestor chain annotated with a
 // principal's effective role at that folder (RoleNone when they have no
@@ -896,6 +972,12 @@ type Repository interface {
 	FolderMayBroadenAccess(ctx context.Context, folderID string, owner auth.Principal) (bool, error)
 	MoveDocumentToFolder(ctx context.Context, principal auth.Principal, folderID, documentID string, expectedSource ...*MoveSource) (MoveResult, error)
 	MoveDocumentToRoot(ctx context.Context, principal auth.Principal, folderID, documentID string) (MoveResult, error)
+	MoveDestinationResource(ctx context.Context, principal auth.Principal, resourceType, resourceID string, includeOrgWide bool) (MoveDestinationResource, error)
+	BootstrapMoveDestinations(ctx context.Context, principal auth.Principal, resourceType, resourceID, revealFolderID string, limit int, includeOrgWide bool) (MoveDestinationBootstrap, error)
+	MoveDestinationPath(ctx context.Context, principal auth.Principal, resourceType, resourceID, targetFolderID string, includeOrgWide bool) ([]string, bool, error)
+	ListMoveDestinations(ctx context.Context, principal auth.Principal, resourceType, resourceID, parentFolderID string, after *MoveDestinationKey, anchorFolderID, anchorDirection string, limit int, includeOrgWide bool) (MoveDestinationPage, error)
+	SearchMoveDestinations(ctx context.Context, principal auth.Principal, resourceType, resourceID, query string, limit int, includeOrgWide bool) (MoveDestinationSearchResult, error)
+	MoveDocument(ctx context.Context, principal auth.Principal, documentID, destinationFolderID string, acknowledgeAccessLoss bool, verify MoveSourceVerifier) (MoveResult, MoveSource, bool, error)
 	ListFolderDocuments(ctx context.Context, principal auth.Principal, folderID string) ([]Document, error)
 	ListEffectiveAccess(ctx context.Context, resourceType, resourceID string) ([]EffectiveAccessItem, error)
 	ListPins(ctx context.Context, principal auth.Principal) ([]Pin, error)

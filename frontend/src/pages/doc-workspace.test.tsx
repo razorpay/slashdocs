@@ -38,7 +38,13 @@ const reader: Principal = { type: "user", id: "u1", name: "Reader" };
 
 // The bar shows where the page is, whether a pin waits for its spot, and the
 // open draft. It also comments on selected text, as the document does.
-function Bar({ onToggleComments }: { onToggleComments: () => void }) {
+function Bar({
+  onToggleComments,
+  moveOpen,
+}: {
+  onToggleComments: () => void;
+  moveOpen: boolean;
+}) {
   const { placingPin, drafts, activeComment, setActiveComment, startDraft } = useDoc();
   const { pathname, search } = useLocation();
   const open = drafts.find((d) => d.id === activeComment);
@@ -47,6 +53,7 @@ function Bar({ onToggleComments }: { onToggleComments: () => void }) {
       <p>{pathname + search}</p>
       <p>{placingPin ? "Placing a pin" : "Reading"}</p>
       <p>{open ? `Draft on "${open.quote}" in ${open.version}` : "No draft"}</p>
+      <p>{moveOpen ? "Move open" : "Move closed"}</p>
       <button onClick={onToggleComments}>Comments</button>
       <button onClick={() => startDraft({ quote: "selected words" })}>
         Comment on text
@@ -58,7 +65,7 @@ function Bar({ onToggleComments }: { onToggleComments: () => void }) {
 
 function renderWorkspace(
   entry: string,
-  props: { principal?: Principal; signIn?: () => void },
+  props: { principal?: Principal; signIn?: () => void; canEdit?: boolean },
 ) {
   render(
     <QueryClientProvider client={new QueryClient()}>
@@ -68,7 +75,9 @@ function renderWorkspace(
           version="v1"
           home="/app/documents"
           {...props}
-          bar={({ onToggleComments }) => <Bar onToggleComments={onToggleComments} />}
+          bar={({ onToggleComments, moveOpen }) => (
+            <Bar onToggleComments={onToggleComments} moveOpen={moveOpen} />
+          )}
         />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -541,4 +550,28 @@ it("asks the server for nothing when Edit mode ends, and when the page goes", as
   const asked = fetched.mock.calls.map(([url]) => String(url));
   expect(asked).not.toHaveLength(0);
   expect(asked.filter((url) => /checkpoint|ops/.test(url))).toEqual([]);
+});
+
+it("opens Move with Esc V only for an editor outside full screen", async () => {
+  const user = userEvent.setup();
+  renderWorkspace("/app/d/doc-1", { principal: reader, canEdit: true });
+
+  expect(screen.getByText("Move closed")).toBeInTheDocument();
+  await user.keyboard("{Escape}v");
+  expect(await screen.findByText("Move open")).toBeInTheDocument();
+});
+
+it("does not offer Esc V to a reader or in full screen", async () => {
+  const user = userEvent.setup();
+  renderWorkspace("/app/d/doc-1", { principal: reader });
+  await user.keyboard("{Escape}v");
+  expect(screen.getByText("Move closed")).toBeInTheDocument();
+  cleanup();
+
+  renderWorkspace("/app/d/doc-1?fullscreen=1", {
+    principal: reader,
+    canEdit: true,
+  });
+  await user.keyboard("{Escape}v");
+  expect(screen.queryByText("Move open")).toBeNull();
 });

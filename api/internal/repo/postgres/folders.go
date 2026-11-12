@@ -426,10 +426,14 @@ func (s *Store) SearchFoldersByTitle(ctx context.Context, p auth.Principal, quer
 }
 
 type folderSearchAccessChain struct {
-	items     []repo.FolderAccess
-	private   bool
-	orgWide   bool
-	inherited repo.Role
+	items            []repo.FolderAccess
+	privateItems     []bool
+	orgWideItems     []bool
+	private          bool
+	orgWide          bool
+	inherited        repo.Role
+	inheritedPrivate bool
+	inheritedOrgWide bool
 }
 
 func (s *Store) folderSearchAccessChains(ctx context.Context, p auth.Principal, rows []dbsqlc.SearchFoldersByTitleRow) (map[string]*folderSearchAccessChain, error) {
@@ -469,7 +473,11 @@ func (s *Store) folderSearchAccessChains(ctx context.Context, p auth.Principal, 
 		}
 		chain.private = chain.private || r.HasPrivateAccess
 		chain.orgWide = chain.orgWide || r.HasAnyoneAccess
+		chain.inheritedPrivate = chain.inheritedPrivate || r.HasPrivateAccess
+		chain.inheritedOrgWide = chain.inheritedOrgWide || r.HasAnyoneAccess
 		chain.items = append(chain.items, repo.FolderAccess{ID: r.ID, Title: r.Title, Role: effective})
+		chain.privateItems = append(chain.privateItems, chain.inheritedPrivate)
+		chain.orgWideItems = append(chain.orgWideItems, chain.inheritedOrgWide)
 	}
 	return chains, nil
 }
@@ -618,10 +626,41 @@ func roleForDocumentQ(ctx context.Context, q *dbsqlc.Queries, p auth.Principal, 
 	return best, nil
 }
 
+// directRoleForDocumentQ intentionally excludes folder inheritance. It is the
+// role the principal will retain after a document is moved to Documents.
+func directRoleForDocumentQ(ctx context.Context, q *dbsqlc.Queries, p auth.Principal, documentID string) (repo.Role, error) {
+	owner, err := q.GetDocumentOwner(ctx, documentID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return repo.RoleNone, repo.ErrNotFound
+	}
+	if err != nil {
+		return repo.RoleNone, err
+	}
+	best := repo.RoleNone
+	if string(p.Type) == owner.OwnerType && p.ID == owner.OwnerID {
+		best = repo.RoleOwner
+	}
+	grants, err := q.ListDocumentInheritedRoles(ctx, documentID)
+	if err != nil {
+		return repo.RoleNone, err
+	}
+	for _, grant := range grants {
+		if grant.ResourceID == documentID && principalHasGrant(p, grant.PrincipalType, grant.PrincipalID) {
+			best = repo.MaxRole(best, repo.Role(grant.Role))
+		}
+	}
+	return best, nil
+}
+
 func authorizeDocumentMove(ctx context.Context, q *dbsqlc.Queries, p auth.Principal, doc dbsqlc.LockDocumentForMoveRow, source repo.MoveSource, destination string) error {
 	docRole, err := roleForDocumentQ(ctx, q, p, doc.ID)
 	if err != nil {
 		return err
+	}
+	// Missing documents and documents the principal cannot view are the same
+	// authorization verdict. Keep that boundary ahead of source-token checks.
+	if !roleAtLeast(docRole, repo.RoleViewer) {
+		return repo.ErrNotFound
 	}
 	if !roleAtLeast(docRole, repo.RoleEditor) {
 		return repo.ErrForbidden

@@ -91,6 +91,8 @@ export type DocBarControls = {
   threads: ThreadCount;
   onToggleComments: () => void;
   onShowShortcuts: () => void;
+  moveOpen: boolean;
+  onMoveOpenChange: (open: boolean) => void;
 };
 
 // DocWorkspace is a rendered document with its comments: their popovers, the
@@ -255,6 +257,7 @@ export function DocWorkspace({
     if (!listOpen) setCrowded(false);
   }, [listOpen]);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
   const [showFullscreenHint, setShowFullscreenHint] = useState(false);
   const [chordLabel, setChordLabel] = useState<string>();
   const nav = useNavigate();
@@ -267,6 +270,13 @@ export function DocWorkspace({
     setJump({ id });
   }, []);
   useCommentLink(docId, comments, jumpToComment);
+
+  useEffect(() => {
+    setActiveComment(undefined);
+    setListOpen(false);
+    setPlacingPin(false);
+    setMoveOpen(false);
+  }, [docId]);
 
   const handleRenderedDocumentClick = useCallback(() => {
     onDocumentClick?.();
@@ -449,8 +459,13 @@ export function DocWorkspace({
 
   const cursorsShown = cursorsShownStore.useStore();
   const chordKeys = useMemo<ChordKey[]>(
-    () => (fullscreen ? ["t", "f", "m", "h"] : ["t", "f", "c", "m", "h"]),
-    [fullscreen],
+    () =>
+      fullscreen
+        ? ["t", "f", "m", "h"]
+        : canEdit
+          ? ["t", "f", "c", "m", "v", "h"]
+          : ["t", "f", "c", "m", "h"],
+    [canEdit, fullscreen],
   );
   const runChord = useCallback(
     (key: ChordKey) => {
@@ -474,6 +489,11 @@ export function DocWorkspace({
       if (key === "m") {
         setChordLabel(cursorsShown ? "Cursors hidden" : "Cursors shown");
         cursorsShownStore.write(!cursorsShown);
+        return;
+      }
+      if (key === "v") {
+        setChordLabel("Move to folder");
+        setMoveOpen(true);
         return;
       }
       setChordLabel("Documents");
@@ -687,7 +707,11 @@ export function DocWorkspace({
   );
   return (
     <DocProvider value={ctx}>
-      <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+      <ShortcutsDialog
+        open={shortcutsOpen}
+        onOpenChange={setShortcutsOpen}
+        available={chordKeys}
+      />
       {fullscreen ? (
         <div className="flex h-full flex-col">
           {banner}
@@ -719,6 +743,8 @@ export function DocWorkspace({
             threads,
             onToggleComments: toggleComments,
             onShowShortcuts: () => setShortcutsOpen(true),
+            moveOpen,
+            onMoveOpenChange: setMoveOpen,
           })}
           {banner}
           <section className="relative min-w-0 flex-1 overflow-hidden bg-[var(--color-surface-muted)]">

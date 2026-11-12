@@ -5,7 +5,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { CHORD_KEYS } from "@/lib/esc-chord";
+import { CHORD_KEYS, type ChordKey } from "@/lib/esc-chord";
 import { useDoc } from "./doc-context";
 
 const MAC = /Mac|iPhone|iPad/.test(navigator.userAgent);
@@ -43,13 +43,6 @@ const EDITING: Section = {
 // CHORD_KEYS, so a new chord shows here without an edit.
 const SECTIONS: Section[] = [
   {
-    title: "Esc, then a letter",
-    rows: CHORD_KEYS.map(({ key, hint }) => [
-      ["Esc", key.toUpperCase()],
-      hint[0].toUpperCase() + hint.slice(1),
-    ]),
-  },
-  {
     title: "Reading",
     rows: [
       [["J"], "Scroll down"],
@@ -80,11 +73,25 @@ const SECTIONS: Section[] = [
 export function ShortcutsDialog({
   open,
   onOpenChange,
+  available = CHORD_KEYS.map((item) => item.key),
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  available?: ReadonlyArray<ChordKey>;
 }) {
   const { canEdit } = useDoc();
+  const sections: Section[] = [
+    {
+      title: "Esc, then a letter",
+      rows: CHORD_KEYS.filter(({ key }) => available.includes(key)).map(
+        ({ key, hint }) => [
+          ["Esc", key.toUpperCase()],
+          hint[0].toUpperCase() + hint.slice(1),
+        ],
+      ),
+    },
+    ...SECTIONS,
+  ];
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85vh] max-w-md overflow-y-auto">
@@ -95,7 +102,7 @@ export function ShortcutsDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-5">
-          {(canEdit ? [EDITING, ...SECTIONS] : SECTIONS).map((section) => (
+          {(canEdit ? [EDITING, ...sections] : sections).map((section) => (
             <section key={section.title}>
               <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-[var(--color-fg-muted)]">
                 {section.title}

@@ -175,6 +175,8 @@ function renderDocBar(
             threads={{ open: 0, unread: false }}
             onToggleComments={vi.fn()}
             onShowShortcuts={vi.fn()}
+            moveOpen={false}
+            onMoveOpenChange={vi.fn()}
             shareOpen={false}
             onShareOpenChange={vi.fn()}
             {...props}
@@ -528,23 +530,6 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     expect(screen.queryByRole("button", { name: /^Rename / })).toBeNull();
   });
 
-  it("lets an editor move the document out of a folder that the editor cannot see", async () => {
-    const user = userEvent.setup();
-    renderDocBar(true, [], [], "editor", {
-      parentFolderId: "fld_hidden",
-      canMove: true,
-    });
-    await user.click(screen.getByRole("button", { name: "More" }));
-    await user.click(await screen.findByRole("menuitem", { name: "Move to folder" }));
-    await user.click(await screen.findByRole("button", { name: "Documents" }));
-    await waitFor(() =>
-      expect(fetch).toHaveBeenCalledWith(
-        "/v1/folders/fld_hidden/documents/doc_1",
-        expect.objectContaining({ method: "DELETE" }),
-      ),
-    );
-  });
-
   it("tells an editor who cannot move the document why", async () => {
     const user = userEvent.setup();
     renderDocBar(true, [], [], "editor", { parentFolderId: "fld_other" });
@@ -554,16 +539,50 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     expect(move).toHaveTextContent("Only an editor of its folder can move it");
   });
 
-  it("uses a hidden parent's id when the owner moves the document to root", async () => {
+  it("shows the move shortcut beside the editor's Move action", async () => {
     const user = userEvent.setup();
-    const move = vi.spyOn(api, "moveDocumentToRoot").mockResolvedValue();
-    renderDocBar(true, [], [], "owner", { parentFolderId: "fld_hidden" });
+    renderDocBar(true, [], [], "editor", { canMove: true });
 
     await user.click(screen.getByRole("button", { name: "More" }));
-    await user.click(await screen.findByRole("menuitem", { name: "Move to folder" }));
-    await user.click(await screen.findByRole("button", { name: "Documents" }));
 
-    await waitFor(() => expect(move).toHaveBeenCalledWith("fld_hidden", "doc_1"));
+    expect(
+      await screen.findByRole("menuitem", { name: /Move to folder.*Esc V/ }),
+    ).toBeVisible();
+  });
+
+  it("uses the opaque source token when moving from a hidden parent to root", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, "getMoveDestinations").mockResolvedValue({
+      resource: {
+        type: "document",
+        id: "doc_1",
+        title: "Test Document",
+        can_move: true,
+        source: { kind: "restricted", token: "ms1_hidden" },
+      },
+      documents: { selectable: true, current: false, can_create_child: true },
+      path: [],
+      path_restricted_prefix: true,
+      levels: [{ parent: null, items: [] }],
+      focus: null,
+    });
+    const move = vi.spyOn(api, "moveDocument").mockResolvedValue({
+      document_id: "doc_1",
+      moved: true,
+      destination: { kind: "root" },
+    });
+    renderDocBar(true, [], [], "owner", {
+      parentFolderId: "fld_hidden",
+      canMove: true,
+      moveOpen: true,
+    });
+
+    await user.click(await screen.findByRole("treeitem", { name: "Documents" }));
+    await user.click(screen.getByRole("button", { name: "Move to Documents" }));
+
+    await waitFor(() =>
+      expect(move).toHaveBeenCalledWith("doc_1", { kind: "root" }, "ms1_hidden"),
+    );
   });
 
   it("says when it could not check the reader's access, with Retry", async () => {

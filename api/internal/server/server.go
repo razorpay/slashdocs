@@ -345,6 +345,9 @@ func (s *Server) routes(deps dependencies) {
 	// Every route below requires authentication.
 	authed := v1.Group("", requireAuth(deps.authenticator, deps.appOrigin, deps.googleGroupResolver))
 	activityLimit := activityRateLimit(60)
+	// Move-tree reads and mutations have an isolated budget so expanding a
+	// large hierarchy cannot starve unrelated document activity.
+	moveDestinationLimit := activityRateLimit(120)
 	// Separate budgets: presence heartbeats and cursor moves must not starve
 	// other activity. A moving cursor reports about 12 times a second.
 	presenceLimit := activityRateLimit(60)
@@ -403,6 +406,7 @@ func (s *Server) routes(deps dependencies) {
 	authed.POST("/documents/:id/versions", h.createVersion)
 	authed.POST("/documents/:id/edits", h.editDocument)
 	authed.POST("/documents/:id/ops", opsLimit, h.appendOperation)
+	authed.POST("/documents/:id/move", moveDestinationLimit, h.moveDocument)
 	authed.POST("/documents/:id/versions/:version_id/restore", h.restoreVersion)
 	authed.GET("/documents/:id/labels", h.listDocumentLabels)
 	authed.PUT("/documents/:id/labels", h.replaceDocumentLabels)
@@ -425,6 +429,9 @@ func (s *Server) routes(deps dependencies) {
 	authed.PUT("/documents/:id/comments/:comment_id/read", h.markCommentThreadRead)
 	authed.POST("/folders", h.createFolder)
 	authed.GET("/folders", h.listFolders)
+	authed.GET("/move-destinations", moveDestinationLimit, h.moveDestinations)
+	authed.GET("/move-destinations/children", moveDestinationLimit, h.moveDestinationChildren)
+	authed.GET("/move-destinations/search", moveDestinationLimit, h.searchMoveDestinations)
 	authed.GET("/folders/:id", h.getFolder)
 	authed.PATCH("/folders/:id", accessLimit, h.patchFolder)
 	authed.DELETE("/folders/:id", accessLimit, h.deleteFolder)

@@ -277,6 +277,75 @@ export type MoveDocumentResponse = {
   moved: boolean;
   permission_warning?: { message: string };
 };
+export type MoveResourceType = "document" | "folder";
+export type MoveDestination = { kind: "root" } | { kind: "folder"; folder_id: string };
+export type MoveDestinationReason = "view_only" | "current" | "too_deep";
+export type MoveDestinationNode = {
+  id: string;
+  title: string;
+  parent_id?: string | null;
+  access: "edit" | "view";
+  selectable: boolean;
+  reason?: MoveDestinationReason;
+  current?: boolean;
+  has_children?: boolean;
+  can_create_child?: boolean;
+  restricted_parent?: boolean;
+  ancestors?: FolderBreadcrumb[];
+  ancestors_truncated?: boolean;
+};
+export type MoveDestinationLevel = {
+  parent: string | null;
+  items: MoveDestinationNode[];
+  before?: string;
+  after?: string;
+};
+export type MoveDestinationBootstrap = {
+  resource: {
+    type: MoveResourceType;
+    id: string;
+    title: string;
+    can_move: boolean;
+    cannot_move_reason?: string;
+    source: {
+      kind: "root" | "folder" | "restricted";
+      folder_id?: string;
+      // Folder moves keep using PATCH /folders/:id, so their bootstrap may
+      // omit this document-only concurrency token.
+      token?: string;
+    };
+  };
+  documents: {
+    selectable: boolean;
+    current: boolean;
+    reason?: MoveDestinationReason;
+    can_create_child: boolean;
+    would_lose_access?: boolean;
+  };
+  path: string[];
+  path_restricted_prefix: boolean;
+  levels: MoveDestinationLevel[];
+  focus: string | null;
+};
+export type MoveDestinationChildren = {
+  parent: string | null;
+  items: MoveDestinationNode[];
+  before?: string;
+  after?: string;
+  next?: string;
+};
+export type MoveDestinationSearch = {
+  items: MoveDestinationNode[];
+  has_more: boolean;
+};
+export type MoveDocumentResult = {
+  document_id: string;
+  moved: boolean;
+  destination: MoveDestination;
+  permission_warning?: { message: string };
+  access_lost?: boolean;
+  undo?: { destination: MoveDestination; source_token: string } | null;
+};
 export type FolderEntry = {
   type: "folder" | "document";
   folder?: Folder;
@@ -921,6 +990,66 @@ export const api = {
   moveDocumentToRoot: (folderId: string, documentId: string) =>
     request<void>(`/v1/folders/${folderId}/documents/${documentId}`, {
       method: "DELETE",
+    }),
+  getMoveDestinations: (
+    resourceType: MoveResourceType,
+    resourceId: string,
+    reveal?: string,
+  ) => {
+    const params = new URLSearchParams({
+      resource_type: resourceType,
+      resource_id: resourceId,
+    });
+    if (reveal) params.set("reveal", reveal);
+    return request<MoveDestinationBootstrap>(`/v1/move-destinations?${params}`);
+  },
+  listMoveDestinationChildren: (
+    resourceType: MoveResourceType,
+    resourceId: string,
+    parent: string | null,
+    cursor?: string,
+    anchor?: string,
+    direction?: "before" | "after",
+  ) => {
+    const params = new URLSearchParams({
+      resource_type: resourceType,
+      resource_id: resourceId,
+      parent: parent ?? "root",
+      limit: "50",
+    });
+    if (cursor) params.set("cursor", cursor);
+    else if (anchor && direction) {
+      params.set("anchor", anchor);
+      params.set("direction", direction);
+    }
+    return request<MoveDestinationChildren>(`/v1/move-destinations/children?${params}`);
+  },
+  searchMoveDestinations: (
+    resourceType: MoveResourceType,
+    resourceId: string,
+    query: string,
+  ) => {
+    const params = new URLSearchParams({
+      resource_type: resourceType,
+      resource_id: resourceId,
+      q: query,
+      limit: "25",
+    });
+    return request<MoveDestinationSearch>(`/v1/move-destinations/search?${params}`);
+  },
+  moveDocument: (
+    documentId: string,
+    destination: MoveDestination,
+    sourceToken: string,
+    acknowledgeAccessLoss = false,
+  ) =>
+    request<MoveDocumentResult>(`/v1/documents/${documentId}/move`, {
+      method: "POST",
+      body: JSON.stringify({
+        destination,
+        source_token: sourceToken,
+        ...(acknowledgeAccessLoss ? { acknowledge_access_loss: true } : {}),
+      }),
     }),
   folderAccess: (id: string) =>
     request<{

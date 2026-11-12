@@ -114,6 +114,8 @@ export function DocBar({
   approvalsOpen,
   shareOpen,
   onShareOpenChange,
+  moveOpen,
+  onMoveOpenChange,
 }: {
   title: string;
   docId: string;
@@ -151,12 +153,13 @@ export function DocBar({
   approvalsOpen?: boolean;
   shareOpen: boolean;
   onShareOpenChange: (open: boolean) => void;
+  moveOpen: boolean;
+  onMoveOpenChange: (open: boolean) => void;
 }) {
   const nav = useNavigate();
   const q = useQueryClient();
   const [uploadOpen, setUploadOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [moveOpen, setMoveOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [labelsOpen, setLabelsOpen] = useState(false);
   const [approvalsDialogOpen, setApprovalsDialogOpen] = useState(!!approvalsOpen);
@@ -447,8 +450,11 @@ export function DocBar({
             </DropdownItem>
           ) : null}
           {canMove ? (
-            <DropdownItem onSelect={() => setMoveOpen(true)}>
+            <DropdownItem onSelect={() => onMoveOpenChange(true)}>
               <FolderInput className="size-4" /> Move to folder
+              <kbd className="ms-auto hidden ps-4 font-mono text-xs text-[var(--color-fg-muted)] sm:inline">
+                Esc V
+              </kbd>
             </DropdownItem>
           ) : canEdit ? (
             <DropdownItem disabled>
@@ -503,16 +509,6 @@ export function DocBar({
           canEdit={canEdit}
         />
       ) : null}
-      {canMove ? (
-        <MoveDialog
-          open={moveOpen}
-          onOpenChange={setMoveOpen}
-          type="document"
-          id={docId}
-          title={title}
-          parentId={parentFolderId}
-        />
-      ) : null}
       {canManage ? (
         <>
           <UploadVersionSheet
@@ -531,10 +527,10 @@ export function DocBar({
           />
         </>
       ) : null}
-      {canEdit ? (
+      {canMove ? (
         <MoveDialog
           open={moveOpen}
-          onOpenChange={setMoveOpen}
+          onOpenChange={onMoveOpenChange}
           type="document"
           id={docId}
           title={title}
