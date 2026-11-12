@@ -256,7 +256,7 @@ func registerMCPVersionTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 	})
 
 	server.AddTool(mcp.NewTool("get_document_html", readOnlyOptions(
-		mcp.WithDescription("Fetch raw document HTML. Omit version_id to fetch the current version."),
+		mcp.WithDescription("Fetch raw document HTML. Omit version_id to fetch the current version. A second text gives the version_id and the seq of the HTML, which update_document needs."),
 		mcpDocumentID(), mcpVersionID(false),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		doc, invalid := mcpRequired(request, "document_id")
@@ -281,9 +281,10 @@ func registerMCPVersionTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 	})
 
 	server.AddTool(mcp.NewTool("update_document", mutationOptions(false, false,
-		mcp.WithDescription("Publish complete HTML as a new document version. When base_version_id is an earlier version, the changes from it move onto the current version and the result has rebased set. When the current version changed the same HTML, the call fails with version_conflict. To change existing text, prefer edit_document: it sends only the changed strings."),
+		mcp.WithDescription("Publish complete HTML as a new document version. A result with rebased set means that other people edited the document after your base, and the saved version has their edits and yours: fetch its HTML before you change the document again. A version_conflict error means that other people changed the same text, and their text stays: fetch the HTML again and make your change again. To change existing text, prefer edit_document: it sends only the changed strings."),
 		mcpDocumentID(),
 		mcp.WithString("base_version_id", mcp.Required(), mcp.Description("Version on which these edits are based.")),
+		mcp.WithNumber("base_seq", mcp.Required(), mcp.Description("The seq that get_document_html gave with the HTML on which these edits are based. With it, the server keeps the text that people typed after it.")),
 		mcp.WithString("html", mcp.Required(), mcp.Description("Complete replacement HTML, up to 50 MiB.")),
 		mcp.WithString("change_summary", mcp.Description("Short summary of the changes, one change per line.")),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -299,7 +300,11 @@ func registerMCPVersionTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 		if invalid != nil {
 			return invalid, nil
 		}
-		fields := map[string]string{"base_version_id": base, "change_summary": request.GetString("change_summary", "")}
+		seq, err := request.RequireInt("base_seq")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		fields := map[string]string{"base_version_id": base, "base_seq": strconv.Itoa(seq), "change_summary": request.GetString("change_summary", "")}
 		return api.multipart(ctx, "/v1/documents/"+doc+"/versions", fields, html, mcpParams("id", doc), api.handlers.createVersion)
 	})
 }
@@ -318,7 +323,6 @@ func registerMCPEditTool(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 			"required":             []string{"old_string", "new_string"},
 			"additionalProperties": false,
 		})),
-		mcp.WithString("base_version_id", mcp.Description("Optional. When set, the edit fails with version_conflict unless this is still the current version. When omitted, the edits apply to the current version.")),
 		mcp.WithString("change_summary", mcp.Description("Short summary of the changes, one change per line. Defaults to one line per edit.")),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		doc, invalid := mcpRequired(request, "document_id")
@@ -330,9 +334,6 @@ func registerMCPEditTool(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 			return invalid, nil
 		}
 		payload := map[string]any{"edits": edits}
-		if base := request.GetString("base_version_id", ""); base != "" {
-			payload["base_version_id"] = base
-		}
 		if summary := request.GetString("change_summary", ""); summary != "" {
 			payload["change_summary"] = summary
 		}

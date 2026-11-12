@@ -109,7 +109,7 @@ func newConfiguredTestEnv(t *testing.T, cfg server.Config, extraOptions ...serve
 			t.Fatalf("seed grant: %v", err)
 		}
 	}
-	e.cmt, err = store.CreateComment(ctx, e.doc.ID, e.ver.ID, "original", repo.Anchor{Quote: "fixture"}, fixtureCommenter, nil)
+	e.cmt, err = store.CreateComment(ctx, e.doc.ID, e.ver.ID, "original", repo.Anchor{Quote: "fixture"}, 0, fixtureCommenter, nil)
 	if err != nil {
 		t.Fatalf("seed comment: %v", err)
 	}

@@ -16,14 +16,19 @@ FROM github_connections WHERE user_id=$1;
 DELETE FROM github_connections WHERE user_id=$1;
 
 -- name: ListGitHubAuthorAccess :many
--- One row for each principal who created a version of the document. user_id
+-- One row for each principal who created a version of the document or wrote
+-- an operation of it. user_id
 -- is the user whose GitHub access counts for the author: the author, or the
 -- owner of a service account, because the owner controls its keys. The row
 -- also has that user's sealed GitHub token (NULL when not connected) and the
 -- cached access answer (NULL when missing, older than fresh_after, or older
 -- than the user's last GitHub connection).
 SELECT DISTINCT v.created_by_type, v.created_by_id, u.id AS user_id, g.access_token_ciphertext, a.can_read
-FROM versions v
+FROM (
+  SELECT created_by_type, created_by_id FROM versions WHERE versions.document_id = @document_id
+  UNION
+  SELECT w.author_type, w.author_id FROM version_authors w JOIN versions wv ON wv.id = w.version_id WHERE wv.document_id = @document_id
+) v
 LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
   ON v.created_by_type = 'service_account' AND sa.id = v.created_by_id
 LEFT JOIN users u
@@ -31,8 +36,7 @@ LEFT JOIN users u
 LEFT JOIN github_connections g ON g.user_id = u.id
 LEFT JOIN github_repo_access a
   ON a.user_id = g.user_id AND a.owner = @owner AND a.repo = @repo
-  AND a.checked_at > GREATEST(g.updated_at, @fresh_after::timestamptz)
-WHERE v.document_id = @document_id;
+  AND a.checked_at > GREATEST(g.updated_at, @fresh_after::timestamptz);
 
 -- name: UpsertGitHubRepoAccess :exec
 -- Selecting from github_connections skips the write when the user

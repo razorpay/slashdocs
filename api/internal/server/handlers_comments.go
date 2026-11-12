@@ -50,10 +50,14 @@ type commentMentionRequest struct {
 }
 
 type createCommentRequest struct {
-	VersionID string                  `json:"version_id"`
-	Body      string                  `json:"body"`
-	Anchor    repo.Anchor             `json:"anchor"`
-	Mentions  []commentMentionRequest `json:"mentions"`
+	VersionID string `json:"version_id"`
+	// Seq is the seq of the document that a text anchor is on: the page
+	// shows the document at that seq. The anchor then follows the changes
+	// after it. With no seq, the anchor is on the live document.
+	Seq      *int64                  `json:"seq"`
+	Body     string                  `json:"body"`
+	Anchor   repo.Anchor             `json:"anchor"`
+	Mentions []commentMentionRequest `json:"mentions"`
 }
 
 type createCommentReplyRequest struct {
@@ -165,10 +169,22 @@ func (h handlers) createComment(c *gin.Context) {
 		badRequest(c, "invalid comment")
 		return
 	}
-	cm, err := h.deps.repository.CreateComment(c.Request.Context(), c.Param("id"), in.VersionID, in.Body, in.Anchor, *p, commentMentions(in.Mentions))
+	d, err := h.deps.repository.GetDocument(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		commentWriteError(c, err)
 		return
+	}
+	seq := d.Seq
+	if in.Seq != nil && *in.Seq >= 0 && *in.Seq < seq {
+		seq = *in.Seq
+	}
+	cm, err := h.deps.repository.CreateComment(c.Request.Context(), c.Param("id"), in.VersionID, in.Body, in.Anchor, seq, *p, commentMentions(in.Mentions))
+	if err != nil {
+		commentWriteError(c, err)
+		return
+	}
+	if seq < d.Seq {
+		h.follow(c, cm.DocumentID)
 	}
 	incComment("created", cm.Status, actorType(c))
 	h.announce(c, repo.DocumentEventComments)
@@ -198,6 +214,7 @@ func (h handlers) listComments(c *gin.Context) {
 		return
 	}
 	versionID := c.Query("version_id")
+	h.follow(c, c.Param("id"))
 	items, err := h.deps.repository.ListComments(c.Request.Context(), c.Param("id"), status, versionID)
 	if err != nil {
 		internalErr(c, err)
@@ -314,7 +331,7 @@ func (h handlers) createCommentReply(c *gin.Context) {
 
 // PatchComment godoc
 // @Summary Update comment
-// @Description Any request containing the mentions key, including an empty array, must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed. An anchor with a point moves a point comment to a new spot. Text comments cannot move.
+// @Description Any request containing the mentions key, including an empty array, must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed. An anchor with a point moves a point comment to a new spot. Text comments follow their text.
 // @Tags comments
 // @Security bearerAuth
 // @Security cookieAuth
@@ -324,6 +341,7 @@ func (h handlers) createCommentReply(c *gin.Context) {
 // @Param update body patchCommentRequest true "Fields to update; omitted mentions are preserved unless the body changes"
 // @Success 200 {object} commentResponse
 // @Failure 409 {object} errorEnvelope "comment_changed: the body is no longer base_body"
+// @Failure 429 {object} errorEnvelope
 // @Router /v1/documents/{id}/comments/{comment_id} [patch]
 func (h handlers) patchComment(c *gin.Context) {
 	if !h.canMutateComment(c, c.Param("id"), c.Param("comment_id")) {
@@ -414,7 +432,8 @@ func patchIsEmpty(in *patchCommentRequest) bool {
 }
 
 // validCommentMove checks a new spot for a comment: only a point thread
-// moves, and only to another valid point. Text comments keep their anchor.
+// moves, and only to another valid point. A text comment follows its text
+// (see followAnchors).
 func (h handlers) validCommentMove(c *gin.Context, a *repo.Anchor) bool {
 	if a.Point == nil || !validCommentAnchor(a) {
 		badRequest(c, "invalid comment anchor")

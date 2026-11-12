@@ -43,12 +43,12 @@ func TestPostgresRepositoryDocumentGrantVersionCommentFlow(t *testing.T) {
 		t.Fatalf("sa role=%s err=%v", role, err)
 	}
 
-	_, err = store.CreateVersion(context.Background(), doc.ID, "stale", "", "bad", []byte("<html>bad</html>"), owner)
-	if err == nil || err.Error() != "version_conflict" {
-		t.Fatalf("want version_conflict, got %v", err)
+	_, _, err = store.SaveVersion(context.Background(), doc.ID, "stale", nil, owner, repo.Upload([]byte("<html>bad</html>"), "bad"))
+	if !errors.Is(err, repo.ErrBaseVersion) {
+		t.Fatalf("want %v, got %v", repo.ErrBaseVersion, err)
 	}
 
-	ver2, err := store.CreateVersion(context.Background(), doc.ID, ver.ID, "", "updated", []byte("<html>v2</html>"), owner)
+	ver2, _, err := store.SaveVersion(context.Background(), doc.ID, ver.ID, nil, owner, repo.Upload([]byte("<html>v2</html>"), "updated"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,48 +57,12 @@ func TestPostgresRepositoryDocumentGrantVersionCommentFlow(t *testing.T) {
 	}
 
 	commenter := auth.Principal{Type: auth.PrincipalUser, ID: "usr_pg_commenter", Email: "c@example.com", Name: "Commenter"}
-	cm, err := store.CreateComment(context.Background(), doc.ID, ver2.ID, "Looks good", repo.Anchor{Quote: "v2", Prefix: "<html>", Suffix: "</html>", DOMPath: "body", StartOffset: 0, EndOffset: 2}, commenter, nil)
+	cm, err := store.CreateComment(context.Background(), doc.ID, ver2.ID, "Looks good", repo.Anchor{Quote: "v2", Prefix: "<html>", Suffix: "</html>", DOMPath: "body", StartOffset: 0, EndOffset: 2}, 0, commenter, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cm.SelectedText != "v2" || cm.Status != "open" {
 		t.Fatalf("bad comment: %+v", cm)
-	}
-}
-
-func TestPostgresClientChangeMakesOneVersion(t *testing.T) {
-	ctx := context.Background()
-	store := newStore(t)
-	owner := auth.Principal{Type: auth.PrincipalUser, ID: "usr_pg_change", Email: "change@example.com", Name: "Owner"}
-	doc, ver, err := store.CreateDocument(ctx, owner, "Changes", "", []byte("<p>v1</p>"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	other, _, err := store.CreateDocument(ctx, owner, "Other", "", []byte("<p>v1</p>"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := store.VersionByClientChange(ctx, doc.ID, "chg_1"); !errors.Is(err, repo.ErrNotFound) {
-		t.Fatalf("before the change: err = %v", err)
-	}
-	ver2, err := store.CreateVersion(ctx, doc.ID, ver.ID, "chg_1", "first", []byte("<p>v2</p>"), owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, parent, err := store.VersionByClientChange(ctx, doc.ID, "chg_1")
-	if err != nil || got.ID != ver2.ID || got.Number != 2 || got.ChangeSummary != "first" || parent != ver.ID {
-		t.Fatalf("VersionByClientChange = %+v, %q, %v", got, parent, err)
-	}
-	// The same change on top of the version it made is refused, but another
-	// document can use the same id.
-	if _, err := store.CreateVersion(ctx, doc.ID, ver2.ID, "chg_1", "again", []byte("<p>v3</p>"), owner); !errors.Is(err, repo.ErrConflict) {
-		t.Fatalf("second save of the change: err = %v", err)
-	}
-	if _, err := store.CreateVersion(ctx, other.ID, other.CurrentVersionID, "chg_1", "", []byte("<p>v2</p>"), owner); err != nil {
-		t.Fatal(err)
-	}
-	if versions, err := store.ListVersions(ctx, doc.ID); err != nil || len(versions) != 2 {
-		t.Fatalf("versions = %d, %v", len(versions), err)
 	}
 }
 
@@ -236,7 +200,7 @@ func TestPostgresCreateDocumentDeletesBlobWhenDBFailsAfterPut(t *testing.T) {
 	}
 }
 
-func TestPostgresCreateVersionDeletesBlobWhenDBFailsAfterPut(t *testing.T) {
+func TestPostgresSaveVersionDeletesBlobWhenDBFailsAfterPut(t *testing.T) {
 	blobs := &cancelAfterPutBlob{}
 	store, err := pgrepo.ConnectWithBlob(context.Background(), testdb.New(t), blobs)
 	if err != nil {
@@ -252,9 +216,9 @@ func TestPostgresCreateVersionDeletesBlobWhenDBFailsAfterPut(t *testing.T) {
 	blobs.puts, blobs.deletes, blobs.putKey, blobs.deletedKey = 0, 0, "", ""
 	ctx, cancel := context.WithCancel(context.Background())
 	blobs.cancel = cancel
-	_, err = store.CreateVersion(ctx, doc.ID, ver.ID, "", "will fail", []byte("<html>v2</html>"), owner)
+	_, _, err = store.SaveVersion(ctx, doc.ID, ver.ID, nil, owner, repo.Upload([]byte("<html>v2</html>"), "will fail"))
 	if err == nil {
-		t.Fatal("CreateVersion succeeded; want context cancellation after blob put")
+		t.Fatal("SaveVersion succeeded; want context cancellation after blob put")
 	}
 	if blobs.puts != 1 || blobs.deletes != 1 {
 		t.Fatalf("blob puts=%d deletes=%d, want 1/1", blobs.puts, blobs.deletes)

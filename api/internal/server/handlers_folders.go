@@ -271,6 +271,9 @@ func (h handlers) patchFolder(c *gin.Context) {
 		respondFolderUpdateError(c, err)
 		return
 	}
+	if parentPtr != nil {
+		h.folderAccessChanged(c)
+	}
 	out := updateFolderResponse{ID: f.ID, Title: f.Title, Owner: f.Owner, ParentFolderID: f.ParentFolderID}
 	if parentPtr != nil && *parentPtr != "" {
 		// The warning is advisory; a failed grant lookup must not fail the move.
@@ -322,6 +325,7 @@ func (h handlers) deleteFolder(c *gin.Context) {
 		}
 		return
 	}
+	h.folderAccessChanged(c)
 	c.Status(http.StatusNoContent)
 }
 
@@ -404,6 +408,7 @@ func (h handlers) moveDocToFolder(c *gin.Context) {
 		internalErr(c, err)
 		return
 	}
+	h.accessChanged(c, in.DocumentID)
 	out := moveDocResponse{DocumentID: in.DocumentID, FolderID: folderID, Moved: true}
 	if mayBroaden {
 		out.PermissionWarning = mayBroadenAccessWarning(folderDocumentWarningMessage)
@@ -422,6 +427,7 @@ func (h handlers) moveDocToRoot(c *gin.Context) {
 		internalErr(c, err)
 		return
 	}
+	h.accessChanged(c, c.Param("doc_id"))
 	c.Status(http.StatusNoContent)
 }
 
@@ -433,6 +439,7 @@ func (h handlers) moveDocToRoot(c *gin.Context) {
 // @Param id path string true "Folder ID"
 // @Param grant body grantInput true "Grant target and role; google_group principals are resolved from principal.email"
 // @Success 201 {object} repo.Grant
+// @Failure 429 {object} errorEnvelope
 // @Router /v1/folders/{id}/grants [post]
 func (h handlers) createFolderGrant(c *gin.Context) {
 	if !h.needFolderRole(c, c.Param("id"), repo.RoleEditor) {
@@ -486,6 +493,7 @@ func (h handlers) patchFolderGrant(c *gin.Context) {
 		internalErr(c, err)
 		return
 	}
+	h.folderAccessChanged(c)
 	c.JSON(http.StatusOK, g)
 }
 func (h handlers) deleteFolderGrant(c *gin.Context) {
@@ -500,5 +508,6 @@ func (h handlers) deleteFolderGrant(c *gin.Context) {
 		internalErr(c, err)
 		return
 	}
+	h.folderAccessChanged(c)
 	c.Status(http.StatusNoContent)
 }

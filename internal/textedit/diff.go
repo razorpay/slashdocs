@@ -12,8 +12,7 @@ import "math"
 // diffBudget bounds the work of one diff to the cost of comparing about
 // 500 million bytes, less than a second, and its memory to a few hundred KiB.
 // An edit step costs as much as stepCost bytes. When the budget runs out, the
-// rest of each text counts as one change. That diff is coarse but correct: it
-// can only refuse more replacements.
+// rest of each text counts as one change. That diff is coarse but correct.
 const (
 	diffBudget = 1 << 29
 	stepCost   = 8

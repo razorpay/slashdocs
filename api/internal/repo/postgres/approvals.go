@@ -12,28 +12,8 @@ import (
 	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
-// lockDocument makes the approval writes on a document take turns, and returns
-// its current version ID. Every approval write calls it first in its
-// transaction, so the status that each change records counts all changes
-// before it.
-func lockDocument(ctx context.Context, q *dbsqlc.Queries, documentID string) (string, error) {
-	currentID, err := q.LockDocumentForApproval(ctx, documentID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", repo.ErrNotFound
-	}
-	return currentID.String, err
-}
-
-// lockCurrentVersion locks the document against a concurrent version push and
-// returns its current version, which cannot change before the write commits.
-func lockCurrentVersion(ctx context.Context, q *dbsqlc.Queries, documentID string) (dbsqlc.GetVersionRow, error) {
-	currentID, err := lockDocument(ctx, q, documentID)
-	if err != nil {
-		return dbsqlc.GetVersionRow{}, err
-	}
-	return q.GetVersion(ctx, currentID)
-}
-
+// CreateApprovalRequest seals no version: a request is for no content. The
+// decision seals the open version when it is made.
 func (s *Store) CreateApprovalRequest(ctx context.Context, documentID string, approver, requestedBy auth.Principal) (repo.ApprovalRequest, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -41,7 +21,7 @@ func (s *Store) CreateApprovalRequest(ctx context.Context, documentID string, ap
 	}
 	defer rollback(ctx, tx)
 	q := s.q.WithTx(tx)
-	if _, err := lockDocument(ctx, q, documentID); err != nil {
+	if _, err := lock(ctx, q, documentID); err != nil {
 		return repo.ApprovalRequest{}, err
 	}
 	id := newID("apr")
@@ -96,7 +76,7 @@ func (s *Store) DeleteApprovalRequest(ctx context.Context, documentID, requestID
 	}
 	defer rollback(ctx, tx)
 	q := s.q.WithTx(tx)
-	if _, err := lockDocument(ctx, q, documentID); err != nil {
+	if _, err := lock(ctx, q, documentID); err != nil {
 		return err
 	}
 	approver, err := q.RevokeApprovalRequest(ctx, dbsqlc.RevokeApprovalRequestParams{RequestID: requestID, DocumentID: documentID})
@@ -152,41 +132,56 @@ var approvalDecisionEvent = map[string]string{
 	repo.DecisionRejected: repo.ApprovalEventRejected,
 }
 
-func (s *Store) CreateOrUpdateApproval(ctx context.Context, documentID, versionID, decision, note string, approver auth.Principal) (repo.Approval, bool, error) {
-	tx, err := s.db.Begin(ctx)
+func (s *Store) CreateOrUpdateApproval(ctx context.Context, documentID, versionID string, seq *int64, decision, note string, approver auth.Principal) (repo.Approval, bool, error) {
+	// A person who is not an approver does not start the seal, which writes
+	// a blob. The check is again under the lock.
+	if err := assigned(ctx, s.q, documentID, approver); err != nil {
+		return repo.Approval{}, false, err
+	}
+	// An approval is for a sealed version: its content cannot change before
+	// the write commits, or after it. The seal is made before the lock.
+	var ready sealing
+	reached := false
+	defer func() {
+		if !reached {
+			s.abandon(ctx, ready)
+		}
+	}()
+	tx, doc, err := s.lockAfter(ctx, documentID, func(q *dbsqlc.Queries, doc live, state liveState) (err error) {
+		s.abandon(ctx, ready)
+		ready, err = s.sealOf(ctx, q, doc, state)
+		return err
+	})
 	if err != nil {
 		return repo.Approval{}, false, err
 	}
 	defer rollback(ctx, tx)
 	q := s.q.WithTx(tx)
-	v, err := q.GetVersion(ctx, versionID)
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && v.DocumentID != documentID) {
-		return repo.Approval{}, false, repo.ErrNotFound
+	sitting := doc.version.ID
+	if err := othersType(ctx, q, doc, approver); err != nil {
+		return repo.Approval{}, false, err
 	}
+	// seq, when set, is the seq that the page of the approver shows. On
+	// another seq, the approver did not see the document.
+	if seq != nil && *seq != doc.seq {
+		return repo.Approval{}, false, &repo.VersionConflictError{LatestVersionID: doc.version.ID, Seq: doc.seq}
+	}
+	if err := s.seal(ctx, q, &doc, &ready, approver); err != nil {
+		return repo.Approval{}, false, err
+	}
+	// A sitting that changed nothing is no version, and the seal removed it.
+	// The decision is then for the version before, which has the same text.
+	if versionID == sitting {
+		versionID = doc.version.ID
+	}
+	v, err := decidedVersion(ctx, q, doc, versionID)
 	if err != nil {
 		return repo.Approval{}, false, err
 	}
-	current, err := lockCurrentVersion(ctx, q, documentID)
-	if err != nil {
+	if err := assigned(ctx, q, documentID, approver); err != nil {
 		return repo.Approval{}, false, err
 	}
-	// A decision is about the content the approver read. When the document has
-	// other content now, the decision would vouch for replaced text.
-	if v.Sha256 != current.Sha256 {
-		return repo.Approval{}, false, &repo.VersionConflictError{LatestVersionID: current.ID}
-	}
-	assigned, err := q.HasActiveApprovalRequest(ctx, dbsqlc.HasActiveApprovalRequestParams{
-		DocumentID:   documentID,
-		ApproverType: string(approver.Type),
-		ApproverID:   approver.ID,
-	})
-	if err != nil {
-		return repo.Approval{}, false, err
-	}
-	if !assigned {
-		return repo.Approval{}, false, repo.ErrForbidden
-	}
-	row, err := q.UpsertApproval(ctx, dbsqlc.UpsertApprovalParams{
+	row, err := s.decide(ctx, tx, dbsqlc.UpsertApprovalParams{
 		ID:           newID("apv"),
 		DocumentID:   documentID,
 		VersionID:    versionID,
@@ -195,21 +190,14 @@ func (s *Store) CreateOrUpdateApproval(ctx context.Context, documentID, versionI
 		ApproverID:   approver.ID,
 		Decision:     decision,
 		Note:         note,
-	})
+	}, approver)
 	if err != nil {
 		return repo.Approval{}, false, err
 	}
-	if row.Changed {
-		if err := s.enqueueApprovalNotification(ctx, tx, documentID, approver, approver, repo.ApprovalNotificationDecided); err != nil {
-			return repo.Approval{}, false, err
-		}
-		if err := s.recordApprovalEvent(ctx, q, approvalEvent{documentID: documentID, kind: approvalDecisionEvent[decision], approver: approver, actor: approver, note: note}); err != nil {
-			return repo.Approval{}, false, err
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
+	if reached, err = commitSeals(ctx, tx); err != nil {
 		return repo.Approval{}, false, err
 	}
+	s.forget(ctx, ready)
 	return repo.Approval{
 		ID:            row.ID,
 		DocumentID:    documentID,
@@ -223,6 +211,72 @@ func (s *Store) CreateOrUpdateApproval(ctx context.Context, documentID, versionI
 	}, row.Inserted, nil
 }
 
+// decide stores the decision d of approver. When it changed the decision
+// before, it also stores its notification and its approval event.
+func (s *Store) decide(ctx context.Context, tx pgx.Tx, d dbsqlc.UpsertApprovalParams, approver auth.Principal) (dbsqlc.UpsertApprovalRow, error) {
+	q := s.q.WithTx(tx)
+	row, err := q.UpsertApproval(ctx, d)
+	if err != nil || !row.Changed {
+		return row, err
+	}
+	if err := s.enqueueApprovalNotification(ctx, tx, d.DocumentID, approver, approver, repo.ApprovalNotificationDecided); err != nil {
+		return row, err
+	}
+	return row, s.recordApprovalEvent(ctx, q, approvalEvent{documentID: d.DocumentID, kind: approvalDecisionEvent[d.Decision], approver: approver, actor: approver, note: d.Note})
+}
+
+// othersType returns ErrEditing when another person than approver types in
+// the open version of doc. A decision while another person types is for
+// text that their next key changes: that key opens a new version, with no
+// approvals. A caller that names no seq, such as the CLI, decides on the
+// live document.
+func othersType(ctx context.Context, q *dbsqlc.Queries, doc live, approver auth.Principal) error {
+	if !doc.version.Open {
+		return nil
+	}
+	typing, err := q.HasRecentOperationOfAnother(ctx, dbsqlc.HasRecentOperationOfAnotherParams{DocumentID: doc.id, Seconds: typingQuiet.Seconds(), AuthorType: string(approver.Type), AuthorID: approver.ID})
+	if err == nil && typing {
+		return repo.ErrEditing
+	}
+	return err
+}
+
+// decidedVersion returns the version versionID of doc, on which an approver
+// decides. Its content must be the content of the current version.
+func decidedVersion(ctx context.Context, q *dbsqlc.Queries, doc live, versionID string) (dbsqlc.GetVersionRow, error) {
+	v, err := q.GetVersion(ctx, versionID)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && v.DocumentID != doc.id) {
+		return v, repo.ErrNotFound
+	}
+	if err != nil {
+		return v, err
+	}
+	current, err := q.GetVersion(ctx, doc.version.ID)
+	if err != nil {
+		return v, err
+	}
+	// A decision is about the content the approver read. When the document has
+	// other content now, the decision would vouch for replaced text.
+	if v.Sha256 != current.Sha256 {
+		return v, &repo.VersionConflictError{LatestVersionID: current.ID, Seq: doc.seq}
+	}
+	return v, nil
+}
+
+// assigned returns ErrForbidden when approver has no active request to
+// decide on the document.
+func assigned(ctx context.Context, q *dbsqlc.Queries, documentID string, approver auth.Principal) error {
+	active, err := q.HasActiveApprovalRequest(ctx, dbsqlc.HasActiveApprovalRequestParams{
+		DocumentID:   documentID,
+		ApproverType: string(approver.Type),
+		ApproverID:   approver.ID,
+	})
+	if err == nil && !active {
+		return repo.ErrForbidden
+	}
+	return err
+}
+
 func (s *Store) DeleteApproval(ctx context.Context, documentID, approvalID string, approver auth.Principal) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -230,7 +284,7 @@ func (s *Store) DeleteApproval(ctx context.Context, documentID, approvalID strin
 	}
 	defer rollback(ctx, tx)
 	q := s.q.WithTx(tx)
-	if _, err := lockDocument(ctx, q, documentID); err != nil {
+	if _, err := lock(ctx, q, documentID); err != nil {
 		return err
 	}
 	row, err := q.GetApproval(ctx, dbsqlc.GetApprovalParams{ID: approvalID, DocumentID: documentID})

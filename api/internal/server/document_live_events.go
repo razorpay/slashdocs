@@ -22,7 +22,10 @@ import (
 // Live document events ride the document KV event stream. Writes announce
 // "document", "comments" and "approvals" events, viewers publish "presence"
 // events, and pointers relay "cursor" events, so every open viewer on every
-// server replica sees them without polling.
+// server replica sees them without polling. A "document" event has the seq
+// of the live document and its current version. It is stored for a version
+// that opens or is sealed, and relayed for the other operations of the
+// browser editor.
 
 const (
 	maxPresenceBytes       = 4 * 1024
@@ -78,6 +81,8 @@ func (p presence) valid() bool {
 // followers show. M, when set, is the viewer's cursor chat message. E, when
 // set, names the block that holds the viewer's caret while they edit it, and
 // C, when set, is the offset of the caret in the characters of that block.
+// A, when set with C, is the offset of the other end of the viewer's
+// selection in that block.
 type cursor struct {
 	Session string        `json:"session"`
 	Version string        `json:"version"`
@@ -94,6 +99,7 @@ type cursorPoint struct {
 	M      string       `json:"m,omitempty"`
 	E      string       `json:"e,omitempty"`
 	C      *int         `json:"c,omitempty"`
+	A      *int         `json:"a,omitempty"`
 	Hidden bool         `json:"hidden,omitempty"`
 }
 
@@ -131,8 +137,12 @@ func (p cursorPoint) valid() bool {
 	return p.T >= 0 && place.valid(0, 1) &&
 		(p.V == nil || p.V.valid(-maxViewFraction, maxViewFraction)) &&
 		plainText(p.M, maxCursorMessage) && cursorPathPattern.MatchString(p.E) &&
-		(p.C == nil || *p.C >= 0 && *p.C <= maxCursorCaret)
+		caretOffset(p.C) && caretOffset(p.A) && (p.A == nil || p.C != nil)
 }
+
+// caretOffset reports whether an offset in a block, when set, is one that a
+// caret can have.
+func caretOffset(at *int) bool { return at == nil || *at >= 0 && *at <= maxCursorCaret }
 
 // postDocumentCursor relays pointer positions to the other viewers. The
 // positions are never stored: a viewer who is not connected misses them.
@@ -210,26 +220,15 @@ func (h handlers) leavePresence(c *gin.Context, docID, session string) {
 	}
 }
 
-// announce tells open viewers that a write changed the document, its
-// comments or its approvals.
+// announce tells open viewers that a write changed the title, the comments
+// or the approvals of the document. The write already succeeded, so a failure
+// here is only logged. The repository stores the events of versions itself,
+// in the transactions that open and seal them.
 func (h handlers) announce(c *gin.Context, kind string) {
-	h.announceData(c, kind, nil)
-}
-
-// announceVersion tells open viewers that a write made the version id, so
-// that a viewer who already has that version does nothing.
-func (h handlers) announceVersion(c *gin.Context, id string) {
-	data, _ := json.Marshal(map[string]string{"version_id": id})
-	h.announceData(c, repo.DocumentEventDocument, data)
-}
-
-// announceData appends the event of a write to the stream of the document.
-// The write already succeeded, so a failure here is only logged.
-func (h handlers) announceData(c *gin.Context, kind string, data json.RawMessage) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), liveEventWriteTimeout)
 	defer cancel()
 	docID := c.Param("id")
-	if err := h.deps.repository.AppendDocumentEvent(ctx, docID, kind, data, *current(c)); err != nil {
+	if err := h.deps.repository.AppendDocumentEvent(ctx, docID, kind, nil, *current(c)); err != nil {
 		slog.WarnContext(ctx, "document event announcement failed",
 			slog.String("document_id", docID),
 			slog.String("kind", kind),

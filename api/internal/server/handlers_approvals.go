@@ -113,6 +113,7 @@ func validApprovalDecision(d string) bool {
 
 const (
 	errVersionSuperseded   = "This document changed. Review the current document before deciding."
+	errApproveWhileEditing = "People are editing this document. Approve it when they are done."
 	errRejectionNeedsWords = "Add a comment on the document or a reason saying what needs to change."
 )
 
@@ -222,7 +223,7 @@ func (h handlers) approverHasAccess(c *gin.Context, approver auth.Principal) boo
 
 // CreateApprover godoc
 // @Summary Assign an approver
-// @Description Assigns a user or service account as an approver. The approver must already have at least viewer access on the document. An approver who loses viewer access when a grant is revoked stops being an approver.
+// @Description Assigns a user or service account as an approver. The approver must already have at least viewer access on the document. An approver who loses viewer access when a grant is revoked stops being an approver. The request is for no version: the approver decides on the version that they read.
 // @Tags approvals
 // @Security bearerAuth
 // @Security cookieAuth
@@ -309,8 +310,11 @@ func (h handlers) deleteApprover(c *gin.Context) {
 // decisionRequest is the body of POST /v1/documents/{id}/approvals.
 type decisionRequest struct {
 	VersionID string `json:"version_id"`
-	Decision  string `json:"decision"`
-	Note      string `json:"note"`
+	// Seq, when set, is the seq that the page of the approver shows. The
+	// decision is refused when the live document is at another seq.
+	Seq      *int64 `json:"seq,omitempty"`
+	Decision string `json:"decision"`
+	Note     string `json:"note"`
 }
 
 // bindDecision reads and validates the request body, and returns the note
@@ -359,15 +363,22 @@ func (h handlers) rejectionSaysWhy(c *gin.Context, p auth.Principal) bool {
 	return true
 }
 
+// versionSuperseded refuses an approval action on a document that is not
+// what the caller saw.
+func versionSuperseded(c *gin.Context, conflict *repo.VersionConflictError) {
+	c.JSON(http.StatusConflict, errorResponse("version_superseded", errVersionSuperseded, versionConflictDetails{CurrentVersionID: conflict.LatestVersionID, Seq: conflict.Seq}))
+}
+
 // CreateApproval godoc
 // @Summary Submit or update a decision
-// @Description Records the caller's decision on the content of a version. The decision vouches for that content, so every version with the same content shows it. Submitting again replaces the previous decision on that content. A rejection needs a note unless the caller has open comment threads on the document (the comments say what to change). Returns 409 when the document's content changed since that version.
+// @Description Records the caller's decision on the content of a version. The open version is sealed first. The decision vouches for that content, so every version with the same content shows it. Submitting again replaces the previous decision on that content. A rejection needs a note unless the caller has open comment threads on the document (the comments say what to change). Returns 409 version_superseded when the document's content changed since that version, or when seq, the seq that the page of the caller shows, is not the seq of the live document, or when another person typed in the document in the last 10 seconds: the message then says to approve when they are done. With no seq, as from the CLI, the decision is on the live document, and version_id in the answer names the sealed version. A decision on an open version that holds the text of the version before it is for that version.
 // @Tags approvals
 // @Security bearerAuth
 // @Security cookieAuth
 // @Param id path string true "Document ID"
 // @Success 201 {object} approvalResponse
 // @Success 200 {object} approvalResponse
+// @Failure 429 {object} errorEnvelope
 // @Router /v1/documents/{id}/approvals [post]
 func (h handlers) createApproval(c *gin.Context) {
 	if !h.needDocRole(c, c.Param("id"), repo.RoleViewer) {
@@ -381,14 +392,17 @@ func (h handlers) createApproval(c *gin.Context) {
 	if in.Decision == repo.DecisionRejected && note == "" && !h.rejectionSaysWhy(c, p) {
 		return
 	}
-	a, created, err := h.deps.repository.CreateOrUpdateApproval(c.Request.Context(), c.Param("id"), in.VersionID, in.Decision, note, p)
+	a, created, err := h.deps.repository.CreateOrUpdateApproval(c.Request.Context(), c.Param("id"), in.VersionID, in.Seq, in.Decision, note, p)
 	var conflict *repo.VersionConflictError
 	switch {
 	case errors.Is(err, repo.ErrNotFound):
 		notFound(c)
 		return
 	case errors.As(err, &conflict):
-		c.JSON(http.StatusConflict, errorResponse("version_superseded", errVersionSuperseded, versionConflictDetails{CurrentVersionID: conflict.LatestVersionID}))
+		versionSuperseded(c, conflict)
+		return
+	case errors.Is(err, repo.ErrEditing):
+		c.JSON(http.StatusConflict, errorResponse("version_superseded", errApproveWhileEditing, nil))
 		return
 	case errors.Is(err, repo.ErrForbidden):
 		forbidden(c, "not an assigned approver on this document")

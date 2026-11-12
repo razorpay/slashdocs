@@ -186,7 +186,7 @@ func TestDocumentCursorRelaysToOpenStreams(t *testing.T) {
 	defer cancel()
 	reader, _ := openLiveStream(ctx, t, ts, e.doc.ID, "?session=viewer-session", fixtureViewer)
 
-	body := `{"session":"editor-session","version":"` + e.ver.ID + `","points":[{"t":5,"path":"0.2","x":0.25,"y":1,"z":2.5,"v":{"path":"0.1","x":-1.5,"y":0.5,"z":2.5},"m":"Look here 👀"},{"t":21,"e":"0.3","c":0,"hidden":true},{"t":22,"e":"0.3","c":1000000}]}`
+	body := `{"session":"editor-session","version":"` + e.ver.ID + `","points":[{"t":5,"path":"0.2","x":0.25,"y":1,"z":2.5,"v":{"path":"0.1","x":-1.5,"y":0.5,"z":2.5},"m":"Look here 👀"},{"t":21,"e":"0.3","c":0,"hidden":true},{"t":22,"e":"0.3","c":1000000,"a":0}]}`
 	assertStatus(t, do(t, e.h, http.MethodPost, "/v1/documents/"+e.doc.ID+"/cursor", body, map[string]string{
 		"Content-Type":     "application/json",
 		"X-Test-Principal": principalHeader(fixtureEditor),
@@ -196,7 +196,7 @@ func TestDocumentCursorRelaysToOpenStreams(t *testing.T) {
 	if got.name != repo.DocumentEventCursor || got.id != "" || got.event.UpdatedBy.ID != fixtureEditor.ID {
 		t.Fatalf("event = %#v, want a cursor event without an id from the editor", got)
 	}
-	want := `{"session":"editor-session","version":"` + e.ver.ID + `","points":[{"t":5,"path":"0.2","x":0.25,"y":1,"z":2.5,"v":{"path":"0.1","x":-1.5,"y":0.5,"z":2.5},"m":"Look here 👀"},{"t":21,"path":"","x":0,"y":0,"e":"0.3","c":0,"hidden":true},{"t":22,"path":"","x":0,"y":0,"e":"0.3","c":1000000}]}`
+	want := `{"session":"editor-session","version":"` + e.ver.ID + `","points":[{"t":5,"path":"0.2","x":0.25,"y":1,"z":2.5,"v":{"path":"0.1","x":-1.5,"y":0.5,"z":2.5},"m":"Look here 👀"},{"t":21,"path":"","x":0,"y":0,"e":"0.3","c":0,"hidden":true},{"t":22,"path":"","x":0,"y":0,"e":"0.3","c":1000000,"a":0}]}`
 	if string(got.event.Data) != want {
 		t.Fatalf("cursor data = %s, want %s", got.event.Data, want)
 	}
@@ -228,6 +228,10 @@ func TestDocumentCursorRejectsInvalidInput(t *testing.T) {
 		{"caret before the block", fixtureViewer, point(`{"t":1,"e":"0","c":-1}`), http.StatusBadRequest},
 		{"caret too far into the block", fixtureViewer, point(`{"t":1,"e":"0","c":1000001}`), http.StatusBadRequest},
 		{"caret between characters", fixtureViewer, point(`{"t":1,"e":"0","c":1.5}`), http.StatusBadRequest},
+		{"selection with no caret", fixtureViewer, point(`{"t":1,"e":"0","a":1}`), http.StatusBadRequest},
+		{"selection from before the block", fixtureViewer, point(`{"t":1,"e":"0","c":1,"a":-1}`), http.StatusBadRequest},
+		{"selection from too far into the block", fixtureViewer, point(`{"t":1,"e":"0","c":1,"a":1000001}`), http.StatusBadRequest},
+		{"selection from between characters", fixtureViewer, point(`{"t":1,"e":"0","c":1,"a":1.5}`), http.StatusBadRequest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rr := do(t, e.h, http.MethodPost, "/v1/documents/"+e.doc.ID+"/cursor", tc.body, map[string]string{
@@ -269,4 +273,71 @@ func TestApprovalChangesAnnounceApprovals(t *testing.T) {
 		"X-Test-Principal": principalHeader(fixtureOwner),
 	}), http.StatusNoContent)
 	next(fixtureOwner)
+}
+
+// A grant on a folder gives access to the documents below it. When that
+// access goes, the streams of those documents end at once, and not at the
+// next keep-alive.
+func TestAccessThatGoesEndsTheStreamsBelowIt(t *testing.T) {
+	type ids struct{ top, below, other, grant, doc string }
+	for _, tc := range []struct {
+		name    string
+		request func(ids) (method, path, body string)
+	}{
+		{"the folder grant goes", func(i ids) (string, string, string) {
+			return http.MethodDelete, "/v1/folders/" + i.top + "/grants/" + i.grant, ""
+		}},
+		{"the folder goes", func(i ids) (string, string, string) { return http.MethodDelete, "/v1/folders/" + i.top, "" }},
+		{"the folder of the document moves", func(i ids) (string, string, string) {
+			return http.MethodPatch, "/v1/folders/" + i.below, `{"parent_folder_id":null}`
+		}},
+		{"the document moves to another folder", func(i ids) (string, string, string) {
+			return http.MethodPost, "/v1/folders/" + i.other + "/documents", `{"document_id":"` + i.doc + `"}`
+		}},
+		{"the document moves to the root", func(i ids) (string, string, string) {
+			return http.MethodDelete, "/v1/folders/" + i.below + "/documents/" + i.doc, ""
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newTestEnv(t)
+			ctx := context.Background()
+			folder := func(title, parent string) string {
+				t.Helper()
+				f, err := e.store.CreateFolder(ctx, fixtureOwner, title, parent)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return f.ID
+			}
+			i := ids{top: folder("Top", ""), other: folder("Other", ""), doc: e.doc.ID}
+			i.below = folder("Below", i.top)
+			if _, err := e.store.MoveDocumentToFolder(ctx, fixtureOwner, i.below, e.doc.ID); err != nil {
+				t.Fatal(err)
+			}
+			grant, err := e.store.CreateGrant(ctx, "folder", i.top, fixtureStranger, repo.RoleViewer, fixtureOwner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			i.grant = grant.ID
+			ts := httptest.NewServer(e.h)
+			defer ts.Close()
+			streamCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			reader, _ := openLiveStream(streamCtx, t, ts, e.doc.ID, "", fixtureStranger)
+
+			method, path, body := tc.request(i)
+			rr := do(t, e.h, method, path, body, map[string]string{"Content-Type": "application/json", "X-Test-Principal": principalHeader(fixtureOwner)})
+			if rr.Code >= 300 {
+				t.Fatalf("status = %d; body=%s", rr.Code, rr.Body)
+			}
+			for {
+				if _, err := reader.ReadString('\n'); err != nil {
+					if streamCtx.Err() != nil {
+						t.Fatal("the stream did not end when the access went")
+					}
+					return
+				}
+			}
+		})
+	}
 }

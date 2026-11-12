@@ -5,6 +5,7 @@ import (
 	crand "crypto/rand"
 	"errors"
 	"math/rand/v2"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -16,10 +17,10 @@ func at(base, old, with string) Replacement {
 	return Replacement{Start: start, End: start + len(old), OldHTML: old, NewHTML: with}
 }
 
-func TestReplaceAppliesByPositionOnTheBase(t *testing.T) {
+func TestPatchAppliesByPositionOnTheBase(t *testing.T) {
 	base := "<p>Try it.</p><p>Try it.</p><p>Try it.</p>"
 	// The second of three equal labels, and an insertion after the last.
-	got, err := Replace([]byte(base), []byte(base), []Replacement{
+	got, err := Patch([]byte(base), []Replacement{
 		{Start: 17, End: 24, OldHTML: "Try it.", NewHTML: "Run it."},
 		{Start: len(base), End: len(base), NewHTML: "<p>New</p>"},
 	})
@@ -31,7 +32,7 @@ func TestReplaceAppliesByPositionOnTheBase(t *testing.T) {
 	}
 }
 
-func TestReplaceMovesReplacementsOntoANewerVersion(t *testing.T) {
+func TestTransformMovesReplacementsOntoALaterState(t *testing.T) {
 	base := "<h1>Café 😀</h1>\n<p>One.</p>\n<p>Two.</p>\n<p>Three.</p>"
 	ours := []Replacement{at(base, "One.", "Uno."), at(base, "Three.", "Tres.")}
 	cases := []struct{ name, latest, want string }{
@@ -49,45 +50,14 @@ func TestReplaceMovesReplacementsOntoANewerVersion(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := Replace([]byte(base), []byte(tc.latest), ours)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(got) != tc.want {
+			if got := merge(t, base, tc.latest, ours); got != tc.want {
 				t.Fatalf("got %q\nwant %q", got, tc.want)
 			}
 		})
 	}
 }
 
-func TestReplaceRefusesAReplacementThatANewerVersionChanged(t *testing.T) {
-	base := "<p>One two three.</p><p>Four.</p>"
-	cases := []struct {
-		name   string
-		latest string
-		ours   []Replacement
-		index  int
-	}{
-		{"same words", strings.Replace(base, "two", "2", 1), []Replacement{at(base, "One", "1"), at(base, "two three", "2 3")}, 1},
-		{"strictly inside", strings.Replace(base, "two", "two and a half", 1), []Replacement{at(base, "One two three", "1 2 3")}, 0},
-		{"overlap at the start", strings.Replace(base, "One two", "Zero", 1), []Replacement{at(base, "two three", "2 3")}, 0},
-		{"insertion at the same point", strings.Replace(base, "Four", "XFour", 1),
-			[]Replacement{{Start: strings.Index(base, "Four"), End: strings.Index(base, "Four"), NewHTML: "Only "}}, 0},
-		{"insertion inside an empty range is a deletion", strings.Replace(base, "<p>Four.</p>", "", 1),
-			[]Replacement{{Start: strings.Index(base, "Four"), End: strings.Index(base, "Four"), NewHTML: "Only "}}, 0},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := Replace([]byte(base), []byte(tc.latest), tc.ours)
-			var conflict *ConflictError
-			if !errors.As(err, &conflict) || conflict.Index != tc.index {
-				t.Fatalf("err = %v, want a conflict on replacement %d", err, tc.index)
-			}
-		})
-	}
-}
-
-func TestReplaceRefusesReplacementsThatDoNotFitTheBase(t *testing.T) {
+func TestNormalRefusesReplacementsThatDoNotFitTheBase(t *testing.T) {
 	base := "<p>é and e</p>"
 	ok := at(base, "and", "or")
 	cases := []struct {
@@ -107,7 +77,7 @@ func TestReplaceRefusesReplacementsThatDoNotFitTheBase(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := Replace([]byte(base), []byte(base), tc.rs)
+			_, err := Normal(Bytes(base), tc.rs)
 			var e *ReplacementError
 			if !errors.As(err, &e) || e.Index != tc.index || e.Reason != tc.reason {
 				t.Fatalf("err = %#v, want %s on replacement %d", err, tc.reason, tc.index)
@@ -183,7 +153,12 @@ func TestDiffStaysCheapOnLargeDocuments(t *testing.T) {
 	}
 }
 
-func TestReplacementSummaryNamesWhatAReaderSeesChange(t *testing.T) {
+// summary names what a reader sees change when the replacements apply to base.
+func summary(base string, rs ...Replacement) string {
+	return ChangeSummary([]byte(base), apply([]byte(base), rs))
+}
+
+func TestChangeSummaryNamesWhatAReaderSeesChange(t *testing.T) {
 	base := `<html><head><style>p { color: red }</style></head><body>
 <p>Clients retry <b>twice</b> before the owner. The end.</p>
 <ul><li>Read the notes</li></ul>
@@ -219,27 +194,42 @@ func TestReplacementSummaryNamesWhatAReaderSeesChange(t *testing.T) {
 		{"bold moved", at(base, "<b>twice</b> before", "<b>twice before</b>"), "Made “twice before” bold"},
 		{"link target", at(base, "owner.", `<a href="https://a.example">owner.</a>`), "Linked “owner.”"},
 	} {
-		if got := ReplacementSummary([]byte(base), []Replacement{c.r}); got != c.want {
+		if got := summary(base, c.r); got != c.want {
 			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
 		}
 	}
 }
 
-func TestReplacementSummaryHasALinePerReplacement(t *testing.T) {
-	base := "<p>Try it.</p><p>Try it.</p>"
-	got := ReplacementSummary([]byte(base), []Replacement{
-		{Start: 3, End: 6, OldHTML: "Try", NewHTML: "Run"},
-		{Start: len(base), End: len(base), NewHTML: "<p>" + strings.Repeat("word ", 20) + "</p>"},
-	})
-	want := "Changed “Try” to “Run”\nAdded a paragraph: “" + strings.TrimSpace(strings.Repeat("word ", 11)) + "…”"
-	if got != want {
+// A person types on while an agent pushes, so a version starts or ends in
+// the middle of a word. The summary must name the words that are new, not
+// the part of a word that was there.
+func TestChangeSummaryNamesTheNewWordsOfTextThatWasPutIn(t *testing.T) {
+	for _, tc := range []struct{ before, after, want string }{
+		{"<p>We meet on Monday at nine, in t</p>", "<p>We meet on Monday at nine, in the large room on the third floor</p>",
+			"Added “the large room on the third floor”"},
+		{"<p>We meet whil</p>", "<p>We meet while the agent writes the other sections</p>", "Added “while the agent writes the other sections”"},
+		{"<p>Intro.</p><p>It lists what the team did.</p>", "<p>Intro.</p><p>TAB-ONE words. It lists what the team did.</p>", "Added “TAB-ONE words.”"},
+		{"<p>That sentence.It lists what the team did.</p>", "<p>That sentence. TAB-ONE words. It lists what the team did.</p>", "Added “TAB-ONE words.”"},
+		{"<p>We meet while the agent writes</p>", "<p>We meet whil</p>", "Removed “while the agent writes”"},
+		{"<p>TAB-ONE words. It lists what the team did.</p>", "<p>It lists what the team did.</p>", "Removed “TAB-ONE words.”"},
+	} {
+		if got := ChangeSummary([]byte(tc.before), []byte(tc.after)); got != tc.want {
+			t.Errorf("ChangeSummary(%q, %q) = %q, want %q", tc.before, tc.after, got, tc.want)
+		}
+	}
+}
+
+func TestChangeSummaryCutsLongWords(t *testing.T) {
+	base := "<p>Try it.</p>"
+	got := summary(base, Replacement{Start: len(base), End: len(base), NewHTML: "<p>" + strings.Repeat("word ", 20) + "</p>"})
+	if want := "Added a paragraph: “" + strings.TrimSpace(strings.Repeat("word ", 11)) + "…”"; got != want {
 		t.Fatalf("got\n%s\nwant\n%s", got, want)
 	}
 }
 
 // The editor sends a new bold of part of a sentence as two replacements: its
-// start tag and its end tag. One line names the words between them.
-func TestReplacementSummaryNamesAFormatFromItsStartTagToItsEndTag(t *testing.T) {
+// start tag and its end tag. The line names the words between them.
+func TestChangeSummaryNamesAFormatFromItsStartTagToItsEndTag(t *testing.T) {
 	base := `<p>Select only these words today.</p><p>Clients retry twice before giving up.</p>`
 	tags := func(word, start, end string) []Replacement {
 		r := at(base, word, "")
@@ -257,10 +247,8 @@ func TestReplacementSummaryNamesAFormatFromItsStartTagToItsEndTag(t *testing.T) 
 		{"one word", tags("twice", "<strong>", "</strong>"), "Made “twice” bold"},
 		{"italic", tags("these words", "<em>", "</em>"), "Made “these words” italic"},
 		{"link", tags("these words", `<a href="https://example.com">`, "</a>"), "Linked “these words”"},
-		{"two edits", append(tags("these words", "<b>", "</b>"), at(base, "twice", "three times")),
-			"Made “these words” bold\nChanged “twice” to “three times”"},
 	} {
-		if got := ReplacementSummary([]byte(base), c.rs); got != c.want {
+		if got := summary(base, c.rs...); got != c.want {
 			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
 		}
 	}
@@ -276,7 +264,7 @@ func TestReplacementSummaryNamesAFormatFromItsStartTagToItsEndTag(t *testing.T) 
 		{"link target", []Replacement{at(linked, "a.example", "b.example")}, "Changed the link on “the notes”"},
 		{"markup", []Replacement{at(linked, "<p>", "<p >")}, "Changed the HTML only"},
 	} {
-		if got := ReplacementSummary([]byte(linked), c.rs); got != c.want {
+		if got := summary(linked, c.rs...); got != c.want {
 			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
 		}
 	}
@@ -284,10 +272,31 @@ func TestReplacementSummaryNamesAFormatFromItsStartTagToItsEndTag(t *testing.T) 
 
 func TestChangeSummaryNamesTheFirstChangeOfAWholeDocument(t *testing.T) {
 	before := `<div class="card"><h2>Card A</h2></div><div class="card"><h2>Card B</h2></div><p>End</p>`
-	if got, want := ChangeSummary([]byte(before), []byte(`<div class="card"><h2>Card A</h2></div><p>End</p>`)), "Removed “Card B”"; got != want {
+	if got, want := ChangeSummary([]byte(before), []byte(`<div class="card"><h2>Card A</h2></div><p>End</p>`)), "Removed the section “Card B”"; got != want {
 		t.Fatalf("ChangeSummary = %q, want %q", got, want)
 	}
 	if got, want := ChangeSummary([]byte(before), []byte(before+"<p>New</p>")), "Added a paragraph: “New”"; got != want {
 		t.Fatalf("ChangeSummary = %q, want %q", got, want)
+	}
+}
+
+// The words of an element are a part of the words of the page, so a document
+// with many elements around its text costs that text one time.
+func TestChangeSummaryOfADeepDocumentCostsItsTextOneTime(t *testing.T) {
+	const depth = 300
+	words := strings.Repeat("some words of a long paragraph ", 8<<10)
+	deep := func(last string) []byte {
+		return []byte(strings.Repeat("<div>", depth) + "<p>" + words + last + "</p>" + strings.Repeat("</div>", depth))
+	}
+	before, after := deep("end."), deep("end. More words.")
+	var m0, m1 runtime.MemStats
+	runtime.ReadMemStats(&m0)
+	got := ChangeSummary(before, after)
+	runtime.ReadMemStats(&m1)
+	if want := "Added “More words.”"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if used := m1.TotalAlloc - m0.TotalAlloc; used > 40*uint64(len(before)) {
+		t.Fatalf("the summary allocated %d bytes for a document of %d bytes", used, len(before))
 	}
 }

@@ -274,7 +274,7 @@ func TestPatchCommentRejectsInvalidStatus(t *testing.T) {
 func TestListCommentsFiltersThreadsByStatus(t *testing.T) {
 	e := newTestEnv(t)
 	ctx := context.Background()
-	resolved, err := e.store.CreateComment(ctx, e.doc.ID, e.ver.ID, "resolved", repo.Anchor{Quote: "fixture"}, fixtureCommenter, nil)
+	resolved, err := e.store.CreateComment(ctx, e.doc.ID, e.ver.ID, "resolved", repo.Anchor{Quote: "fixture"}, 0, fixtureCommenter, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

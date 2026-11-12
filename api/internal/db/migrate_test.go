@@ -96,8 +96,8 @@ func TestCommentMentionMigrationsSplitTriggerFromLegacyCleanup(t *testing.T) {
 	}
 	assertMentionMigrationObjects(t, database)
 	version, err := goose.GetDBVersion(database)
-	if err != nil || version != 43 {
-		t.Fatalf("migration version = %d, %v; want 43", version, err)
+	if err != nil || version != 44 {
+		t.Fatalf("migration version = %d, %v; want 44", version, err)
 	}
 
 	// The cleanup cannot reconstruct markers, so migration 19's Down is a
@@ -172,6 +172,83 @@ func TestCommentReadsMigration(t *testing.T) {
 	var table sql.NullString
 	if err := database.QueryRow(`SELECT to_regclass('public.comment_reads')::text`).Scan(&table); err != nil || table.Valid {
 		t.Fatalf("comment_reads after Down = %v, %v; want gone", table, err)
+	}
+}
+
+// Migration 44 writes no row: the versions that exist are sealed by the
+// defaults, at seq 0. A server of the release before cannot write a version,
+// because it would write it on a snapshot and remove typed text. Down is
+// refused while a version is open, because that version has no content of
+// its own.
+func TestLiveDocumentMigration(t *testing.T) {
+	databaseURL := testdb.New(t)
+	database, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	setMigrationTestFS(t)
+	if err := goose.SetDialect("postgres"); err != nil {
+		t.Fatal(err)
+	}
+	if err := goose.DownTo(database, "migrations", 43); err != nil {
+		t.Fatal(err)
+	}
+	seedMigrationGraph(t, database)
+	exec := func(statement string) error {
+		_, err := database.Exec(statement)
+		return err
+	}
+	if err := aidb.Migrate(databaseURL); err != nil {
+		t.Fatalf("migrate to 44 on existing versions: %v", err)
+	}
+	// A server of the release before saves a version with no seq.
+	if err := exec(`INSERT INTO versions(id, document_id, number, html_blob_key, sha256, parent_version_id, created_by_type, created_by_id, client_change_id)
+		VALUES ('ver_old_server', 'doc_migration', 2, 'typed.html', 'sha2', 'ver_migration', 'user', 'usr_migration', 'chg_1')`); err == nil || !strings.Contains(err.Error(), "seq") {
+		t.Fatalf("a version of the release before: err = %v, want it refused", err)
+	}
+	var sealed, atZero, documentSeq int
+	if err := database.QueryRow(`SELECT count(*) FILTER (WHERE sealed_at IS NOT NULL), count(*) FILTER (WHERE seq = 0),
+		(SELECT seq FROM documents WHERE id = 'doc_migration') FROM versions`).Scan(&sealed, &atZero, &documentSeq); err != nil {
+		t.Fatal(err)
+	}
+	if sealed != 1 || atZero != 1 || documentSeq != 0 {
+		t.Fatalf("sealed versions = %d, versions at seq 0: %d, document seq = %d; want 1, 1, 0", sealed, atZero, documentSeq)
+	}
+
+	// An operation opens a version, with its author.
+	for _, statement := range []string{
+		`INSERT INTO versions(id, document_id, number, html_blob_key, sha256, parent_version_id, created_by_type, created_by_id, seq, sealed_at)
+		 VALUES ('ver_open', 'doc_migration', 2, 'typed.html', '', 'ver_migration', 'user', 'usr_migration', 0, NULL)`,
+		`INSERT INTO document_ops(document_id, seq, version_id, author_type, author_id, client_op_id, typed, replacements, sum)
+		 VALUES ('doc_migration', 1, 'ver_open', 'user', 'usr_migration', 'op_1', true, '[]', 0)`,
+		`INSERT INTO version_authors(version_id, author_type, author_id) VALUES ('ver_open', 'user', 'usr_migration')`,
+		`UPDATE documents SET current_version_id = 'ver_open', seq = 1 WHERE id = 'doc_migration'`,
+	} {
+		if err := exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := exec(`INSERT INTO document_ops(document_id, seq, version_id, author_type, author_id, client_op_id, typed, replacements, sum)
+		VALUES ('doc_migration', 2, 'ver_open', 'user', 'usr_migration', 'op_1', true, '[]', 0)`); err == nil {
+		t.Fatal("a document took one client_op_id twice")
+	}
+	setMigrationTestFS(t)
+	if err := goose.DownTo(database, "migrations", 43); err == nil || !strings.Contains(err.Error(), "a version is open") {
+		t.Fatalf("down migration 44 with an open version: err = %v, want it refused", err)
+	}
+	if err := exec(`UPDATE versions SET sealed_at = now() WHERE id = 'ver_open'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := goose.DownTo(database, "migrations", 43); err != nil {
+		t.Fatalf("down migration 44: %v", err)
+	}
+	var table sql.NullString
+	if err := database.QueryRow(`SELECT to_regclass('public.document_ops')::text`).Scan(&table); err != nil || table.Valid {
+		t.Fatalf("document_ops after Down = %v, %v; want gone", table, err)
+	}
+	if err := exec(`UPDATE versions SET client_change_id = 'chg_2' WHERE id = 'ver_open'`); err != nil {
+		t.Fatalf("client_change_id after Down: %v", err)
 	}
 }
 

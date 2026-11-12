@@ -191,8 +191,7 @@ func TestPointCommentPlacementAcrossVersions(t *testing.T) {
 	moved := mk(`{"point":{"target":"t_gone","x":0.5,"y":0.5,"page_x":40,"page_y":300,"viewport_w":1280}}`)
 	onBody := mk(`{"point":{"x":-0.1,"y":0.5,"page_x":40,"page_y":300,"viewport_w":1280}}`)
 
-	if _, err := e.store.CreateVersion(context.Background(), e.doc.ID, e.ver.ID, "", "points",
-		[]byte(`<html><body><div data-slashdocs-target='t_mob'></div><svg id="chart"></svg><p data-id="t_data">Revenue</p></body></html>`), fixtureOwner); err != nil {
+	if _, _, err := e.store.SaveVersion(context.Background(), e.doc.ID, e.ver.ID, nil, fixtureOwner, repo.Upload([]byte(`<html><body><div data-slashdocs-target='t_mob'></div><svg id="chart"></svg><p data-id="t_data">Revenue</p></body></html>`), "points")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -316,12 +315,52 @@ func TestMovePointComment(t *testing.T) {
 	}
 }
 
-func TestTextCommentCannotMove(t *testing.T) {
+// A text comment follows its text on the server, as in Google Docs: through
+// typing in it, through a push that changes words in it, and when it was
+// posted from a page that was behind while another person typed in its
+// words.
+func TestTextCommentFollowsItsText(t *testing.T) {
 	e := newTestEnv(t)
-	rr := do(t, e.h, http.MethodPatch, "/v1/documents/"+e.doc.ID+"/comments/"+e.cmt.ID,
-		`{"anchor":{"point":{"target":"t_mob","x":0.5,"y":0.5}}}`,
-		map[string]string{"Content-Type": "application/json", "X-Test-Principal": principalHeader(fixtureOwner)})
-	assertStatus(t, rr, http.StatusBadRequest)
+	const html = "<html><body><p>Eleven kilo lima mike november.</p></body></html>"
+	rr := push(t, e, e.doc.ID, e.ver.ID, html, fixtureOwner)
+	assertStatus(t, rr, http.StatusCreated)
+	var pushed struct {
+		ID  string `json:"id"`
+		Seq int64  `json:"seq"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &pushed); err != nil {
+		t.Fatal(err)
+	}
+	version, seq := pushed.ID, pushed.Seq
+	post := func(seq int64, quote, prefix, suffix string, start int) string {
+		t.Helper()
+		body := fmt.Sprintf(`{"version_id":%q,"seq":%d,"body":"note","anchor":{"quote":%q,"prefix":%q,"suffix":%q,"dom_path":"body","start_offset":%d,"end_offset":%d}}`,
+			version, seq, quote, prefix, suffix, start, start+len(quote))
+		rr := do(t, e.h, http.MethodPost, "/v1/documents/"+e.doc.ID+"/comments", body, map[string]string{"Content-Type": "application/json", "X-Test-Principal": principalHeader(fixtureCommenter)})
+		assertStatus(t, rr, http.StatusCreated)
+		return jsonField(t, rr.Body.Bytes(), "id")
+	}
+	assertOn := func(id, want string) {
+		t.Helper()
+		got := findComment(t, listComments(t, e, ""), id)
+		placement, _ := got["current_placement"].(map[string]any)
+		if got["selected_text"] != want || placement["status"] != "attached" {
+			t.Fatalf("comment = %v, want it attached on %q", got, want)
+		}
+	}
+	phrase := post(seq, "kilo lima mike", "Eleven ", " november.", 7)
+
+	typed := typeOp(t, e, e.doc.ID, fixtureEditor, seq, "op_grow", replaceAt(html, "lima", "liXXma", 0))
+	assertOn(phrase, "kilo liXXma mike")
+
+	// A page at seq 2 posts a comment on "november" while another person
+	// types in that word.
+	typed = typeOp(t, e, e.doc.ID, fixtureEditor, typed.Seq, "op_word", replaceAt(strings.Replace(html, "lima", "liXXma", 1), "november", "novXember", 0))
+	assertOn(post(seq, "november", "Eleven kilo lima mike ", ".", 22), "novXember")
+
+	live := "<html><body><p>Eleven KILO liXXma mike novXember.</p></body></html>"
+	assertStatus(t, pushAt(t, e, e.doc.ID, typed.VersionID, typed.Seq, live, fixtureOwner), http.StatusCreated)
+	assertOn(phrase, "KILO liXXma mike")
 }
 
 func TestCommentBodyMustHaveText(t *testing.T) {
@@ -350,5 +389,31 @@ func TestCommentBodyLengthLimit(t *testing.T) {
 	assertStatus(t, rr, http.StatusBadRequest)
 	if !strings.Contains(rr.Body.String(), "at most 20000 characters") {
 		t.Fatalf("body = %s", rr.Body.String())
+	}
+}
+
+// A text anchor makes the server read the live document. So each principal
+// has a budget of comment updates, large enough for the anchors that typing
+// moves, and apart from the budget of decisions.
+func TestCommentUpdatesHaveABudgetForEachPrincipal(t *testing.T) {
+	e := newTestEnv(t)
+	path := "/v1/documents/" + e.doc.ID + "/comments/" + e.cmt.ID
+	update := func(p auth.Principal) int {
+		return do(t, e.h, http.MethodPatch, path, `{}`, map[string]string{"Content-Type": "application/json", "X-Test-Principal": principalHeader(p)}).Code
+	}
+	// A request that fails counts too.
+	for i := range 300 {
+		if got := update(fixtureEditor); got != http.StatusBadRequest {
+			t.Fatalf("request %d: status = %d", i, got)
+		}
+	}
+	if got := update(fixtureEditor); got != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", got)
+	}
+	if got := update(fixtureOwner); got != http.StatusBadRequest {
+		t.Fatalf("another principal: status = %d, want 400", got)
+	}
+	if got := submitApproval(t, e, e.doc.ID, e.ver.ID, "maybe", fixtureEditor).Code; got != http.StatusBadRequest {
+		t.Fatalf("decision: status = %d, want 400", got)
 	}
 }

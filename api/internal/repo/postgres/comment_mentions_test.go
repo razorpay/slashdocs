@@ -53,7 +53,7 @@ func TestPostgresCommentMentionRootReplyAndCanonicalPrincipals(t *testing.T) {
 	body := "🙂 ping @mention@example.com and @review-bot"
 	userMention := mentionAt(t, body, "@mention@example.com", auth.Principal{Type: auth.PrincipalUser, ID: f.user.ID, Email: "spoof@example.com", Name: "Spoof"})
 	saMention := mentionAt(t, body, "@review-bot", auth.Principal{Type: auth.PrincipalServiceAccount, ID: f.sa.ID, Name: "spoof-bot"})
-	created, err := f.store.CreateComment(ctx, f.doc.ID, f.ver.ID, body, repo.Anchor{Quote: "mentions"}, f.owner, []repo.CommentMention{saMention, userMention})
+	created, err := f.store.CreateComment(ctx, f.doc.ID, f.ver.ID, body, repo.Anchor{Quote: "mentions"}, 0, f.owner, []repo.CommentMention{saMention, userMention})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestPostgresCommentMentionWritesRollbackAtomically(t *testing.T) {
 		t.Fatal(err)
 	}
 	badBody := "@mention@example.com and @missing"
-	_, err = f.store.CreateComment(ctx, f.doc.ID, f.ver.ID, badBody, repo.Anchor{Quote: "mentions"}, f.owner, []repo.CommentMention{
+	_, err = f.store.CreateComment(ctx, f.doc.ID, f.ver.ID, badBody, repo.Anchor{Quote: "mentions"}, 0, f.owner, []repo.CommentMention{
 		mentionAt(t, badBody, "@mention@example.com", auth.Principal{Type: auth.PrincipalUser, ID: f.user.ID}),
 		mentionAt(t, badBody, "@missing", auth.Principal{Type: auth.PrincipalUser, ID: "usr_missing"}),
 	})
@@ -120,7 +120,7 @@ func TestPostgresCommentMentionWritesRollbackAtomically(t *testing.T) {
 		t.Fatalf("invalid root inserted a comment: before=%d after=%d", len(before), len(after))
 	}
 
-	root, err := f.store.CreateComment(ctx, f.doc.ID, f.ver.ID, "@mention@example.com", repo.Anchor{Quote: "mentions"}, f.owner, []repo.CommentMention{
+	root, err := f.store.CreateComment(ctx, f.doc.ID, f.ver.ID, "@mention@example.com", repo.Anchor{Quote: "mentions"}, 0, f.owner, []repo.CommentMention{
 		mentionAt(t, "@mention@example.com", "@mention@example.com", auth.Principal{Type: auth.PrincipalUser, ID: f.user.ID}),
 	})
 	if err != nil {
@@ -162,7 +162,7 @@ func TestPostgresCommentMentionPatchTriState(t *testing.T) {
 	ctx := context.Background()
 	body := "Please ask @mention@example.com"
 	mention := mentionAt(t, body, "@mention@example.com", auth.Principal{Type: auth.PrincipalUser, ID: f.user.ID})
-	comment, err := f.store.CreateComment(ctx, f.doc.ID, f.ver.ID, body, repo.Anchor{Quote: "mentions"}, f.owner, []repo.CommentMention{mention})
+	comment, err := f.store.CreateComment(ctx, f.doc.ID, f.ver.ID, body, repo.Anchor{Quote: "mentions"}, 0, f.owner, []repo.CommentMention{mention})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestPostgresCommentMentionLabelSnapshotsSurviveRenameWithoutAllowingSpoofin
 	}
 	oldBody := "Hello @Old Name"
 	oldMention := mentionAt(t, oldBody, "@Old Name", auth.Principal{Type: auth.PrincipalUser, ID: oldUser.ID, Email: "forged@example.com", Name: "Forged"})
-	comment, err := f.store.CreateComment(ctx, f.doc.ID, f.ver.ID, oldBody, repo.Anchor{Quote: "mentions"}, f.owner, []repo.CommentMention{oldMention})
+	comment, err := f.store.CreateComment(ctx, f.doc.ID, f.ver.ID, oldBody, repo.Anchor{Quote: "mentions"}, 0, f.owner, []repo.CommentMention{oldMention})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,13 +223,13 @@ func TestPostgresCommentMentionLabelSnapshotsSurviveRenameWithoutAllowingSpoofin
 		t.Fatalf("renamed mention = %#v", comment.Mentions)
 	}
 
-	_, err = f.store.CreateComment(ctx, f.doc.ID, f.ver.ID, "@Old Name", repo.Anchor{Quote: "mentions"}, f.owner, []repo.CommentMention{
+	_, err = f.store.CreateComment(ctx, f.doc.ID, f.ver.ID, "@Old Name", repo.Anchor{Quote: "mentions"}, 0, f.owner, []repo.CommentMention{
 		mentionAt(t, "@Old Name", "@Old Name", auth.Principal{Type: auth.PrincipalUser, ID: oldUser.ID, Name: "Old Name"}),
 	})
 	if !errors.Is(err, repo.ErrInvalidCommentMention) {
 		t.Fatalf("fresh stale label error = %v", err)
 	}
-	_, err = f.store.CreateComment(ctx, f.doc.ID, f.ver.ID, "@Spoofed", repo.Anchor{Quote: "mentions"}, f.owner, []repo.CommentMention{
+	_, err = f.store.CreateComment(ctx, f.doc.ID, f.ver.ID, "@Spoofed", repo.Anchor{Quote: "mentions"}, 0, f.owner, []repo.CommentMention{
 		mentionAt(t, "@Spoofed", "@Spoofed", auth.Principal{Type: auth.PrincipalUser, ID: oldUser.ID, Email: "spoof@example.com", Name: "Spoofed"}),
 	})
 	if !errors.Is(err, repo.ErrInvalidCommentMention) {
@@ -256,14 +256,14 @@ func TestPostgresCommentMentionLimit(t *testing.T) {
 	f := newMentionFixture(t)
 	ctx := context.Background()
 	body, fifty := repeatedStoreMentions(f.user, repo.MaxCommentMentions)
-	comment, err := f.store.CreateComment(ctx, f.doc.ID, f.ver.ID, body, repo.Anchor{Quote: "mentions"}, f.owner, fifty)
+	comment, err := f.store.CreateComment(ctx, f.doc.ID, f.ver.ID, body, repo.Anchor{Quote: "mentions"}, 0, f.owner, fifty)
 	if err != nil || len(comment.Mentions) != repo.MaxCommentMentions {
 		t.Fatalf("50 mentions = %d, %v", len(comment.Mentions), err)
 	}
 
 	missing := auth.Principal{Type: auth.PrincipalUser, ID: "usr_missing_cap"}
 	body, fiftyOne := repeatedStoreMentions(missing, repo.MaxCommentMentions+1)
-	_, err = f.store.CreateComment(ctx, f.doc.ID, f.ver.ID, body, repo.Anchor{Quote: "mentions"}, f.owner, fiftyOne)
+	_, err = f.store.CreateComment(ctx, f.doc.ID, f.ver.ID, body, repo.Anchor{Quote: "mentions"}, 0, f.owner, fiftyOne)
 	if !errors.Is(err, repo.ErrInvalidCommentMention) || !strings.Contains(err.Error(), "too many mentions") {
 		t.Fatalf("51 mentions error = %v, want count rejection before lookup", err)
 	}
@@ -273,7 +273,7 @@ func TestPostgresCommentBodiesNormalizeLegacyMarkers(t *testing.T) {
 	f := newMentionFixture(t)
 	ctx := context.Background()
 	const marker = "\u2063"
-	comment, err := f.store.CreateComment(ctx, f.doc.ID, f.ver.ID, "Hello "+marker+"@mention@example.com"+marker, repo.Anchor{Quote: "mentions"}, f.owner, nil)
+	comment, err := f.store.CreateComment(ctx, f.doc.ID, f.ver.ID, "Hello "+marker+"@mention@example.com"+marker, repo.Anchor{Quote: "mentions"}, 0, f.owner, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

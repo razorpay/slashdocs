@@ -117,7 +117,7 @@ func TestPostgresSearchDocumentText(t *testing.T) {
 	if _, err := store.UpdateDocument(ctx, budget.ID, "Forecast"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateVersion(ctx, incident.ID, incident.CurrentVersionID, "", "", []byte("<p>Rollback notes.</p>"), owner); err != nil {
+	if _, _, err := store.SaveVersion(ctx, incident.ID, incident.CurrentVersionID, nil, owner, repo.Upload([]byte("<p>Rollback notes.</p>"), "")); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct{ term, want string }{

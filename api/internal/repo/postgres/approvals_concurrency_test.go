@@ -40,7 +40,7 @@ func TestPostgresDecisionWaitsForAConcurrentPush(t *testing.T) {
 
 	pushed := make(chan error, 1)
 	go func() {
-		_, err := store.CreateVersion(ctx, doc.ID, ver.ID, "", "", []byte("<html>v2</html>"), owner)
+		_, _, err := store.SaveVersion(ctx, doc.ID, ver.ID, nil, owner, repo.Upload([]byte("<html>v2</html>"), ""))
 		pushed <- err
 	}()
 	if err := waitForLockWaiters(waitCtx, store.Pool(), 1); err != nil {
@@ -48,7 +48,7 @@ func TestPostgresDecisionWaitsForAConcurrentPush(t *testing.T) {
 	}
 	decided := make(chan error, 1)
 	go func() {
-		_, _, err := store.CreateOrUpdateApproval(ctx, doc.ID, ver.ID, repo.DecisionApproved, "", approver)
+		_, _, err := store.CreateOrUpdateApproval(ctx, doc.ID, ver.ID, nil, repo.DecisionApproved, "", approver)
 		decided <- err
 	}()
 	if err := waitForLockWaiters(waitCtx, store.Pool(), 2); err != nil {
@@ -81,11 +81,11 @@ func TestPostgresApproverWhoEditsStaysAnApprover(t *testing.T) {
 	if _, err := store.CreateApprovalRequest(ctx, doc.ID, editor, owner); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.CreateOrUpdateApproval(ctx, doc.ID, ver.ID, repo.DecisionApproved, "", editor); err != nil {
+	if _, _, err := store.CreateOrUpdateApproval(ctx, doc.ID, ver.ID, nil, repo.DecisionApproved, "", editor); err != nil {
 		t.Fatal(err)
 	}
 
-	second, err := store.CreateVersion(ctx, doc.ID, ver.ID, "", "", []byte("<html>v2</html>"), editor)
+	second, _, err := store.SaveVersion(ctx, doc.ID, ver.ID, nil, editor, repo.Upload([]byte("<html>v2</html>"), ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,10 +94,10 @@ func TestPostgresApproverWhoEditsStaysAnApprover(t *testing.T) {
 	if err != nil || len(requests) != 1 {
 		t.Fatalf("approvers = %+v, %v; want the editor", requests, err)
 	}
-	if _, _, err := store.CreateOrUpdateApproval(ctx, doc.ID, ver.ID, repo.DecisionApproved, "", editor); !errors.Is(err, repo.ErrVersionConflict) {
+	if _, _, err := store.CreateOrUpdateApproval(ctx, doc.ID, ver.ID, nil, repo.DecisionApproved, "", editor); !errors.Is(err, repo.ErrVersionConflict) {
 		t.Fatalf("decision on the replaced content: err = %v, want %v", err, repo.ErrVersionConflict)
 	}
-	if _, _, err := store.CreateOrUpdateApproval(ctx, doc.ID, second.ID, repo.DecisionApproved, "", editor); err != nil {
+	if _, _, err := store.CreateOrUpdateApproval(ctx, doc.ID, second.ID, nil, repo.DecisionApproved, "", editor); err != nil {
 		t.Fatalf("decision on the editor's own content: %v", err)
 	}
 }
@@ -135,7 +135,7 @@ func TestPostgresConcurrentDecisionsTakeTurns(t *testing.T) {
 	decided := make(chan error, len(approvers))
 	for _, a := range approvers {
 		go func() {
-			_, _, err := store.CreateOrUpdateApproval(ctx, doc.ID, ver.ID, repo.DecisionApproved, "", a)
+			_, _, err := store.CreateOrUpdateApproval(ctx, doc.ID, ver.ID, nil, repo.DecisionApproved, "", a)
 			decided <- err
 		}()
 	}

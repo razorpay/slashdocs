@@ -413,6 +413,20 @@ func TestApproveMissingVersionID(t *testing.T) {
 	assertStatus(t, rr, http.StatusBadRequest)
 }
 
+// A decision can start the seal of the open version, which costs a blob
+// write. So each principal has a budget of decisions.
+func TestDecisionsHaveABudgetForEachPrincipal(t *testing.T) {
+	e := newTestEnv(t)
+	// A request that fails counts too.
+	for i := range 60 {
+		if rr := submitApproval(t, e, e.doc.ID, e.ver.ID, "maybe", fixtureViewer); rr.Code != http.StatusBadRequest {
+			t.Fatalf("request %d: status = %d; body=%s", i, rr.Code, rr.Body)
+		}
+	}
+	assertStatus(t, submitApproval(t, e, e.doc.ID, e.ver.ID, "maybe", fixtureViewer), http.StatusTooManyRequests)
+	assertStatus(t, submitApproval(t, e, e.doc.ID, e.ver.ID, "maybe", fixtureEditor), http.StatusBadRequest)
+}
+
 func TestApproveVersionFromAnotherDocument(t *testing.T) {
 	e := newTestEnv(t)
 	_, otherVersion := e.createDocument("other", "<html><body>other</body></html>", fixtureOwner)
@@ -545,8 +559,10 @@ func TestIdenticalContentKeepsDecisions(t *testing.T) {
 	assertStatus(t, submitApproval(t, e, e.doc.ID, second, "approved", fixtureViewer), http.StatusCreated)
 	assertStatus(t, submitApproval(t, e, e.doc.ID, second, "rejected", fixtureCommenter), http.StatusCreated)
 
-	// Nothing changed, so there is nothing new to decide.
-	third := pushApprovalTestVersionHTML(t, e, e.doc.ID, second, html, fixtureEditor)
+	// A version with other content between them, and then the same content
+	// again: there is nothing new to decide.
+	between := pushApprovalTestVersion(t, e, e.doc.ID, second, fixtureEditor)
+	third := pushApprovalTestVersionHTML(t, e, e.doc.ID, between, html, fixtureEditor)
 
 	list := listApprovals(t, e, e.doc.ID, "", fixtureViewer)
 	if list.VersionID != third || list.Status != "rejected" || list.Summary.Approved != 1 || list.Summary.Rejected != 1 {
@@ -588,14 +604,15 @@ func TestDecidingAgainOnTheSameContentReplacesTheDecision(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertStatus(t, submitApproval(t, e, e.doc.ID, e.ver.ID, "approved", fixtureViewer), http.StatusCreated)
-	second := pushApprovalTestVersionHTML(t, e, e.doc.ID, e.ver.ID, string(html), fixtureEditor)
+	second := pushApprovalTestVersion(t, e, e.doc.ID, e.ver.ID, fixtureEditor)
+	third := pushApprovalTestVersionHTML(t, e, e.doc.ID, second, string(html), fixtureEditor)
 
-	// The approver reviews the same content again from version 2.
-	assertStatus(t, submitApprovalWithNote(t, e, e.doc.ID, second, "approved", "still good", fixtureViewer), http.StatusOK)
+	// The approver reviews the same content again from version 3.
+	assertStatus(t, submitApprovalWithNote(t, e, e.doc.ID, third, "approved", "still good", fixtureViewer), http.StatusOK)
 
 	list := listApprovals(t, e, e.doc.ID, "", fixtureViewer)
-	if len(list.Items) != 1 || list.Items[0].VersionID != second || list.Items[0].Note != "still good" {
-		t.Fatalf("items = %+v, want one decision on %s", list.Items, second)
+	if len(list.Items) != 1 || list.Items[0].VersionID != third || list.Items[0].Note != "still good" {
+		t.Fatalf("items = %+v, want one decision on %s", list.Items, third)
 	}
 }
 
@@ -981,7 +998,8 @@ func TestDecisionOnAnOlderVersionWithTheSameContentCounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pushApprovalTestVersionHTML(t, e, e.doc.ID, e.ver.ID, string(html), fixtureEditor)
+	second := pushApprovalTestVersion(t, e, e.doc.ID, e.ver.ID, fixtureEditor)
+	pushApprovalTestVersionHTML(t, e, e.doc.ID, second, string(html), fixtureEditor)
 
 	assertStatus(t, submitApproval(t, e, e.doc.ID, e.ver.ID, "approved", fixtureViewer), http.StatusCreated)
 	if doc := getDocumentApprovalFields(t, e, e.doc.ID, fixtureViewer); doc.ApprovalStatus != "approved" {

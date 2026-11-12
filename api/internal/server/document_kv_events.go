@@ -22,6 +22,11 @@ const (
 	documentKVKeepAlive   = 25 * time.Second
 	// presenceTTL is how long a viewer stays listed without a heartbeat.
 	presenceTTL = 45 * time.Second
+	// folderAccessDelay is how long a stream waits after a change of a
+	// folder before it examines the access of its viewer. A change of a
+	// folder wakes every open stream, so each stream examines it once for
+	// all of the changes in that time.
+	folderAccessDelay = time.Second
 )
 
 type documentKVStream struct {
@@ -35,9 +40,12 @@ type documentKVStream struct {
 	lastSent     int64
 	keepAlive    <-chan time.Time
 	started      bool
+	// The check of access after a change of a folder, while one waits.
+	folderChanged <-chan time.Time
 }
 
 type documentKVStreamRepository interface {
+	GetDocument(context.Context, string) (repo.Document, error)
 	ListDocumentKVEvents(context.Context, string, int64, int32) ([]repo.DocumentKVEvent, error)
 	RoleForDocument(context.Context, auth.Principal, string) (repo.Role, error)
 }
@@ -96,6 +104,22 @@ func (s *documentKVStream) sendLive(event repo.DocumentKVEvent) error {
 	return nil
 }
 
+// sendPosition tells the viewer where the live document is, with an event
+// that is not stored. A viewer who missed the relayed event of an operation
+// then asks for the changes. A read that fails sends nothing: the next
+// keep-alive sends the position.
+func (s *documentKVStream) sendPosition() error {
+	d, err := s.repository.GetDocument(s.ctx, s.documentID)
+	if err != nil {
+		return nil
+	}
+	data, err := json.Marshal(repo.DocumentPosition{Seq: d.Seq, VersionID: d.CurrentVersionID})
+	if err != nil {
+		return err
+	}
+	return writeDocumentEventSSE(s.writer, repo.DocumentKVEvent{DocumentID: s.documentID, Kind: repo.DocumentEventDocument, Data: data}, false)
+}
+
 func (s *documentKVStream) reauthorize() bool {
 	if s.authenticate == nil {
 		return false
@@ -124,6 +148,23 @@ func (s *documentKVStream) reauthorize() bool {
 	return atLeast(role, repo.RoleViewer)
 }
 
+// hear sends a live event to the viewer, and reports whether the stream
+// goes on. A grant changed: a viewer who lost access gets no more events. An
+// event of no document is a change of a folder, which the stream examines
+// after folderAccessDelay, once for all of the changes in that time.
+func (s *documentKVStream) hear(event repo.DocumentKVEvent) bool {
+	if event.Kind != repo.DocumentEventAccess {
+		return s.sendLive(event) == nil
+	}
+	if event.DocumentID != "" {
+		return s.reauthorize()
+	}
+	if s.folderChanged == nil {
+		s.folderChanged = time.After(folderAccessDelay)
+	}
+	return true
+}
+
 func (s *documentKVStream) run(liveEvents <-chan repo.DocumentKVEvent) {
 	keepAlive := s.keepAlive
 	var ticker *time.Ticker
@@ -138,10 +179,12 @@ func (s *documentKVStream) run(liveEvents <-chan repo.DocumentKVEvent) {
 		case <-s.ctx.Done():
 			return
 		case event, ok := <-liveEvents:
-			if !ok {
+			if !ok || !s.hear(event) {
 				return
 			}
-			if err := s.sendLive(event); err != nil {
+		case <-s.folderChanged:
+			s.folderChanged = nil
+			if !s.reauthorize() {
 				return
 			}
 		case <-keepAlive:
@@ -149,6 +192,9 @@ func (s *documentKVStream) run(liveEvents <-chan repo.DocumentKVEvent) {
 				return
 			}
 			if _, err := fmt.Fprint(s.writer, ": keepalive\n\n"); err != nil {
+				return
+			}
+			if err := s.sendPosition(); err != nil {
 				return
 			}
 			s.flusher.Flush()

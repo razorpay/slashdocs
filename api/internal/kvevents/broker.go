@@ -518,14 +518,25 @@ func (b *Broker) Relay(ctx context.Context, event repo.DocumentKVEvent) error {
 	return b.listenerFactory.Notify(ctx, payload)
 }
 
-// deliver gives a relayed event to each subscriber with room for it. Relayed
-// events use at most half of a buffer, so they never fill it and disconnect a
-// subscriber that stored events must reach. A full subscriber misses the
-// event, which the next relayed event replaces.
+// deliver gives a relayed event to each subscriber of its document with room
+// for it. An event of no document goes to the subscribers of all documents.
+// Relayed events use at most half of a buffer, so they never fill it and
+// disconnect a subscriber that stored events must reach. A full subscriber
+// misses the event, which the next relayed event replaces.
 func (b *Broker) deliver(event repo.DocumentKVEvent) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	state := b.documents[event.DocumentID]
+	if event.DocumentID != "" {
+		give(b.documents[event.DocumentID], event)
+		return
+	}
+	for _, state := range b.documents {
+		give(state, event)
+	}
+}
+
+// give gives event to each subscriber of state with room for it.
+func give(state *documentState, event repo.DocumentKVEvent) {
 	if state == nil {
 		return
 	}

@@ -131,6 +131,8 @@ func Summary(edits []Edit) string {
 const (
 	summaryRunes = 60
 	contextWords = 3
+	// A summary of a sitting names up to three headings.
+	headingRunes = 40
 )
 
 // excerpts shows the words that differ between the old and new strings, with
@@ -173,15 +175,20 @@ func shared(a, b []string) (head, tail int) {
 	return head, tail
 }
 
-// quote puts a change in curly quotes, shortened at a word edge to at most
-// summaryRunes runes.
-func quote(s string) string {
-	if r := []rune(s); len(r) > summaryRunes {
-		s = string(r[:summaryRunes-1])
-		if space := strings.LastIndexByte(s, ' '); space > 0 {
-			s = s[:space]
-		}
-		s += "…"
+// quote puts a change in curly quotes, shortened to at most summaryRunes
+// runes.
+func quote(s string) string { return "“" + clip(s, summaryRunes) + "”" }
+
+// clip shortens s at a word edge to at most runes runes, with a mark where
+// it is cut.
+func clip(s string, runes int) string {
+	r := []rune(s)
+	if len(r) <= runes {
+		return s
 	}
-	return "“" + s + "”"
+	s = string(r[:runes-1])
+	if space := strings.LastIndexByte(s, ' '); space > 0 {
+		s = s[:space]
+	}
+	return s + "…"
 }

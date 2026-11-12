@@ -20,6 +20,15 @@ type streamAuthorizationRepository struct {
 	role  repo.Role
 	err   error
 	calls chan streamAuthorizationCheck
+	// doc is the document of the stream, when the test gives one.
+	doc *repo.Document
+}
+
+func (r *streamAuthorizationRepository) GetDocument(context.Context, string) (repo.Document, error) {
+	if r.doc == nil {
+		return repo.Document{}, repo.ErrNotFound
+	}
+	return *r.doc, nil
 }
 
 func (r *streamAuthorizationRepository) ListDocumentKVEvents(context.Context, string, int64, int32) ([]repo.DocumentKVEvent, error) {
@@ -175,5 +184,92 @@ func TestDocumentKVStreamReauthorizesOnKeepalive(t *testing.T) {
 				t.Fatal("stream did not stop")
 			}
 		})
+	}
+}
+
+// A viewer who missed the relayed event of an operation learns where the
+// live document is from the next keep-alive.
+func TestDocumentKVStreamSendsThePositionOnKeepalive(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	viewer := auth.Principal{Type: auth.PrincipalUser, ID: "viewer_1"}
+	keepAlive := make(chan time.Time, 1)
+	writer := newStreamResponseWriter()
+	stream := &documentKVStream{
+		ctx:     ctx,
+		writer:  writer,
+		flusher: writer,
+		repository: &streamAuthorizationRepository{
+			role:  repo.RoleViewer,
+			calls: make(chan streamAuthorizationCheck, 1),
+			doc:   &repo.Document{ID: "doc_stream", CurrentVersionID: "ver_open", Seq: 44},
+		},
+		authenticate: func(context.Context) (*auth.Principal, error) { return &viewer, nil },
+		principal:    viewer,
+		documentID:   "doc_stream",
+		keepAlive:    keepAlive,
+	}
+	go stream.run(make(chan repo.DocumentKVEvent))
+
+	keepAlive <- time.Now()
+	for _, want := range []string{": keepalive\n\n", "event: document\ndata: {\"document_id\":\"doc_stream\",\"revision\":0,\"kind\":\"document\",\"changes\":null,\"data\":{\"seq\":44,\"version_id\":\"ver_open\"}}\n\n"} {
+		select {
+		case got := <-writer.writes:
+			if got != want {
+				t.Fatalf("stream wrote %q, want %q", got, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("stream did not write %q", want)
+		}
+	}
+}
+
+// A change of a folder wakes every open stream. A stream examines the access
+// of its viewer once for the folder changes of folderAccessDelay, and at once
+// for a change of its own document.
+func TestDocumentKVStreamExaminesFolderChangesOnceForEachDelay(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	viewer := auth.Principal{Type: auth.PrincipalUser, ID: "viewer_1"}
+	checks := make(chan streamAuthorizationCheck, 10)
+	writer := newStreamResponseWriter()
+	stream := &documentKVStream{
+		ctx:          ctx,
+		writer:       writer,
+		flusher:      writer,
+		repository:   &streamAuthorizationRepository{role: repo.RoleViewer, calls: checks},
+		authenticate: func(context.Context) (*auth.Principal, error) { return &viewer, nil },
+		principal:    viewer,
+		documentID:   "doc_stream",
+		keepAlive:    make(chan time.Time),
+	}
+	events := make(chan repo.DocumentKVEvent)
+	go stream.run(events)
+	checked := func(within time.Duration) bool {
+		select {
+		case <-checks:
+			return true
+		case <-time.After(within):
+			return false
+		}
+	}
+
+	start := time.Now()
+	for range 5 {
+		events <- repo.DocumentKVEvent{Kind: repo.DocumentEventAccess}
+	}
+	if !checked(2 * folderAccessDelay) {
+		t.Fatal("stream did not examine the access after a change of a folder")
+	}
+	if waited := time.Since(start); waited < folderAccessDelay {
+		t.Fatalf("stream examined the access after %s, want %s", waited, folderAccessDelay)
+	}
+	if checked(folderAccessDelay + 100*time.Millisecond) {
+		t.Fatal("stream examined the access more than once for one burst of folder changes")
+	}
+
+	events <- repo.DocumentKVEvent{DocumentID: "doc_stream", Kind: repo.DocumentEventAccess}
+	if !checked(100 * time.Millisecond) {
+		t.Fatal("stream did not examine the access at once after a change of its document")
 	}
 }

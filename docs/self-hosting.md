@@ -695,7 +695,7 @@ the webhook answers with a 2xx status.
 | `approval.approved`        | An approver approves                                                                                         |
 | `approval.rejected`        | An approver rejects                                                                                          |
 | `approval.revoked`         | An approver revokes their decision                                                                           |
-| `approval.version_created` | A new version of a document that has approvers, including each save of browser edits and each restore        |
+| `approval.version_created` | The current version of a document that has approvers changes (see below)                                     |
 
 ```json
 {
@@ -730,7 +730,14 @@ the webhook answers with a 2xx status.
 `version` is the document's current version after the change, and `status` and
 `summary` are its approval state. `approver` is absent on
 `approval.version_created`; `note`, `status` and the names are absent when
-empty.
+empty. `version.sha256` is absent while people edit that version in the
+browser: its content is not fixed yet.
+
+`approval.version_created` comes for a push, an upload, an API edit and a
+restore. It also comes when people start to edit in the browser, which makes a
+new version with no decisions. When their edits end on the text where they
+started, the version before is the current one again, with its decisions, and
+the event comes again with that status.
 
 Each request has three headers, in the
 [Standard Webhooks](https://www.standardwebhooks.com/) layout:
@@ -827,6 +834,13 @@ Postgres migrations are applied automatically at startup unless
 `SLASHDOCS_MIGRATE=false`. The chart and Docker image both honor this. To
 roll back, deploy the previous image tag and pre-apply any matching
 down-migration manually if needed; the binary does not auto-rollback.
+
+A rolling deploy to the release with live editing (migration 44) is safe.
+While old and new servers run side by side, an old server cannot save a
+version: its pushes and edits fail with a server error, and the agent or the
+person sends them again. The browser sends typed text again by itself, also
+when an old server answers that it has no route for it. No typed text is
+lost.
 
 ## Production checklist
 

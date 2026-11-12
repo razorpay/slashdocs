@@ -1,9 +1,11 @@
 package server_test
 
 import (
+	"fmt"
 	"net/http"
 	"testing"
 
+	"github.com/razorpay/slashdocs/api/internal/auth"
 	"github.com/razorpay/slashdocs/api/internal/server"
 )
 
@@ -99,5 +101,34 @@ func TestAnonymousReaderDoesNotRecordOpen(t *testing.T) {
 	}
 	if opened != 0 {
 		t.Fatalf("workspace entries = %d, want 0", opened)
+	}
+}
+
+// An anonymous reader has no id, so the budget of the rate limiter is for
+// the address of the connection. The document is not in the key: the caller
+// chooses it, and the limiter runs before the role check, so one address
+// could make a key for each id that it invents, and fill the table of the
+// limiter for every principal.
+func TestAnonymousBudgetIsForTheAddress(t *testing.T) {
+	e := newTestEnv(t)
+	e.shareWithAnyone("viewer")
+	changes := func(docID string, p *auth.Principal) int {
+		headers := map[string]string{}
+		if p != nil {
+			headers["X-Test-Principal"] = principalHeader(*p)
+		}
+		return do(t, e.h, http.MethodGet, "/v1/documents/"+docID+"/changes?after=1", "", headers).Code
+	}
+	// One address asks for 1200 documents that it invents.
+	for i := range 1200 {
+		if status := changes(fmt.Sprintf("doc_invented_%d", i), nil); status == http.StatusTooManyRequests {
+			t.Fatalf("request %d: status = %d", i, status)
+		}
+	}
+	if status := changes(e.doc.ID, nil); status != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want the budget of the address used up", status)
+	}
+	if status := changes(e.doc.ID, &fixtureOwner); status != http.StatusOK {
+		t.Fatalf("a person who signed in: status = %d, want their own budget", status)
 	}
 }

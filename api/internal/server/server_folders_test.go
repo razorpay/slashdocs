@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/razorpay/slashdocs/api/internal/auth"
 )
 
 func TestFolderAccessControl(t *testing.T) {
@@ -505,5 +507,30 @@ func TestFolderSearchPathsAndContentTimes(t *testing.T) {
 		if item.LastActive == "" {
 			t.Errorf("%s entry has no last_active", item.Type)
 		}
+	}
+}
+
+// A change of a folder wakes every open stream. So each principal has a
+// budget of the changes of access and of the moves of folders and
+// documents.
+func TestFolderAccessChangesHaveABudgetForEachPrincipal(t *testing.T) {
+	e := newTestEnv(t)
+	patch := func(p auth.Principal) int {
+		return do(t, e.h, http.MethodPatch, "/v1/folders/fld_missing/grants/grt_missing", `{}`, map[string]string{"Content-Type": "application/json", "X-Test-Principal": principalHeader(p)}).Code
+	}
+	// A request that fails counts too.
+	for i := range 30 {
+		if got := patch(fixtureEditor); got == http.StatusTooManyRequests {
+			t.Fatalf("request %d: status = %d", i, got)
+		}
+	}
+	if got := patch(fixtureEditor); got != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", got)
+	}
+	if got := do(t, e.h, http.MethodDelete, "/v1/folders/fld_missing", "", map[string]string{"X-Test-Principal": principalHeader(fixtureEditor)}).Code; got != http.StatusTooManyRequests {
+		t.Fatalf("folder delete: status = %d, want 429", got)
+	}
+	if got := patch(fixtureOwner); got == http.StatusTooManyRequests {
+		t.Fatalf("another principal: status = %d", got)
 	}
 }
