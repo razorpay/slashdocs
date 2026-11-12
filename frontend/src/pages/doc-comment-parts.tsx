@@ -70,9 +70,9 @@ import { CommentBody, MentionTextarea } from "./doc-comment-text";
 import { ReactionBar } from "./doc-comment-reactions";
 
 // The parts of a comment thread, which the comments panel uses. The structure
-// follows Figma (each message as avatar, name and time on one line with its
-// text beneath; replies split by hairlines; a reply field that is always
-// there), in slashdocs' own look.
+// follows Figma, in slashdocs' own look. Each message has its avatar, name and
+// time on one line with its text beneath. Hairlines split the replies, and a
+// reply field is always there.
 
 // PersonAvatar is a person's photo, or their initials on their principalColor,
 // the same color as their live cursor.

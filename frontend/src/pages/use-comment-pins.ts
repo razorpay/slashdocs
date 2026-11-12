@@ -40,7 +40,7 @@ export function plainKey(e: KeyboardEvent, key: string): boolean {
 // render frame, and turns the frame's pin gestures into drafts and moves. The
 // frame tells which pins it could not place, and which moved to their spot
 // in the page.
-// Open pins always show; a resolved one shows while its thread is open.
+// Open pins always show. A resolved one shows while its thread is open.
 export function useCommentPins(
   frame: RefObject<HTMLIFrameElement | null>,
   origin: string | null,

@@ -138,7 +138,7 @@ func TestCommentPlacementOnTheCommentedVersionIsAttached(t *testing.T) {
 	}
 }
 
-// The viewer measured these context scores for the same documents; the API
+// The viewer measured these context scores for the same documents. The API
 // must agree with it on which side of the threshold each case falls.
 func TestContextScoreMatchesTheViewer(t *testing.T) {
 	for _, tc := range []struct {

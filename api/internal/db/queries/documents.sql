@@ -85,7 +85,7 @@ UPDATE documents SET title=$1,updated_at=now() WHERE id=$2;
 -- name: SearchDocuments :many
 -- @match_query, @words_query, @exclude_query, and @rank_query are tsquery
 -- text. A document matches when its title or current text matches
--- match_query. words_query is the words of match_query in any order; it
+-- match_query. words_query is the words of match_query in any order. It
 -- differs from match_query only when a term is a phrase. Documents whose
 -- title matches rank_query (the words joined with |) come first, then the
 -- latest. The rank reads titles only: ranking the text would read the whole

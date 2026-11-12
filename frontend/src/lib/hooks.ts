@@ -32,7 +32,7 @@ export function useSelf(principal?: Principal): Principal | undefined {
 }
 
 // useDocumentRole is what the signed-in reader may do with a document. The
-// owner may do everything; anyone else has the role their grants give. The
+// owner may do everything. Anyone else has the role their grants give. The
 // grants are asked for only after the document loads with its owner, so a
 // document that does not open asks for nothing more.
 // When the grants do not load, the role is unknown, and `failed` is the query

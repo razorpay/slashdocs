@@ -92,7 +92,7 @@ func (p *localPoint) validPage() bool {
 	return within(p.PageX) && within(p.PageY) && within(p.ViewportW) && *p.ViewportW > 0
 }
 
-// move puts a point thread on a new spot; a nil anchor moves nothing. Text
+// move puts a point thread on a new spot. A nil anchor moves nothing. Text
 // threads keep their anchor.
 func (c *localComment) move(a *localAnchor) error {
 	switch {

@@ -424,7 +424,7 @@ func (s *Store) enqueueNewCommentMentionNotifications(ctx context.Context, tx pg
 }
 
 // The approval change and its message commit together. A request notifies the
-// approver, when they are a user; a decision notifies the document's human
+// approver, when they are a user. A decision notifies the document's human
 // owner. Nobody hears about their own action, and the usual preference and
 // mute policy applies.
 func (s *Store) enqueueApprovalNotification(ctx context.Context, tx pgx.Tx, documentID string, approver, actor auth.Principal, reason string) error {

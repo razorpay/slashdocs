@@ -16,7 +16,7 @@ import (
 // the title or the text, "quoted text" matches its words in order, and -word
 // excludes documents that contain the word. Modifiers filter the results:
 //
-//	title:<word>     a word in the title; title:"a phrase" is a phrase there
+//	title:<word>     a word in the title, or title:"a phrase" for a phrase
 //	from:<person>    the owner: an email, the name before the @, or me
 //	in:<folder>      a folder title or ID, or a folder above it
 //	label:<name>     a label; every label is required

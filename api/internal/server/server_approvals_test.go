@@ -33,7 +33,7 @@ func mustAssignApprover(t *testing.T, e *testEnv, docID, email string, as auth.P
 }
 
 // submitApproval posts a decision as the given principal. A rejection needs a
-// note, so a default one is supplied; use submitApprovalWithNote to control it
+// note, so a default one is supplied. Use submitApprovalWithNote to control it
 // (including sending none).
 func submitApproval(t *testing.T, e *testEnv, docID, versionID, decision string, as auth.Principal) *httptest.ResponseRecorder {
 	t.Helper()

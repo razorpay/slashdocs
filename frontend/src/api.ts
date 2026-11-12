@@ -340,7 +340,7 @@ export type CursorPlace = { path: string; x: number; y: number; z?: number };
 // path of the block that holds their caret while they edit, in c the offset
 // of the caret in the text of that block, in UTF-16 code units, and in a the
 // offset of the other end of their selection in that block, when they
-// selected text. A hidden spot means that the pointer left the document; it
+// selected text. A hidden spot means that the pointer left the document. It
 // may still carry the view, the block, the caret and the selection end.
 export type CursorSpot = CursorPlace & {
   v?: CursorPlace;
