@@ -266,6 +266,19 @@ func (s *Server) routes(deps dependencies) {
 	v1.POST("/auth/cli/exchange", h.cliExchange)
 	v1.POST("/auth/logout", h.logout)
 
+	// These routes read a document. A public deployment also serves them to
+	// anonymous readers of a document that is shared with anyone.
+	reader := v1.Group("", requireAuth(deps.readerAuthenticator(), deps.appOrigin, deps.googleGroupResolver))
+	reader.GET("/documents/:id", h.getDocument)
+	reader.GET("/documents/:id/versions", h.listVersions)
+	reader.GET("/documents/:id/versions/:version_id", h.getVersion)
+	reader.GET("/documents/:id/versions/:version_id/html", h.getVersionHTML)
+	reader.POST("/documents/:id/versions/:version_id/render-token", h.createRenderToken)
+	reader.POST("/documents/:id/versions/:version_id/print-token", h.createPrintToken)
+	reader.GET("/documents/:id/comments", h.listComments)
+	reader.GET("/documents/:id/kv", h.listDocumentKV)
+	reader.GET("/documents/:id/kv/events", h.streamDocumentKVEvents)
+
 	// Every route below requires authentication.
 	authed := v1.Group("", requireAuth(deps.authenticator, deps.appOrigin, deps.googleGroupResolver))
 	activityLimit := activityRateLimit(60)
@@ -290,7 +303,6 @@ func (s *Server) routes(deps dependencies) {
 	authed.POST("/service-accounts/transfers/:id/decline", h.declineOwnershipTransfer)
 	authed.POST("/documents", h.createDocument)
 	authed.GET("/documents", h.listDocuments)
-	authed.GET("/documents/:id", h.getDocument)
 	authed.POST("/documents/:id/access-requests", activityLimit, h.requestDocumentAccess)
 	authed.GET("/documents/:id/access", h.documentAccess)
 	authed.PATCH("/documents/:id", h.patchDocument)
@@ -299,24 +311,16 @@ func (s *Server) routes(deps dependencies) {
 	authed.PATCH("/documents/:id/grants/:grant_id", h.patchGrant)
 	authed.DELETE("/documents/:id/grants/:grant_id", h.deleteGrant)
 	authed.POST("/documents/:id/versions", h.createVersion)
-	authed.GET("/documents/:id/versions", h.listVersions)
-	authed.GET("/documents/:id/versions/:version_id", h.getVersion)
-	authed.GET("/documents/:id/versions/:version_id/html", h.getVersionHTML)
-	authed.POST("/documents/:id/versions/:version_id/render-token", h.createRenderToken)
-	authed.POST("/documents/:id/versions/:version_id/print-token", h.createPrintToken)
 	authed.GET("/documents/:id/labels", h.listDocumentLabels)
 	authed.PUT("/documents/:id/labels", h.replaceDocumentLabels)
 	authed.POST("/documents/:id/github/raw", h.githubRawContent)
 	authed.POST("/documents/:id/comments", h.createComment)
-	authed.GET("/documents/:id/comments", h.listComments)
 	authed.GET("/me/notifications", activityLimit, h.notificationPreferences)
 	authed.PUT("/me/notifications", activityLimit, h.setNotificationPreferences)
 	authed.GET("/documents/:id/notifications", activityLimit, h.documentNotificationPreferences)
 	authed.GET("/documents/:id/headings", activityLimit, h.documentHeadings)
 	authed.GET("/documents/:id/link", activityLimit, h.documentLink)
 	authed.PUT("/documents/:id/notifications", activityLimit, h.setDocumentNotificationPreferences)
-	authed.GET("/documents/:id/kv", h.listDocumentKV)
-	authed.GET("/documents/:id/kv/events", h.streamDocumentKVEvents)
 	authed.POST("/documents/:id/presence", presenceLimit, h.postDocumentPresence)
 	authed.POST("/documents/:id/cursor", cursorLimit, h.postDocumentCursor)
 	authed.PATCH("/documents/:id/kv", h.patchDocumentKV)
@@ -360,14 +364,60 @@ func (h handlers) needDocRole(c *gin.Context, docID string, need repo.Role) bool
 		return false
 	}
 	if !atLeast(role, need) {
-		if groupMembershipUnavailable(current(c)) {
-			groupMembershipUnavailableResponse(c)
-			return false
-		}
-		forbidden(c, string(need)+" role required")
+		denyDocRole(c, need)
 		return false
 	}
 	return true
+}
+
+// denyDocRole answers a caller whose role on a document is less than need.
+func denyDocRole(c *gin.Context, need repo.Role) {
+	switch p := current(c); {
+	case p.Type == auth.PrincipalAnonymous:
+		// After sign-in, the reader can have a role that anyone does not have.
+		unauthorized(c)
+	case groupMembershipUnavailable(p):
+		groupMembershipUnavailableResponse(c)
+	default:
+		forbidden(c, string(need)+" role required")
+	}
+}
+
+// readerAuthenticator authenticates the routes that read a document. On a
+// public deployment, a caller without credentials reads as anonymous.
+func (d dependencies) readerAuthenticator() auth.Authenticator {
+	if d.deployment == DeploymentOrg {
+		return d.authenticator
+	}
+	return anonymousReader{d.authenticator}
+}
+
+// anonymousReader gives the anonymous principal to a caller without
+// credentials. An invalid bearer token still fails, so that a CLI or an
+// agent does not mistake an expired token for a smaller audience.
+type anonymousReader struct{ auth.Authenticator }
+
+func (a anonymousReader) Authenticate(r *http.Request) (*auth.Principal, error) {
+	p, err := a.Authenticator.Authenticate(r)
+	if errors.Is(err, auth.ErrUnauthorized) && auth.BearerFromHeader(r.Header.Get("Authorization")) == "" {
+		return &auth.Principal{Type: auth.PrincipalAnonymous}, nil
+	}
+	return p, err
+}
+
+// unauthorized asks the caller to sign in. A browser that opens the URL goes
+// to the login page and then comes back.
+func unauthorized(c *gin.Context) {
+	if wantsBrowserLogin(c) {
+		redirect := c.Request.URL.RequestURI()
+		if !safeWebRedirect(redirect) {
+			redirect = "/"
+		}
+		c.Abort()
+		c.Redirect(http.StatusFound, "/v1/auth/google/start?mode=web&redirect="+url.QueryEscape(redirect))
+		return
+	}
+	c.AbortWithStatusJSON(http.StatusUnauthorized, errorResponse("unauthorized", "authentication required", nil))
 }
 
 func requireAuth(a auth.Authenticator, appOrigin string, groups *googlegroups.Resolver) gin.HandlerFunc {
@@ -375,16 +425,7 @@ func requireAuth(a auth.Authenticator, appOrigin string, groups *googlegroups.Re
 		p, err := a.Authenticate(c.Request)
 		if err != nil {
 			incAuth("request", "failure")
-			if wantsBrowserLogin(c) {
-				redirect := c.Request.URL.RequestURI()
-				if !safeWebRedirect(redirect) {
-					redirect = "/"
-				}
-				c.Abort()
-				c.Redirect(http.StatusFound, "/v1/auth/google/start?mode=web&redirect="+url.QueryEscape(redirect))
-				return
-			}
-			c.AbortWithStatusJSON(http.StatusUnauthorized, errorResponse("unauthorized", "authentication required", nil))
+			unauthorized(c)
 			return
 		}
 		if !allowCookieUnsafeRequest(c, appOrigin) {

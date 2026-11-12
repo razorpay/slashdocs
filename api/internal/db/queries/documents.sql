@@ -102,7 +102,10 @@ docs_via_folder AS (
      OR (g.principal_type='google_group' AND g.principal_id=ANY(@google_group_ids::text[]))
      OR (@include_org_wide::boolean AND g.principal_type='anyone')
 ),
-search AS (
+-- The planner puts the query values into the conditions below, so that the
+-- search_vector index can find the matches, and an empty query reads no
+-- vectors.
+search AS NOT MATERIALIZED (
   SELECT to_tsquery('english', @match_query::text) AS match,
          to_tsquery('english', @exclude_query::text) AS exclude
 ),
@@ -115,7 +118,7 @@ matches AS (
          d.updated_at,
          cv.search_text,
          cv.search_vector,
-         ts_rank(doc.vector, search.match) AS rank
+         CASE WHEN numnode(search.match) > 0 THEN ts_rank(d.search_vector, search.match) ELSE 0 END AS rank
   FROM documents d
   CROSS JOIN search
   LEFT JOIN versions cv ON cv.id=d.current_version_id
@@ -123,11 +126,8 @@ matches AS (
   LEFT JOIN users u ON d.owner_type='user' AND u.id=d.owner_id
   LEFT JOIN service_accounts sa
     ON d.owner_type='service_account' AND sa.id=d.owner_id
-  CROSS JOIN LATERAL (
-    SELECT setweight(to_tsvector('english', d.title), 'A') || COALESCE(cv.search_vector, '') AS vector
-  ) doc
-  WHERE (numnode(search.match) = 0 OR doc.vector @@ search.match)
-  AND NOT doc.vector @@ search.exclude
+  WHERE (numnode(search.match) = 0 OR d.search_vector @@ search.match)
+  AND (numnode(search.exclude) = 0 OR NOT d.search_vector @@ search.exclude)
   AND (
     COALESCE(cardinality(@owners::text[]), 0) = 0
     OR lower(d.owner_id) = ANY(@owners::text[])
@@ -180,6 +180,16 @@ SELECT m.id, m.title, m.current_version_id, m.owner_type, m.owner_id,
 FROM matches m
 CROSS JOIN search
 ORDER BY m.rank DESC, m.updated_at DESC, m.title;
+
+-- name: IndexDocuments :execrows
+-- The trigger on title sets search_vector. Servers that index at the same
+-- time skip each other's documents.
+UPDATE documents SET title = title
+WHERE id IN (
+  SELECT id FROM documents WHERE search_vector IS NULL
+  LIMIT @row_limit
+  FOR NO KEY UPDATE SKIP LOCKED
+);
 
 -- name: DeleteDocument :execrows
 DELETE FROM documents WHERE id=$1;

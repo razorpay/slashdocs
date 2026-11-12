@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -194,6 +195,7 @@ func (h handlers) oauthCallback(c *gin.Context) {
 	metricKind := oidcAuthMetricKind(h.deps.oidc.Issuer)
 	u, err := h.deps.oidc.ExchangeAndVerify(c.Request.Context(), c.Query("code"))
 	if err != nil {
+		slog.WarnContext(c.Request.Context(), "oidc login failed", slog.Any("error", err))
 		incAuth(metricKind, "failure")
 		c.JSON(http.StatusUnauthorized, errorResponse("unauthorized", "oidc login failed", nil))
 		return

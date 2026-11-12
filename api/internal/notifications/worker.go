@@ -37,10 +37,10 @@ type Sender interface {
 }
 
 type Message struct {
-	Reason, Link, DocumentTitle, Highlight, Body, Requester string
-	PreviousRole, Role                                      repo.Role
-	DirectAccess                                            bool
-	Reply                                                   bool
+	Reason, Link, DocumentTitle, Highlight, Body, Requester, Actor string
+	PreviousRole, Role                                             repo.Role
+	DirectAccess                                                   bool
+	Reply                                                          bool
 }
 type Worker struct {
 	Store            Store
@@ -331,8 +331,21 @@ func (w *Worker) message(ctx context.Context, n repo.CommentNotification, c repo
 	return Message{
 		Reason: n.Reason, Link: CommentURL(w.AppOrigin, c.DocumentID, c.ID),
 		DocumentTitle: doc.Title, Highlight: highlight, Body: c.Body,
-		Reply: c.ParentCommentID != "",
+		Actor: commentActor(c.Author), Reply: c.ParentCommentID != "",
 	}, nil
+}
+
+func commentActor(author auth.Principal) string {
+	if author.Name != "" {
+		return author.Name
+	}
+	if author.Email != "" {
+		return author.Email
+	}
+	if author.ID != "" {
+		return author.ID
+	}
+	return "Someone"
 }
 
 func (w *Worker) canRead(ctx context.Context, p auth.Principal, documentID string) (bool, error) {

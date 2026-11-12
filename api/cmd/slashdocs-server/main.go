@@ -118,19 +118,22 @@ func run() error {
 	workerCtx, cancelWorkers := context.WithCancel(ctx)
 	var workers sync.WaitGroup
 	workers.Go(func() { srv.RunCommentNotifications(workerCtx) })
-	workers.Go(func() { indexVersions(workerCtx, store) })
+	workers.Go(func() {
+		indexSearch(workerCtx, "versions", store.IndexVersions)
+		indexSearch(workerCtx, "documents", store.IndexDocuments)
+	})
 	defer func() { cancelWorkers(); workers.Wait() }()
 	return serve(ctx, srv.Handler(), ":"+envOrDefault("SLASHDOCS_PORT", "8080"), ":"+envOrDefault("SLASHDOCS_METRICS_PORT", "9090"))
 }
 
-// indexVersions gives search text to versions that were created before
-// content search. After the first run, it finds nothing to do.
-func indexVersions(ctx context.Context, store *pgrepo.Store) {
-	indexed, err := store.IndexVersions(ctx)
+// indexSearch gives search data to the versions or documents that were
+// created before it existed. After the first run, it finds nothing to do.
+func indexSearch(ctx context.Context, items string, index func(context.Context) (int, error)) {
+	indexed, err := index(ctx)
 	if err != nil && ctx.Err() == nil {
-		slog.ErrorContext(ctx, "version indexing stopped", slog.Int("indexed", indexed), slog.Any("error", err))
+		slog.ErrorContext(ctx, "search indexing stopped", slog.String("items", items), slog.Int("indexed", indexed), slog.Any("error", err))
 	} else if indexed > 0 {
-		slog.InfoContext(ctx, "versions indexed for search", slog.Int("indexed", indexed))
+		slog.InfoContext(ctx, "indexed for search", slog.String("items", items), slog.Int("indexed", indexed))
 	}
 }
 

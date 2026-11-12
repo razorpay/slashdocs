@@ -98,4 +98,33 @@ func TestPostgresSearchDocumentText(t *testing.T) {
 	if indexed, err := store.IndexVersions(ctx); err != nil || indexed != 0 {
 		t.Fatalf("second IndexVersions() = %d, %v, want nothing to do", indexed, err)
 	}
+
+	// Documents from before search_vector have none until they are indexed.
+	if _, err := store.Pool().Exec(ctx, `UPDATE documents SET search_vector = NULL`); err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(search([]string{"twice"}, nil)); got != "" {
+		t.Fatalf("unindexed document search = %s, want no results", got)
+	}
+	if indexed, err := store.IndexDocuments(ctx); err != nil || indexed != 2 {
+		t.Fatalf("IndexDocuments() = %d, %v, want 2 documents", indexed, err)
+	}
+	if got, want := ids(search([]string{"incident", "twice"}, nil)), incident.ID; got != want {
+		t.Fatalf("indexed document search = %s, want %s", got, want)
+	}
+
+	// A new title and a new version replace the old words.
+	if _, err := store.UpdateDocument(ctx, budget.ID, "Forecast"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateVersion(ctx, incident.ID, incident.CurrentVersionID, "", []byte("<p>Rollback notes.</p>"), owner); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ term, want string }{
+		{"forecast", budget.ID}, {"plan", ""}, {"rollback", incident.ID}, {"twice", ""},
+	} {
+		if got := ids(search([]string{tc.term}, nil)); got != tc.want {
+			t.Errorf("search %q after changes = %s, want %s", tc.term, got, tc.want)
+		}
+	}
 }

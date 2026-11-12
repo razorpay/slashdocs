@@ -153,6 +153,7 @@ JOIN documents d ON d.current_version_id = v.id
 WHERE v.search_text IS NULL AND v.id <> ALL(COALESCE($1::text[], '{}'))
 ORDER BY v.id
 LIMIT $2
+FOR NO KEY UPDATE OF d SKIP LOCKED
 FOR UPDATE OF v SKIP LOCKED
 `
 
@@ -167,7 +168,10 @@ type ListUnindexedVersionsRow struct {
 }
 
 // Locks the rows, so that servers that index at the same time skip each
-// other's versions. Only current versions are searched.
+// other's versions. Only current versions are searched. The documents are
+// locked too, because the search text changes their search_vector. Without
+// that lock, a delete that holds the document and waits for its version
+// causes a deadlock.
 func (q *Queries) ListUnindexedVersions(ctx context.Context, arg ListUnindexedVersionsParams) ([]ListUnindexedVersionsRow, error) {
 	rows, err := q.db.Query(ctx, listUnindexedVersions, arg.Skipped, arg.RowLimit)
 	if err != nil {

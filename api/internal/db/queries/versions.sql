@@ -10,13 +10,17 @@ RETURNING created_at;
 
 -- name: ListUnindexedVersions :many
 -- Locks the rows, so that servers that index at the same time skip each
--- other's versions. Only current versions are searched.
+-- other's versions. Only current versions are searched. The documents are
+-- locked too, because the search text changes their search_vector. Without
+-- that lock, a delete that holds the document and waits for its version
+-- causes a deadlock.
 SELECT v.id, v.html_blob_key
 FROM versions v
 JOIN documents d ON d.current_version_id = v.id
 WHERE v.search_text IS NULL AND v.id <> ALL(COALESCE(@skipped::text[], '{}'))
 ORDER BY v.id
 LIMIT @row_limit
+FOR NO KEY UPDATE OF d SKIP LOCKED
 FOR UPDATE OF v SKIP LOCKED;
 
 -- name: SetVersionSearchText :exec

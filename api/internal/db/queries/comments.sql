@@ -9,7 +9,7 @@ VALUES($1,$2,$3,$4,$5,$6,$7,$8,'','{}'::jsonb,'open',$9,$10)
 RETURNING created_at;
 
 -- name: ListComments :many
-SELECT id,document_id,created_on_version_id,author_type,author_id,author_email,author_name,body,selected_text,anchor_json,status,parent_comment_id,root_comment_id,created_at,resolved_at
+SELECT id,document_id,created_on_version_id,author_type,author_id,author_email,author_name,body,selected_text,anchor_json,status,parent_comment_id,root_comment_id,created_at,resolved_at,edited
 FROM comments WHERE document_id= @document_id AND (@status::text='' OR status= @status) AND (@version_id::text='' OR created_on_version_id= @version_id) ORDER BY created_at, id;
 
 -- name: InsertCommentMention :exec
@@ -61,7 +61,7 @@ WHERE id = $1
 FOR KEY SHARE;
 
 -- name: UpdateCommentBody :exec
-UPDATE comments SET body=$1 WHERE id=$2;
+UPDATE comments SET body=$1, edited=true WHERE id=$2;
 
 -- name: UpdateCommentStatus :exec
 UPDATE comments SET status=$1, resolved_at=CASE WHEN $1='resolved' THEN now() ELSE NULL END WHERE id=$2;
@@ -70,18 +70,18 @@ UPDATE comments SET status=$1, resolved_at=CASE WHEN $1='resolved' THEN now() EL
 DELETE FROM comments WHERE id=$1;
 
 -- name: GetComment :one
-SELECT id, document_id, created_on_version_id, author_type, author_id, author_email, author_name, body, selected_text, anchor_json, status, parent_comment_id, root_comment_id, created_at, resolved_at
+SELECT id, document_id, created_on_version_id, author_type, author_id, author_email, author_name, body, selected_text, anchor_json, status, parent_comment_id, root_comment_id, created_at, resolved_at, edited
 FROM comments
 WHERE id = $1;
 
 -- name: GetCommentForReply :one
-SELECT id, document_id, created_on_version_id, author_type, author_id, author_email, author_name, body, selected_text, anchor_json, status, parent_comment_id, root_comment_id, created_at, resolved_at
+SELECT id, document_id, created_on_version_id, author_type, author_id, author_email, author_name, body, selected_text, anchor_json, status, parent_comment_id, root_comment_id, created_at, resolved_at, edited
 FROM comments
 WHERE id = $1
 FOR KEY SHARE;
 
 -- name: GetCommentForUpdate :one
-SELECT id, document_id, created_on_version_id, author_type, author_id, author_email, author_name, body, selected_text, anchor_json, status, parent_comment_id, root_comment_id, created_at, resolved_at
+SELECT id, document_id, created_on_version_id, author_type, author_id, author_email, author_name, body, selected_text, anchor_json, status, parent_comment_id, root_comment_id, created_at, resolved_at, edited
 FROM comments
 WHERE id = $1
 FOR UPDATE;

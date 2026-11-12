@@ -90,6 +90,7 @@ export function DocWorkspace({
   docId,
   version,
   principal,
+  signIn,
   home,
   notifications = true,
   stream = NO_STREAM,
@@ -100,6 +101,7 @@ export function DocWorkspace({
   docId: string;
   version: string;
   principal?: Principal;
+  signIn?: () => void;
   // The Esc H shortcut goes here.
   home: string;
   notifications?: boolean;
@@ -284,6 +286,7 @@ export function DocWorkspace({
   // the same text again returns to its draft.
   const startDraft = useCallback(
     (selection: PendingSelection) => {
+      if (signIn) return signIn();
       let draftId = `draft:${crypto.randomUUID()}`;
       updateDrafts((list) => {
         const same = list.find(
@@ -318,6 +321,7 @@ export function DocWorkspace({
     [
       version,
       updateDrafts,
+      signIn,
       fullscreen,
       isMobile,
       mobilePanelOpen,
@@ -456,6 +460,7 @@ export function DocWorkspace({
       commentsError: !!comments.error,
       notifications,
       principal,
+      signIn,
       drafts,
       startDraft,
       saveDraft,
@@ -491,6 +496,7 @@ export function DocWorkspace({
       comments.error,
       notifications,
       principal,
+      signIn,
       drafts,
       startDraft,
       saveDraft,

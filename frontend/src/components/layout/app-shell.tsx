@@ -1,24 +1,21 @@
-import { Outlet, useLocation, useNavigate } from "react-router-dom";
-import { useEffect } from "react";
+import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { AccountMenu, GetStarted, TopBar } from "./topbar";
 import { useMe } from "@/lib/hooks";
+import { useSignInPath } from "@/lib/auth-state";
 import { Center } from "@/components/ui/misc";
 import { cn } from "@/lib/cn";
 
 export function AppShell() {
   const me = useMe();
-  const nav = useNavigate();
   const loc = useLocation();
-  useEffect(() => {
-    if (me.unauth) {
-      const next = encodeURIComponent(loc.pathname + loc.search);
-      nav(`/login?next=${next}`, { replace: true });
-    }
-  }, [me.unauth, loc.pathname, loc.search, nav]);
-  if (me.isLoading) return <Center>Loading workspace…</Center>;
-  if (!me.data) return null;
-  const user = me.data.user || me.data.principal;
+  const signInPath = useSignInPath();
   const documentPage = loc.pathname.startsWith("/app/d/");
+  // A signed-out reader can open a document. The document page sends them
+  // to sign in when the server does not let them read it.
+  if (me.unauth && !documentPage) return <Navigate to={signInPath} replace />;
+  if (me.isLoading) return <Center>Loading workspace…</Center>;
+  if (!me.data && !me.unauth) return null;
+  const user = me.data?.user || me.data?.principal;
   const fullscreenDocument =
     documentPage && new URLSearchParams(loc.search).get("fullscreen") === "1";
   return (
@@ -28,7 +25,7 @@ export function AppShell() {
         fullscreenDocument ? "overflow-hidden" : "overflow-auto",
       )}
     >
-      {!documentPage && (
+      {!documentPage && user && (
         <TopBar>
           <GetStarted />
           <AccountMenu user={user} />

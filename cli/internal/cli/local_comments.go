@@ -71,6 +71,7 @@ type localComment struct {
 	Version    string          `json:"created_on_version_id,omitzero"`
 	CreatedAt  time.Time       `json:"created_at"`
 	ResolvedAt time.Time       `json:"resolved_at,omitzero"`
+	Edited     bool            `json:"edited,omitzero"`
 	Reactions  []localReaction `json:"reactions,omitzero"`
 	Replies    []*localComment `json:"replies,omitzero"`
 }
@@ -248,8 +249,8 @@ func (s *localDocs) patch(r *http.Request, doc string) (any, error) {
 		if c, _ = t.find(r.PathValue("comment")); c == nil {
 			return errLocalCommentNotFound
 		}
-		if in.Body != nil {
-			c.Body = *in.Body
+		if in.Body != nil && c.Body != *in.Body {
+			c.Body, c.Edited = *in.Body, true
 		}
 		switch {
 		case in.Status == "":

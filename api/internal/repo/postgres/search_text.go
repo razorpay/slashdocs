@@ -90,6 +90,19 @@ func (s *Store) IndexVersions(ctx context.Context) (indexed int, err error) {
 	}
 }
 
+// IndexDocuments gives a search vector to documents that were created before
+// documents had one. IndexDocuments returns the number of documents that it
+// indexed.
+func (s *Store) IndexDocuments(ctx context.Context) (indexed int, err error) {
+	for {
+		n, err := s.q.IndexDocuments(ctx, 100)
+		indexed += int(n)
+		if err != nil || n == 0 {
+			return indexed, err
+		}
+	}
+}
+
 func (s *Store) indexVersionBatch(ctx context.Context, skipped []string) (indexed int, failed []string, err error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {

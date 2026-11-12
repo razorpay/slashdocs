@@ -97,6 +97,25 @@ func (q *Queries) GetDocumentVersionForUpdate(ctx context.Context, documentID st
 	return i, err
 }
 
+const indexDocuments = `-- name: IndexDocuments :execrows
+UPDATE documents SET title = title
+WHERE id IN (
+  SELECT id FROM documents WHERE search_vector IS NULL
+  LIMIT $1
+  FOR NO KEY UPDATE SKIP LOCKED
+)
+`
+
+// The trigger on title sets search_vector. Servers that index at the same
+// time skip each other's documents.
+func (q *Queries) IndexDocuments(ctx context.Context, rowLimit int32) (int64, error) {
+	result, err := q.db.Exec(ctx, indexDocuments, rowLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertDocument = `-- name: InsertDocument :exec
 INSERT INTO documents(id,title,owner_type,owner_id) VALUES($1,$2,$3,$4)
 `
@@ -337,7 +356,7 @@ docs_via_folder AS (
      OR (g.principal_type='google_group' AND g.principal_id=ANY($3::text[]))
      OR ($4::boolean AND g.principal_type='anyone')
 ),
-search AS (
+search AS NOT MATERIALIZED (
   SELECT to_tsquery('english', $5::text) AS match,
          to_tsquery('english', $6::text) AS exclude
 ),
@@ -350,7 +369,7 @@ matches AS (
          d.updated_at,
          cv.search_text,
          cv.search_vector,
-         ts_rank(doc.vector, search.match) AS rank
+         CASE WHEN numnode(search.match) > 0 THEN ts_rank(d.search_vector, search.match) ELSE 0 END AS rank
   FROM documents d
   CROSS JOIN search
   LEFT JOIN versions cv ON cv.id=d.current_version_id
@@ -358,11 +377,8 @@ matches AS (
   LEFT JOIN users u ON d.owner_type='user' AND u.id=d.owner_id
   LEFT JOIN service_accounts sa
     ON d.owner_type='service_account' AND sa.id=d.owner_id
-  CROSS JOIN LATERAL (
-    SELECT setweight(to_tsvector('english', d.title), 'A') || COALESCE(cv.search_vector, '') AS vector
-  ) doc
-  WHERE (numnode(search.match) = 0 OR doc.vector @@ search.match)
-  AND NOT doc.vector @@ search.exclude
+  WHERE (numnode(search.match) = 0 OR d.search_vector @@ search.match)
+  AND (numnode(search.exclude) = 0 OR NOT d.search_vector @@ search.exclude)
   AND (
     COALESCE(cardinality($7::text[]), 0) = 0
     OR lower(d.owner_id) = ANY($7::text[])
@@ -447,6 +463,9 @@ type SearchDocumentsRow struct {
 
 // @match_query and @exclude_query are tsquery text. A document matches when
 // its title or current text matches. Title words rank higher.
+// The planner puts the query values into the conditions below, so that the
+// search_vector index can find the matches, and an empty query reads no
+// vectors.
 // Snippets are made after LIMIT, because ts_headline reads the whole text.
 func (q *Queries) SearchDocuments(ctx context.Context, arg SearchDocumentsParams) ([]SearchDocumentsRow, error) {
 	rows, err := q.db.Query(ctx, searchDocuments,
