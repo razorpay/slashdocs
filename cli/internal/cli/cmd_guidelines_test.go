@@ -107,8 +107,8 @@ func TestGuidelinesPublishingExamplesMatchCLIFlags(t *testing.T) {
 	}
 	for _, want := range []string{
 		"slashdocs docs create report.html --title 'Report'",
-		"slashdocs docs push <doc_id> report.html --base-version <version_id> --summary 'Address comments'",
-		"slashdocs docs pull <doc_id>",
+		"slashdocs docs push <doc_id> report.html --summary 'Address comments'",
+		"slashdocs docs pull <doc_id> --out report.html",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("publishing output missing %q:\n%s", want, got)

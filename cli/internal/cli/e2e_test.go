@@ -100,7 +100,9 @@ func e2eMux(t *testing.T) *http.ServeMux {
 			if in["decision"] != "approved" && in["decision"] != "rejected" {
 				t.Fatalf("approval sent bad decision: %#v", in)
 			}
-			writeTestJSON(t, w, map[string]any{"id": "apv_new", "document_id": "doc_1", "version_id": "ver_1", "decision": in["decision"]})
+			// The sitting ver_1 changed nothing, so the decision is for the
+			// version before it.
+			writeTestJSON(t, w, map[string]any{"id": "apv_new", "document_id": "doc_1", "version_id": "ver_0", "decision": in["decision"]})
 			return
 		}
 		writeTestJSON(t, w, map[string]any{
@@ -223,7 +225,7 @@ func TestCLICommandsE2E(t *testing.T) {
 	html := filepath.Join(t.TempDir(), "x.html")
 	writeTestFile(t, html, []byte("<h1>x</h1>"))
 	out := filepath.Join(t.TempDir(), "out.html")
-	cmds := [][]string{{"auth", "whoami"}, {"docs", "list"}, {"docs", "list", `incident from:alice@example.com label:api,review in:"Product Specs"`}, {"docs", "labels", "list", "doc_1"}, {"docs", "labels", "set", "doc_1", "API,review"}, {"docs", "labels", "clear", "doc_1"}, {"docs", "create", html}, {"docs", "show", "doc_1"}, {"docs", "update", "doc_1", "--title", "New"}, {"docs", "versions", "list", "doc_1"}, {"docs", "versions", "show", "doc_1", "ver_1"}, {"docs", "versions", "html", "doc_1", "ver_1"}, {"docs", "pull", "doc_1", "--out", out}, {"docs", "push", "doc_1", html}, {"docs", "comments", "list", "doc_1"}, {"docs", "comments", "create", "doc_1", "--body", "hi", "--quote", "x", "--version", "ver_1"}, {"docs", "comments", "reply", "doc_1", "cmt_1", "--body", "reply"}, {"docs", "comments", "update", "doc_1", "cmt_1", "--status", "resolved"}, {"docs", "comments", "update", "doc_1", "cmt_1", "--body", "revised"}, {"docs", "comments", "delete", "doc_1", "cmt_1"}, {"docs", "comments", "resolve", "doc_1", "cmt_1"}, {"docs", "comments", "reopen", "doc_1", "cmt_1"}, {"docs", "grants", "list", "doc_1"}, {"docs", "grants", "requests", "doc_1"}, {"docs", "grants", "add", "doc_1", "--principal", "user:a@b.com", "--role", "viewer"}, {"docs", "grants", "update", "doc_1", "gr_1", "--role", "editor"}, {"docs", "grants", "revoke", "doc_1", "gr_1"}, {"sa", "list"}, {"sa", "create", "bot"}, {"sa", "update", "sa_1", "--name", "new-bot"}, {"sa", "update", "sa_1", "--disable"}, {"sa", "key", "list", "sa_1"}, {"sa", "key", "create", "sa_1"}, {"sa", "key", "revoke", "sa_1", "sak_1"}, {"sa", "transfer", "sa_1", "--to", "new@example.com"}, {"sa", "transfers", "list"}, {"sa", "transfer", "accept", "xfer_1"}, {"sa", "transfer", "decline", "xfer_1"}, {"docs", "approvers", "list", "doc_1"}, {"docs", "approvers", "add", "doc_1", "--to", "rev@example.com"}, {"docs", "approvers", "remove", "doc_1", "apr_1"}, {"docs", "approvals", "list", "doc_1"}, {"docs", "approvals", "list", "doc_1", "--version", "ver_1"}, {"docs", "approve", "doc_1", "--version", "ver_1"}, {"docs", "reject", "doc_1", "--version", "ver_1", "--note", "needs a rollback plan"}, {"docs", "revoke-approval", "doc_1", "--version", "ver_1"}, {"context", "list"}, {"context", "use", srv.URL}, {"skills", "update"}, {"open", "doc_1"}}
+	cmds := [][]string{{"auth", "whoami"}, {"docs", "list"}, {"docs", "list", `incident from:alice@example.com label:api,review in:"Product Specs"`}, {"docs", "labels", "list", "doc_1"}, {"docs", "labels", "set", "doc_1", "API,review"}, {"docs", "labels", "clear", "doc_1"}, {"docs", "create", html}, {"docs", "show", "doc_1"}, {"docs", "update", "doc_1", "--title", "New"}, {"docs", "versions", "list", "doc_1"}, {"docs", "versions", "show", "doc_1", "ver_1"}, {"docs", "versions", "html", "doc_1", "ver_1"}, {"docs", "pull", "doc_1", "--out", out}, {"docs", "push", "doc_1", out}, {"docs", "comments", "list", "doc_1"}, {"docs", "comments", "create", "doc_1", "--body", "hi", "--quote", "x", "--version", "ver_1"}, {"docs", "comments", "reply", "doc_1", "cmt_1", "--body", "reply"}, {"docs", "comments", "update", "doc_1", "cmt_1", "--status", "resolved"}, {"docs", "comments", "update", "doc_1", "cmt_1", "--body", "revised"}, {"docs", "comments", "delete", "doc_1", "cmt_1"}, {"docs", "comments", "resolve", "doc_1", "cmt_1"}, {"docs", "comments", "reopen", "doc_1", "cmt_1"}, {"docs", "grants", "list", "doc_1"}, {"docs", "grants", "requests", "doc_1"}, {"docs", "grants", "add", "doc_1", "--principal", "user:a@b.com", "--role", "viewer"}, {"docs", "grants", "update", "doc_1", "gr_1", "--role", "editor"}, {"docs", "grants", "revoke", "doc_1", "gr_1"}, {"sa", "list"}, {"sa", "create", "bot"}, {"sa", "update", "sa_1", "--name", "new-bot"}, {"sa", "update", "sa_1", "--disable"}, {"sa", "key", "list", "sa_1"}, {"sa", "key", "create", "sa_1"}, {"sa", "key", "revoke", "sa_1", "sak_1"}, {"sa", "transfer", "sa_1", "--to", "new@example.com"}, {"sa", "transfers", "list"}, {"sa", "transfer", "accept", "xfer_1"}, {"sa", "transfer", "decline", "xfer_1"}, {"docs", "approvers", "list", "doc_1"}, {"docs", "approvers", "add", "doc_1", "--to", "rev@example.com"}, {"docs", "approvers", "remove", "doc_1", "apr_1"}, {"docs", "approvals", "list", "doc_1"}, {"docs", "approvals", "list", "doc_1", "--version", "ver_1"}, {"docs", "approve", "doc_1", "--version", "ver_1"}, {"docs", "reject", "doc_1", "--version", "ver_1", "--note", "needs a rollback plan"}, {"docs", "revoke-approval", "doc_1", "--version", "ver_1"}, {"context", "list"}, {"context", "use", srv.URL}, {"skills", "update"}, {"open", "doc_1"}}
 	for _, c := range cmds {
 		t.Run(strings.Join(c, " "), func(t *testing.T) {
 			if _, err := Execute(c); err != nil {
@@ -261,7 +263,7 @@ func TestCommandOutputsAreConversational(t *testing.T) {
 		{[]string{"docs", "labels", "set", "doc_1", "API,review"}, []string{"Set labels", "api, review"}},
 		{[]string{"docs", "labels", "clear", "doc_1"}, []string{"Cleared labels", "doc_1"}},
 		{[]string{"docs", "pull", "doc_1", "--out", out}, []string{"Pulled version", "doc_1"}},
-		{[]string{"docs", "push", "doc_1", html}, []string{"Pushed version", "ver_2"}},
+		{[]string{"docs", "push", "doc_1", out}, []string{"Your change is in the document: ", "/app/d/doc_1"}},
 		{[]string{"docs", "comments", "create", "doc_1", "--body", "hi", "--quote", "x", "--version", "ver_1"}, []string{"Added comment"}},
 		{[]string{"docs", "comments", "reply", "doc_1", "cmt_1", "--body", "reply"}, []string{"Created reply", "cmt_reply"}},
 		{[]string{"docs", "comments", "delete", "doc_1", "cmt_1"}, []string{"Deleted comment", "cmt_1"}},
@@ -273,8 +275,8 @@ func TestCommandOutputsAreConversational(t *testing.T) {
 		{[]string{"sa", "update", "sa_1", "--name", "new-bot"}, []string{"Updated service account", "sa_1"}},
 		{[]string{"docs", "approvers", "add", "doc_1", "--to", "rev@example.com"}, []string{"Assigned", "rev@example.com", "approver"}},
 		{[]string{"docs", "approvers", "remove", "doc_1", "apr_1"}, []string{"Removed approver", "apr_1"}},
-		{[]string{"docs", "approve", "doc_1", "--version", "ver_1"}, []string{"Approved", "ver_1", "doc_1"}},
-		{[]string{"docs", "reject", "doc_1", "--version", "ver_1", "--note", "needs a rollback plan"}, []string{"Rejected", "ver_1"}},
+		{[]string{"docs", "approve", "doc_1", "--version", "ver_1"}, []string{"Approved", "ver_0", "doc_1"}},
+		{[]string{"docs", "reject", "doc_1", "--version", "ver_1", "--note", "needs a rollback plan"}, []string{"Rejected", "ver_0"}},
 		{[]string{"docs", "revoke-approval", "doc_1", "--version", "ver_1"}, []string{"Revoked your decision", "ver_1"}},
 		{[]string{"sa", "update", "sa_1", "--disable"}, []string{"Disabled service account", "sa_1"}},
 		{[]string{"sa", "key", "create", "sa_1"}, []string{"Created key", "Copy this key"}},

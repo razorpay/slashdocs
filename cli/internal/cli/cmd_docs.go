@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,8 +11,10 @@ import (
 	"math"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/spf13/cobra"
 
@@ -240,7 +245,7 @@ func documentCreateCmd(g *globals, out io.Writer) *cobra.Command {
 		if err := json.Unmarshal(b, &created); err != nil {
 			return err
 		}
-		if err := recordBaseVersion(g, created.ID, created.VersionID); err != nil {
+		if err := recordBase(g, args[0], Base{DocumentID: created.ID, VersionID: created.VersionID}); err != nil {
 			return err
 		}
 		return renderCreatedDocument(out, g, cl, title, perm, b)
@@ -522,12 +527,13 @@ func pullCmd(g *globals, out io.Writer) *cobra.Command {
 				return errors.New("document response did not include current_version_id")
 			}
 		}
-		b, err := cl.do("GET", apiPath("/v1/documents/%s/versions/%s/html", args[0], v), nil, "")
+		b, header, err := cl.doResponse("GET", apiPath("/v1/documents/%s/versions/%s/html", args[0], v), nil, "")
 		if err != nil {
 			return err
 		}
-		// The saved base version must match what was written, so a failed
-		// write keeps the base version of the last pull.
+		got := Base{DocumentID: args[0], VersionID: v, Seq: header.Get(seqHeader)}
+		// A base must match what the file holds, so a failed write keeps the
+		// base of the last pull. A pull to stdout is the base of no file.
 		if outp == "" {
 			if g.json {
 				err = render(out, g, b)
@@ -537,7 +543,7 @@ func pullCmd(g *globals, out io.Writer) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			err = recordBaseVersion(g, args[0], v)
+			err = recordBase(g, "-", got)
 			if err != nil && g.json {
 				// The HTML is already the one JSON value on stdout.
 				return reportedError{err}
@@ -547,7 +553,7 @@ func pullCmd(g *globals, out io.Writer) *cobra.Command {
 		if err := os.WriteFile(outp, b, pulledFilePerm); err != nil {
 			return err
 		}
-		if err := recordBaseVersion(g, args[0], v); err != nil {
+		if err := recordBase(g, outp, got); err != nil {
 			return err
 		}
 		return confirm(out, g, "Pulled version "+v+" of "+args[0]+" to "+outp+".")
@@ -557,20 +563,46 @@ func pullCmd(g *globals, out io.Writer) *cobra.Command {
 	return cmd
 }
 
-func recordBaseVersion(g *globals, docID, versionID string) error {
-	if docID == "" || versionID == "" {
+// seqHeader is the response header with the seq of version HTML.
+const seqHeader = "X-Slashdocs-Seq"
+
+// recordBase saves base as the state of its document that file holds, and
+// its version as the one that the person got last. file is "-" for stdin
+// and stdout, which have no base.
+func recordBase(g *globals, file string, base Base) error {
+	if base.DocumentID == "" || base.VersionID == "" {
 		return nil
 	}
 	name, cx, cfg, err := currentContextE(g)
 	if err != nil {
 		return err
 	}
-	cx.Pulled[docID] = versionID
+	cx.Pulled[base.DocumentID] = base.VersionID
+	if file != "-" {
+		path, err := filepath.Abs(file)
+		if err != nil {
+			return err
+		}
+		if cx.Bases == nil {
+			cx.Bases = map[string]Base{}
+		}
+		cx.Bases[path] = base
+	}
 	cfg.Contexts[name] = cx
 	if cfg.ActiveContext == "" && !g.local {
 		cfg.ActiveContext = name
 	}
 	return saveConfig(cfg)
+}
+
+// baseOf returns the base of file when it holds a state of the document, or
+// else no base.
+func baseOf(cx *Context, doc, file string) Base {
+	path, err := filepath.Abs(file)
+	if base := cx.Bases[path]; err == nil && file != "-" && base.DocumentID == doc {
+		return base
+	}
+	return Base{}
 }
 
 func docsPushCmd(g *globals, out io.Writer) *cobra.Command {
@@ -581,40 +613,183 @@ func docsPushCmd(g *globals, out io.Writer) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		if base == "" {
-			_, cx, _ := currentContext(g)
-			base = cx.Pulled[doc]
+		// A pull to another file keeps the changes in this one.
+		pullBeside := pullCommand(doc, latestFile(file))
+		fields := map[string]string{"change_summary": summary}
+		_, cx, _ := currentContext(g)
+		held := baseOf(cx, doc, file)
+		named := base != ""
+		if !named {
+			base = held.VersionID
 		}
 		if base == "" {
-			return errors.New("no base version known; run slashdocs docs pull <doc_id> first or pass --base-version")
+			return fmt.Errorf("slashdocs does not know which version of %s this file holds, and a push on a guessed version can remove the text of other people. Run %s, make your change in that file, and push that file", doc, pullBeside)
+		}
+		fields["base_version_id"] = base
+		// The seq of the file is the seq of the HTML of its base version.
+		if base == held.VersionID && held.Seq != "" {
+			fields["base_seq"] = held.Seq
 		}
 		cl, err := client(g)
 		if err != nil {
 			return err
 		}
-		b, err := cl.multipart(apiPath("/v1/documents/%s/versions", doc), map[string]string{"base_version_id": base, "change_summary": summary}, "file", fn, data)
+		b, err := cl.multipart(apiPath("/v1/documents/%s/versions", doc), fields, "file", fn, data)
+		if err != nil {
+			return pushRefusal(err, doc, file, base, named, fields["base_seq"] != "")
+		}
+		var saved pushAnswer
+		if err := json.Unmarshal(b, &saved); err != nil {
+			return err
+		}
+		pushed, err := savedVersion(b)
 		if err != nil {
 			return err
 		}
-		var pushed struct {
-			ID string `json:"id"`
+		// The server saved the push together with the edits of other people,
+		// so the saved version is not the file. The file must be the base of
+		// the next push: else that push takes out their edits.
+		now := data
+		if saved.Rebased {
+			now = writeSavedVersion(cl, doc, saved.ID, file, data)
 		}
-		if err := json.Unmarshal(b, &pushed); err != nil {
-			return err
+		// The answer is the base of the file only when the file is its
+		// content. The answer for a file that changes nothing has the hash
+		// of the file only with a version and a seq that the file holds.
+		if sum := sha256.Sum256(now); now != nil && hex.EncodeToString(sum[:]) == saved.SHA256 {
+			if err := recordBase(g, file, Base{DocumentID: doc, VersionID: saved.ID, Seq: saved.Seq.String()}); err != nil {
+				return err
+			}
 		}
-		if err := recordBaseVersion(g, doc, pushed.ID); err != nil {
-			return err
-		}
-		return printPushedVersion(out, g, doc, cl.Base, b)
+		return printPushedVersion(out, g, doc, cl.Base, pushed, now != nil, pullBeside)
 	}}
 	cmd.Flags().StringVar(&base, "base-version", "", "base version ID")
 	cmd.Flags().StringVar(&summary, "summary", "", "change summary, one change per line")
 	return cmd
 }
 
+// pushRefusal gives a refused push of file to doc on base the message of the
+// CLI in place of that of the server: it says what is true and names the
+// command to run. A person reads only that message. The code of the error
+// stays in --json and in the exit code, and its details go. named says that
+// the caller named base, and seqSent that the push sent the seq of the file.
+// pushRefusal returns other errors as they are.
+func pushRefusal(err error, doc, file, base string, named, seqSent bool) error {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return err
+	}
+	again := fmt.Sprintf(" Run %s to get the document as it is now, then make your change again.", pullCommand(doc, file))
+	text, _ := apiErr.Details["text"].(string)
+	// The text is of a document, and goes to a terminal.
+	text = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, text)
+	switch {
+	case apiErr.Code == "version_conflict" && text != "":
+		apiErr.Message = `Other people changed the same text, in "` + text + `", and their text stays.` + again
+	case apiErr.Code == "version_conflict":
+		apiErr.Message = "Other people changed the same text, and their text stays." + again
+	case apiErr.Code == "base_version_not_found":
+		apiErr.Message = base + " is not a version of this document." + again
+	case apiErr.Code == "stale" && !seqSent:
+		// The server does not know which state of the open version the
+		// file holds: the caller named the version, or an older CLI pulled
+		// the file and recorded no seq.
+		push := "push that file"
+		if named {
+			push += " without --base-version"
+		}
+		apiErr.Message = fmt.Sprintf("People are editing this document, and slashdocs does not know which state of it this file holds. Run %s, make your change in that file, and %s.", pullCommand(doc, latestFile(file)), push)
+	case apiErr.Code == "stale":
+		apiErr.Message = "This document changed after your pull." + again
+	default:
+		return err
+	}
+	apiErr.Details = nil
+	return plainError{apiErr}
+}
+
+// pushAnswer is what a push reads of the answer of the server. The output
+// shows all of the answer (savedVersion).
+type pushAnswer struct {
+	ID      string      `json:"id"`
+	Seq     json.Number `json:"seq"`
+	SHA256  string      `json:"sha256"`
+	Rebased bool        `json:"rebased"`
+}
+
+// savedVersion reads the answer of a write that saves a version. A number
+// stays as the server wrote it.
+func savedVersion(b []byte) (map[string]any, error) {
+	var m map[string]any
+	d := json.NewDecoder(bytes.NewReader(b))
+	d.UseNumber()
+	return m, d.Decode(&m)
+}
+
+// pullCommand is the command that writes the document as it is now to the
+// file of a push.
+func pullCommand(doc, file string) string {
+	if file == "-" {
+		file = "<file>"
+	} else if strings.ContainsFunc(file, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !strings.ContainsRune("/._-+:@%,=~", r)
+	}) {
+		// A shell splits or expands the path without quotes.
+		file = "'" + strings.ReplaceAll(file, "'", `'\''`) + "'"
+	}
+	return fmt.Sprintf("slashdocs docs pull %s --out %s", doc, file)
+}
+
+// plainError is an API error that a person reads as its message only.
+type plainError struct{ *APIError }
+
+func (e plainError) Error() string { return e.Message }
+func (e plainError) Unwrap() error { return e.APIError }
+
+// latestFile is a path beside file for the document as it is now: report.html
+// gives report.latest.html.
+func latestFile(file string) string {
+	if file == "-" {
+		return file
+	}
+	ext := filepath.Ext(file)
+	return strings.TrimSuffix(file, ext) + ".latest" + ext
+}
+
+// writeSavedVersion writes the HTML of the saved version over the pushed
+// file, and returns it, or nil when the file does not have it. It does not
+// write when the file is not the data that the push sent: the file changed
+// during the push, or the data came from stdin. It also returns nil when it
+// cannot read the saved version or write the file. The push is saved all
+// the same, so none of these is an error: the author learns how to get the
+// saved version.
+func writeSavedVersion(cl *Client, doc, version, file string, pushed []byte) []byte {
+	if file == "-" {
+		return nil
+	}
+	saved, err := cl.do("GET", apiPath("/v1/documents/%s/versions/%s/html", doc, version), nil, "")
+	if err != nil {
+		return nil
+	}
+	//nolint:gosec // G304: file is the explicit document path supplied by the CLI user.
+	if now, err := os.ReadFile(file); err != nil || !bytes.Equal(now, pushed) {
+		return nil
+	}
+	// The file exists, so it keeps its mode.
+	if os.WriteFile(file, saved, pulledFilePerm) != nil {
+		return nil
+	}
+	return saved
+}
+
 func docsEditCmd(g *globals, out io.Writer) *cobra.Command {
 	var olds, news []string
-	var editsFile, base, summary string
+	var editsFile, summary string
 	var all bool
 	cmd := &cobra.Command{
 		Use:   "edit <doc_id>",
@@ -629,8 +804,8 @@ text to make it unique, or pass --all to replace every occurrence. Pair each
 {"old_string", "new_string", "replace_all"} objects. Edits apply in order, and
 if one does not match, nothing is saved.
 
-Without --base-version the edits apply to the current version, even when
-someone else changed another part of the document since you read it.`,
+The edits apply to the document as it is now, even when someone else changed
+another part of it since you read it.`,
 		Example: `  slashdocs docs edit doc_123 --old 'TTL of 10 minutes' --new 'TTL of 5 minutes'
   slashdocs docs edit doc_123 --all --old 'Cache design' --new 'Cache plan'
   slashdocs docs edit doc_123 --edits edits.json --summary 'Shorten cache TTLs'`,
@@ -641,9 +816,6 @@ someone else changed another part of the document since you read it.`,
 				return err
 			}
 			payload := map[string]any{"edits": edits}
-			if base != "" {
-				payload["base_version_id"] = base
-			}
 			if summary != "" {
 				payload["change_summary"] = summary
 			}
@@ -659,16 +831,19 @@ someone else changed another part of the document since you read it.`,
 			if err != nil {
 				return err
 			}
-			// The pulled base version stays as it was: a later push of the
+			saved, err := savedVersion(b)
+			if err != nil {
+				return err
+			}
+			// The base of each file stays as it was: a later push of a
 			// pulled file must not overwrite these edits without a conflict.
-			return printSavedVersion(out, g, "Saved version %s of %s.", args[0], cl.Base, b)
+			return printSavedVersion(out, g, args[0], cl.Base, saved, "")
 		},
 	}
 	cmd.Flags().StringArrayVar(&olds, "old", nil, "exact text to replace; repeat with --new for several edits")
 	cmd.Flags().StringArrayVar(&news, "new", nil, "replacement for the --old at the same position")
 	cmd.Flags().BoolVar(&all, "all", false, "replace every occurrence of each --old, not just one")
 	cmd.Flags().StringVar(&editsFile, "edits", "", `JSON file of [{"old_string": ..., "new_string": ..., "replace_all": false}], or - for stdin`)
-	cmd.Flags().StringVar(&base, "base-version", "", "fail unless this is still the current version")
 	cmd.Flags().StringVar(&summary, "summary", "", "change summary, one change per line (defaults to one line per edit)")
 	return cmd
 }

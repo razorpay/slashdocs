@@ -162,9 +162,15 @@ func scalarDetails(details map[string]any) string {
 }
 
 func (c *Client) do(method, path string, body io.Reader, ct string) ([]byte, error) {
+	b, _, err := c.doResponse(method, path, body, ct)
+	return b, err
+}
+
+// doResponse is do for a caller that also reads the response headers.
+func (c *Client) doResponse(method, path string, body io.Reader, ct string) ([]byte, http.Header, error) {
 	req, err := http.NewRequest(method, c.Base+path, body)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
@@ -174,14 +180,14 @@ func (c *Client) do(method, path string, body io.Reader, ct string) ([]byte, err
 	}
 	res, err := c.HTTP.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer func() {
 		_ = res.Body.Close()
 	}()
 	b, err := io.ReadAll(res.Body)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if res.StatusCode < 400 {
 		c.followMove(res.Request)
@@ -200,9 +206,9 @@ func (c *Client) do(method, path string, body io.Reader, ct string) ([]byte, err
 			ae.Message = payload.Error.Message
 			ae.Details = payload.Error.Details
 		}
-		return nil, ae
+		return nil, nil, ae
 	}
-	return b, nil
+	return b, res.Header, nil
 }
 
 // followMove saves the new server origin after the saved server answered with
