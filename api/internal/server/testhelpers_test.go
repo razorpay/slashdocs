@@ -97,7 +97,7 @@ func newConfiguredTestEnv(t *testing.T, cfg server.Config, extraOptions ...serve
 	}
 
 	var err error
-	e.doc, e.ver, err = store.CreateDocument(ctx, fixtureOwner, "fixture", []byte("<html><body>fixture</body></html>"))
+	e.doc, e.ver, err = store.CreateDocument(ctx, fixtureOwner, "fixture", "", []byte("<html><body>fixture</body></html>"))
 	if err != nil {
 		t.Fatalf("seed document: %v", err)
 	}

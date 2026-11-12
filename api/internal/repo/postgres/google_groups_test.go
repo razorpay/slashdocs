@@ -20,7 +20,7 @@ func TestGoogleGroupRoleMergesWithDirectAndAnyoneUsingHighestPrecedence(t *testi
 	if _, err := store.UpsertGoogleUser(ctx, member.ID, member.Email, "Member", "sub-member", ""); err != nil {
 		t.Fatal(err)
 	}
-	doc, _, err := store.CreateDocument(ctx, owner, "Role precedence", []byte("<html></html>"))
+	doc, _, err := store.CreateDocument(ctx, owner, "Role precedence", "", []byte("<html></html>"))
 	if err != nil {
 		t.Fatal(err)
 	}

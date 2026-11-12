@@ -203,6 +203,16 @@ googleGroups:
   adminEmail: groups-reader-admin@example.com
   existingSecret: slashdocs-google-groups
   credentialsKey: credentials.json
+
+# Google Chat notifications (incoming webhook URL under key webhook-url).
+googleChat:
+  webhookSecret: slashdocs-chat-webhook
+```
+
+Create the Secret before installing, for example:
+
+```bash
+kubectl create secret generic slashdocs-chat-webhook --from-literal=webhook-url='https://chat.googleapis.com/v1/spaces/…'
 ```
 
 ## Redirect URIs

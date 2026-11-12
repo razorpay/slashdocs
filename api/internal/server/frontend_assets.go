@@ -35,17 +35,28 @@ func embeddedFrontend() fs.FS {
 	return dist
 }
 
-func registerFrontendRoutes(r *gin.Engine, dist fs.FS, publicURL string, documentHead func(*http.Request, string) []byte) {
+func registerFrontendRoutes(r *gin.Engine, h handlers) {
+	dist := h.deps.frontend
 	if dist == nil {
 		return
 	}
 	fileServer := http.FileServer(http.FS(dist))
-	publicURL = strings.TrimRight(publicURL, "/")
+	appOrigin := strings.TrimRight(h.deps.appOrigin, "/")
 
 	r.GET("/assets/*filepath", gin.WrapH(http.StripPrefix("/assets/", http.FileServer(http.FS(subOrEmpty(dist, "assets"))))))
 	r.NoRoute(func(c *gin.Context) {
 		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
 			c.Status(http.StatusNotFound)
+			return
+		}
+		// The render hostname serves only tokenized renders. Its other pages go to
+		// the app origin, where sign-in works and document pages get their head.
+		if h.deps.isRenderHost(c.Request.Host) {
+			if strings.HasPrefix(c.Request.URL.Path, "/v/") || strings.HasPrefix(c.Request.URL.Path, "/print/") {
+				c.Status(http.StatusNotFound)
+				return
+			}
+			c.Redirect(http.StatusTemporaryRedirect, appOrigin+c.Request.URL.RequestURI())
 			return
 		}
 		urlPath := strings.TrimPrefix(path.Clean(c.Request.URL.Path), "/")
@@ -58,17 +69,23 @@ func registerFrontendRoutes(r *gin.Engine, dist fs.FS, publicURL string, documen
 			c.Status(http.StatusNotFound)
 			return
 		}
-		index = bytes.ReplaceAll(index, []byte("__SLASHDOCS_PUBLIC_URL_VALUE__"), []byte(publicURL))
+		index = bytes.ReplaceAll(index, []byte("__SLASHDOCS_PUBLIC_URL_VALUE__"), []byte(appOrigin))
 		if id, ok := documentPageID(urlPath); ok {
 			// The head depends on who asks: no shared cache may keep the page, and
 			// the browser must ask again before it reuses it.
 			c.Header("Cache-Control", "private, no-cache")
-			if head := documentHead(c.Request, id); head != nil {
+			if head := h.documentHead(c.Request, id); head != nil {
 				index = bytes.Replace(index, []byte(shellTitle), head, 1)
 			}
 		}
 		c.Data(http.StatusOK, "text/html; charset=utf-8", index)
 	})
+}
+
+// isRenderHost reports whether host is the render hostname and not also the app
+// hostname.
+func (d dependencies) isRenderHost(host string) bool {
+	return d.appOrigin != "" && d.renderOrigin != "" && hostMatchesOrigin(host, d.renderOrigin) && !hostMatchesOrigin(host, d.appOrigin)
 }
 
 // documentPageID returns the document ID of a cleaned "app/d/{id}" path.
