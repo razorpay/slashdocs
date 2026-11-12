@@ -125,7 +125,7 @@ export function DocBar({
     },
     onError: (e) => toast.error(errorMessage(e, "Delete failed")),
   });
-  const { printDocument: exportPDF } = useDoc();
+  const { printDocument: exportPDF, signIn } = useDoc();
   return (
     <DocBarFrame
       home="/app/documents"
@@ -185,47 +185,49 @@ export function DocBar({
           <Maximize2 className="h-4 w-4" />
         </Link>
       </Button>
-      <Sheet modal={false} open={shareOpen} onOpenChange={onShareOpenChange}>
-        <SheetTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="shrink-0"
-            title="Share"
-            aria-label="Share"
-            onPointerDown={() => {
-              const active = document.activeElement;
-              shareFrameFocusRef.current =
-                active instanceof HTMLIFrameElement &&
-                active.title === "Rendered document"
-                  ? active
-                  : null;
-            }}
-          >
-            <Share2 className="h-4 w-4" />
-          </Button>
-        </SheetTrigger>
-        <ShareSheet
-          docId={docId}
-          canManageAccess={canManageAccess}
-          onOpenAutoFocus={(event) => {
-            const frame = shareFrameFocusRef.current;
-            shareFrameFocusRef.current = null;
-            if (!frame?.isConnected) return;
-            event.preventDefault();
-            frame.focus();
-          }}
-          onInteractOutside={(event) => {
-            const target = event.target;
-            if (
-              target instanceof HTMLIFrameElement &&
-              target.title === "Rendered document"
-            ) {
+      {!signIn && (
+        <Sheet modal={false} open={shareOpen} onOpenChange={onShareOpenChange}>
+          <SheetTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="shrink-0"
+              title="Share"
+              aria-label="Share"
+              onPointerDown={() => {
+                const active = document.activeElement;
+                shareFrameFocusRef.current =
+                  active instanceof HTMLIFrameElement &&
+                  active.title === "Rendered document"
+                    ? active
+                    : null;
+              }}
+            >
+              <Share2 className="h-4 w-4" />
+            </Button>
+          </SheetTrigger>
+          <ShareSheet
+            docId={docId}
+            canManageAccess={canManageAccess}
+            onOpenAutoFocus={(event) => {
+              const frame = shareFrameFocusRef.current;
+              shareFrameFocusRef.current = null;
+              if (!frame?.isConnected) return;
               event.preventDefault();
-            }
-          }}
-        />
-      </Sheet>
+              frame.focus();
+            }}
+            onInteractOutside={(event) => {
+              const target = event.target;
+              if (
+                target instanceof HTMLIFrameElement &&
+                target.title === "Rendered document"
+              ) {
+                event.preventDefault();
+              }
+            }}
+          />
+        </Sheet>
+      )}
       <CommentsToggle open={commentsOpen} onToggle={onToggleComments} />
       <Dropdown>
         <DropdownTrigger asChild>
@@ -300,6 +302,11 @@ export function DocBar({
         <div className="shrink-0 border-l border-[var(--color-border)] pl-2">
           <AccountMenu user={accountUser} />
         </div>
+      )}
+      {signIn && (
+        <Button size="sm" className="ml-1 shrink-0" onClick={signIn}>
+          Sign in
+        </Button>
       )}
     </DocBarFrame>
   );

@@ -6,8 +6,13 @@ import { errorMessage } from "@/lib/errors";
 // useBridgeHost is the app side of the render bridge that every embedded
 // document needs, wherever it is shown. It passes the theme, answers the
 // document's KV and GitHub requests, and forwards KV changes to the frame.
-// Message origins are checked on both ends.
-export function useBridgeHost(docId: string, renderURL: string | undefined) {
+// Message origins are checked on both ends. A signed-out reader who writes
+// KV data goes to signIn instead.
+export function useBridgeHost(
+  docId: string,
+  renderURL: string | undefined,
+  signIn?: () => void,
+) {
   const ref = useRef<HTMLIFrameElement>(null);
   // The frame is ready only for the URL it loaded. A new URL is not ready
   // from the first render that uses it.
@@ -24,6 +29,8 @@ export function useBridgeHost(docId: string, renderURL: string | undefined) {
   readyRef.current = ready;
   // The newest KV revision the frame received, so no change goes twice.
   const kvRevision = useRef(0);
+  const signInRef = useRef(signIn);
+  signInRef.current = signIn;
 
   const frameOrigin = useMemo(() => {
     if (!renderURL) return null;
@@ -90,7 +97,7 @@ export function useBridgeHost(docId: string, renderURL: string | undefined) {
         reply({ type: "slashdocs:theme", theme: themeRef.current });
       }
       if (data?.type === "slashdocs:kv-request") {
-        void answerKV(docId, data, reply, kvRevision);
+        void answerKV(docId, data, reply, kvRevision, signInRef.current);
       }
       if (data?.type === "slashdocs:github-request") {
         void answerGitHub(docId, data, reply);
@@ -123,6 +130,7 @@ async function answerKV(
   data: Record<string, unknown>,
   reply: Reply,
   kvRevision: { current: number },
+  signIn?: () => void,
 ) {
   const remember = (revision: number) => {
     kvRevision.current = Math.max(kvRevision.current, revision);
@@ -147,6 +155,10 @@ async function answerKV(
       return;
     }
     if (operation !== "patch") throw new Error("unknown KV operation");
+    if (signIn) {
+      signIn();
+      throw new Error("Sign in to edit this document.");
+    }
     const set =
       data.set && typeof data.set === "object" && !Array.isArray(data.set)
         ? (data.set as Record<string, unknown>)

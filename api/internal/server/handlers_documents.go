@@ -188,15 +188,12 @@ func (h handlers) getDocument(c *gin.Context) {
 		return
 	}
 	if !atLeast(role, repo.RoleViewer) {
-		if groupMembershipUnavailable(current(c)) {
-			groupMembershipUnavailableResponse(c)
-			return
-		}
-		forbidden(c, "viewer role required")
+		denyDocRole(c, repo.RoleViewer)
 		return
 	}
 	p := current(c)
-	if p.Type != d.Owner.Type || p.ID != d.Owner.ID {
+	// The workspace lists documents that a signed-in principal opened.
+	if p.Type != auth.PrincipalAnonymous && (p.Type != d.Owner.Type || p.ID != d.Owner.ID) {
 		_ = h.deps.repository.RecordDocumentOpened(c.Request.Context(), d.ID, *p)
 	}
 	// Show parent folder in breadcrumb only if viewer has access to it. The
