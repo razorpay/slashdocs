@@ -62,6 +62,17 @@ type VersionConflictError struct {
 func (e *VersionConflictError) Error() string        { return "version_conflict" }
 func (e *VersionConflictError) Is(target error) bool { return target == ErrVersionConflict }
 
+// EmailIdentityConflictError reports a sign-in whose identity key matches no
+// user while its verified email belongs to a user with another identity key,
+// for example after SLASHDOCS_OIDC_ISSUER_URL changed.
+type EmailIdentityConflictError struct {
+	Email            string
+	ExistingIdentity string
+	IncomingIdentity string
+}
+
+func (e *EmailIdentityConflictError) Error() string { return "email_identity_conflict" }
+
 var ErrAmbiguousPath = errors.New("ambiguous_path")
 
 type AmbiguousPathError struct {
@@ -80,6 +91,13 @@ const (
 	StatusDeclined = "declined"
 )
 
+// Approval decision values. A document's derived approval status reuses these
+// plus StatusPending.
+const (
+	DecisionApproved         = "approved"
+	DecisionChangesRequested = "changes_requested"
+)
+
 type Document struct {
 	ID               string            `json:"id"`
 	Title            string            `json:"title"`
@@ -92,6 +110,61 @@ type Document struct {
 	// Snippet is set in search results when the text matches. U+0002 and
 	// U+0003 surround each match.
 	Snippet string `json:"snippet,omitempty"`
+	// ApprovalStatus and ApprovalSummary are handler-populated (like
+	// ParentFolder) and only present when the document has assigned approvers.
+	ApprovalStatus  string           `json:"approval_status,omitempty"`
+	ApprovalSummary *ApprovalSummary `json:"approval_summary,omitempty"`
+}
+
+// ApprovalRequest names a principal the document owner wants a decision from.
+// It is version-independent: the set of approvers survives new versions.
+type ApprovalRequest struct {
+	ID          string         `json:"id"`
+	DocumentID  string         `json:"document_id"`
+	Approver    auth.Principal `json:"approver"`
+	RequestedBy auth.Principal `json:"requested_by"`
+}
+
+// Approval is one approver's decision on one version. Carried rows (copied
+// forward on version pushes) keep the original decision time and point at the
+// version that received the explicit decision.
+type Approval struct {
+	ID         string         `json:"id"`
+	DocumentID string         `json:"document_id"`
+	VersionID  string         `json:"version_id"`
+	Approver   auth.Principal `json:"approver"`
+	Decision   string         `json:"decision"`
+	// Note is the reviewer's explanation. Required for changes_requested,
+	// optional for an approval.
+	Note                 string `json:"note,omitempty"`
+	DecidedAt            string `json:"decided_at,omitempty"`
+	CarriedFromVersionID string `json:"carried_from_version_id,omitempty"`
+}
+
+// ApprovalSummary aggregates decisions from currently assigned approvers on
+// one version. Status is derived, not stored: approved when everyone
+// approved, changes_requested when anyone did, pending otherwise.
+type ApprovalSummary struct {
+	Total            int    `json:"total"`
+	Approved         int    `json:"approved"`
+	ChangesRequested int    `json:"changes_requested"`
+	Pending          int    `json:"pending"`
+	Status           string `json:"-"`
+}
+
+// DeriveApprovalStatus computes the aggregate status for a version given its
+// decision counts. Returns "" when no approvers are assigned.
+func DeriveApprovalStatus(total, approved, changesRequested int) string {
+	switch {
+	case total == 0:
+		return ""
+	case approved == total:
+		return DecisionApproved
+	case changesRequested > 0:
+		return DecisionChangesRequested
+	default:
+		return StatusPending
+	}
 }
 
 type FolderBreadcrumb struct {
@@ -121,6 +194,12 @@ type FolderEntry struct {
 	Folder     *Folder   `json:"folder,omitempty"`
 	Document   *Document `json:"document,omitempty"`
 	LastActive string    `json:"last_active,omitempty"`
+}
+
+// Page selects at most Limit items after the first Offset items of a list.
+type Page struct {
+	Limit  int32
+	Offset int32
 }
 
 // DocumentSearch filters documents. All values are lowercase, and empty
@@ -154,6 +233,13 @@ type EffectiveAccessItem struct {
 	Principal     auth.Principal `json:"principal"`
 	EffectiveRole Role           `json:"effective_role"`
 	Sources       []AccessSource `json:"sources"`
+}
+
+// AccessRequest is a request for access to a document. A grant on the
+// document to the requester removes it.
+type AccessRequest struct {
+	Requester   auth.Principal `json:"requester"`
+	RequestedAt string         `json:"requested_at"`
 }
 
 type ServiceAccount struct {
@@ -208,7 +294,19 @@ type Version struct {
 	CreatedBy     auth.Principal `json:"created_by"`
 	ChangeSummary string         `json:"change_summary"`
 	SHA256        string         `json:"sha256"`
-	CreatedAt     string         `json:"created_at"`
+	// CarriedApprovals counts approval rows copied forward when this version
+	// was created; used for metrics only.
+	CarriedApprovals int    `json:"-"`
+	CreatedAt        string `json:"created_at"`
+}
+
+// VersionPreview is what a link preview shows of a version besides its
+// document's title and owner.
+type VersionPreview struct {
+	// Text is the start of what a reader sees in the version. It is empty
+	// until the version is indexed.
+	Text      string
+	CreatedAt time.Time
 }
 
 type GitHubConnection struct {
@@ -263,6 +361,7 @@ type Comment struct {
 	Replies         []Comment         `json:"replies,omitempty"`
 	CreatedAt       string            `json:"created_at,omitempty"`
 	ResolvedAt      string            `json:"resolved_at,omitempty"`
+	Edited          bool              `json:"edited,omitempty"`
 }
 
 // CommentReaction is one principal's acknowledgement of a comment with one
@@ -347,9 +446,15 @@ type Repository interface {
 	NotificationPreferences(ctx context.Context, principal auth.Principal, documentID string) (NotificationPreferences, error)
 	SetNotificationPreferences(ctx context.Context, principal auth.Principal, documentID string, enabled bool) (NotificationPreferences, error)
 	RequestDocumentAccess(ctx context.Context, principal auth.Principal, documentID string) error
+	ListAccessRequests(ctx context.Context, documentID string) ([]AccessRequest, error)
 	ResolveBearerToken(ctx context.Context, tokenHash string) (auth.Principal, error)
 	ResolveUser(ctx context.Context, id string) (auth.Principal, error)
+	// UpsertGoogleUser returns *EmailIdentityConflictError when the email
+	// belongs to a user with another identity key.
 	UpsertGoogleUser(ctx context.Context, id, email, name, googleSub, pictureURL string) (auth.Principal, error)
+	// RelinkUserIdentity moves the user with identity key from to key to. It
+	// returns ErrNotFound when no user has key from, or a user already has key to.
+	RelinkUserIdentity(ctx context.Context, from, to string) error
 	CreateCLICredential(ctx context.Context, userID, name, tokenHash string) (string, error)
 	ListCLICredentials(ctx context.Context, userID string) ([]CLICredential, error)
 	RevokeCLICredential(ctx context.Context, userID, credentialID string) error
@@ -363,9 +468,13 @@ type Repository interface {
 	// folder itself last) with the principal's effective role at each level,
 	// resolved in one query. Returns ErrNotFound when the folder is missing.
 	FolderAccessChain(ctx context.Context, principal auth.Principal, folderID string) ([]FolderAccess, error)
-	CreateDocument(ctx context.Context, owner auth.Principal, title string, html []byte) (Document, Version, error)
-	ListDocuments(ctx context.Context, principal auth.Principal) ([]Document, error)
-	SearchDocuments(ctx context.Context, principal auth.Principal, search DocumentSearch, includeOrgWide bool, limit int32) ([]Document, error)
+	// CreateDocument puts the document in the folder, or at the root when
+	// folderID is empty. It returns ErrNotFound when the folder does not exist.
+	CreateDocument(ctx context.Context, owner auth.Principal, title, folderID string, html []byte) (Document, Version, error)
+	// ListDocuments and SearchDocuments return one page of documents, and
+	// whether more documents follow it.
+	ListDocuments(ctx context.Context, principal auth.Principal, page Page, includeLabels bool) ([]Document, bool, error)
+	SearchDocuments(ctx context.Context, principal auth.Principal, search DocumentSearch, includeOrgWide bool, page Page) ([]Document, bool, error)
 	// RecordDocumentOpened notes that a principal opened a document, so a
 	// broadly-shared ("anyone") document joins their workspace listing after
 	// first open. Idempotent.
@@ -408,10 +517,19 @@ type Repository interface {
 	ListGrants(ctx context.Context, documentID string) ([]Grant, error)
 	UpdateGrant(ctx context.Context, documentID, grantID string, role Role, updatedBy auth.Principal) (Grant, error)
 	DeleteGrant(ctx context.Context, documentID, grantID string, deletedBy auth.Principal) error
-	CreateVersion(ctx context.Context, documentID, baseVersionID, changeSummary string, html []byte, createdBy auth.Principal) (Version, error)
+	// CreateVersion writes a new immutable version. A change of content resets
+	// every approval: the approvers decide again on the new version. Only when
+	// keepApprovals is set, or the content is byte-identical to the base
+	// version, are active approved decisions on the base version copied forward
+	// to the new version (with provenance) in the same transaction. A decision
+	// is never carried onto a version its own approver created.
+	CreateVersion(ctx context.Context, documentID, baseVersionID, changeSummary string, html []byte, createdBy auth.Principal, keepApprovals bool) (Version, error)
 	ListVersions(ctx context.Context, documentID string) ([]Version, error)
 	GetVersion(ctx context.Context, id string) (Version, error)
 	GetVersionHTML(ctx context.Context, id string) ([]byte, error)
+	// VersionPreview returns the start of a version's text, for link previews.
+	// Returns ErrNotFound when the version is missing.
+	VersionPreview(ctx context.Context, id string) (VersionPreview, error)
 	CreateComment(ctx context.Context, documentID, versionID, body string, anchor Anchor, author auth.Principal, mentions []CommentMention) (Comment, error)
 	CreateCommentReply(ctx context.Context, documentID, parentCommentID, body string, author auth.Principal, mentions []CommentMention) (Comment, error)
 	GetComment(ctx context.Context, id string) (Comment, error)
@@ -438,7 +556,10 @@ type Repository interface {
 	GetFolder(ctx context.Context, id string) (Folder, error)
 	UpdateFolder(ctx context.Context, id, title string, parentFolderID *string) (Folder, error)
 	DeleteFolder(ctx context.Context, id string, principal auth.Principal) error
-	FolderHasGrants(ctx context.Context, folderID string) (bool, error)
+	// FolderMayBroadenAccess reports whether content of owner placed in the
+	// folder may become visible to others.
+	FolderMayBroadenAccess(ctx context.Context, folderID string, owner auth.Principal) (bool, error)
+	// MoveDocumentToFolder reports whether the move may broaden access.
 	MoveDocumentToFolder(ctx context.Context, principal auth.Principal, folderID, documentID string) (bool, error)
 	MoveDocumentToRoot(ctx context.Context, folderID, documentID string) error
 	ListFolderDocuments(ctx context.Context, principal auth.Principal, folderID string) ([]Document, error)
@@ -448,4 +569,23 @@ type Repository interface {
 	DeletePin(ctx context.Context, principal auth.Principal, resourceType, resourceID string) error
 	ListHiddenFeaturedItems(ctx context.Context, principal auth.Principal) ([]string, error)
 	HideFeaturedItem(ctx context.Context, principal auth.Principal, resourceID string) error
+	// CreateApprovalRequest assigns an approver; ErrConflict when already
+	// assigned. DeleteApprovalRequest removes the assignment and revokes all of
+	// that approver's decisions on the document.
+	CreateApprovalRequest(ctx context.Context, documentID string, approver, requestedBy auth.Principal) (ApprovalRequest, error)
+	ListApprovalRequests(ctx context.Context, documentID string) ([]ApprovalRequest, error)
+	DeleteApprovalRequest(ctx context.Context, documentID, requestID string) error
+	// CreateOrUpdateApproval upserts the approver's decision on a version. The
+	// bool reports whether a new decision row was created (false = replaced).
+	// ErrNotFound when the version is not part of the document; ErrForbidden
+	// when the principal is not an assigned approver.
+	CreateOrUpdateApproval(ctx context.Context, documentID, versionID, decision, note string, approver auth.Principal) (Approval, bool, error)
+	// DeleteApproval revokes the approver's own decision; ErrForbidden when the
+	// decision belongs to someone else.
+	DeleteApproval(ctx context.Context, documentID, approvalID string, approver auth.Principal) error
+	ListApprovals(ctx context.Context, documentID, versionID string) ([]Approval, error)
+	// DocumentApprovalSummaries batch-computes each document's approval summary
+	// for its current version. Documents without assigned approvers are absent
+	// from the result map.
+	DocumentApprovalSummaries(ctx context.Context, documentIDs []string) (map[string]ApprovalSummary, error)
 }

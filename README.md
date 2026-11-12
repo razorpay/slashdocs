@@ -27,7 +27,7 @@ Instead of pasting giant reports into chat, give the work a shared home where yo
 - One self-contained HTML file per document
 - Browser review UI with sandboxed rendering
 - Anchored comments and resolve/reopen workflow
-- [Slack notifications, personal mute controls, and comment/heading links](docs/comment-notifications.md)
+- [Slack or Google Chat notifications, personal mute controls, and comment/heading links](docs/comment-notifications.md)
 - Immutable versions with optimistic concurrency
 - OpenID Connect for human users (Google, Okta, Entra ID, Keycloak, Dex, ...)
 - Native service accounts for headless/agent workflows
@@ -134,6 +134,10 @@ The application server exposes Streamable HTTP directly at:
 ```text
 https://your-slashdocs-host.example/mcp
 ```
+
+The same URL serves MCP revisions 2024-11-05 through 2026-07-28: clients on
+2026-07-28 connect statelessly with `server/discover`, and older clients with
+the `initialize` handshake.
 
 Add that URL to a remote MCP client. Standards-based clients discover the
 server's OAuth metadata, open the normal slashdocs sign-in and consent flow, and

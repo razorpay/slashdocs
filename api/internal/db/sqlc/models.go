@@ -8,6 +8,30 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Approval struct {
+	ID                   string
+	DocumentID           string
+	VersionID            string
+	ApproverType         string
+	ApproverID           string
+	Decision             string
+	DecidedAt            pgtype.Timestamptz
+	CarriedFromVersionID pgtype.Text
+	RevokedAt            pgtype.Timestamptz
+	Note                 string
+}
+
+type ApprovalRequest struct {
+	ID              string
+	DocumentID      string
+	ApproverType    string
+	ApproverID      string
+	RequestedByType string
+	RequestedByID   string
+	CreatedAt       pgtype.Timestamptz
+	RevokedAt       pgtype.Timestamptz
+}
+
 type CliCredential struct {
 	ID         string
 	UserID     string
@@ -34,6 +58,7 @@ type Comment struct {
 	ResolvedAt         pgtype.Timestamptz
 	ParentCommentID    pgtype.Text
 	RootCommentID      string
+	Edited             bool
 }
 
 // Structured principals mentioned in comment bodies. Mention metadata grants no access; future notification delivery must re-check effective document access and apply rate limits.
@@ -50,12 +75,13 @@ type CommentMention struct {
 }
 
 type CommentNotificationOutbox struct {
-	CommentID   string
-	RecipientID string
-	Reason      string
-	Attempts    int32
-	AvailableAt pgtype.Timestamptz
-	CreatedAt   pgtype.Timestamptz
+	CommentID         string
+	RecipientID       string
+	Reason            string
+	Attempts          int32
+	AvailableAt       pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	FinishedProviders []string
 }
 
 type CommentPlacement struct {
@@ -92,15 +118,16 @@ type Document struct {
 }
 
 type DocumentAccessNotificationOutbox struct {
-	DocumentID   string
-	RecipientID  string
-	Source       string
-	Reason       string
-	PreviousRole string
-	Role         string
-	Attempts     int32
-	AvailableAt  pgtype.Timestamptz
-	CreatedAt    pgtype.Timestamptz
+	DocumentID        string
+	RecipientID       string
+	Source            string
+	Reason            string
+	PreviousRole      string
+	Role              string
+	Attempts          int32
+	AvailableAt       pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	FinishedProviders []string
 }
 
 type DocumentAccessRequest struct {
@@ -111,14 +138,15 @@ type DocumentAccessRequest struct {
 }
 
 type DocumentAccessRequestNotificationOutbox struct {
-	DocumentID     string
-	RequesterType  string
-	RequesterID    string
-	RequesterLabel string
-	RecipientID    string
-	Attempts       int32
-	AvailableAt    pgtype.Timestamptz
-	CreatedAt      pgtype.Timestamptz
+	DocumentID        string
+	RequesterType     string
+	RequesterID       string
+	RequesterLabel    string
+	RecipientID       string
+	Attempts          int32
+	AvailableAt       pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	FinishedProviders []string
 }
 
 type DocumentKv struct {

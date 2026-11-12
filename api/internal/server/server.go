@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -64,29 +65,33 @@ type readinessCheck struct {
 }
 
 type dependencies struct {
-	commentNotificationSender notifications.Sender
-	authenticator             auth.Authenticator
-	repository                repo.Repository
-	stateStore                auth.LoginStateStore
-	oidc                      auth.OIDC
-	oidcProviderName          string
-	sessionSecret             string
-	appOrigin                 string
-	renderOrigin              string
-	allowedOAuthDomains       []string
-	deployment                string
-	orgName                   string
-	defaultDocPermission      repo.Role
-	featured                  []FeaturedSection
-	readinessChecks           []readinessCheck
-	documentKVEvents          kvevents.Subscriber
-	githubOAuth               *oauth2.Config
-	githubHTTPClient          *http.Client
-	githubAccessChecks        *singleflight.Group
-	googleGroupsEnabled       bool
-	googleGroupDirectory      googlegroups.GoogleGroupDirectory
-	googleGroupResolver       *googlegroups.Resolver
-	labelsEnabled             bool
+	notificationSenders  map[string]notifications.Sender
+	authenticator        auth.Authenticator
+	repository           repo.Repository
+	stateStore           auth.LoginStateStore
+	oidc                 auth.OIDC
+	oidcProviderName     string
+	sessionSecret        string
+	appOrigin            string
+	renderOrigin         string
+	allowedOAuthDomains  []string
+	deployment           string
+	orgName              string
+	defaultDocPermission repo.Role
+	featured             []FeaturedSection
+	readinessChecks      []readinessCheck
+	documentKVEvents     kvevents.Subscriber
+	githubOAuth          *oauth2.Config
+	githubHTTPClient     *http.Client
+	githubAccessChecks   *singleflight.Group
+	googleGroupsEnabled  bool
+	googleGroupDirectory googlegroups.GoogleGroupDirectory
+	googleGroupResolver  *googlegroups.Resolver
+	labelsEnabled        bool
+	slackSigningSecret   string
+	slackUnfurler        notifications.Unfurler
+	previousOrigins      []string
+	frontend             fs.FS
 }
 
 // Option configures the Server.
@@ -96,8 +101,16 @@ func WithAuthenticator(a auth.Authenticator) Option {
 	return func(d *dependencies) { d.authenticator = a }
 }
 
-func WithCommentNotificationSender(sender notifications.Sender) Option {
-	return func(d *dependencies) { d.commentNotificationSender = sender }
+// WithNotificationSenders starts the notification worker when at least one
+// provider is configured. The map key names the provider.
+func WithNotificationSenders(senders map[string]notifications.Sender) Option {
+	return func(d *dependencies) { d.notificationSenders = senders }
+}
+
+// WithSlackLinkPreviews serves Slack link previews at POST /v1/slack/events.
+// signingSecret verifies that Slack sent each event.
+func WithSlackLinkPreviews(signingSecret string, unfurler notifications.Unfurler) Option {
+	return func(d *dependencies) { d.slackSigningSecret, d.slackUnfurler = signingSecret, unfurler }
 }
 
 func (s *Server) RunCommentNotifications(ctx context.Context) {
@@ -107,6 +120,9 @@ func (s *Server) RunCommentNotifications(ctx context.Context) {
 }
 
 func WithRepository(r repo.Repository) Option { return func(d *dependencies) { d.repository = r } }
+
+// WithFrontend serves the web app from fsys instead of the embedded build.
+func WithFrontend(fsys fs.FS) Option { return func(d *dependencies) { d.frontend = fsys } }
 
 func WithGoogleGroupDirectory(directory googlegroups.GoogleGroupDirectory) Option {
 	return func(d *dependencies) { d.googleGroupDirectory = directory }
@@ -161,6 +177,8 @@ func New(cfg Config, opts ...Option) *Server {
 		githubAccessChecks:   new(singleflight.Group),
 		googleGroupsEnabled:  cfg.GoogleGroupsEnabled,
 		labelsEnabled:        !cfg.DisableLabels,
+		previousOrigins:      cfg.PreviousOrigins,
+		frontend:             embeddedFrontend(),
 	}
 	if cfg.GitHubClientID != "" && cfg.GitHubClientSecret != "" && cfg.AppOrigin != "" {
 		deps.githubOAuth = &oauth2.Config{
@@ -202,12 +220,12 @@ func New(cfg Config, opts ...Option) *Server {
 		r.Use(movedOriginMiddleware(cfg.AppOrigin, cfg.PreviousOrigins))
 	}
 	s := &Server{engine: r}
-	if deps.commentNotificationSender != nil {
+	if len(deps.notificationSenders) > 0 {
 		store, ok := deps.repository.(notifications.Store)
 		if !ok {
 			panic("notification sender requires an outbox store")
 		}
-		s.notificationWorker = &notifications.Worker{Store: store, Sender: deps.commentNotificationSender, AppOrigin: deps.appOrigin}
+		s.notificationWorker = &notifications.Worker{Store: store, Senders: deps.notificationSenders, AppOrigin: deps.appOrigin}
 		if deps.googleGroupResolver != nil {
 			s.notificationWorker.ResolvePrincipal = deps.googleGroupResolver.Resolve
 		}
@@ -249,7 +267,7 @@ func (s *Server) routes(deps dependencies) {
 	registerAPIDocsRoutes(s.engine, deps)
 	s.engine.GET("/v/:id/:version_id", h.renderVersion)
 	s.engine.GET("/print/:id/:version_id", h.renderPrintVersion)
-	registerFrontendRoutes(s.engine, deps.appOrigin)
+	registerFrontendRoutes(s.engine, h)
 
 	s.engine.GET("/livez", h.livez)
 	s.engine.GET("/readyz", h.readyz)
@@ -265,6 +283,11 @@ func (s *Server) routes(deps dependencies) {
 	v1.GET("/auth/oidc/callback", h.oauthCallback)
 	v1.POST("/auth/cli/exchange", h.cliExchange)
 	v1.POST("/auth/logout", h.logout)
+	// Slack link previews. Public, because Slack cannot sign in; every request
+	// must carry a valid Slack signature instead (see verifySlackSignature).
+	if deps.slackUnfurler != nil {
+		v1.POST("/slack/events", verifySlackSignature(deps.slackSigningSecret, time.Now), h.slackEvents)
+	}
 
 	// These routes read a document. A public deployment also serves them to
 	// anonymous readers of a document that is shared with anyone.
@@ -304,12 +327,19 @@ func (s *Server) routes(deps dependencies) {
 	authed.POST("/documents", h.createDocument)
 	authed.GET("/documents", h.listDocuments)
 	authed.POST("/documents/:id/access-requests", activityLimit, h.requestDocumentAccess)
+	authed.GET("/documents/:id/access-requests", h.listDocumentAccessRequests)
 	authed.GET("/documents/:id/access", h.documentAccess)
 	authed.PATCH("/documents/:id", h.patchDocument)
 	authed.DELETE("/documents/:id", h.deleteDocument)
 	authed.POST("/documents/:id/grants", h.createGrant)
 	authed.PATCH("/documents/:id/grants/:grant_id", h.patchGrant)
 	authed.DELETE("/documents/:id/grants/:grant_id", h.deleteGrant)
+	authed.POST("/documents/:id/approvers", h.createApprover)
+	authed.GET("/documents/:id/approvers", h.listApprovers)
+	authed.DELETE("/documents/:id/approvers/:approver_id", h.deleteApprover)
+	authed.POST("/documents/:id/approvals", h.createApproval)
+	authed.GET("/documents/:id/approvals", h.listApprovals)
+	authed.DELETE("/documents/:id/approvals/:approval_id", h.deleteApproval)
 	authed.POST("/documents/:id/versions", h.createVersion)
 	authed.POST("/documents/:id/edits", h.editDocument)
 	authed.GET("/documents/:id/labels", h.listDocumentLabels)
@@ -364,11 +394,20 @@ func (h handlers) needDocRole(c *gin.Context, docID string, need repo.Role) bool
 		internalErr(c, err)
 		return false
 	}
-	if !atLeast(role, need) {
-		denyDocRole(c, need)
-		return false
+	if atLeast(role, need) {
+		return true
 	}
-	return true
+	// RoleNone also means that the document does not exist. Then the answer
+	// is 404, which GET /v1/documents/{id} already gives to every caller.
+	switch _, err := h.deps.repository.GetDocument(c.Request.Context(), docID); {
+	case errors.Is(err, repo.ErrNotFound):
+		notFound(c)
+	case err != nil:
+		internalErr(c, err)
+	default:
+		denyDocRole(c, need)
+	}
+	return false
 }
 
 // denyDocRole answers a caller whose role on a document is less than need.

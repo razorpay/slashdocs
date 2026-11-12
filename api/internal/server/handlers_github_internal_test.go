@@ -104,7 +104,7 @@ func TestGitHubRawContentNeedsEveryVersionCreatorToReadTheRepository(t *testing.
 			t.Fatal(err)
 		}
 	}
-	doc, ver, err := store.CreateDocument(ctx, users["owner"], "doc", []byte("<html></html>"))
+	doc, ver, err := store.CreateDocument(ctx, users["owner"], "doc", "", []byte("<html></html>"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestGitHubRawContentNeedsEveryVersionCreatorToReadTheRepository(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	saDoc, _, err := store.CreateDocument(ctx, auth.Principal{Type: auth.PrincipalServiceAccount, ID: sa.ID}, "agent doc", []byte("<html></html>"))
+	saDoc, _, err := store.CreateDocument(ctx, auth.Principal{Type: auth.PrincipalServiceAccount, ID: sa.ID}, "agent doc", "", []byte("<html></html>"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestGitHubRawContentNeedsEveryVersionCreatorToReadTheRepository(t *testing.
 
 	// An editor who cannot read the repository adds a version. The old
 	// author still passes from the cache, and the new author is stopped.
-	if _, err := store.CreateVersion(ctx, doc.ID, ver.ID, "edit", []byte("<html>2</html>"), users["editor"]); err != nil {
+	if _, err := store.CreateVersion(ctx, doc.ID, ver.ID, "edit", []byte("<html>2</html>"), users["editor"], false); err != nil {
 		t.Fatal(err)
 	}
 	rr := read("viewer", "acme", "app")

@@ -48,8 +48,11 @@ format:
 3. Save it locally (for example `report.html`).
 4. Use `slashdocs docs --help` and `slashdocs docs create --help` to confirm current
    syntax.
-5. Publish with the CLI.
+5. Publish with the CLI. To put the document in a folder, add
+   `--folder-id fld_123`, so that it is never at the root.
 6. Return the printed slashdocs document URL.
+7. If the `ai-sessions` skill is installed, use it and follow its guidance to
+   link this session to the document.
 
 ### Updating an existing document
 
@@ -77,9 +80,9 @@ slashdocs docs list 'incident from:alice@example.com label:api,review in:"Produc
 slashdocs docs list 'rollout -draft from:me after:last week' --json
 ```
 
-Every word must appear in the title or the text of the latest version, and
-the most relevant documents come first. A word also matches longer words that
-start with it. `"quoted text"` matches the words in order, and `-word`
+Every word must appear in the title or the text of the latest version.
+Documents with the words in the title come first, then the latest. A word
+also matches longer words that start with it. `"quoted text"` matches the words in order, and `-word`
 excludes documents that contain the word. `from:` (an email, the name
 before the @, or `me`), `in:` (a folder or any folder above the document),
 `label:`, `before:`, `after:`, `on:`, and `during:` narrow the results. Repeat
@@ -87,7 +90,16 @@ before the @, or `me`), `in:` (a folder or any folder above the document),
 `5 september`, `monday`, `today`, `3 days ago`), a week, a month, or a year
 (`last week`, `september`, `this year`, `2026`), or `last 7 days`, in UTC.
 
-Manage labels directly from the CLI:
+Search reads the first 256 KiB of the text of a document (about 40,000
+words), and a `"quoted text"` phrase matches in the first 16,383 words only.
+To make all of a longer document searchable, divide it into documents.
+
+A list shows 25 documents, and `--limit` shows up to 100. When the JSON has
+`"has_more": true`, more documents follow: `--offset` skips the documents that
+you have, for example `--offset 25` for the second page of 25.
+
+Manage labels directly from the CLI, or with the MCP `set_document_labels`
+tool:
 
 ```bash
 slashdocs docs labels list doc_123

@@ -73,3 +73,9 @@ WHERE v.id=$1;
 
 -- name: GetVersionBlobKey :one
 SELECT html_blob_key FROM versions WHERE id=$1;
+
+-- name: GetVersionPreview :one
+-- The start of a version's text and when the version was created, for link
+-- previews. The text is empty until the version is indexed.
+SELECT left(COALESCE(search_text, ''), 2000)::text AS text, created_at
+FROM versions WHERE id=$1;

@@ -103,7 +103,7 @@ func registerMCPFolderCRUDTools(server *mcpserver.MCPServer, api mcpAPIAdapter) 
 	})
 
 	server.AddTool(mcp.NewTool("delete_folder", mutationOptions(true, true,
-		mcp.WithDescription("Permanently delete a folder and its subfolders."), mcpFolderID(),
+		mcp.WithDescription("Permanently delete a folder and its subfolders. Documents inside them move to the workspace root, and subfolders that other users own move to the root of their owner."), mcpFolderID(),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		folder, invalid := mcpRequired(request, "folder_id")
 		if invalid != nil {

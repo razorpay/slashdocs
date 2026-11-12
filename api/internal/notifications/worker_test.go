@@ -48,7 +48,7 @@ func TestOutboxDeliveryPreferencesAndAccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc, v, err := store.CreateDocument(ctx, owner, "Private", []byte("<p>Review</p>"))
+	doc, v, err := store.CreateDocument(ctx, owner, "Private", "", []byte("<p>Review</p>"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestOutboxDeliveryPreferencesAndAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	sender := &recordingSender{}
-	w := Worker{Store: store, Sender: sender, AppOrigin: "https://slashdocs.example.com"}
+	w := Worker{Store: store, Senders: map[string]Sender{"test": sender}, AppOrigin: "https://slashdocs.example.com"}
 	create := func(body string, mentions []repo.CommentMention) repo.Comment {
 		t.Helper()
 		c, err := store.CreateComment(ctx, doc.ID, v.ID, body, repo.Anchor{Quote: "Review"}, author, mentions)
@@ -274,6 +274,102 @@ func TestOutboxDeliveryPreferencesAndAccess(t *testing.T) {
 	}
 }
 
+// Every provider delivers each message once: a retry only repeats providers
+// that failed transiently, and a permanent failure does not hold back others.
+func TestEachProviderDeliversOnce(t *testing.T) {
+	ctx := context.Background()
+	store, err := pgrepo.Connect(ctx, testdb.New(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.SetNotificationsEnabled(true)
+	owner, err := store.UpsertGoogleUser(ctx, "owner", "owner@example.com", "Owner", "owner-sub", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, v, err := store.CreateDocument(ctx, owner, "Plan", "", []byte("<p>Review</p>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	slack, chat := &recordingSender{}, &recordingSender{}
+	w := Worker{Store: store, Senders: map[string]Sender{"slack": slack, "google_chat": chat}, AppOrigin: "https://slashdocs.example.com"}
+	deliver := func(slackErr, chatErr error) {
+		t.Helper()
+		slack.err, chat.err = slackErr, chatErr
+		if _, err := store.Pool().Exec(ctx, "UPDATE users SET next_notification_at=now(); UPDATE comment_notification_outbox SET available_at=now()"); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.DeliverNext(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	queued := func() bool {
+		t.Helper()
+		var n int
+		if err := store.Pool().QueryRow(ctx, "SELECT count(*) FROM comment_notification_outbox").Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n > 0
+	}
+	author, err := store.UpsertGoogleUser(ctx, "author", "author@example.com", "Author", "author-sub", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateGrant(ctx, "document", doc.ID, author, repo.RoleCommenter, owner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateComment(ctx, doc.ID, v.ID, "First", repo.Anchor{Quote: "Review"}, author, nil); err != nil {
+		t.Fatal(err)
+	}
+	deliver(&DeliveryError{Code: "rate_limited"}, nil)
+	if !queued() || len(slack.emails) != 1 || len(chat.emails) != 1 {
+		t.Fatal("a transient failure must keep the message for the failed provider")
+	}
+	deliver(nil, nil)
+	if queued() || len(slack.emails) != 2 || len(chat.emails) != 1 {
+		t.Fatal("a retry must not repeat a delivered provider")
+	}
+
+	if _, err := store.CreateComment(ctx, doc.ID, v.ID, "Second", repo.Anchor{Quote: "Review"}, author, nil); err != nil {
+		t.Fatal(err)
+	}
+	deliver(&DeliveryError{Code: "users_not_found", Permanent: true}, &DeliveryError{Code: "http_503"})
+	if !queued() || len(slack.emails) != 3 || len(chat.emails) != 2 {
+		t.Fatal("a permanent failure must not cancel a transient retry")
+	}
+	deliver(nil, nil)
+	if queued() || len(slack.emails) != 3 || len(chat.emails) != 3 {
+		t.Fatal("a retry must skip a provider that failed permanently")
+	}
+
+	// A re-enqueue sends the new content to every provider, and an
+	// acknowledgement from an earlier claim cannot discard it.
+	c, err := store.CreateComment(ctx, doc.ID, v.ID, "@Owner", repo.Anchor{Quote: "Review"}, author, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deliver(&DeliveryError{Code: "rate_limited"}, nil)
+	if _, err := store.Pool().Exec(ctx, "UPDATE comment_notification_outbox SET available_at=now()"); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := store.ClaimCommentNotification(ctx)
+	if err != nil || stale == nil {
+		t.Fatalf("claim=%v err=%v", stale, err)
+	}
+	mentions := []repo.CommentMention{{Principal: owner, OffsetUTF16: 0, LengthUTF16: int64(len("@Owner"))}}
+	if _, err := store.UpdateComment(ctx, c.ID, repo.CommentUpdate{Mentions: &mentions}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FinishCommentNotification(ctx, *stale, 0); err != nil {
+		t.Fatal(err)
+	}
+	deliver(nil, nil)
+	if queued() || slack.reasons[len(slack.reasons)-1] != "mention" || chat.reasons[len(chat.reasons)-1] != "mention" {
+		t.Fatalf("a mention upgrade must reach every provider: slack=%v chat=%v", slack.reasons, chat.reasons)
+	}
+}
+
 func TestCommentActorFallbacks(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -319,12 +415,12 @@ func TestDocumentAccessNotifications(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc, _, err := store.CreateDocument(ctx, owner, "Access review", []byte("<p>Review</p>"))
+	doc, _, err := store.CreateDocument(ctx, owner, "Access review", "", []byte("<p>Review</p>"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	sender := &recordingSender{}
-	w := Worker{Store: store, Sender: sender, AppOrigin: "https://slashdocs.example.com"}
+	w := Worker{Store: store, Senders: map[string]Sender{"test": sender}, AppOrigin: "https://slashdocs.example.com"}
 	count := func() int {
 		t.Helper()
 		var n int
@@ -446,7 +542,7 @@ func TestDocumentAccessRequestNotification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc, _, err := store.CreateDocument(ctx, owner, "Request review", []byte("<p>Private</p>"))
+	doc, _, err := store.CreateDocument(ctx, owner, "Request review", "", []byte("<p>Private</p>"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -458,7 +554,7 @@ func TestDocumentAccessRequestNotification(t *testing.T) {
 		t.Fatalf("queued=%d err=%v, want one owner notification", queued, err)
 	}
 	sender := &recordingSender{}
-	w := Worker{Store: store, Sender: sender, AppOrigin: "https://slashdocs.example.com"}
+	w := Worker{Store: store, Senders: map[string]Sender{"test": sender}, AppOrigin: "https://slashdocs.example.com"}
 	if err := w.DeliverNextDocumentAccessRequest(ctx); err != nil {
 		t.Fatal(err)
 	}

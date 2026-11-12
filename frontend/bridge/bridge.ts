@@ -83,6 +83,9 @@ interface SlashdocsPublicAPI {
 declare global {
   interface Window {
     __SLASHDOCS_APP_ORIGIN__?: string;
+    // Set by the wrapper before the document loads and kept current by the
+    // bridge, so a document that reloads itself reads the live theme.
+    __slashdocsTheme?: string;
     __slashdocsKVHandlers?: KVHandlers;
     __slashdocsKVQueue?: QueuedKVOperation[];
     __slashdocsGitHubQueue?: Array<{
@@ -1208,6 +1211,13 @@ type Theme = "dark" | "light";
   }
 
   let curTheme: Theme | null = null;
+  // The theme last announced to the current document. A document that reloads
+  // itself on a theme change (a common way to re-render a diagram) would
+  // reload forever if every load were announced. So the load right after an
+  // announcement counts as that reload and is skipped. Every other load is
+  // announced, because documents that only listen for the event need it.
+  let announcedTheme: Theme | null = null;
+  let reloadExpected = false;
   function initialTheme(): Theme | null {
     try {
       const t = new URLSearchParams(location.search).get("slashdocs_theme");
@@ -1220,11 +1230,17 @@ type Theme = "dark" | "light";
   function applyTheme(t: unknown): void {
     if (t !== "dark" && t !== "light") return;
     curTheme = t;
+    // The prelude in the document reads this before its own scripts run, and
+    // a document that reloads itself reads it again on the way back.
+    window.__slashdocsTheme = t;
     const d = doc();
     if (!d || !d.documentElement) return;
     for (const name of PUBLIC_NAMES) {
       d.documentElement.setAttribute(`data-${name}-theme`, t);
     }
+    if (d !== setupDoc || announcedTheme === t) return;
+    announcedTheme = t;
+    reloadExpected = true;
     try {
       dispatchPublicEvent(d.defaultView!, "theme", { detail: { theme: t } });
     } catch (e) {}
@@ -1701,6 +1717,10 @@ type Theme = "dark" | "light";
     });
     prepareHeadings(d);
     prepareLinks();
+    // The prelude already stamped the current theme on a reload, so only
+    // other loads get it announced.
+    announcedTheme = reloadExpected ? curTheme : null;
+    reloadExpected = false;
     applyTheme(curTheme);
     // Track the selection gesture so mutation repairs never run mid-drag
     // (they would make the browser stop rendering the native selection).

@@ -41,17 +41,21 @@ export function UploadVersionSheet({
 }) {
   const q = useQueryClient();
   const [summary, setSummary] = useState("");
+  const [keepApprovals, setKeepApprovals] = useState(false);
   const { file, setFile, reset } = useStagedFile();
   const m = useMutation({
-    mutationFn: () => api.createVersion(docId, baseVersion, summary, file!),
+    mutationFn: () =>
+      api.createVersion(docId, baseVersion, summary, file!, keepApprovals),
     onSuccess: () => {
       toast.success("Version uploaded.");
       onOpenChange(false);
       setSummary("");
+      setKeepApprovals(false);
       reset();
       q.invalidateQueries({ queryKey: queryKeys.versions(docId) });
       q.invalidateQueries({ queryKey: queryKeys.document(docId) });
       q.invalidateQueries({ queryKey: queryKeys.comments(docId) });
+      q.invalidateQueries({ queryKey: queryKeys.approvalsAll(docId) });
     },
     onError: (e) => toast.error(errorMessage(e, "Upload failed")),
   });
@@ -75,6 +79,20 @@ export function UploadVersionSheet({
               onChange={(e) => setSummary(e.target.value)}
             />
             <HtmlFileInput file={file} onFile={setFile} />
+            <div className="space-y-1">
+              <label className="flex items-center gap-2 text-xs text-[var(--color-fg-muted)]">
+                <input
+                  type="checkbox"
+                  checked={keepApprovals}
+                  onChange={(e) => setKeepApprovals(e.target.checked)}
+                />
+                Keep existing approvals
+              </label>
+              <p className="pl-6 text-[11px] text-[var(--color-fg-muted)]">
+                Approvals are cleared when the content changes, so approvers review the
+                new version. Keep them only for changes they do not need to see again.
+              </p>
+            </div>
             <Button type="submit" disabled={!file || m.isPending}>
               {m.isPending ? "Uploading…" : "Upload version"}
             </Button>

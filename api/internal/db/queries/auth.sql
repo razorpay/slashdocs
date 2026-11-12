@@ -28,6 +28,13 @@ INSERT INTO users(id,email,name,google_sub,picture_url)
 SELECT $1,$2,$3,$4,$5
 WHERE NOT EXISTS (SELECT 1 FROM updated);
 
+-- name: GetGoogleSubByEmail :one
+SELECT google_sub FROM users WHERE email=$1;
+
+-- name: RelinkUserIdentity :execrows
+UPDATE users SET google_sub = @to_sub
+WHERE users.google_sub = @from_sub AND NOT EXISTS (SELECT 1 FROM users taken WHERE taken.google_sub = @to_sub);
+
 -- name: GetUserByEmail :one
 SELECT id,email,name,picture_url FROM users WHERE email=$1;
 

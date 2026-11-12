@@ -36,6 +36,10 @@ hostnames match; local or throwaway setups can override this with
 `SLASHDOCS_ALLOW_UNSAFE_RENDER_ORIGIN=true`, accepting that uploaded documents
 can then script against the app origin.
 
+Direct visits to frontend pages on the render hostname redirect to the app
+hostname. Tokenized `/v/...` and `/print/...` document routes continue to run
+on the render hostname.
+
 ## Configure sign-in
 
 slashdocs authenticates humans through OpenID Connect. Pick one provider:
@@ -138,6 +142,21 @@ must dial `http://dex:5556`), set `SLASHDOCS_OIDC_INTERNAL_ISSUER_URL` to the
 server-side URL. Discovery, token exchange, and JWKS fetches then use the
 internal URL while ID tokens are still validated against the public
 `SLASHDOCS_OIDC_ISSUER_URL`.
+
+Each user's identity key in `users.google_sub` comes from the exact issuer
+URL and the token `sub`. If you change `SLASHDOCS_OIDC_ISSUER_URL` (a new
+host, port, scheme, or trailing slash, or a backup restored into another
+deployment), the next sign-in of each user moves their existing account to the
+new key, matched by verified email. The server logs
+`relinked user to a new oidc identity` with the old and new keys. slashdocs
+does not relink an account between Google and a generic OIDC provider. That
+sign-in fails with `409 conflict` and the log names both keys. To move such
+an account on purpose, clear its key. The next sign-in with the same verified
+email then adopts the account:
+
+```sql
+UPDATE users SET google_sub = NULL WHERE email = 'person@example.com';
+```
 
 Example: a minimal [Dex](https://dexidp.io/) setup for local testing —
 
@@ -456,6 +475,7 @@ Sealed Secrets, etc.).
 | `kvEvents.{mode,listenerDatabaseURL,existingSecret}`                       | Realtime KV events: `SLASHDOCS_KV_EVENTS_MODE` and the dedicated LISTEN connection URL (secret-backed). Rendered only when set. |
 | `commitSha`                                                                | Optional revision surfaced at `/commit.txt`.                                                                                    |
 | `ingress`                                                                  | Standard ingress block; supports multiple hosts.                                                                                |
+| `googleChat.{webhookSecret,webhookKey}`                                    | Google Chat webhook notifications: Secret holding the webhook URL.                                                              |
 | `extraEnv` / `extraEnvFrom`                                                | Append arbitrary env vars / envFrom sources.                                                                                    |
 | `resources`                                                                | CPU/memory requests and limits.                                                                                                 |
 | `livenessProbe` / `readinessProbe`                                         | HTTP probes against `/livez` and `/readyz`.                                                                                     |
@@ -537,6 +557,21 @@ both. The redirect URI to register is
 `<SLASHDOCS_APP_ORIGIN>/v1/auth/google/callback` for Google and
 `<SLASHDOCS_APP_ORIGIN>/v1/auth/oidc/callback` for everything else.
 
+### Notifications
+
+Comment and access notifications are off unless one of these is set. When both
+are set, each provider delivers every notification. See
+[Comment notifications](comment-notifications.md) for provider setup.
+
+| Variable                            | Purpose                                                                                                                     |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `SLASHDOCS_SLACK_BOT_TOKEN`         | Slack bot token; DMs each recipient.                                                                                        |
+| `SLASHDOCS_GOOGLE_CHAT_WEBHOOK_URL` | Google Chat incoming webhook (`https://chat.googleapis.com/v1/spaces/…/messages?…`); posts every notification to one space. |
+
+The webhook URL and the Slack token both grant posting rights, so keep them in
+a secret store. The server needs outbound HTTPS to `chat.googleapis.com` or
+`slack.com`.
+
 ### Optional
 
 | Variable                                    | Default     | Purpose                                                                                                                                                                                                                                                                                             |
@@ -554,7 +589,9 @@ both. The redirect URI to register is
 | `ALLOWED_OAUTH_DOMAINS`                     | unset       | Comma-separated email-domain allowlist for OAuth logins (public deployments).                                                                                                                                                                                                                       |
 | `SLASHDOCS_DEPLOYMENT`                      | `public`    | `public` or `org`. An org deployment gates login to `SLASHDOCS_ORG_DOMAINS`.                                                                                                                                                                                                                        |
 | `SLASHDOCS_ORG_DOMAINS`                     | unset       | Comma-separated org domains. Required when `SLASHDOCS_DEPLOYMENT=org`; also the login gate.                                                                                                                                                                                                         |
-| `SLASHDOCS_ORG_NAME`                        | unset       | Org display name used in share UI copy (e.g. "Anyone in Razorpay").                                                                                                                                                                                                                                     |
+| `SLASHDOCS_ORG_NAME`                        | unset       | Org display name used in share UI copy (e.g. "Anyone in Razorpay").                                                                                                                                                                                                                                 |
+| `SLASHDOCS_SLACK_LINK_PREVIEWS`             | `false`     | Set `true` to unfurl document links in Slack. Requires `SLASHDOCS_SLACK_BOT_TOKEN` and `SLASHDOCS_SLACK_SIGNING_SECRET`; startup fails without them. See [Slack link previews](comment-notifications.md#slack-link-previews). |
+| `SLASHDOCS_SLACK_SIGNING_SECRET`            | unset       | Slack app signing secret, used to verify `/v1/slack/events` requests. Keep it in your secret store. |
 | `BLOB_REGION`                               | `us-east-1` | AWS region for the S3 client.                                                                                                                                                                                                                                                                       |
 | `BLOB_ENDPOINT`                             | unset       | Custom S3 endpoint (MinIO, R2, etc.).                                                                                                                                                                                                                                                               |
 | `BLOB_ACCESS_KEY_ID`                        | unset       | Override AWS-SDK default credential chain.                                                                                                                                                                                                                                                          |
@@ -617,6 +654,30 @@ boot. This drives copy-paste-correct commands in the UI:
 No extra API call is made; the value comes from the same env you already
 configured for the server.
 
+## Document titles and link previews
+
+For a document page (`/app/d/:id`), the server also puts the document's title,
+a short description and Open Graph tags into `index.html`, so that browser
+tabs, bookmarks and link previews show the document before the app loads. The
+description is the start of the document's text, or the owner and the date of
+the last version when the text is not indexed yet. Sensitive values such as
+one-time codes are redacted from the description.
+
+Only a caller who may read the document gets them. Everyone else, including a
+chat app that fetches the link to preview it, gets the generic page. On a
+`public` deployment, a document shared with everyone therefore previews in any
+chat app; on an `org` deployment, link previews stay generic, because the app
+that fetches the link is not signed in. There, the Slack app can still preview
+documents that everyone in the organization can open (see [Slack link
+previews](comment-notifications.md#slack-link-previews)). `og:url` needs
+`SLASHDOCS_APP_ORIGIN`.
+
+Document pages are sent with `Cache-Control: private, no-cache`, because their
+content depends on who asks. If the lookups take longer than a second, the
+server sends the generic page. With Google Groups enabled, a reader whose access
+comes from a group gets the document's head only while their memberships are
+cached; the page never asks the directory.
+
 ## Storage notes
 
 `slashdocs` stores uploaded HTML versions in blob storage and metadata,
@@ -652,6 +713,8 @@ down-migration manually if needed; the binary does not auto-rollback.
 - [ ] OAuth/OIDC redirect URIs registered at the IdP match `SLASHDOCS_APP_ORIGIN`.
 - [ ] `ALLOWED_OAUTH_DOMAINS` set if you don't want public sign-ups.
 - [ ] Postgres backups configured.
+- [ ] If notifications are on: each provider's secret in a secret manager, and
+      outbound HTTPS to each configured provider allowed.
 - [ ] Blob storage versioning / lifecycle rules configured.
 - [ ] `SLASHDOCS_COMMIT_SHA` baked into your image so `/commit.txt`
       reports the running build.

@@ -13,7 +13,7 @@ import (
 
 func documentHeadingsCmd(g *globals, out io.Writer) *cobra.Command {
 	var version string
-	cmd := &cobra.Command{Use: "headings <doc_id>", Short: "List headings, their IDs, and shareable URLs", Args: exactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "headings <doc_id>", Short: "List headings, their IDs, and shareable URLs", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
 		path := apiPath("/v1/documents/%s/headings", args[0])
 		if version != "" {
 			path += "?" + url.Values{"version": {version}}.Encode()
@@ -26,7 +26,7 @@ func documentHeadingsCmd(g *globals, out io.Writer) *cobra.Command {
 
 func documentLinkCmd(g *globals, out io.Writer) *cobra.Command { //nolint:gocyclo // flag validation for the link kinds is intentionally exhaustive and flat.
 	var heading, comment, version, text, prefix, suffix string
-	cmd := &cobra.Command{Use: "link <doc_id>", Short: "Get a URL to a document, heading, text, or comment", Args: exactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "link <doc_id>", Short: "Get a URL to a document, heading, text, or comment", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
 		if text != "" && (heading != "" || comment != "") {
 			return usageError{errors.New("--text cannot be combined with --heading or --comment")}
 		}

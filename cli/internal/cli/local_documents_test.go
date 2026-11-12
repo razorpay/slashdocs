@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 // TestLocalDocumentsCLI runs `slashdocs docs` commands on a local server at
@@ -24,7 +25,7 @@ func TestLocalDocumentsCLI(t *testing.T) {
 	_, p, _ := net.SplitHostPort(srv.Listener.Addr().String())
 	port, _ := strconv.Atoi(p)
 	info := localInfo{URL: localURL(port), Port: port, Dir: dir}
-	srv.Config.Handler = localHandler(root, info, localPrincipal{Type: "user", ID: "ada"})
+	srv.Config.Handler = localHandler(root, fstest.MapFS{}, info, localPrincipal{Type: "user", ID: "ada"})
 	srv.Start()
 	t.Cleanup(srv.Close)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -63,6 +64,18 @@ func TestLocalDocumentsCLI(t *testing.T) {
 	sd("docs", "create", notes, "--title", "Team notes")
 	if out := sd("docs", "show", "notes.html"); !strings.Contains(out, "title=Team notes") {
 		t.Errorf("show after create --title = %q", out)
+	}
+	if out := sd("docs", "create", notes, "--folder-id", "team/2026"); !strings.Contains(out, "(team/2026/notes.html)") || !exists("team/2026/notes.html") {
+		t.Errorf("create --folder-id = %q", out)
+	}
+	if _, err := Execute([]string{"--server", info.URL, "docs", "create", notes, "--folder-id", ".git"}); err == nil {
+		t.Error("create put a document in a hidden folder")
+	}
+	if out := sd("docs", "list", "--limit", "2"); strings.Count(out, "title=") != 2 || !strings.Contains(out, "Use --offset 2") {
+		t.Errorf("list --limit 2 of 3 documents = %q, want 2 and the next offset", out)
+	}
+	if out := sd("docs", "list", "--limit", "2", "--offset", "2"); strings.Count(out, "title=") != 1 || strings.Contains(out, "--offset") {
+		t.Errorf("list --offset 2 of 3 documents = %q, want the last one", out)
 	}
 	sd("docs", "update", "notes.html", "--title", "Notes")
 	if out := sd("docs", "list", "notes"); !strings.Contains(out, "title=Notes ") {

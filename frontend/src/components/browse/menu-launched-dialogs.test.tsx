@@ -145,7 +145,7 @@ describe("dialogs launched from a dropdown menu", () => {
     await user.click(screen.getByRole("button", { name: "Upload version" }));
 
     await waitFor(() =>
-      expect(create).toHaveBeenCalledWith("doc_1", "ver_1", "Fix typo", HTML),
+      expect(create).toHaveBeenCalledWith("doc_1", "ver_1", "Fix typo", HTML, false),
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
