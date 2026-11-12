@@ -39,6 +39,21 @@ describe("isolated print output", () => {
   it("waits for async preparation and snapshots revealed content", async () => {
     document.body.innerHTML = "<p hidden>Extra detail</p>";
     window.addEventListener(
+      "slashdocs:beforeprint",
+      (event) => {
+        (event as CustomEvent).detail.waitUntil(
+          Promise.resolve().then(() => {
+            document.querySelector("p")!.hidden = false;
+          }),
+        );
+      },
+      { once: true },
+    );
+    expect(await snapshotForPrint(document)).not.toContain("<p hidden");
+  });
+  it("waits for documents that listen for the pre-rename aidocs event", async () => {
+    document.body.innerHTML = "<p hidden>Extra detail</p>";
+    window.addEventListener(
       "aidocs:beforeprint",
       (event) => {
         (event as CustomEvent).detail.waitUntil(
@@ -55,7 +70,7 @@ describe("isolated print output", () => {
     vi.useFakeTimers();
     document.body.textContent = "Still printable";
     window.addEventListener(
-      "aidocs:beforeprint",
+      "slashdocs:beforeprint",
       (event) => {
         const { waitUntil } = (event as CustomEvent).detail;
         waitUntil(Promise.reject(new Error("failed")));

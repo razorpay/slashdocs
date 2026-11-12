@@ -1,17 +1,17 @@
+import { dispatchPublicEvent } from "./public-names.ts";
+
 // Snapshot live DOM, rather than reloading the stored HTML and losing its state.
 export async function snapshotForPrint(d: Document): Promise<string> {
   const view = d.defaultView!;
   const pending: Promise<unknown>[] = [];
   let accepting = true;
-  view.dispatchEvent(
-    new CustomEvent("aidocs:beforeprint", {
-      detail: {
-        waitUntil: (work: Promise<unknown>) => {
-          if (accepting) pending.push(Promise.resolve(work));
-        },
+  dispatchPublicEvent(view, "beforeprint", {
+    detail: {
+      waitUntil: (work: Promise<unknown>) => {
+        if (accepting) pending.push(Promise.resolve(work));
       },
-    }),
-  );
+    },
+  });
   accepting = false;
   view.dispatchEvent(new Event("beforeprint"));
   await Promise.race([
@@ -77,7 +77,7 @@ export async function snapshotForPrint(d: Document): Promise<string> {
   }
   copy
     .querySelectorAll(
-      ".aidocs-selection-action,.aidocs-heading-link,.aidocs-text-flash,script",
+      ".slashdocs-selection-action,.slashdocs-heading-link,.slashdocs-text-flash,script",
     )
     .forEach((node) => node.remove());
   return "<!doctype html>" + copy.outerHTML;

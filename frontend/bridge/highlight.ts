@@ -102,7 +102,7 @@ function svgHighlight(
   }
   // Reuse the existing rect when several text nodes of one comment live in
   // the same SVG element (e.g. a <text> with <tspan> children).
-  if (id && el.dataset.cid === id && el.classList.contains("aidocs-svg-mark-text")) {
+  if (id && el.dataset.cid === id && el.classList.contains("slashdocs-svg-mark-text")) {
     return 1;
   }
   let box;
@@ -115,9 +115,9 @@ function svgHighlight(
     return 0;
   }
   const rect = el.ownerDocument.createElementNS(SVG_NS, "rect");
-  rect.classList.add("aidocs-svg-mark-rect");
+  rect.classList.add("slashdocs-svg-mark-rect");
   if (active) {
-    rect.classList.add("aidocs-mark-active");
+    rect.classList.add("slashdocs-mark-active");
   }
   if (id) {
     rect.dataset.cid = id;
@@ -128,7 +128,7 @@ function svgHighlight(
   rect.setAttribute("width", String(box.width + 6));
   rect.setAttribute("height", String(box.height + 4));
   el.parentNode!.insertBefore(rect, el);
-  el.classList.add("aidocs-svg-mark-text");
+  el.classList.add("slashdocs-svg-mark-text");
   if (active && scroll) {
     el.scrollIntoView({ block: "center", behavior: "smooth" });
   }
@@ -193,7 +193,7 @@ export function highlightRange(
     }
 
     const mark = parent.ownerDocument.createElement("mark");
-    mark.className = "aidocs-mark" + (active ? " aidocs-mark-active" : "");
+    mark.className = "slashdocs-mark" + (active ? " slashdocs-mark-active" : "");
     if (id) {
       mark.dataset.cid = id;
     }
@@ -219,15 +219,15 @@ export function highlightRange(
  */
 export function clearHighlights(d: Document): void {
   const parents = new Set<Node>();
-  d.querySelectorAll("mark.aidocs-mark").forEach((m) => {
+  d.querySelectorAll("mark.slashdocs-mark").forEach((m) => {
     if (m.parentNode) {
       parents.add(m.parentNode);
     }
     m.replaceWith(...m.childNodes);
   });
-  d.querySelectorAll(".aidocs-svg-mark-rect").forEach((r) => r.remove());
-  d.querySelectorAll<HTMLElement>(".aidocs-svg-mark-text").forEach((t) => {
-    t.classList.remove("aidocs-svg-mark-text");
+  d.querySelectorAll(".slashdocs-svg-mark-rect").forEach((r) => r.remove());
+  d.querySelectorAll<HTMLElement>(".slashdocs-svg-mark-text").forEach((t) => {
+    t.classList.remove("slashdocs-svg-mark-text");
     delete t.dataset.cid;
   });
   // Merge only the text nodes our wrapping split apart. A whole-body
@@ -245,21 +245,23 @@ export function clearHighlightsFor(d: Document, id: string): number {
   const cid = CSS.escape(id);
   const parents = new Set<Node>();
   let removed = 0;
-  d.querySelectorAll('mark.aidocs-mark[data-cid="' + cid + '"]').forEach((m) => {
+  d.querySelectorAll('mark.slashdocs-mark[data-cid="' + cid + '"]').forEach((m) => {
     if (m.parentNode) {
       parents.add(m.parentNode);
     }
     m.replaceWith(...m.childNodes);
     removed += 1;
   });
-  d.querySelectorAll('.aidocs-svg-mark-rect[data-cid="' + cid + '"]').forEach((r) => {
-    r.remove();
-    removed += 1;
-  });
+  d.querySelectorAll('.slashdocs-svg-mark-rect[data-cid="' + cid + '"]').forEach(
+    (r) => {
+      r.remove();
+      removed += 1;
+    },
+  );
   d.querySelectorAll<HTMLElement>(
-    '.aidocs-svg-mark-text[data-cid="' + cid + '"]',
+    '.slashdocs-svg-mark-text[data-cid="' + cid + '"]',
   ).forEach((t) => {
-    t.classList.remove("aidocs-svg-mark-text");
+    t.classList.remove("slashdocs-svg-mark-text");
     delete t.dataset.cid;
   });
   parents.forEach((p) => p.normalize());
@@ -272,15 +274,15 @@ export function clearHighlightsFor(d: Document, id: string): number {
  * the highlighted text itself.
  */
 export function refreshSVGRects(d: Document): void {
-  d.querySelectorAll(".aidocs-svg-mark-rect").forEach((rect) => {
+  d.querySelectorAll(".slashdocs-svg-mark-rect").forEach((rect) => {
     // svgHighlight inserts the rect immediately before the element it
     // covers; several comments on one element stack contiguous rects.
     let target = rect.nextElementSibling;
-    while (target && target.classList.contains("aidocs-svg-mark-rect")) {
+    while (target && target.classList.contains("slashdocs-svg-mark-rect")) {
       target = target.nextElementSibling;
     }
     const el = target as SVGGraphicsElement | null;
-    if (!el || !el.classList.contains("aidocs-svg-mark-text") || !el.getBBox) {
+    if (!el || !el.classList.contains("slashdocs-svg-mark-text") || !el.getBBox) {
       rect.remove();
       return;
     }

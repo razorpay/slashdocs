@@ -18,6 +18,8 @@ import { ServiceAccountsPage } from "@/pages/service-accounts";
 import { DevelopersPage } from "@/pages/developers";
 import { ProfilePage } from "@/pages/profile";
 import { StartPage } from "@/pages/start";
+import { migrateLegacyStorage } from "@/lib/legacy-storage";
+import { finishLegacySignOut } from "@/lib/auth-state";
 
 // Query failures (other than auth, handled by route guards) and any mutation
 // without its own onError surface as a toast.
@@ -80,8 +82,12 @@ function LegacyDocRedirect() {
   return <Navigate to={`/app/d/${id}`} replace />;
 }
 
-createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
+migrateLegacyStorage();
+
+void finishLegacySignOut().then(() =>
+  createRoot(document.getElementById("root")!).render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>,
+  ),
 );

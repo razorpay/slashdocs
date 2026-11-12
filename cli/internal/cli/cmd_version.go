@@ -17,10 +17,10 @@ func versionCmd(g *globals, out io.Writer) *cobra.Command {
 				return renderValue(out, g, map[string]any{"version": Version, "commit": Commit})
 			}
 			if Commit != "" {
-				_, _ = fmt.Fprintf(out, "aidocs %s (%s)\n", Version, Commit)
+				_, _ = fmt.Fprintf(out, "slashdocs %s (%s)\n", Version, Commit)
 				return nil
 			}
-			_, _ = fmt.Fprintf(out, "aidocs %s\n", Version)
+			_, _ = fmt.Fprintf(out, "slashdocs %s\n", Version)
 			return nil
 		},
 	}

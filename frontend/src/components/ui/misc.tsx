@@ -10,10 +10,13 @@ export function Skeleton({ className, ...p }: React.HTMLAttributes<HTMLDivElemen
 export function CodeBlock({
   children,
   copy = true,
+  wrap = false,
   className,
 }: {
   children: string;
   copy?: boolean;
+  // Wrap long lines. Use it for prose, such as a prompt, not for commands.
+  wrap?: boolean;
   className?: string;
 }) {
   const [copied, setCopied] = React.useState(false);
@@ -30,11 +33,16 @@ export function CodeBlock({
   return (
     <div
       className={cn(
-        "group relative rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface-muted)] font-mono text-xs",
+        "group relative rounded-sm border border-[var(--color-border)] bg-[var(--color-surface-muted)] font-mono text-xs",
         className,
       )}
     >
-      <pre className="overflow-x-auto p-3 pr-10 leading-relaxed text-[var(--color-fg)]">
+      <pre
+        className={cn(
+          "overflow-x-auto p-3 pr-10 leading-relaxed text-[var(--color-fg)]",
+          wrap && "whitespace-pre-wrap",
+        )}
+      >
         {children}
       </pre>
       {copy && (
@@ -43,7 +51,9 @@ export function CodeBlock({
             variant="ghost"
             size="icon"
             onClick={onCopy}
-            className="absolute right-2 top-2 min-h-10 min-w-10 rounded-md p-1.5 text-[var(--color-fg-muted)] opacity-0 transition-[background-color,color,opacity,transform] duration-150 ease-out active:scale-[0.96] hover:bg-[var(--color-border)] hover:text-[var(--color-fg)] group-hover:opacity-100 focus:opacity-100"
+            // 32px tall at 6px from the top: centered on the first line, so a
+            // one-line block centers it too.
+            className="absolute right-1.5 top-1.5 h-8 min-h-8 w-8 rounded-md text-[var(--color-fg-muted)] opacity-0 transition-[background-color,color,opacity,transform] duration-150 ease-out active:scale-[0.96] hover:bg-[var(--color-border)] hover:text-[var(--color-fg)] group-hover:opacity-100 focus:opacity-100"
             aria-label={copied ? "Copied" : "Copy"}
           >
             {copied ? (
@@ -77,16 +87,16 @@ export function EmptyState({
   return (
     <div
       className={cn(
-        "flex flex-col items-center justify-center rounded-[14px] border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] p-10 text-center",
+        "flex flex-col items-center justify-center rounded-lg bg-[radial-gradient(ellipse_at_50%_0%,color-mix(in_srgb,var(--razorsense-wash-from)_14%,transparent),transparent_70%)] px-6 py-10 text-center",
         className,
       )}
     >
       {icon && (
-        <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-[var(--color-surface-muted)] text-[var(--color-fg-muted)]">
+        <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-md bg-[var(--color-accent-muted)] text-[var(--color-accent)]">
           {icon}
         </div>
       )}
-      <h3 className="text-balance text-base font-semibold">{title}</h3>
+      <h3 className="text-balance font-heading text-base font-medium">{title}</h3>
       {description && (
         <p className="mt-1 max-w-md text-pretty text-sm text-[var(--color-fg-muted)]">
           {description}

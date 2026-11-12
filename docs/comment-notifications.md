@@ -30,39 +30,39 @@ cannot be changed on someone else's behalf. Add `--json` for structured output.
 
 ```bash
 # Global preference and effective per-document preference.
-aidocs notifications status --json
-aidocs notifications disable
-aidocs notifications enable
-aidocs docs notifications disable doc_123
-aidocs docs notifications status doc_123 --json
-aidocs docs notifications enable doc_123
+slashdocs notifications status --json
+slashdocs notifications disable
+slashdocs notifications enable
+slashdocs docs notifications disable doc_123
+slashdocs docs notifications status doc_123 --json
+slashdocs docs notifications enable doc_123
 
 # Repeated --mention flags create real tags, appending @email if absent.
-aidocs docs comments create doc_123 --version ver_123 \
+slashdocs docs comments create doc_123 --version ver_123 \
   --quote 'Launch checklist' --body 'Please review' \
   --mention reviewer@example.com --mention owner@example.com
 
 # File and stdin input avoid shell escaping for longer comments.
-aidocs docs comments reply doc_123 cmt_123 --body-file - \
+slashdocs docs comments reply doc_123 cmt_123 --body-file - \
   --mention reviewer@example.com < review.txt
 
 # Stable principal IDs also work, including agents.
-aidocs docs comments reply doc_123 cmt_123 --body 'Follow up' \
+slashdocs docs comments reply doc_123 cmt_123 --body 'Follow up' \
   --mention sa:sa_123
 
 # Mention changes require the updated body; editing does not send notifications.
-aidocs docs comments update doc_123 cmt_123 --body 'Updated request' \
+slashdocs docs comments update doc_123 cmt_123 --body 'Updated request' \
   --mention user:usr_123
-aidocs docs comments update doc_123 cmt_123 --clear-mentions
+slashdocs docs comments update doc_123 cmt_123 --clear-mentions
 
 # Discover headings; get a URL without launching a browser.
-aidocs docs headings doc_123 --json
-aidocs docs link doc_123 --heading launch-checklist
-aidocs docs link doc_123 --heading launch-checklist --version ver_123
-aidocs docs link doc_123 --comment cmt_123
+slashdocs docs headings doc_123 --json
+slashdocs docs link doc_123 --heading launch-checklist
+slashdocs docs link doc_123 --heading launch-checklist --version ver_123
+slashdocs docs link doc_123 --comment cmt_123
 
 # Resolved threads remain available to agents.
-aidocs docs comments list doc_123 --status resolved --json
+slashdocs docs comments list doc_123 --status resolved --json
 ```
 
 The CLI resolves an email to an exact platform user and calculates structured
@@ -87,8 +87,8 @@ rewritten by these viewer conveniences.
 
 ## Slack setup
 
-This first iteration uses one internal Slack app for the deployment. Platform and
-Slack email addresses must match. Install the app with bot scopes
+Each deployment uses one Slack app. Platform and Slack email addresses must
+match. Install the app with bot scopes
 [`users:read`](https://docs.slack.dev/reference/scopes/users.read/) (required by Slack alongside email lookup),
 [`users:read.email`](https://docs.slack.dev/reference/methods/users.lookupByEmail/),
 [`im:write`](https://docs.slack.dev/reference/methods/conversations.open/), and
@@ -99,32 +99,29 @@ this integration does not handle messages sent back to the bot. In an app
 manifest, set `features.app_home.messages_tab_enabled` and
 `features.app_home.messages_tab_read_only_enabled` to `true`.
 
-The server reads the bot token from `AIDOCS_SLACK_BOT_TOKEN` at startup. On
-Razorpay deployments, Credstash is the internal UI for managing Kubernetes
-Secrets; the Helm chart injects the secret value as an environment variable.
-The application does not invoke a Credstash client or access DynamoDB/KMS for
-this token.
+The server reads the bot token from `SLASHDOCS_SLACK_BOT_TOKEN` at startup.
+Keep the token in your secret store and inject it as an environment variable;
+the application never reads secret-manager APIs itself. An unset or empty token
+disables delivery and enqueueing.
 
-For devstack, put the bot token at
-`aidocs/aidocs-secrets/AIDOCS_SLACK_BOT_TOKEN` in the Credstash UI. The AIDocs chart
-supports this through its existing `extraEnv` setting:
+On Kubernetes, put the token in a Secret and reference it through the chart's
+`extraEnv` setting:
 
 ```yaml
 extraEnv:
-  - name: AIDOCS_SLACK_BOT_TOKEN
+  - name: SLASHDOCS_SLACK_BOT_TOKEN
     valueFrom:
       secretKeyRef:
-        name: aidocs-secrets
-        key: AIDOCS_SLACK_BOT_TOKEN
+        name: slashdocs-secrets
+        key: SLASHDOCS_SLACK_BOT_TOKEN
 ```
 
-Keep `AIDOCS_APP_ORIGIN` set to the public application origin so notification
-buttons point to the right deployment. An unset or empty token disables
-delivery and enqueueing. With the required `secretKeyRef` above, Kubernetes
-prevents a pod from starting if the Secret or key is missing. Rotate by updating
-the Kubernetes Secret through Credstash and restarting the workload; revoke the
-old token after rollout. For offboarding, disable the environment injection,
-revoke the Slack token, and remove its Kubernetes Secret key through Credstash.
+With a required `secretKeyRef`, Kubernetes prevents a pod from starting if the
+Secret or key is missing. Keep `SLASHDOCS_APP_ORIGIN` set to the public
+application origin so notification buttons point to the right deployment.
+Rotate by updating the Secret and restarting the workload, then revoke the old
+token after rollout. To offboard, remove the environment injection, revoke the
+Slack token, and delete the Secret key.
 
 ## Delivery behavior
 
@@ -154,15 +151,11 @@ across replicas. Preference/link APIs have a bounded per-principal request budge
 
 Tests exercise the queue against PostgreSQL and the Slack HTTP contract against
 a local TLS mock. Enabling a real deployment requires its Slack app and bot token.
-Local Compose accepts `AIDOCS_SLACK_BOT_TOKEN` from the launching process's
+Local Compose accepts `SLASHDOCS_SLACK_BOT_TOKEN` from the launching process's
 environment; when absent, it does not send Slack messages. The RAW workspace
 integration check uses this same environment-variable contract and real Slack
 delivery.
 
-Applied Seezo guidance: `validation/notifications`,
-`validation/third-party-services`, `secrets/credstash`, `secrets/handling`,
-`authorization/access-control`, `authorization/state-changing-operations`,
-`data-protection/sensitive-data`, `validation/untrusted-input`, `api/security`.
 
 ### Links to selected text
 
@@ -175,12 +168,12 @@ opened. If the passage is unavailable, the viewer shows a notice.
 Agents can create the same links:
 
 ```sh
-aidocs docs link doc_123 --text "The selected passage" --version ver_123
-aidocs docs link doc_123 --text "Approved" --prefix "Launch: " --suffix " by the team"
+slashdocs docs link doc_123 --text "The selected passage" --version ver_123
+slashdocs docs link doc_123 --text "Approved" --prefix "Launch: " --suffix " by the team"
 ```
 
 `--prefix` and `--suffix` disambiguate repeated text. `--version` is optional in the
 CLI; omitting it follows the latest version. Text is limited to 4,096 characters
 and each context string to 64. The quote and context stay in the URL fragment,
 not in requests to the server, and document access rules still apply. These are
-AIDocs links (`#text=...`); native Chromium text fragments do not target iframes.
+Slashdocs links (`#text=...`); native Chromium text fragments do not target iframes.

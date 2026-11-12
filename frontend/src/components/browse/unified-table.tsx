@@ -1,5 +1,4 @@
-import { Link } from "react-router-dom";
-import { FileText, Folder as FolderIcon, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { Button } from "@/components/ui/button";
 import { Avatar } from "@/components/ui/misc";
@@ -7,7 +6,9 @@ import { DeleteDocumentDialog } from "@/components/delete-document-dialog";
 import { docID, docTitle, type FolderEntry, type Principal } from "@/api";
 import { principalLabel, samePrincipal } from "@/lib/principals";
 import { DRAG_TYPE } from "./drag";
-import { PinButton } from "./pin-button";
+import { ENTRY_ROW, EntryName, EntryTable } from "./entry-table";
+import { PinButton, PinnedMark } from "./pin-button";
+import { SearchSnippet } from "./search-snippet";
 import {
   FOLDER_DELETE_DESCRIPTION,
   useDeleteResource,
@@ -24,48 +25,38 @@ export function UnifiedTable({
   pinnedIds?: Set<string>;
 }) {
   return (
-    <div className="overflow-hidden rounded-[12px] border border-[var(--color-border)] bg-[var(--color-surface)]">
-      <table className="w-full text-sm">
-        <thead className="bg-[var(--color-surface-muted)]/50 text-[11px] uppercase tracking-wider text-[var(--color-fg-muted)]">
-          <tr>
-            <th className="px-4 py-2.5 text-left font-medium">Name</th>
-            <th className="px-4 py-2.5 text-left font-medium">Owner</th>
-            <th className="w-12 px-2 py-2.5"></th>
-          </tr>
-        </thead>
-        <tbody className="stagger-rows">
-          {entries.map((e) => {
-            if (e.type === "folder" && e.folder) {
-              return (
-                <DraggableEntryRow
-                  key={e.folder.id}
-                  type="folder"
-                  id={e.folder.id}
-                  title={e.folder.title}
-                  owner={e.folder.owner}
-                  canDelete={samePrincipal(principal, e.folder.owner)}
-                  pinned={pinnedIds?.has(e.folder.id)}
-                />
-              );
-            }
-            if (e.type === "document" && e.document) {
-              return (
-                <DraggableEntryRow
-                  key={docID(e.document)}
-                  type="document"
-                  id={docID(e.document)}
-                  title={docTitle(e.document)}
-                  owner={e.document.owner}
-                  canDelete={samePrincipal(principal, e.document.owner)}
-                  pinned={pinnedIds?.has(docID(e.document))}
-                />
-              );
-            }
-            return null;
-          })}
-        </tbody>
-      </table>
-    </div>
+    <EntryTable columns={["Name", "Owner", ""]}>
+      {entries.map((e) => {
+        if (e.type === "folder" && e.folder) {
+          return (
+            <DraggableEntryRow
+              key={e.folder.id}
+              type="folder"
+              id={e.folder.id}
+              title={e.folder.title}
+              owner={e.folder.owner}
+              canDelete={samePrincipal(principal, e.folder.owner)}
+              pinned={pinnedIds?.has(e.folder.id)}
+            />
+          );
+        }
+        if (e.type === "document" && e.document) {
+          return (
+            <DraggableEntryRow
+              key={docID(e.document)}
+              type="document"
+              id={docID(e.document)}
+              title={docTitle(e.document)}
+              owner={e.document.owner}
+              canDelete={samePrincipal(principal, e.document.owner)}
+              pinned={pinnedIds?.has(docID(e.document))}
+              snippet={e.document.snippet}
+            />
+          );
+        }
+        return null;
+      })}
+    </EntryTable>
   );
 }
 
@@ -76,6 +67,7 @@ function DraggableEntryRow({
   owner,
   canDelete,
   pinned,
+  snippet,
 }: {
   type: ResourceType;
   id: string;
@@ -83,6 +75,7 @@ function DraggableEntryRow({
   owner?: Principal;
   canDelete: boolean;
   pinned?: boolean;
+  snippet?: string;
 }) {
   const isFolder = type === "folder";
   const {
@@ -109,21 +102,19 @@ function DraggableEntryRow({
       }}
       {...listeners}
       {...attributes}
-      className={`group border-t transition-colors ${isOver ? "bg-[var(--color-accent)]/10 border-[var(--color-accent)]" : "border-[var(--color-border)] hover:bg-[var(--color-surface-muted)]/40"} ${isDragging ? "opacity-40" : ""}`}
+      className={`group border-t transition-colors ${isOver ? "bg-[var(--color-accent)]/10 border-[var(--color-accent)]" : ENTRY_ROW} ${isDragging ? "opacity-40" : ""}`}
     >
       <td className="px-4 py-3">
-        <Link
+        <EntryName
           to={isFolder ? `/app/folders/${id}` : `/app/d/${id}`}
-          className="flex cursor-default items-center gap-2 font-medium hover:underline"
-          draggable={false}
+          folder={isFolder}
+          title={title}
         >
-          {isFolder ? (
-            <FolderIcon className="h-4 w-4 text-[var(--color-accent)]" />
-          ) : (
-            <FileText className="h-4 w-4 text-[var(--color-fg-muted)]" />
-          )}
-          {title}
-        </Link>
+          {pinned && <PinnedMark />}
+        </EntryName>
+        {snippet ? (
+          <SearchSnippet text={snippet} className="mt-1 line-clamp-2 pl-6 text-xs" />
+        ) : null}
       </td>
       <td className="px-4 py-3">
         <OwnerCell owner={owner} />

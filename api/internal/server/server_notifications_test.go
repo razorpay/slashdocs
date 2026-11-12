@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/razorpay/aidocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
 func TestNotificationPreferencesArePersonalAndRequireDocumentAccess(t *testing.T) {

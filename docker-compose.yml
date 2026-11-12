@@ -1,6 +1,7 @@
-# Local dev/eval stack: aidocs + Postgres + MinIO + Dex.
+# Local dev/eval stack: slashdocs + Postgres + versitygw (S3) + Dex.
 #
-#   docker compose up --build
+#   docker compose up            # runs the latest published image
+#   docker compose up --build    # builds and runs this checkout instead
 #   open http://localhost:8080 and sign in as admin@example.com / password
 #
 # Dex is the DEV identity provider only; real deployments configure Google or
@@ -9,49 +10,42 @@
 #
 # The app is served on http://localhost:8080 and documents render on
 # http://127.0.0.1:8080 — same listener, but a different browser origin, which
-# is how aidocs keeps untrusted document HTML away from your session.
+# is how slashdocs keeps untrusted document HTML away from your session.
 
 services:
   postgres:
     image: postgres:17-alpine
     environment:
-      POSTGRES_USER: aidocs
-      POSTGRES_PASSWORD: aidocs
-      POSTGRES_DB: aidocs
+      POSTGRES_USER: slashdocs
+      POSTGRES_PASSWORD: slashdocs
+      POSTGRES_DB: slashdocs
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U aidocs -d aidocs"]
+      test: ["CMD-SHELL", "pg_isready -U slashdocs -d slashdocs"]
       interval: 2s
       timeout: 3s
       retries: 30
 
-  minio:
-    image: minio/minio:latest
-    command: server /data
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    volumes:
-      - minio-data:/data
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://127.0.0.1:9000/minio/health/live"]
-      interval: 2s
-      timeout: 3s
-      retries: 30
-
-  # One-shot sidecar that creates the document bucket, then exits.
-  minio-init:
-    image: minio/mc:latest
-    depends_on:
-      minio:
-        condition: service_healthy
+  # S3-compatible blob store. versitygw is one small Go binary that starts in
+  # milliseconds. Its posix backend maps each top-level directory to a bucket,
+  # so a mkdir creates the document bucket.
+  blob:
+    image: versity/versitygw:v1.8.0@sha256:30292fc2eeacc67a36993b01f7a7a5e3361a19cced0e80c1d71cfa2a4b0a2499
     entrypoint:
       - /bin/sh
       - -c
-      - |
-        mc alias set local http://minio:9000 minioadmin minioadmin &&
-        mc mb --ignore-existing local/aidocs-documents
+      - mkdir -p /data/slashdocs-documents && exec versitygw --quiet --port :9000 posix /data
+    environment:
+      ROOT_ACCESS_KEY_ID: blobadmin
+      ROOT_SECRET_ACCESS_KEY: blobadmin
+    volumes:
+      - blob-data:/data
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "9000"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
 
   dex:
     image: dexidp/dex:v2.41.1
@@ -60,7 +54,7 @@ services:
       - ./dev/dex-config.yaml:/etc/dex/config.yaml:ro
     ports:
       # Browsers are redirected to Dex during login, so it must be reachable
-      # from the host too (AIDOCS_OIDC_ISSUER_URL below).
+      # from the host too (SLASHDOCS_OIDC_ISSUER_URL below).
       - "5556:5556"
     healthcheck:
       test:
@@ -69,56 +63,59 @@ services:
       timeout: 3s
       retries: 30
 
-  aidocs:
+  slashdocs:
     build: .
-    # CI prebuilds this image once with a shared layer cache and injects the
-    # tag; local runs fall back to an ordinary compose build.
-    image: ${AIDOCS_IMAGE:-aidocs-e2e:local}
+    # A plain `docker compose up` pulls the newest published image on every
+    # start, because a local copy of `latest` does not follow new releases. It
+    # builds only if the pull fails. `--build` always builds this checkout. Set
+    # SLASHDOCS_IMAGE to tag local builds under a different name (scripts/e2e.sh
+    # and CI do) so they never shadow the published image.
+    image: ${SLASHDOCS_IMAGE:-razorpay/slashdocs:latest}
+    pull_policy: always
     ports:
       - "8080:8080"
     environment:
-      # nosemgrep: generic_postgres_string
-      DATABASE_URL: postgres://aidocs:aidocs@postgres:5432/aidocs?sslmode=disable
-      AIDOCS_MIGRATE: "true"
+      DATABASE_URL: postgres://slashdocs:slashdocs@postgres:5432/slashdocs?sslmode=disable
+      SLASHDOCS_MIGRATE: "true"
       # The compose stack uses direct Postgres, so exercise LISTEN/NOTIFY rather
       # than allowing the E2E harness to pass through the polling fallback.
-      AIDOCS_KV_EVENTS_MODE: notify
+      SLASHDOCS_KV_EVENTS_MODE: notify
 
-      BLOB_BUCKET: aidocs-documents
-      BLOB_ENDPOINT: http://minio:9000
+      BLOB_BUCKET: slashdocs-documents
+      BLOB_ENDPOINT: http://blob:9000
       BLOB_FORCE_PATH_STYLE: "true"
-      BLOB_ACCESS_KEY_ID: minioadmin
-      BLOB_SECRET_ACCESS_KEY: minioadmin
+      BLOB_ACCESS_KEY_ID: blobadmin
+      BLOB_SECRET_ACCESS_KEY: blobadmin
       BLOB_REGION: us-east-1
 
       # Optional: supplied by the local process environment for Slack testing.
-      AIDOCS_SLACK_BOT_TOKEN: ${AIDOCS_SLACK_BOT_TOKEN:-}
+      SLASHDOCS_SLACK_BOT_TOKEN: ${SLASHDOCS_SLACK_BOT_TOKEN:-}
 
-      AIDOCS_APP_ORIGIN: http://localhost:8080
+      SLASHDOCS_APP_ORIGIN: http://localhost:8080
       # Distinct browser origin, same listener: the server only serves /v/…
       # renders when the request's Host matches this origin.
-      AIDOCS_RENDER_ORIGIN: http://127.0.0.1:8080
+      SLASHDOCS_RENDER_ORIGIN: http://127.0.0.1:8080
 
       # Split horizon: browsers reach Dex on localhost:5556, the server
       # reaches it on the compose network at dex:5556.
-      AIDOCS_OIDC_ISSUER_URL: http://localhost:5556/dex
-      AIDOCS_OIDC_INTERNAL_ISSUER_URL: http://dex:5556/dex
-      AIDOCS_OIDC_CLIENT_ID: aidocs
-      AIDOCS_OIDC_CLIENT_SECRET: aidocs-dev-secret
-      AIDOCS_OIDC_PROVIDER_NAME: Dex
+      SLASHDOCS_OIDC_ISSUER_URL: http://localhost:5556/dex
+      SLASHDOCS_OIDC_INTERNAL_ISSUER_URL: http://dex:5556/dex
+      SLASHDOCS_OIDC_CLIENT_ID: slashdocs
+      SLASHDOCS_OIDC_CLIENT_SECRET: slashdocs-dev-secret
+      SLASHDOCS_OIDC_PROVIDER_NAME: Dex
 
       # Optional per-user GitHub OAuth App credentials. Export these before
       # running Compose to exercise GitHub-backed documents locally.
-      AIDOCS_GITHUB_CLIENT_ID: ${AIDOCS_GITHUB_CLIENT_ID:-}
-      AIDOCS_GITHUB_CLIENT_SECRET: ${AIDOCS_GITHUB_CLIENT_SECRET:-}
+      SLASHDOCS_GITHUB_CLIENT_ID: ${SLASHDOCS_GITHUB_CLIENT_ID:-}
+      SLASHDOCS_GITHUB_CLIENT_SECRET: ${SLASHDOCS_GITHUB_CLIENT_SECRET:-}
 
       # Dev-only value; generate your own for anything beyond localhost.
       SESSION_SECRET: dev-only-session-secret-0123456789abcdef
     depends_on:
       postgres:
         condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
+      blob:
+        condition: service_healthy
       dex:
         condition: service_healthy
     healthcheck:
@@ -129,4 +126,4 @@ services:
 
 volumes:
   postgres-data:
-  minio-data:
+  blob-data:

@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
-	pgrepo "github.com/razorpay/aidocs/api/internal/repo/postgres"
-	"github.com/razorpay/aidocs/api/internal/server"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	pgrepo "github.com/razorpay/slashdocs/api/internal/repo/postgres"
+	"github.com/razorpay/slashdocs/api/internal/server"
 )
 
 const (
@@ -67,7 +67,7 @@ func newMCPOAuthTestEnvConfig(t *testing.T, mutate func(*server.Config)) *mcpOAu
 	).Handler()
 	session := (auth.SessionCodec{Secret: []byte(oauthTestSigningMaterial)}).Sign(fixtureUser.ID)
 	//nolint:gosec // G124: this test-only cookie is injected directly into httptest requests; no network transport is used.
-	cookie := (&http.Cookie{Name: "aidocs_session", Value: session}).String()
+	cookie := (&http.Cookie{Name: "slashdocs_session", Value: session}).String()
 	return &mcpOAuthTestEnv{
 		h:          h,
 		store:      store,
@@ -80,10 +80,10 @@ func newMCPOAuthTestEnvConfig(t *testing.T, mutate func(*server.Config)) *mcpOAu
 func TestMCPDiscoveryAndOAuthMetadata(t *testing.T) {
 	e := newMCPOAuthTestEnv(t)
 
-	discovery := do(t, e.h, http.MethodGet, "/.well-known/aidocs.json", "", nil)
+	discovery := do(t, e.h, http.MethodGet, "/.well-known/slashdocs.json", "", nil)
 	assertStatus(t, discovery, http.StatusOK)
 	assertJSON(t, discovery.Body.Bytes(), `{
-	  "name": "aidocs",
+	  "name": "slashdocs",
 	  "api_version": "v1",
 	  "auth": { "modes": ["web", "cli", "mcp"] }
 	}`)
@@ -113,7 +113,7 @@ func TestMCPDiscoveryAndOAuthMetadata(t *testing.T) {
 	  "registration_endpoint": "https://app.example/oauth/register",
 	  "response_types_supported": ["code"],
 	  "response_modes_supported": ["query"],
-	  "grant_types_supported": ["authorization_code"],
+	  "grant_types_supported": ["authorization_code", "refresh_token"],
 	  "token_endpoint_auth_methods_supported": ["none"],
 	  "code_challenge_methods_supported": ["S256"],
 	  "scopes_supported": ["mcp"]
@@ -129,15 +129,15 @@ func TestMCPDynamicClientRegistrationValidatesRedirectURIs(t *testing.T) {
 		"http://127.0.0.1:3210/callback",
 		"http://[::1]:3210/callback",
 		// Private-use app schemes (RFC 8252 §7.1) used by native MCP clients.
-		"cursor://anysphere.cursor-retrieval/oauth/user-aidocs/callback",
+		"cursor://anysphere.cursor-retrieval/oauth/user-slashdocs/callback",
 		"vscode://ms-vscode.remote-server/oauth/callback",
 		"claude://oauth/callback",
 	} {
 		t.Run("allows "+redirectURI, func(t *testing.T) {
 			rr := registerMCPClient(t, e, "Conformance client", []string{redirectURI})
 			assertStatus(t, rr, http.StatusCreated)
-			if got := jsonField(t, rr.Body.Bytes(), "client_id"); !strings.HasPrefix(got, "aidocs_mcp_client_") {
-				t.Fatalf("client_id = %q, want signed aidocs MCP client id", got)
+			if got := jsonField(t, rr.Body.Bytes(), "client_id"); !strings.HasPrefix(got, "slashdocs_mcp_client_") {
+				t.Fatalf("client_id = %q, want signed slashdocs MCP client id", got)
 			}
 			if got := rr.Header().Get("Cache-Control"); got != "no-store" {
 				t.Fatalf("Cache-Control = %q, want no-store", got)
@@ -198,7 +198,7 @@ func TestMCPDynamicClientRegistrationValidatesRedirectURIs(t *testing.T) {
 		body := `{"client_name":"mcp2cli","redirect_uris":["http://localhost:4100/callback"],"token_endpoint_auth_method":"none","grant_types":["authorization_code","refresh_token"],"response_types":["code"]}`
 		rr := do(t, e.h, http.MethodPost, "/oauth/register", body, map[string]string{"Content-Type": "application/json"})
 		assertStatus(t, rr, http.StatusCreated)
-		if got := jsonField(t, rr.Body.Bytes(), "client_id"); !strings.HasPrefix(got, "aidocs_mcp_client_") {
+		if got := jsonField(t, rr.Body.Bytes(), "client_id"); !strings.HasPrefix(got, "slashdocs_mcp_client_") {
 			t.Fatalf("client_id = %q, want signed client id", got)
 		}
 	})
@@ -266,7 +266,7 @@ func TestMCPAuthorizeRequiresBrowserSessionAndExplicitConsent(t *testing.T) {
 
 	consent := do(t, e.h, http.MethodGet, path, "", map[string]string{"Accept": "text/html", "Cookie": e.cookie})
 	assertStatus(t, consent, http.StatusOK)
-	for _, want := range []string{"Connect Review agent?", fixtureUser.Name, `name="decision" value="deny"`, `name="decision" value="approve"`} {
+	for _, want := range []string{"Connect Review agent?", "Access goes to <strong>client.example</strong>", "The client name is self-reported and is not verified.", fixtureUser.Name, `name="decision" value="deny"`, `name="decision" value="approve"`} {
 		if !strings.Contains(consent.Body.String(), want) {
 			t.Errorf("consent page missing %q: %s", want, consent.Body.String())
 		}
@@ -274,8 +274,10 @@ func TestMCPAuthorizeRequiresBrowserSessionAndExplicitConsent(t *testing.T) {
 	if got := consent.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("consent Cache-Control = %q, want no-store", got)
 	}
-	if got := consent.Header().Get("Content-Security-Policy"); !strings.Contains(got, "frame-ancestors 'none'") || !strings.Contains(got, "form-action 'self' https://client.example") {
-		t.Fatalf("consent Content-Security-Policy = %q, want frame and form restrictions", got)
+	if got := consent.Header().Get("Content-Security-Policy"); !strings.Contains(got, "frame-ancestors 'none'") || strings.Contains(got, "form-action") {
+		// Browsers check form-action on every redirect after the POST, and
+		// client callbacks redirect again (www.cursor.com to cursor.com).
+		t.Fatalf("consent Content-Security-Policy = %q, want frame-ancestors and no form-action", got)
 	}
 	if got := consent.Header().Get("X-Frame-Options"); got != "DENY" {
 		t.Fatalf("consent X-Frame-Options = %q, want DENY", got)
@@ -313,14 +315,14 @@ func TestMCPAuthorizeRequiresBrowserSessionAndExplicitConsent(t *testing.T) {
 // (RFC 8252 §7.1); the whole flow must work end to end for them.
 func TestMCPOAuthFlowCompletesWithPrivateUseSchemeRedirect(t *testing.T) {
 	e := newMCPOAuthTestEnv(t)
-	redirectURI := "cursor://anysphere.cursor-retrieval/oauth/user-aidocs/callback"
+	redirectURI := "cursor://anysphere.cursor-retrieval/oauth/user-slashdocs/callback"
 	clientID := registeredMCPClientID(t, e, "Cursor", []string{redirectURI})
 
 	values := mcpAuthorizeValues(e, clientID, redirectURI, mcpTestVerifier, "cursor-state")
 	consent := do(t, e.h, http.MethodGet, "/oauth/authorize?"+values.Encode(), "", map[string]string{"Accept": "text/html", "Cookie": e.cookie})
 	assertStatus(t, consent, http.StatusOK)
-	if got := consent.Header().Get("Content-Security-Policy"); !strings.Contains(got, "form-action 'self' cursor:") {
-		t.Fatalf("consent Content-Security-Policy = %q, want scheme-only cursor: form-action source", got)
+	if !strings.Contains(consent.Body.String(), "Access goes to <strong>cursor://anysphere.cursor-retrieval</strong>") {
+		t.Fatal("consent did not show the private-use redirect target")
 	}
 
 	code := approveMCPAuthorization(t, e, clientID, redirectURI, mcpTestVerifier, "cursor-state")
@@ -329,6 +331,16 @@ func TestMCPOAuthFlowCompletesWithPrivateUseSchemeRedirect(t *testing.T) {
 	if got := jsonField(t, exchanged.Body.Bytes(), "access_token"); !strings.HasPrefix(got, auth.MCPAccessTokenPrefix) {
 		t.Fatalf("access_token = %q, want %q prefix", got, auth.MCPAccessTokenPrefix)
 	}
+}
+
+func TestMCPOAuthFlowAcceptsPreRenameClientRegistration(t *testing.T) {
+	e := newMCPOAuthTestEnv(t)
+	signed := strings.TrimPrefix(registeredMCPClientID(t, e, "Claude", []string{mcpTestRedirectURI}), "slashdocs_mcp_client_")
+	clientID := "aidocs_mcp_client_" + signed
+
+	code := approveMCPAuthorization(t, e, clientID, mcpTestRedirectURI, mcpTestVerifier, "legacy-state")
+	exchanged := postMCPToken(t, e, mcpTokenValues(e, code, clientID, mcpTestRedirectURI, mcpTestVerifier))
+	assertStatus(t, exchanged, http.StatusOK)
 }
 
 // Native clients bind an ephemeral loopback port at request time, so a
@@ -343,6 +355,9 @@ func TestMCPOAuthFlowAcceptsDifferentLoopbackPortThanRegistered(t *testing.T) {
 	values := mcpAuthorizeValues(e, clientID, liveRedirect, mcpTestVerifier, "loopback-state")
 	consent := do(t, e.h, http.MethodGet, "/oauth/authorize?"+values.Encode(), "", map[string]string{"Accept": "text/html", "Cookie": e.cookie})
 	assertStatus(t, consent, http.StatusOK)
+	if !strings.Contains(consent.Body.String(), "Access goes to <strong>http://127.0.0.1:49812</strong>") {
+		t.Fatal("consent did not show the live loopback redirect target")
+	}
 
 	code := approveMCPAuthorization(t, e, clientID, liveRedirect, mcpTestVerifier, "loopback-state")
 	exchanged := postMCPToken(t, e, mcpTokenValues(e, code, clientID, liveRedirect, mcpTestVerifier))
@@ -412,6 +427,106 @@ func TestMCPOAuthCodeExchangeIsBoundAndOneTime(t *testing.T) {
 	}
 }
 
+// The authorization_code exchange must issue a rotating refresh token so MCP
+// clients can renew the access token without re-prompting the user when it
+// expires (the bug reported for the SlashDocs MCP server: signed in
+// at 2:05 PM, asked to re-auth by 3:07 PM, while the CLI stays signed in).
+func TestMCPRefreshTokenGrantRotatesAndIsBound(t *testing.T) {
+	e := newMCPOAuthTestEnv(t)
+	clientID := registeredMCPClientID(t, e, "Refresh client", []string{mcpTestRedirectURI})
+
+	code := approveMCPAuthorization(t, e, clientID, mcpTestRedirectURI, mcpTestVerifier, "refresh-flow")
+	exchanged := postMCPToken(t, e, mcpTokenValues(e, code, clientID, mcpTestRedirectURI, mcpTestVerifier))
+	assertStatus(t, exchanged, http.StatusOK)
+	refreshToken := jsonField(t, exchanged.Body.Bytes(), "refresh_token")
+	if !strings.HasPrefix(refreshToken, "slashdocs_mcp_refresh_") {
+		t.Fatalf("refresh_token = %q, want slashdocs_mcp_refresh_ prefix", refreshToken)
+	}
+
+	renewed := postMCPToken(t, e, mcpRefreshTokenValues(e, refreshToken, clientID))
+	assertStatus(t, renewed, http.StatusOK)
+	if got := renewed.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("refresh Cache-Control = %q, want no-store", got)
+	}
+	newAccess := jsonField(t, renewed.Body.Bytes(), "access_token")
+	if !strings.HasPrefix(newAccess, auth.MCPAccessTokenPrefix) {
+		t.Fatalf("refreshed access_token = %q, want %q prefix", newAccess, auth.MCPAccessTokenPrefix)
+	}
+	// Access tokens are deterministic over (sub, aud, exp) with second
+	// granularity, so same-second renewals can repeat bytes; the refresh token
+	// below must still rotate because it carries fresh random material.
+	newRefresh := jsonField(t, renewed.Body.Bytes(), "refresh_token")
+	if newRefresh == "" || newRefresh == refreshToken {
+		t.Fatalf("refresh_token was not rotated: %q", newRefresh)
+	}
+
+	// The refreshed access token must authenticate against the MCP resource.
+	authenticator := auth.MCPAuthenticator{
+		Users:         e.store,
+		ServiceTokens: auth.DBAuthenticator{Resolver: e.store, SessionSecret: oauthTestSigningMaterial},
+		SessionSecret: oauthTestSigningMaterial,
+		Resource:      e.resource,
+	}
+	if got := authenticateMCP(t, authenticator, newAccess, ""); got.ID != fixtureUser.ID {
+		t.Fatalf("refreshed token principal = %#v, want user %s", got, fixtureUser.ID)
+	}
+
+	// A rotated-out token is spent, but its replacement stays valid.
+	assertOAuthError(t, postMCPToken(t, e, mcpRefreshTokenValues(e, refreshToken, clientID)),
+		http.StatusBadRequest, "invalid_grant")
+	assertStatus(t, postMCPToken(t, e, mcpRefreshTokenValues(e, newRefresh, clientID)), http.StatusOK)
+
+	// Binding: a different client cannot redeem the token.
+	code2 := approveMCPAuthorization(t, e, clientID, mcpTestRedirectURI, mcpTestVerifier, "second-grant")
+	exchanged2 := postMCPToken(t, e, mcpTokenValues(e, code2, clientID, mcpTestRedirectURI, mcpTestVerifier))
+	assertStatus(t, exchanged2, http.StatusOK)
+	secondRefresh := jsonField(t, exchanged2.Body.Bytes(), "refresh_token")
+	otherClient := registeredMCPClientID(t, e, "Other client", []string{mcpTestRedirectURI})
+	assertOAuthError(t, postMCPToken(t, e, mcpRefreshTokenValues(e, secondRefresh, otherClient)),
+		http.StatusBadRequest, "invalid_grant")
+}
+
+func TestMCPRefreshTokenGrantValidatesRequests(t *testing.T) {
+	e := newMCPOAuthTestEnv(t)
+	clientID := registeredMCPClientID(t, e, "Validation client", []string{mcpTestRedirectURI})
+
+	t.Run("missing refresh_token", func(t *testing.T) {
+		values := mcpRefreshTokenValues(e, "", clientID)
+		values.Del("refresh_token")
+		assertOAuthError(t, postMCPToken(t, e, values), http.StatusBadRequest, "invalid_request")
+	})
+
+	t.Run("unknown refresh token", func(t *testing.T) {
+		values := mcpRefreshTokenValues(e, "slashdocs_mcp_refresh_forged", clientID)
+		assertOAuthError(t, postMCPToken(t, e, values), http.StatusBadRequest, "invalid_grant")
+	})
+
+	t.Run("mismatched resource", func(t *testing.T) {
+		code := approveMCPAuthorization(t, e, clientID, mcpTestRedirectURI, mcpTestVerifier, "resource-check")
+		exchanged := postMCPToken(t, e, mcpTokenValues(e, code, clientID, mcpTestRedirectURI, mcpTestVerifier))
+		assertStatus(t, exchanged, http.StatusOK)
+		refreshToken := jsonField(t, exchanged.Body.Bytes(), "refresh_token")
+
+		values := mcpRefreshTokenValues(e, refreshToken, clientID)
+		values.Set("resource", mcpTestOrigin+"/other")
+		assertOAuthError(t, postMCPToken(t, e, values), http.StatusBadRequest, "invalid_grant")
+	})
+
+	t.Run("login states cannot be replayed as refresh tokens", func(t *testing.T) {
+		// A state row that is not a refresh-token row (wrong mode) must never
+		// redeem, even when stored under the id the token endpoint looks up.
+		token := "slashdocs_mcp_refresh_imposter" //nolint:gosec // G101: fabricated test token, not a credential.
+		if err := e.stateStore.PutState(context.Background(), "mcp_refresh:"+auth.HashToken(token), auth.LoginState{
+			Mode: "web", UserID: fixtureUser.ID, OAuthClientID: clientID, OAuthResource: e.resource,
+			ExpiresAt: time.Now().Add(time.Hour),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		values := mcpRefreshTokenValues(e, token, clientID)
+		assertOAuthError(t, postMCPToken(t, e, values), http.StatusBadRequest, "invalid_grant")
+	})
+}
+
 func TestMCPAndCLIAuthCodesCannotCrossProtocols(t *testing.T) {
 	e := newMCPOAuthTestEnv(t)
 	clientID := registeredMCPClientID(t, e, "Protocol-bound client", []string{mcpTestRedirectURI})
@@ -471,7 +586,7 @@ func TestMCPAuthenticatorRequiresAudienceBoundBearerTokens(t *testing.T) {
 	})
 
 	t.Run("CLI credential is never MCP authentication", func(t *testing.T) {
-		cliToken, cliHash, err := auth.NewBearerToken("aidocs_cli_")
+		cliToken, cliHash, err := auth.NewBearerToken("slashdocs_cli_")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -513,6 +628,23 @@ func TestMCPAuthenticatorRequiresAudienceBoundBearerTokens(t *testing.T) {
 			t.Fatalf("revoke service-account key: %v", err)
 		}
 		assertMCPUnauthorized(t, authenticator, token, "")
+	})
+
+	t.Run("service-account keys issued before the rename still work", func(t *testing.T) {
+		sa, err := e.store.CreateServiceAccount(context.Background(), fixtureOwner, "legacy-mcp-bot")
+		if err != nil {
+			t.Fatalf("create service account: %v", err)
+		}
+		token, hash, err := auth.NewBearerToken("aidocs_sa_")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.store.CreateServiceAccountKey(context.Background(), sa.ID, "legacy", hash); err != nil {
+			t.Fatalf("create service-account key: %v", err)
+		}
+		if got := authenticateMCP(t, authenticator, token, ""); got.ID != sa.ID {
+			t.Fatalf("legacy service-account principal = %#v, want id %s", got, sa.ID)
+		}
 	})
 }
 
@@ -581,6 +713,15 @@ func mcpTokenValues(e *mcpOAuthTestEnv, code, clientID, redirectURI, verifier st
 		"code_verifier": {verifier},
 		"client_id":     {clientID},
 		"redirect_uri":  {redirectURI},
+		"resource":      {e.resource},
+	}
+}
+
+func mcpRefreshTokenValues(e *mcpOAuthTestEnv, refreshToken, clientID string) url.Values {
+	return url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {refreshToken},
+		"client_id":     {clientID},
 		"resource":      {e.resource},
 	}
 }

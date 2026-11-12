@@ -7,7 +7,7 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
-	docs "github.com/razorpay/aidocs/api/internal/server/docs"
+	docs "github.com/razorpay/slashdocs/api/internal/server/docs"
 )
 
 func registerAPIDocsRoutes(r *gin.Engine, deps dependencies) {

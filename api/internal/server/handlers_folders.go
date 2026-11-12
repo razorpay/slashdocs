@@ -7,8 +7,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
-	"github.com/razorpay/aidocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
 func (h handlers) needFolderRole(c *gin.Context, id string, need repo.Role) bool {
@@ -27,6 +27,33 @@ func (h handlers) needFolderRole(c *gin.Context, id string, need repo.Role) bool
 		return false
 	}
 	return true
+}
+
+// needDocMove makes sure the caller can move a document to folder to ("" is
+// the root). The caller needs editor on the document. Like Google Drive's
+// canRemoveChildren, the caller also needs editor on the folder that the
+// document leaves, because the move removes the access that folder gives.
+// The owner skips that check, so no one can trap a document away from them.
+func (h handlers) needDocMove(c *gin.Context, docID, to string) bool {
+	role, err := h.deps.repository.RoleForDocument(c.Request.Context(), *current(c), docID)
+	if err != nil {
+		internalErr(c, err)
+		return false
+	}
+	if !atLeast(role, repo.RoleEditor) {
+		forbidden(c, "editor role on the document is required")
+		return false
+	}
+	if role == repo.RoleOwner {
+		return true
+	}
+	doc, err := h.deps.repository.GetDocument(c.Request.Context(), docID)
+	if err != nil {
+		internalErr(c, err)
+		return false
+	}
+	from := doc.ParentFolderID
+	return from == "" || from == to || h.needFolderRole(c, from, repo.RoleEditor)
 }
 
 // folderListResponse is the payload of GET /v1/folders.
@@ -274,8 +301,23 @@ func (h handlers) deleteFolder(c *gin.Context) {
 	}
 	c.Status(http.StatusNoContent)
 }
+
+// accessResponse is the payload of GET /v1/{documents,folders}/{id}/access.
+// current_role describes the CALLER: the share sheet gates its controls on it
+// (canManageSharing(current_role)), so a response without it renders sharing
+// read-only for every non-owner regardless of their actual role.
+type accessResponse struct {
+	Items       []repo.EffectiveAccessItem `json:"items"`
+	CurrentRole repo.Role                  `json:"current_role"`
+}
+
 func (h handlers) folderAccess(c *gin.Context) {
 	if !h.needFolderRole(c, c.Param("id"), repo.RoleViewer) {
+		return
+	}
+	role, err := h.deps.repository.RoleForFolder(c.Request.Context(), *current(c), c.Param("id"))
+	if err != nil {
+		internalErr(c, err)
 		return
 	}
 	items, err := h.deps.repository.ListEffectiveAccess(c.Request.Context(), "folder", c.Param("id"))
@@ -283,10 +325,15 @@ func (h handlers) folderAccess(c *gin.Context) {
 		internalErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, listResponse[repo.EffectiveAccessItem]{Items: items})
+	c.JSON(http.StatusOK, accessResponse{Items: items, CurrentRole: role})
 }
 func (h handlers) documentAccess(c *gin.Context) {
 	if !h.needDocRole(c, c.Param("id"), repo.RoleViewer) {
+		return
+	}
+	role, err := h.deps.repository.RoleForDocument(c.Request.Context(), *current(c), c.Param("id"))
+	if err != nil {
+		internalErr(c, err)
 		return
 	}
 	items, err := h.deps.repository.ListEffectiveAccess(c.Request.Context(), "document", c.Param("id"))
@@ -294,7 +341,7 @@ func (h handlers) documentAccess(c *gin.Context) {
 		internalErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, listResponse[repo.EffectiveAccessItem]{Items: items})
+	c.JSON(http.StatusOK, accessResponse{Items: items, CurrentRole: role})
 }
 
 func (h handlers) listFolderDocs(c *gin.Context) {
@@ -326,17 +373,10 @@ func (h handlers) moveDocToFolder(c *gin.Context) {
 		badRequest(c, "invalid document")
 		return
 	}
-	p := current(c)
-	docRole, err := h.deps.repository.RoleForDocument(c.Request.Context(), *p, in.DocumentID)
-	if err != nil {
-		internalErr(c, err)
+	if !h.needDocMove(c, in.DocumentID, folderID) {
 		return
 	}
-	if !atLeast(docRole, repo.RoleEditor) {
-		forbidden(c, "editor role on the document is required")
-		return
-	}
-	hasGrants, err := h.deps.repository.MoveDocumentToFolder(c.Request.Context(), *p, folderID, in.DocumentID)
+	hasGrants, err := h.deps.repository.MoveDocumentToFolder(c.Request.Context(), *current(c), folderID, in.DocumentID)
 	if err != nil {
 		if errors.Is(err, repo.ErrNotFound) {
 			notFound(c)
@@ -352,17 +392,7 @@ func (h handlers) moveDocToFolder(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 func (h handlers) moveDocToRoot(c *gin.Context) {
-	if !h.needFolderRole(c, c.Param("id"), repo.RoleEditor) {
-		return
-	}
-	p := current(c)
-	docRole, err := h.deps.repository.RoleForDocument(c.Request.Context(), *p, c.Param("doc_id"))
-	if err != nil {
-		internalErr(c, err)
-		return
-	}
-	if !atLeast(docRole, repo.RoleEditor) {
-		forbidden(c, "editor role on the document is required")
+	if !h.needDocMove(c, c.Param("doc_id"), "") {
 		return
 	}
 	if err := h.deps.repository.MoveDocumentToRoot(c.Request.Context(), c.Param("id"), c.Param("doc_id")); err != nil {
@@ -386,14 +416,14 @@ func (h handlers) moveDocToRoot(c *gin.Context) {
 // @Success 201 {object} repo.Grant
 // @Router /v1/folders/{id}/grants [post]
 func (h handlers) createFolderGrant(c *gin.Context) {
-	if !h.needFolderRole(c, c.Param("id"), repo.RoleCommenter) {
+	if !h.needFolderRole(c, c.Param("id"), repo.RoleEditor) {
 		return
 	}
 	var in grantInput
 	if !requireJSON(c) {
 		return
 	}
-	if err := c.ShouldBindJSON(&in); err != nil || !validGrantRoleForPrincipal(in.Principal.Type, in.Role) {
+	if err := c.ShouldBindJSON(&in); err != nil || !validGrantRole(in.Role) {
 		badRequest(c, "invalid grant")
 		return
 	}
@@ -401,9 +431,6 @@ func (h handlers) createFolderGrant(c *gin.Context) {
 	resolved, err := resolveGrantPrincipal(c, h.deps.repository, h.deps.googleGroupDirectory, h.deps.googleGroupsEnabled, in.Address, principal)
 	if err != nil {
 		respondGrantPrincipalError(c, err, in.Principal.Type)
-		return
-	}
-	if !h.requireCanonicalOwnerForOwnerGroupChange(c, "folder", c.Param("id"), repo.Grant{}, repo.Grant{Principal: resolved, Role: in.Role}) {
 		return
 	}
 	g, err := h.deps.repository.CreateGrant(c.Request.Context(), "folder", c.Param("id"), resolved, in.Role, *current(c))
@@ -418,7 +445,7 @@ func (h handlers) createFolderGrant(c *gin.Context) {
 	c.JSON(http.StatusCreated, g)
 }
 func (h handlers) patchFolderGrant(c *gin.Context) {
-	if !h.needFolderRole(c, c.Param("id"), repo.RoleCommenter) {
+	if !h.needFolderRole(c, c.Param("id"), repo.RoleEditor) {
 		return
 	}
 	var in struct {
@@ -427,20 +454,8 @@ func (h handlers) patchFolderGrant(c *gin.Context) {
 	if !requireJSON(c) {
 		return
 	}
-	if err := c.ShouldBindJSON(&in); err != nil {
+	if err := c.ShouldBindJSON(&in); err != nil || !validGrantRole(in.Role) {
 		badRequest(c, "invalid grant")
-		return
-	}
-	existing, err := h.deps.repository.GetGrant(c.Request.Context(), c.Param("id"), c.Param("grant_id"))
-	if err != nil {
-		notFound(c)
-		return
-	}
-	if !validGrantRoleForPrincipal(existing.Principal.Type, in.Role) {
-		badRequest(c, "invalid grant")
-		return
-	}
-	if !h.requireCanonicalOwnerForOwnerGroupChange(c, "folder", c.Param("id"), existing, repo.Grant{Principal: existing.Principal, Role: in.Role}) {
 		return
 	}
 	g, err := h.deps.repository.UpdateGrant(c.Request.Context(), c.Param("id"), c.Param("grant_id"), in.Role, *current(c))
@@ -455,15 +470,7 @@ func (h handlers) patchFolderGrant(c *gin.Context) {
 	c.JSON(http.StatusOK, g)
 }
 func (h handlers) deleteFolderGrant(c *gin.Context) {
-	if !h.needFolderRole(c, c.Param("id"), repo.RoleCommenter) {
-		return
-	}
-	existing, err := h.deps.repository.GetGrant(c.Request.Context(), c.Param("id"), c.Param("grant_id"))
-	if err != nil {
-		notFound(c)
-		return
-	}
-	if !h.requireCanonicalOwnerForOwnerGroupChange(c, "folder", c.Param("id"), existing, repo.Grant{}) {
+	if !h.needFolderRole(c, c.Param("id"), repo.RoleEditor) {
 		return
 	}
 	if err := h.deps.repository.DeleteGrant(c.Request.Context(), c.Param("id"), c.Param("grant_id"), *current(c)); err != nil {

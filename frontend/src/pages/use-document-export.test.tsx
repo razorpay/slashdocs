@@ -32,7 +32,7 @@ it("denies document exports without browser-owned user activation", () => {
       new MessageEvent("message", {
         origin: "https://render.example",
         source: frame.current.contentWindow,
-        data: { type: "aidocs:print-request", userActivated: true },
+        data: { type: "slashdocs:print-request", userActivated: true },
       }),
     ),
   );
@@ -47,14 +47,14 @@ it("denies messages from another origin or window even during a real activation"
       new MessageEvent("message", {
         origin: "https://evil.example",
         source: frame.current.contentWindow,
-        data: { type: "aidocs:print-request" },
+        data: { type: "slashdocs:print-request" },
       }),
     );
     window.dispatchEvent(
       new MessageEvent("message", {
         origin: "https://render.example",
         source: window,
-        data: { type: "aidocs:print-request" },
+        data: { type: "slashdocs:print-request" },
       }),
     );
   });

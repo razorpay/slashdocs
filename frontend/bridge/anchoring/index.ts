@@ -1,4 +1,4 @@
-// Comment anchoring engine for the aidocs render bridge.
+// Comment anchoring engine for the slashdocs render bridge.
 //
 // Follows the Hypothesis client's anchoring architecture: a selection is
 // described as a TextPosition selector (fast, exact) plus a TextQuote

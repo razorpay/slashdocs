@@ -15,7 +15,7 @@ import (
 // defaultDocPermissionEnv is the CLI-side per-user override for the sharing
 // default applied when a document is created. The server does the granting;
 // the CLI only forwards the preference.
-const defaultDocPermissionEnv = "AIDOCS_DEFAULT_DOC_PERMISSION"
+const defaultDocPermissionEnv = "SLASHDOCS_DEFAULT_DOC_PERMISSION"
 
 func docsCmd(g *globals, out io.Writer) *cobra.Command {
 	c := &cobra.Command{Use: "docs", Short: "Manage documents"}
@@ -59,15 +59,24 @@ func documentListCmd(g *globals, out io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list [query]",
 		Short: "List or search documents",
-		Long: "List documents, or search with the same query language as the web application.\n\n" +
-			"Supported primitives:\n" +
-			"  author:<email>       Match the document author\n" +
-			"  labels:<a,b>         Require every comma-separated label\n" +
-			"  in:<folder>          Match a folder or any ancestor folder\n" +
-			"  /pattern/            Use a primitive case-insensitive regex value\n\n" +
-			"Quote the whole query when it contains spaces.",
-		Example: "  aidocs docs list 'incident author:alice@example.com labels:api,review in:\"Product Specs\"'\n" +
-			"  aidocs docs list --query 'author:/@razorpay\\.com$/ labels:/^api-/'",
+		Long: "List documents, or search with the same Slack-style language as the web application.\n\n" +
+			"Every word must appear in the title or the text. The most relevant documents come first.\n" +
+			"Modifiers narrow the results:\n" +
+			"  \"exact phrase\"       Match the words together\n" +
+			"  -word                Exclude documents that contain the word\n" +
+			"  from:<person>        The owner: an email, the name before the @, or me\n" +
+			"  in:<folder>          A folder, or any folder above the document\n" +
+			"  label:<a,b>          Require every label\n" +
+			"  before:<date>        Updated before the date\n" +
+			"  after:<date>         Updated after the date\n" +
+			"  on:<date>            Updated on the date (during: is the same)\n\n" +
+			"A date is a day (25-09-26, 5 september, monday, today, 3 days ago), a week,\n" +
+			"a month, or a year (last week, september, this year, 2026), or last 7 days.\n" +
+			"Dates use UTC. Repeat from: or in: to match any value.\n" +
+			"Quote the whole query when it contains spaces.\n\n" +
+			"With --local, the query finds each word in the title or the path of a document, and modifiers are not available.",
+		Example: "  slashdocs docs list 'incident from:alice@example.com label:api,review in:\"Product Specs\"'\n" +
+			"  slashdocs docs list --query 'rollout -draft from:me after:last week'",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 1 && cmd.Flags().Changed("query") {
@@ -104,7 +113,7 @@ func documentLabelsSetCmd(g *globals, out io.Writer) *cobra.Command {
 	return &cobra.Command{
 		Use:     "set <doc_id> <label>...",
 		Short:   "Replace a document's labels",
-		Example: "  aidocs docs labels set doc_… api review-ready\n  aidocs docs labels set doc_… api,review-ready",
+		Example: "  slashdocs docs labels set doc_… api review-ready\n  slashdocs docs labels set doc_… api,review-ready",
 		Args:    cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			labels, err := normalizedLabelArgs(args[1:])
@@ -153,7 +162,7 @@ func normalizedLabelArgs(args []string) ([]string, error) {
 
 func documentCreateCmd(g *globals, out io.Writer) *cobra.Command {
 	var title string
-	cmd := &cobra.Command{Use: "create <file>", Short: "Create a document from an HTML file", Long: "Create a document from a single self-contained HTML file.\n\nThe sharing default for new documents is controlled by the server. Set AIDOCS_DEFAULT_DOC_PERMISSION to viewer, commenter, editor, or private to override it per-user; private keeps new documents private.\n\nRun 'aidocs guidelines' for authoring rules (single-file, base64 images, reader theme).", Example: "  aidocs docs create report.html --title 'Report'", Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "create <file>", Short: "Create a document from an HTML file", Long: "Create a document from a single self-contained HTML file.\n\nThe sharing default for new documents is controlled by the server. Set SLASHDOCS_DEFAULT_DOC_PERMISSION to viewer, commenter, editor, or private to override it per-user; private keeps new documents private.\n\nRun 'slashdocs guidelines' for authoring rules (single-file, base64 images, reader theme).", Example: "  slashdocs docs create report.html --title 'Report'", Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		perm, err := defaultDocPermission()
 		if err != nil {
 			return err
@@ -177,6 +186,16 @@ func documentCreateCmd(g *globals, out io.Writer) *cobra.Command {
 		if err != nil {
 			return err
 		}
+		var created struct {
+			ID        string `json:"id"`
+			VersionID string `json:"current_version_id"`
+		}
+		if err := json.Unmarshal(b, &created); err != nil {
+			return err
+		}
+		if err := recordBaseVersion(g, created.ID, created.VersionID); err != nil {
+			return err
+		}
 		return renderCreatedDocument(out, g, cl, title, perm, b)
 	}}
 	cmd.Flags().StringVar(&title, "title", "", "document title (defaults to the file name)")
@@ -186,7 +205,7 @@ func documentCreateCmd(g *globals, out io.Writer) *cobra.Command {
 // defaultDocPermission reads the per-user sharing override sent with document
 // creation. Empty means the server-wide default applies.
 func defaultDocPermission() (string, error) {
-	perm := os.Getenv(defaultDocPermissionEnv)
+	perm := env(defaultDocPermissionEnv)
 	switch perm {
 	case "", "viewer", "commenter", "editor", "private":
 		return perm, nil
@@ -275,7 +294,7 @@ func renderCreatedDocumentJSON(out io.Writer, g *globals, id, requestedPermissio
 
 func documentUpdateCmd(g *globals, out io.Writer) *cobra.Command {
 	var ut string
-	cmd := &cobra.Command{Use: "update <doc_id>", Short: "Update document metadata", Long: "Rename a document. Sharing is managed separately with 'aidocs docs grants'.", Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "update <doc_id>", Short: "Update document metadata", Long: "Rename a document. Sharing is managed separately with 'slashdocs docs grants'.", Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if !cmd.Flags().Changed("title") {
 			return errors.New("nothing to update; pass --title")
 		}
@@ -349,10 +368,10 @@ func grantsCmd(g *globals, out io.Writer) *cobra.Command {
 			"access to everyone who can reach this server (anyone with the link on a\n" +
 			"public deployment, or everyone in the org on an org deployment).\n\n" +
 			"Examples:\n" +
-			"  aidocs docs grants add doc_… --to user@org.example --role commenter\n" +
-			"  aidocs docs grants add doc_… --to report-creator@brave.otter.bot --role editor\n" +
-			"  aidocs docs grants add doc_… --group tech-infra@org.example --role commenter\n" +
-			"  aidocs docs grants add doc_… --everyone --role viewer",
+			"  slashdocs docs grants add doc_… --to user@org.example --role commenter\n" +
+			"  slashdocs docs grants add doc_… --to report-creator@brave.otter.bot --role editor\n" +
+			"  slashdocs docs grants add doc_… --group tech-infra@org.example --role commenter\n" +
+			"  slashdocs docs grants add doc_… --everyone --role viewer",
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body := map[string]any{"role": role}
@@ -393,14 +412,14 @@ func grantsCmd(g *globals, out io.Writer) *cobra.Command {
 	add.Flags().StringVar(&group, "group", "", "verified organization Google Group email")
 	add.Flags().BoolVar(&everyone, "everyone", false, "share with everyone who can reach this server")
 	add.Flags().StringVar(&principal, "principal", "", "legacy: sa:<id> or user:<email>")
-	add.Flags().StringVar(&role, "role", "viewer", "viewer, commenter, editor, or owner (groups only)")
+	add.Flags().StringVar(&role, "role", "viewer", "viewer, commenter, or editor")
 	var r string
 	upd := &cobra.Command{Use: "update <doc_id> <grant_id>", Short: "Update a grant role", Args: exactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 		return action(g, out, func(c *Client) ([]byte, error) {
 			return c.doJSON("PATCH", apiPath("/v1/documents/%s/grants/%s", args[0], args[1]), map[string]any{"role": r})
 		}, func(map[string]any) string { return "Changed grant " + args[1] + " on " + args[0] + " to " + r + "." })
 	}}
-	upd.Flags().StringVar(&r, "role", "viewer", "new grant role: viewer, commenter, editor, or owner")
+	upd.Flags().StringVar(&r, "role", "viewer", "new grant role: viewer, commenter, or editor")
 	revoke := mutate(g, out, "revoke <doc_id> <grant_id>", "Revoke a document grant", "DELETE", "/v1/documents/%s/grants/%s", 2, func(a []string) string { return "Revoked grant " + a[1] + " on " + a[0] + "." })
 	list := simplePath(g, out, "list", "GET", "/v1/documents/%s/access")
 	list.Short = "List effective document access"
@@ -432,7 +451,7 @@ func docVersionCmd(g *globals, out io.Writer, use, method, tmpl string) *cobra.C
 
 func pullCmd(g *globals, out io.Writer) *cobra.Command {
 	var ver, outp string
-	cmd := &cobra.Command{Use: "pull <doc_id>", Short: "Download a document HTML version", Example: "  aidocs docs pull doc_123 --out report.html\n  aidocs docs pull doc_123 --version ver_123", Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "pull <doc_id>", Short: "Download a document HTML version", Example: "  slashdocs docs pull doc_123 --out report.html\n  slashdocs docs pull doc_123 --version ver_123", Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		cl, err := client(g)
 		if err != nil {
 			return err
@@ -456,13 +475,7 @@ func pullCmd(g *globals, out io.Writer) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		name, cx, cfg := currentContext(g)
-		cx.Pulled[args[0]] = v
-		cfg.Contexts[name] = cx
-		if cfg.ActiveContext == "" {
-			cfg.ActiveContext = name
-		}
-		if err := saveConfig(cfg); err != nil {
+		if err := recordBaseVersion(g, args[0], v); err != nil {
 			return err
 		}
 		if outp != "" {
@@ -478,9 +491,22 @@ func pullCmd(g *globals, out io.Writer) *cobra.Command {
 	return cmd
 }
 
+func recordBaseVersion(g *globals, docID, versionID string) error {
+	if docID == "" || versionID == "" {
+		return nil
+	}
+	name, cx, cfg := currentContext(g)
+	cx.Pulled[docID] = versionID
+	cfg.Contexts[name] = cx
+	if cfg.ActiveContext == "" && !g.local {
+		cfg.ActiveContext = name
+	}
+	return saveConfig(cfg)
+}
+
 func docsPushCmd(g *globals, out io.Writer) *cobra.Command {
 	var base, summary string
-	cmd := &cobra.Command{Use: "push <doc_id> <file>", Short: "Upload a new document version", Example: "  aidocs docs push doc_123 report.html --base-version ver_123\n  aidocs docs push doc_123 report.html --summary 'Address comments'", Args: exactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "push <doc_id> <file>", Short: "Upload a new document version", Example: "  slashdocs docs push doc_123 report.html --base-version ver_123\n  slashdocs docs push doc_123 report.html --summary 'Address comments'", Args: exactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 		doc, file := args[0], args[1]
 		data, fn, err := readFileArg(file)
 		if err != nil {
@@ -491,7 +517,7 @@ func docsPushCmd(g *globals, out io.Writer) *cobra.Command {
 			base = cx.Pulled[doc]
 		}
 		if base == "" {
-			return errors.New("no base version known; run aidocs docs pull <doc_id> first or pass --base-version")
+			return errors.New("no base version known; run slashdocs docs pull <doc_id> first or pass --base-version")
 		}
 		cl, err := client(g)
 		if err != nil {
@@ -501,10 +527,19 @@ func docsPushCmd(g *globals, out io.Writer) *cobra.Command {
 		if err != nil {
 			return err
 		}
+		var pushed struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(b, &pushed); err != nil {
+			return err
+		}
+		if err := recordBaseVersion(g, doc, pushed.ID); err != nil {
+			return err
+		}
 		return printPushedVersion(out, g, doc, cl.Base, b)
 	}}
 	cmd.Flags().StringVar(&base, "base-version", "", "base version ID")
-	cmd.Flags().StringVar(&summary, "summary", "", "change summary")
+	cmd.Flags().StringVar(&summary, "summary", "", "change summary, one change per line")
 	return cmd
 }
 
@@ -599,7 +634,7 @@ const reactionSlugs = "+1, -1, laugh, hooray, confused, heart, rocket, eyes, plu
 func reactionCmd(g *globals, out io.Writer, name, short, method string, msg func(args []string) string) *cobra.Command {
 	cmd := mutate(g, out, name+" <doc_id> <comment_id> <emoji>", short, method, "/v1/documents/%s/comments/%s/reactions/%s", 3, msg)
 	cmd.Long = short + ".\n\nReactions work on both root comments and replies.\nValid values: " + reactionSlugs + "."
-	cmd.Example = "  aidocs docs comments " + name + " doc_123 cmt_456 +1"
+	cmd.Example = "  slashdocs docs comments " + name + " doc_123 cmt_456 +1"
 	return cmd
 }
 
@@ -661,8 +696,8 @@ func openCmd(g *globals, out io.Writer) *cobra.Command {
 		if err := openBrowserErr(u); err != nil {
 			return err
 		}
-		if os.Getenv("AIDOCS_NO_BROWSER") != "" {
-			return message(out, g, "Browser launch is disabled (AIDOCS_NO_BROWSER). Open this URL manually:\n"+u)
+		if env("SLASHDOCS_NO_BROWSER") != "" {
+			return message(out, g, "Browser launch is disabled (SLASHDOCS_NO_BROWSER). Open this URL manually:\n"+u)
 		}
 		return confirm(out, g, "Opened "+args[0]+" in your browser: "+u)
 	}}

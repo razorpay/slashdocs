@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -28,14 +29,15 @@ type Context struct {
 	Pulled     map[string]string `json:"pulled"`
 }
 
-func configPath() string {
-	base := os.Getenv("XDG_CONFIG_HOME")
-	if base == "" {
-		home, _ := os.UserHomeDir()
-		base = filepath.Join(home, ".config")
+func configBase() string {
+	if base := os.Getenv("XDG_CONFIG_HOME"); base != "" {
+		return base
 	}
-	return filepath.Join(base, "aidocs", "config.json")
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config")
 }
+
+func configPath() string { return filepath.Join(configBase(), cliName, "config.json") }
 
 func loadConfig() (Config, error) {
 	c := Config{Contexts: map[string]*Context{}}
@@ -100,7 +102,7 @@ func currentContext(g *globals) (string, *Context, Config) {
 }
 
 func currentContextFrom(g *globals, cfg Config) (string, *Context, Config) {
-	srv := first(g.server, os.Getenv("AIDOCS_SERVER"), cfg.ActiveContext)
+	srv := first(g.server, env("SLASHDOCS_SERVER"), cfg.ActiveContext)
 	if srv == "" {
 		// No server anywhere: hand back an unnamed, unsaved context so
 		// read-only callers keep working; anything that needs a real server
@@ -118,9 +120,41 @@ func currentContextFrom(g *globals, cfg Config) (string, *Context, Config) {
 	return name, cx, cfg
 }
 
-const keychainService = "aidocs"
+// moveContext points the saved context of oldServer at newServer, with its
+// credential, and keeps it active. A context that the user already has for
+// newServer wins, and the old one is removed.
+func moveContext(oldServer, newServer string) error {
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	oldName, newName := ctxName(oldServer), ctxName(newServer)
+	cx := cfg.Contexts[oldName]
+	if cx == nil || oldName == newName {
+		return nil
+	}
+	delete(cfg.Contexts, oldName)
+	if cfg.ActiveContext == oldName {
+		cfg.ActiveContext = newName
+	}
+	tok := credentialToken(oldName, cx.Credential)
+	deleteCredentialToken(oldName, cx.Credential)
+	if cfg.Contexts[newName] == nil {
+		cx.Server = normalizeServer(newServer)
+		if tok != "" {
+			cred := maps.Clone(cx.Credential)
+			delete(cred, "token_ref")
+			cred["token"] = tok
+			cx.Credential = storeCredentialToken(newName, cred)
+		}
+		cfg.Contexts[newName] = cx
+	}
+	return saveConfig(cfg)
+}
 
-func keychainDisabled() bool             { return os.Getenv("AIDOCS_NO_KEYCHAIN") != "" }
+const keychainService = cliName
+
+func keychainDisabled() bool             { return env("SLASHDOCS_NO_KEYCHAIN") != "" }
 func tokenRef(contextName string) string { return contextName + ":token" }
 
 func credentialToken(contextName string, cred map[string]any) string {
@@ -137,9 +171,16 @@ func credentialToken(contextName string, cred map[string]any) string {
 	if keychainDisabled() {
 		return ""
 	}
-	t, err := keyring.Get(keychainService, ref)
+	if t, err := keyring.Get(keychainService, ref); err == nil {
+		return t
+	}
+	// Tokens saved before the rename live under the aidocs service. Move them.
+	t, err := keyring.Get(legacyName, ref)
 	if err != nil {
 		return ""
+	}
+	if keyring.Set(keychainService, ref, t) == nil {
+		_ = keyring.Delete(legacyName, ref)
 	}
 	return t
 }
@@ -174,5 +215,8 @@ func deleteCredentialToken(contextName string, cred map[string]any) {
 			ref = r
 		}
 	}
-	_ = keyring.Delete(keychainService, ref)
+	// A token saved before the rename may still be under the aidocs service.
+	for _, service := range []string{keychainService, legacyName} {
+		_ = keyring.Delete(service, ref)
+	}
 }

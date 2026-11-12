@@ -4,27 +4,30 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/cn";
 import { Tooltip } from "./tooltip";
 
+// Blade's button: raised primary and secondary shadows, an 8px radius (12px
+// when large), and a soft 4px focus ring. A disabled primary goes neutral, as
+// Slash retunes it, because a faded blue reads as broken on a dark canvas.
 const buttonVariants = cva(
-  "inline-flex min-h-10 items-center justify-center gap-2 whitespace-nowrap rounded-[10px] font-medium transition-[background-color,color,opacity,transform,box-shadow] duration-150 ease-out active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-bg)] disabled:pointer-events-none disabled:scale-100 disabled:opacity-50",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-sm font-medium transition-[background-color,color,opacity,transform,box-shadow] duration-150 ease-out active:scale-[0.97] focus-visible:outline-4 focus-visible:outline-[color-mix(in_srgb,var(--color-accent)_24%,transparent)] disabled:pointer-events-none disabled:scale-100 disabled:opacity-50",
   {
     variants: {
       variant: {
         primary:
-          "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:opacity-90 hover:shadow-[0_0_20px_-4px_var(--color-accent)]",
+          "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-[var(--shadow-button-primary)] hover:bg-[var(--color-accent-strong)] disabled:bg-[var(--color-surface-muted)] disabled:text-[var(--color-fg-muted)] disabled:opacity-100 disabled:shadow-[var(--shadow-button-secondary)]",
         secondary:
           "bg-[var(--color-surface-muted)] text-[var(--color-fg)] hover:bg-[var(--color-border)]",
         outline:
-          "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-fg)] hover:bg-[var(--color-surface-muted)]",
+          "bg-[var(--color-surface)] text-[var(--color-fg)] shadow-[var(--shadow-button-secondary)] hover:bg-[var(--color-surface-muted)]",
         ghost: "text-[var(--color-fg)] hover:bg-[var(--color-surface-muted)]",
         danger:
           "bg-[var(--color-danger)] text-[var(--color-danger-fg)] hover:opacity-90",
         link: "text-[var(--color-accent)] underline-offset-4 hover:underline",
       },
       size: {
-        sm: "h-10 px-3 text-sm",
-        md: "h-10 px-4 text-sm",
-        lg: "h-11 px-6 text-base",
-        icon: "h-10 w-10",
+        sm: "h-8 px-3 text-sm",
+        md: "h-9 px-4 text-sm",
+        lg: "h-12 rounded-md px-5 text-base",
+        icon: "h-9 w-9",
       },
     },
     defaultVariants: { variant: "primary", size: "md" },

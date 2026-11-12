@@ -18,11 +18,11 @@ func TestTextLinkKeepsQuoteInFragment(t *testing.T) {
 		if r.URL.RawQuery != "version=ver_1" {
 			t.Errorf("unexpected link request: %s", r.URL)
 		}
-		writeTestJSON(t, w, map[string]string{"url": "https://aidocs.example/app/d/doc_1?version=ver_1"})
+		writeTestJSON(t, w, map[string]string{"url": "https://slashdocs.example/app/d/doc_1?version=ver_1"})
 	}))
 	defer srv.Close()
-	t.Setenv("AIDOCS_TOKEN", "tok")
-	t.Setenv("AIDOCS_SERVER", srv.URL)
+	t.Setenv("SLASHDOCS_TOKEN", "tok")
+	t.Setenv("SLASHDOCS_SERVER", srv.URL)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	out, err := Execute([]string{"--json", "docs", "link", "doc_1", "--version", "ver_1", "--text", quote, "--prefix", "Second: "})
 	if err != nil {

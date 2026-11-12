@@ -39,11 +39,11 @@ export function Tooltip({
           side="bottom"
           sideOffset={6}
           collisionPadding={8}
-          className="icon-tooltip z-[200] max-w-64 rounded-md bg-zinc-900 px-2.5 py-1.5 text-xs font-medium leading-snug text-white shadow-lg dark:bg-zinc-100 dark:text-zinc-900"
+          className="icon-tooltip z-[200] max-w-64 rounded-md bg-[#16191d] px-2.5 py-1.5 text-xs font-medium leading-snug text-white shadow-[var(--shadow-pop)] dark:bg-[#2b2e33]"
         >
           {label}
           <Primitive.Arrow
-            className="fill-zinc-900 dark:fill-zinc-100"
+            className="fill-[#16191d] dark:fill-[#2b2e33]"
             width={8}
             height={4}
           />

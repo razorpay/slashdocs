@@ -13,17 +13,33 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/auth"
 )
 
 const (
-	mcpScope                    = "mcp"
-	mcpClientIDPrefix           = "aidocs_mcp_client_"
+	mcpScope          = "mcp"
+	mcpClientIDPrefix = "slashdocs_mcp_client_"
+	// legacyMCPClientIDPrefix marks registrations issued before the rename
+	// from aidocs. They stay valid until they expire.
+	legacyMCPClientIDPrefix     = "aidocs_mcp_client_"
 	mcpClientRegistrationAud    = "mcp-client-registration"
 	mcpClientRegistrationTTL    = 365 * 24 * time.Hour
 	mcpAuthorizationCodeTTLHint = 5 * time.Minute
-	mcpAccessTokenTTL           = time.Hour
-	maxMCPAuthRequestBytes      = 64 * 1024
+	mcpAccessTokenTTL           = 7 * 24 * time.Hour
+	// mcpRefreshTokenTTL is the inactivity window. Each refresh issues a new
+	// token with a new window, so an active client stays signed in.
+	mcpRefreshTokenTTL = 42 * 24 * time.Hour
+	// mcpRefreshTokenPrefix is a public token type marker, not a credential.
+	//nolint:gosec // The fixed prefix only marks the token type.
+	mcpRefreshTokenPrefix = "slashdocs_mcp_refresh_"
+	// mcpRefreshStateIDPrefix namespaces refresh-token rows in the shared
+	// one-time login state store. Rows are keyed by the token hash, so the
+	// store never holds the token itself.
+	mcpRefreshStateIDPrefix = "mcp_refresh:"
+	// mcpRefreshMode marks refresh-token rows, so login states can never be
+	// redeemed as refresh tokens.
+	mcpRefreshMode         = "mcp_refresh"
+	maxMCPAuthRequestBytes = 64 * 1024
 	// Dynamic registration is embedded in the signed client ID. These byte
 	// limits keep the resulting /oauth/authorize request comfortably below the
 	// common 8 KiB proxy request-line/header limit while preserving ordinary
@@ -78,18 +94,21 @@ type mcpClientRegistrationResponse struct {
 }
 
 type mcpTokenResponse struct {
-	AccessToken string `json:"access_token"`
-	TokenType   string `json:"token_type"`
-	ExpiresIn   int    `json:"expires_in"`
-	Scope       string `json:"scope"`
+	AccessToken  string `json:"access_token"`
+	TokenType    string `json:"token_type"`
+	ExpiresIn    int    `json:"expires_in"`
+	Scope        string `json:"scope"`
+	RefreshToken string `json:"refresh_token,omitempty"`
 }
 
 type mcpTokenRequest struct {
+	GrantType    string
 	Code         string
 	CodeVerifier string
 	ClientID     string
 	RedirectURI  string
 	Resource     string
+	RefreshToken string
 }
 
 type oauthRequestError struct {
@@ -134,7 +153,7 @@ func (h handlers) mcpAuthorizationServerMetadata(c *gin.Context) {
 		RegistrationEndpoint:              origin + "/oauth/register",
 		ResponseTypesSupported:            []string{"code"},
 		ResponseModesSupported:            []string{"query"},
-		GrantTypesSupported:               []string{"authorization_code"},
+		GrantTypesSupported:               []string{"authorization_code", "refresh_token"},
 		TokenEndpointAuthMethodsSupported: []string{"none"},
 		CodeChallengeMethodsSupported:     []string{"S256"},
 		ScopesSupported:                   []string{mcpScope},
@@ -178,7 +197,7 @@ func (h handlers) mcpRegisterClient(c *gin.Context) {
 		ClientName:              client.Name,
 		RedirectURIs:            client.RedirectURIs,
 		TokenEndpointAuthMethod: "none",
-		GrantTypes:              []string{"authorization_code"},
+		GrantTypes:              []string{"authorization_code", "refresh_token"},
 		ResponseTypes:           []string{"code"},
 	})
 }
@@ -210,13 +229,12 @@ func validateMCPClientRegistration(in mcpClientRegistrationRequest) string {
 	return ""
 }
 
-// validateMCPGrantTypes requires the authorization_code grant and tolerates a
+// validateMCPGrantTypes requires the authorization_code grant and accepts a
 // co-registered refresh_token grant, which conformant MCP clients (mcp2cli,
-// VS Code) request by default during dynamic registration. The server never
-// issues refresh tokens, so the grant is accepted here but never exercised:
-// clients simply re-run the authorization_code flow when the short-lived
-// access token expires. Rejecting the registration outright would lock those
-// clients out entirely.
+// VS Code, Claude) request by default during dynamic registration. The token
+// endpoint issues a rotating refresh token with every exchange, so clients
+// renew the access token silently instead of re-running the browser
+// authorization flow each time it expires.
 func validateMCPGrantTypes(grantTypes []string) string {
 	if len(grantTypes) == 0 {
 		return ""
@@ -297,13 +315,14 @@ func validMCPRedirectURI(raw string) bool {
 }
 
 func (h handlers) parseMCPClient(clientID string) (mcpOAuthClient, bool) {
-	if len(clientID) > maxMCPClientIDBytes || !strings.HasPrefix(clientID, mcpClientIDPrefix) {
+	signed, ok := strings.CutPrefix(clientID, mcpClientIDPrefix)
+	if !ok {
+		signed, ok = strings.CutPrefix(clientID, legacyMCPClientIDPrefix)
+	}
+	if len(clientID) > maxMCPClientIDBytes || !ok {
 		return mcpOAuthClient{}, false
 	}
-	subject, ok := (auth.SessionCodec{Secret: []byte(h.deps.sessionSecret)}).VerifyAudience(
-		strings.TrimPrefix(clientID, mcpClientIDPrefix),
-		mcpClientRegistrationAud,
-	)
+	subject, ok := (auth.SessionCodec{Secret: []byte(h.deps.sessionSecret)}).VerifyAudience(signed, mcpClientRegistrationAud)
 	if !ok {
 		return mcpOAuthClient{}, false
 	}
@@ -370,11 +389,25 @@ func validPKCEChallenge(challenge string) bool {
 	return true
 }
 
+func mcpRedirectTarget(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	if u.Scheme == "https" {
+		return u.Host
+	}
+	if u.Host != "" {
+		return u.Scheme + "://" + u.Host
+	}
+	return raw
+}
+
 var mcpConsentTemplate = template.Must(template.New("mcp-consent").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Connect {{.ClientName}} to aidocs</title>
+<title>Connect {{.ClientName}} to slashdocs</title>
 <style>body{font:16px/1.5 system-ui,sans-serif;max-width:36rem;margin:10vh auto;padding:0 1.5rem;color:#171717}section{border:1px solid #ddd;border-radius:12px;padding:1.5rem}h1{font-size:1.4rem}p{color:#525252}.actions{display:flex;gap:.75rem;margin-top:1.5rem}button{padding:.65rem 1rem;border-radius:8px;border:1px solid #bbb;background:#fff;font:inherit}button[value=approve]{background:#171717;color:#fff;border-color:#171717}</style></head>
-<body><section><h1>Connect {{.ClientName}}?</h1><p>This gives the client access to aidocs as <strong>{{.User}}</strong>. It can read and change the same documents, comments, folders, sharing settings, and service accounts that you can.</p>
+<body><section><h1>Connect {{.ClientName}}?</h1><p>Access goes to <strong>{{.RedirectTarget}}</strong>.</p><p>The client name is self-reported and is not verified.</p><p>This gives the client access to slashdocs as <strong>{{.User}}</strong>. It can read and change the same documents, comments, folders, sharing settings, and service accounts that you can.</p>
 <form method="post" action="/oauth/authorize">{{range $k,$v := .Fields}}<input type="hidden" name="{{$k}}" value="{{$v}}">{{end}}<div class="actions"><button type="submit" name="decision" value="deny">Cancel</button><button type="submit" name="decision" value="approve">Connect</button></div></form></section></body></html>`))
 
 func (h handlers) mcpAuthorize(c *gin.Context) {
@@ -400,24 +433,17 @@ func (h handlers) mcpAuthorize(c *gin.Context) {
 			"code_challenge": in.CodeChallenge, "code_challenge_method": in.CodeChallengeMethod,
 			"resource": in.Resource, "scope": firstNonEmpty(in.Scope, mcpScope), "state": in.State,
 		}
-		redirectURL, _ := url.Parse(in.RedirectURI) // already validated against the signed client registration
-		redirectOrigin := redirectURL.Scheme + "://" + redirectURL.Host
-		if !strings.EqualFold(redirectURL.Scheme, "http") && !strings.EqualFold(redirectURL.Scheme, "https") {
-			// Private-use app schemes are expressed as scheme-only CSP
-			// sources; browsers do not reliably match host sources on
-			// unregistered schemes.
-			redirectOrigin = redirectURL.Scheme + ":"
-		}
 		c.Header("Content-Type", "text/html; charset=utf-8")
 		c.Header("Cache-Control", "no-store")
-		// form-action is checked again after redirects, so allow the registered
-		// callback origin as well as the same-origin consent POST.
-		c.Header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' "+redirectOrigin+"; frame-ancestors 'none'; base-uri 'none'")
+		// No form-action: browsers check it on every redirect after the consent
+		// POST, and client callbacks redirect again to hosts that this server
+		// cannot know (www.cursor.com to cursor.com, vscode.dev to loopback).
+		c.Header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'")
 		c.Header("X-Frame-Options", "DENY")
 		// Keep same-origin form submissions compatible with the application's
 		// cookie CSRF check without leaking authorization parameters off-origin.
 		c.Header("Referrer-Policy", "same-origin")
-		if err := mcpConsentTemplate.Execute(c.Writer, map[string]any{"ClientName": client.Name, "User": user, "Fields": fields}); err != nil {
+		if err := mcpConsentTemplate.Execute(c.Writer, map[string]any{"ClientName": client.Name, "RedirectTarget": mcpRedirectTarget(in.RedirectURI), "User": user, "Fields": fields}); err != nil {
 			internalErr(c, err)
 		}
 		return
@@ -471,6 +497,10 @@ func (h handlers) mcpToken(c *gin.Context) {
 		oauthError(c, http.StatusBadRequest, "invalid_client", "unknown or expired client_id")
 		return
 	}
+	if in.GrantType == "refresh_token" {
+		h.mcpRefreshGrant(c, in)
+		return
+	}
 	st, ok, err := h.deps.stateStore.TakeCode(c.Request.Context(), in.Code)
 	if err != nil {
 		internalErr(c, err)
@@ -481,15 +511,53 @@ func (h handlers) mcpToken(c *gin.Context) {
 		oauthError(c, http.StatusBadRequest, "invalid_grant", "authorization code is invalid, expired, or does not match the PKCE request")
 		return
 	}
-	token := auth.NewMCPAccessToken(st.UserID, in.Resource, h.deps.sessionSecret, mcpAccessTokenTTL)
 	incAuth("mcp_exchange", "success")
+	h.issueMCPTokens(c, st.UserID, in.ClientID, in.Resource, firstNonEmpty(st.OAuthScope, mcpScope))
+}
+
+// mcpRefreshGrant redeems a refresh token once and issues a new pair. The row
+// is keyed by the token hash, so the one-time take both finds and consumes it.
+func (h handlers) mcpRefreshGrant(c *gin.Context, in mcpTokenRequest) {
+	st, ok, err := h.deps.stateStore.TakeState(c.Request.Context(), mcpRefreshStateIDPrefix+auth.HashToken(in.RefreshToken))
+	if err != nil {
+		internalErr(c, err)
+		return
+	}
+	if !ok || st.Mode != mcpRefreshMode || st.OAuthClientID != in.ClientID ||
+		st.OAuthResource != in.Resource || in.Resource != h.mcpResource() {
+		incAuth("mcp_refresh", "failure")
+		oauthError(c, http.StatusBadRequest, "invalid_grant", "refresh token is invalid, expired, or bound to a different client")
+		return
+	}
+	incAuth("mcp_refresh", "success")
+	h.issueMCPTokens(c, st.UserID, in.ClientID, in.Resource, st.OAuthScope)
+}
+
+// issueMCPTokens mints an access token and a new refresh token, stores the
+// refresh token hash for one later redemption, and writes the token response.
+func (h handlers) issueMCPTokens(c *gin.Context, userID, clientID, resource, scope string) {
+	accessToken := auth.NewMCPAccessToken(userID, resource, h.deps.sessionSecret, mcpAccessTokenTTL)
+	refreshToken, refreshHash, err := auth.NewBearerToken(mcpRefreshTokenPrefix)
+	if err != nil {
+		internalErr(c, err)
+		return
+	}
+	if err := h.deps.stateStore.PutState(c.Request.Context(), mcpRefreshStateIDPrefix+refreshHash, auth.LoginState{
+		Mode: mcpRefreshMode, UserID: userID,
+		OAuthClientID: clientID, OAuthResource: resource, OAuthScope: scope,
+		ExpiresAt: time.Now().Add(mcpRefreshTokenTTL),
+	}); err != nil {
+		internalErr(c, err)
+		return
+	}
 	c.Header("Cache-Control", "no-store")
 	c.Header("Pragma", "no-cache")
 	c.JSON(http.StatusOK, mcpTokenResponse{
-		AccessToken: token,
-		TokenType:   "Bearer",
-		ExpiresIn:   int(mcpAccessTokenTTL / time.Second),
-		Scope:       firstNonEmpty(st.OAuthScope, mcpScope),
+		AccessToken:  accessToken,
+		TokenType:    "Bearer",
+		ExpiresIn:    int(mcpAccessTokenTTL / time.Second),
+		Scope:        scope,
+		RefreshToken: refreshToken,
 	})
 }
 
@@ -497,12 +565,21 @@ func parseMCPTokenRequest(c *gin.Context) (mcpTokenRequest, *oauthRequestError) 
 	if !strings.HasPrefix(strings.ToLower(c.GetHeader("Content-Type")), "application/x-www-form-urlencoded") {
 		return mcpTokenRequest{}, &oauthRequestError{http.StatusUnsupportedMediaType, "invalid_request", "token requests must be form encoded"}
 	}
-	if c.PostForm("grant_type") != "authorization_code" {
-		return mcpTokenRequest{}, &oauthRequestError{http.StatusBadRequest, "unsupported_grant_type", "only authorization_code is supported"}
+	grantType := c.PostForm("grant_type")
+	if grantType != "authorization_code" && grantType != "refresh_token" {
+		return mcpTokenRequest{}, &oauthRequestError{http.StatusBadRequest, "unsupported_grant_type", "only the authorization_code and refresh_token grants are supported"}
 	}
 	in := mcpTokenRequest{
-		Code: c.PostForm("code"), CodeVerifier: c.PostForm("code_verifier"),
+		GrantType: grantType,
+		Code:      c.PostForm("code"), CodeVerifier: c.PostForm("code_verifier"),
 		ClientID: c.PostForm("client_id"), RedirectURI: c.PostForm("redirect_uri"), Resource: c.PostForm("resource"),
+		RefreshToken: c.PostForm("refresh_token"),
+	}
+	if grantType == "refresh_token" {
+		if in.RefreshToken == "" || in.ClientID == "" || in.Resource == "" {
+			return mcpTokenRequest{}, &oauthRequestError{http.StatusBadRequest, "invalid_request", "refresh_token, client_id, and resource are required"}
+		}
+		return in, nil
 	}
 	if in.Code == "" || in.CodeVerifier == "" || in.ClientID == "" || in.RedirectURI == "" || in.Resource == "" {
 		return mcpTokenRequest{}, &oauthRequestError{http.StatusBadRequest, "invalid_request", "code, code_verifier, client_id, redirect_uri, and resource are required"}

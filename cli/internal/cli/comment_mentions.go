@@ -74,7 +74,7 @@ func (c *Client) commentJSON(method, path string, payload map[string]any, emails
 	if err != nil {
 		return nil, err
 	}
-	return c.do(method, path, bytes.NewReader(raw), "application/vnd.aidocs.comment-mentions+json")
+	return c.do(method, path, bytes.NewReader(raw), "application/vnd.slashdocs.comment-mentions+json")
 }
 
 func commentBody(cmd *cobra.Command, body, filename string) (string, error) {

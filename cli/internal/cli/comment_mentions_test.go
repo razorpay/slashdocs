@@ -18,7 +18,7 @@ func TestCLIMentionsResolveEmailsAndCalculateUTF16Offsets(t *testing.T) {
 			writeTestJSON(t, w, map[string]any{"items": []mentionUser{{Type: "user", ID: "usr_alice", Email: "alice@example.com"}}})
 			return
 		}
-		if r.Header.Get("Content-Type") != "application/vnd.aidocs.comment-mentions+json" {
+		if r.Header.Get("Content-Type") != "application/vnd.slashdocs.comment-mentions+json" {
 			t.Error("missing structured mention media type")
 		}
 		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {

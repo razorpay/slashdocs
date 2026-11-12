@@ -44,7 +44,7 @@ export function printDocumentHTML(html: string): string {
   head.prepend(referrer);
   const style = document.createElement("style");
   style.textContent =
-    "html,body{height:auto!important;max-height:none!important;overflow:visible!important}.aidocs-selection-action,.aidocs-heading-link,.aidocs-svg-mark-rect{display:none!important}.aidocs-mark{background:transparent!important;box-shadow:none!important;color:inherit!important;-webkit-text-fill-color:inherit!important}";
+    "html,body{height:auto!important;max-height:none!important;overflow:visible!important}.slashdocs-selection-action,.slashdocs-heading-link,.slashdocs-svg-mark-rect{display:none!important}.slashdocs-mark{background:transparent!important;box-shadow:none!important;color:inherit!important;-webkit-text-fill-color:inherit!important}";
   head.append(style);
   return "<!doctype html>" + root.outerHTML;
 }

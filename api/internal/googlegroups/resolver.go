@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
-	"github.com/razorpay/aidocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
 type MembershipStore interface {
@@ -68,7 +68,7 @@ func (r *Resolver) Resolve(ctx context.Context, principal *auth.Principal) *auth
 	resolved := *principal
 	resolved.GoogleGroupIDs = nil
 	resolved.GoogleGroupMembershipState = ""
-	// aidocs service accounts are standalone machine identities and must never
+	// slashdocs service accounts are standalone machine identities and must never
 	// inherit a human owner's Google Workspace memberships.
 	if principal.Type != auth.PrincipalUser || r == nil || r.store == nil || r.directory == nil {
 		return &resolved

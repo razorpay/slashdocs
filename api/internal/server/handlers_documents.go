@@ -5,12 +5,13 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
-	"github.com/razorpay/aidocs/api/internal/blob"
-	"github.com/razorpay/aidocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/blob"
+	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
 // createDocumentResponse is the payload of POST /v1/documents.
@@ -46,6 +47,15 @@ type defaultGrantPrincipal struct {
 // @Router /v1/documents [post]
 func (h handlers) createDocument(c *gin.Context) {
 	p := current(c)
+	html, err := readMultipartFile(c, "file")
+	if errors.Is(err, errPayloadTooLarge) {
+		c.JSON(http.StatusRequestEntityTooLarge, errorResponse("payload_too_large", "HTML file exceeds 50 MiB", nil))
+		return
+	}
+	if err != nil {
+		badRequest(c, "invalid document upload")
+		return
+	}
 	title := c.PostForm("title")
 	// The request override beats the server-wide default regardless of
 	// deployment mode: only the server env is org-gated (at startup), because
@@ -59,12 +69,7 @@ func (h handlers) createDocument(c *gin.Context) {
 		}
 		permission = role
 	}
-	html, err := readMultipartFile(c, "file")
-	if errors.Is(err, errPayloadTooLarge) {
-		c.JSON(http.StatusRequestEntityTooLarge, errorResponse("payload_too_large", "HTML file exceeds 50 MiB", nil))
-		return
-	}
-	if err != nil || title == "" {
+	if title == "" {
 		badRequest(c, "invalid document upload")
 		return
 	}
@@ -104,8 +109,9 @@ func (h handlers) createDocument(c *gin.Context) {
 // @Security bearerAuth
 // @Security cookieAuth
 // @Produce json
-// @Param q query string false "Search query; supports author:, labels:, in:, and /regex/ values"
-// @Param label query string false "Deprecated exact label filter; use q=labels:<label>"
+// @Param q query string false "Slack-style search of titles and text: words, \"phrases\", -word, from:, in:, label:, before:, after:, on:, and during:"
+// @Param tz query string false "IANA time zone for date modifiers; defaults to UTC"
+// @Param label query string false "Deprecated exact label filter; use q=label:<label>"
 // @Success 200 {object} listResponse[repo.Document]
 // @Router /v1/documents [get]
 func (h handlers) listDocuments(c *gin.Context) {
@@ -113,13 +119,12 @@ func (h handlers) listDocuments(c *gin.Context) {
 		return
 	}
 	q := strings.TrimSpace(c.Query("q"))
-	var search repo.DocumentSearch
-	var err error
-	if h.deps.searchTagsEnabled {
-		search, err = parseDocumentSearch(q)
-	} else {
-		search, err = parseDocumentTitleSearch(q)
+	zone, err := time.LoadLocation(c.Query("tz"))
+	if err != nil {
+		badRequest(c, "invalid tz")
+		return
 	}
+	search, err := parseDocumentSearch(q, *current(c), time.Now().In(zone))
 	if err != nil {
 		badRequest(c, err.Error())
 		return
@@ -134,13 +139,9 @@ func (h handlers) listDocuments(c *gin.Context) {
 			badRequest(c, "invalid label")
 			return
 		}
-		if len(search.LabelPatterns) >= maxSearchLabels {
-			badRequest(c, fmt.Sprintf("at most %d labels are allowed", maxSearchLabels))
-			return
-		}
-		search.LabelPatterns = append(search.LabelPatterns, "^"+escapePostgresRegex(label)+"$")
+		search.Labels = append(search.Labels, label)
 	}
-	if q != "" || len(search.LabelPatterns) > 0 {
+	if q != "" || len(search.Labels) > 0 {
 		includeOrgWide := h.deps.deployment == DeploymentOrg
 		items, err := h.deps.repository.SearchDocuments(c.Request.Context(), *current(c), search, includeOrgWide, 25)
 		if err != nil {
@@ -187,15 +188,12 @@ func (h handlers) getDocument(c *gin.Context) {
 		return
 	}
 	if !atLeast(role, repo.RoleViewer) {
-		if groupMembershipUnavailable(current(c)) {
-			groupMembershipUnavailableResponse(c)
-			return
-		}
-		forbidden(c, "viewer role required")
+		denyDocRole(c, repo.RoleViewer)
 		return
 	}
 	p := current(c)
-	if p.Type != d.Owner.Type || p.ID != d.Owner.ID {
+	// The workspace lists documents that a signed-in principal opened.
+	if p.Type != auth.PrincipalAnonymous && (p.Type != d.Owner.Type || p.ID != d.Owner.ID) {
 		_ = h.deps.repository.RecordDocumentOpened(c.Request.Context(), d.ID, *p)
 	}
 	// Show parent folder in breadcrumb only if viewer has access to it. The
@@ -244,6 +242,7 @@ func (h handlers) patchDocument(c *gin.Context) {
 		internalErr(c, err)
 		return
 	}
+	h.announce(c, repo.DocumentEventDocument)
 	c.JSON(http.StatusOK, d)
 }
 

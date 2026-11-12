@@ -68,9 +68,9 @@ SELECT g.id, g.resource_id, g.resource_type, g.principal_type, g.principal_id,
        COALESCE(u.name,sa.name,gg.display_name,'') AS principal_name, g.role
 FROM resource_grants g
 LEFT JOIN users u ON g.principal_type='user' AND g.principal_id=u.id
-LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-  -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
-  ON g.principal_type='service_account' AND g.principal_id=sa.id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON g.principal_type='service_account' AND g.principal_id=sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 LEFT JOIN google_groups gg ON g.principal_type='google_group' AND g.principal_id=gg.id
 WHERE g.revoked_at IS NULL AND g.resource_id = ANY($1::text[])
 `
@@ -86,7 +86,7 @@ type ListGrantsForResourcesRow struct {
 	Role           string
 }
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) ListGrantsForResources(ctx context.Context, resourceIds []string) ([]ListGrantsForResourcesRow, error) {
 	rows, err := q.db.Query(ctx, listGrantsForResources, resourceIds)
 	if err != nil {
@@ -138,10 +138,10 @@ LEFT JOIN documents d ON a.rtype='document' AND d.id=a.rid
 LEFT JOIN users ou
   ON COALESCE(f.owner_type, d.owner_type)='user'
  AND COALESCE(f.owner_id, d.owner_id)=ou.id
-LEFT JOIN service_accounts osa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-  -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
+LEFT JOIN service_accounts osa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
   ON COALESCE(f.owner_type, d.owner_type)='service_account'
- AND COALESCE(f.owner_id, d.owner_id)=osa.id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+ AND COALESCE(f.owner_id, d.owner_id)=osa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE a.rid IS NOT NULL
 `
 
@@ -163,7 +163,7 @@ type ListResourceAncestorsRow struct {
 
 // The resource itself plus every folder above it, with titles and owners, for
 // the effective-access report.
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) ListResourceAncestors(ctx context.Context, arg ListResourceAncestorsParams) ([]ListResourceAncestorsRow, error) {
 	rows, err := q.db.Query(ctx, listResourceAncestors, arg.ResourceID, arg.ResourceType)
 	if err != nil {
@@ -211,16 +211,16 @@ SELECT
 FROM resource_grants g
 LEFT JOIN users u
   ON g.principal_type = 'user' AND g.principal_id = u.id
-LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-  -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
-  ON g.principal_type = 'service_account' AND g.principal_id = sa.id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON g.principal_type = 'service_account' AND g.principal_id = sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 LEFT JOIN google_groups gg
   ON g.principal_type = 'google_group' AND g.principal_id = gg.id
 LEFT JOIN users gu
   ON g.granted_by_type = 'user' AND g.granted_by_user_id = gu.id
-LEFT JOIN service_accounts gsa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-  -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
-  ON g.granted_by_type = 'service_account' AND g.granted_by_user_id = gsa.id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts gsa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON g.granted_by_type = 'service_account' AND g.granted_by_user_id = gsa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE g.resource_id= $1 AND g.revoked_at IS NULL
 `
 
@@ -240,8 +240,8 @@ type ListResourceGrantsRow struct {
 	GrantedByName       string
 }
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) ListResourceGrants(ctx context.Context, resourceID string) ([]ListResourceGrantsRow, error) {
 	rows, err := q.db.Query(ctx, listResourceGrants, resourceID)
 	if err != nil {

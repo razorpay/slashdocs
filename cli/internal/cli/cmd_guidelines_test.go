@@ -15,18 +15,18 @@ func TestGuidelinesIndexPointsToSections(t *testing.T) {
 		t.Fatalf("guidelines returned error: %v", err)
 	}
 	for _, want := range []string{
-		"aidocs document authoring guidelines",
-		"aidocs guidelines core",
-		"aidocs guidelines rendering theme",
-		"aidocs guidelines interactivity kv",
-		"aidocs guidelines interactivity github",
-		"aidocs guidelines all",
+		"slashdocs document authoring guidelines",
+		"slashdocs guidelines core",
+		"slashdocs guidelines rendering theme",
+		"slashdocs guidelines interactivity kv",
+		"slashdocs guidelines interactivity github",
+		"slashdocs guidelines all",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("index output missing %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "window.aidocs.kv.get") {
+	if strings.Contains(got, "window.slashdocs.kv.get") {
 		t.Fatalf("index should not include full KV detail:\n%s", got)
 	}
 }
@@ -37,9 +37,9 @@ func TestGuidelinesGitHubAliasDocumentsPrimitive(t *testing.T) {
 		t.Fatalf("GitHub guidelines returned error: %v", err)
 	}
 	for _, want := range []string{
-		"aidocs guidelines: interactivity github",
-		"window.aidocs.github.getRawContent",
-		"window.aidocs.github.connect",
+		"slashdocs guidelines: interactivity github",
+		"window.slashdocs.github.getRawContent",
+		"window.slashdocs.github.connect",
 		"branch, tag, or commit SHA",
 		"Prefer a stable commit ref unless",
 		"a floating branch or tag",
@@ -60,9 +60,9 @@ func TestGuidelinesSectionLookup(t *testing.T) {
 		t.Fatalf("theme guidelines returned error: %v", err)
 	}
 	for _, want := range []string{
-		"aidocs guidelines: rendering theme",
-		`<html data-aidocs-theme="light">`,
-		"window.addEventListener('aidocs:theme'",
+		"slashdocs guidelines: rendering theme",
+		`<html data-slashdocs-theme="light">`,
+		"window.addEventListener('slashdocs:theme'",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("theme output missing %q:\n%s", want, got)
@@ -76,14 +76,14 @@ func TestGuidelinesKVAliasDocumentsPrimitive(t *testing.T) {
 		t.Fatalf("KV guidelines returned error: %v", err)
 	}
 	for _, want := range []string{
-		"window.aidocs.kv.get",
-		"window.aidocs.kv.all",
-		"window.aidocs.kv.set",
-		"window.aidocs.kv.delete",
-		"window.aidocs.kv.patch",
-		"window.aidocs.kv.undo",
-		"window.aidocs.kv.redo",
-		`window.aidocs.on("kvchange"`,
+		"window.slashdocs.kv.get",
+		"window.slashdocs.kv.all",
+		"window.slashdocs.kv.set",
+		"window.slashdocs.kv.delete",
+		"window.slashdocs.kv.patch",
+		"window.slashdocs.kv.undo",
+		"window.slashdocs.kv.redo",
+		`window.slashdocs.on("kvchange"`,
 		"KV writes persist immediately",
 		"KV writes do not create document versions",
 		"One document's keys are not visible to another",
@@ -106,9 +106,9 @@ func TestGuidelinesPublishingExamplesMatchCLIFlags(t *testing.T) {
 		t.Fatalf("publishing guidelines returned error: %v", err)
 	}
 	for _, want := range []string{
-		"aidocs docs create report.html --title 'Report'",
-		"aidocs docs push <doc_id> report.html --base-version <version_id> --summary 'Address comments'",
-		"aidocs docs pull <doc_id>",
+		"slashdocs docs create report.html --title 'Report'",
+		"slashdocs docs push <doc_id> report.html --base-version <version_id> --summary 'Address comments'",
+		"slashdocs docs pull <doc_id>",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("publishing output missing %q:\n%s", want, got)
@@ -131,7 +131,7 @@ func TestGuidelinesUnknownSectionIsUsageError(t *testing.T) {
 	if got := ExitCode(err); got != 2 {
 		t.Fatalf("ExitCode = %d, want 2", got)
 	}
-	if !strings.Contains(err.Error(), `unknown guidelines section "missing"`) || !strings.Contains(err.Error(), "aidocs guidelines interactivity kv") {
+	if !strings.Contains(err.Error(), `unknown guidelines section "missing"`) || !strings.Contains(err.Error(), "slashdocs guidelines interactivity kv") {
 		t.Fatalf("unknown section error should be helpful, got %q", err.Error())
 	}
 }
@@ -143,10 +143,10 @@ func TestGuidelinesDoesNotCallUpdateEndpoints(t *testing.T) {
 		http.Error(w, "unexpected request", http.StatusInternalServerError)
 	}))
 	defer srv.Close()
-	t.Setenv("AIDOCS_SERVER", srv.URL)
-	t.Setenv("AIDOCS_TOKEN", "tok")
+	t.Setenv("SLASHDOCS_SERVER", srv.URL)
+	t.Setenv("SLASHDOCS_TOKEN", "tok")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	t.Setenv("AIDOCS_DISABLE_AUTO_UPDATE", "")
+	t.Setenv("SLASHDOCS_DISABLE_AUTO_UPDATE", "")
 
 	if _, err := Execute([]string{"guidelines"}); err != nil {
 		t.Fatalf("guidelines returned error: %v", err)

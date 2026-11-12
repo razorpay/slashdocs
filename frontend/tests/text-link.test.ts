@@ -1,5 +1,4 @@
-import assert from "node:assert/strict";
-import test from "node:test";
+import { assert, test } from "vitest";
 import { parseTextLink, textLinkFragment } from "../bridge/text-link.ts";
 
 test("text links round-trip punctuation, Unicode and duplicate-text context", () => {
@@ -13,7 +12,7 @@ test("text links round-trip punctuation, Unicode and duplicate-text context", ()
   const url = new URL("https://example.test/app/d/doc_1?version=ver_1");
   url.hash = textLinkFragment(anchor)!;
   assert.deepEqual(parseTextLink(url.hash), anchor);
-  assert.equal(url.search, "?version=ver_1");
+  assert.strictEqual(url.search, "?version=ver_1");
 });
 
 test("text links reject empty or oversized input and ignore invalid offsets", () => {
@@ -24,10 +23,10 @@ test("text links reject empty or oversized input and ignore invalid offsets", ()
     { quote: "x".repeat(4097) },
     { quote: "ok", prefix: {} },
   ]) {
-    assert.equal(textLinkFragment(value), null);
+    assert.strictEqual(textLinkFragment(value), null);
   }
-  assert.equal(parseTextLink("#heading"), null);
-  assert.equal(parseTextLink("#text="), null);
+  assert.strictEqual(parseTextLink("#heading"), null);
+  assert.strictEqual(parseTextLink("#text="), null);
   assert.deepEqual(parseTextLink("#text=hello&start=-2&end=NaN"), {
     quote: "hello",
     prefix: undefined,

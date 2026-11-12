@@ -8,7 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/razorpay/aidocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
 var labelPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,47}$`)

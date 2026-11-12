@@ -24,6 +24,8 @@ export type Document = {
   parent_folder?: { id: string; title: string };
   updated_at?: string;
   labels?: string[];
+  // Search results only: the matching text. U+0002 and U+0003 surround each match.
+  snippet?: string;
 };
 export type ServerConfig = {
   deployment: "public" | "org";
@@ -32,7 +34,6 @@ export type ServerConfig = {
   provider_name: string;
   google_groups_enabled: boolean;
   labels_enabled: boolean;
-  search_tags_enabled: boolean;
 };
 export type GoogleGroup = { id: string; email: string; name: string };
 export type Version = {
@@ -109,6 +110,7 @@ export type Comment = {
   };
   created_at?: string;
   resolved_at?: string;
+  edited?: boolean;
 };
 export type CommentPatch = {
   body?: string;
@@ -116,7 +118,7 @@ export type CommentPatch = {
   mentions?: CommentMention[];
 };
 
-const COMMENT_MENTIONS_MEDIA_TYPE = "application/vnd.aidocs.comment-mentions+json";
+const COMMENT_MENTIONS_MEDIA_TYPE = "application/vnd.slashdocs.comment-mentions+json";
 export type Grant = {
   id: string;
   principal?: Principal;
@@ -139,6 +141,14 @@ export type FolderEntry = {
   folder?: Folder;
   document?: Document;
   last_active?: string;
+};
+// FeaturedSection is a titled row of server-configured documents and folders.
+// Users cannot hide the items of a permanent section.
+export type FeaturedSection = {
+  title: string;
+  description?: string;
+  permanent: boolean;
+  items: FolderEntry[];
 };
 export type Pin = {
   resource_type: "document" | "folder";
@@ -172,6 +182,30 @@ export type DocumentKVEvent = {
   changes: DocumentKVChange[];
   updated_at?: string;
   updated_by?: Principal;
+  // Stream events other than KV changes set kind; presence and cursor events
+  // carry data.
+  kind?: "kv" | "document" | "comments" | "presence" | "cursor";
+  data?: unknown;
+};
+// A viewer's place in a document, published on the document event stream.
+export type DocumentPresence = {
+  session: string;
+  version?: string;
+  anchor?: Partial<Anchor>;
+  left?: boolean;
+  picture_url?: string;
+};
+// A place in a rendered document: the element at a path of child indexes
+// under the body, and fractions of the width and height of that element.
+export type CursorSpot = { path: string; x: number; y: number };
+// A pointer position at time t, in milliseconds on the sender's clock. A
+// hidden point means that the pointer left the document.
+export type CursorPoint = CursorSpot & { t: number; hidden?: boolean };
+// A batch of pointer positions from one viewer session.
+export type DocumentCursor = {
+  session: string;
+  version: string;
+  points: CursorPoint[];
 };
 export type AccessSource = {
   resource_type: string;
@@ -268,9 +302,14 @@ export const api = {
     }>("/v1/me"),
   loginURL: (redirect: string = location.pathname + location.search) =>
     `/v1/auth/google/start?mode=web&redirect=${encodeURIComponent(redirect)}`,
+  logout: () => request<void>("/v1/auth/logout", { method: "POST" }),
   listDocuments: (q?: string) => {
     const params = new URLSearchParams();
-    if (q) params.set("q", q);
+    if (q) {
+      params.set("q", q);
+      // Date modifiers such as on:today use the searcher's days.
+      params.set("tz", Intl.DateTimeFormat().resolvedOptions().timeZone);
+    }
     const qs = params.toString();
     return request<{ items: Document[] }>(`/v1/documents${qs ? `?${qs}` : ""}`);
   },
@@ -348,6 +387,16 @@ export const api = {
     request<DocumentKVPatchResult>(`/v1/documents/${doc}/kv`, {
       method: "PATCH",
       body: JSON.stringify(patch),
+    }),
+  postDocumentPresence: (doc: string, presence: DocumentPresence) =>
+    request<void>(`/v1/documents/${doc}/presence`, {
+      method: "POST",
+      body: JSON.stringify(presence),
+    }),
+  postDocumentCursor: (doc: string, cursor: DocumentCursor) =>
+    request<void>(`/v1/documents/${doc}/cursor`, {
+      method: "POST",
+      body: JSON.stringify(cursor),
     }),
   // emoji stays a string: the only caller forwards a slug the server sent, and
   // narrowing it here would need a cast that asserts what the wire does not
@@ -554,13 +603,11 @@ export const api = {
     request<{
       items: EffectiveAccessItem[];
       current_role: string;
-      canonical_owner: boolean;
     }>(`/v1/folders/${id}/access`),
   documentAccess: (id: string) =>
     request<{
       items: EffectiveAccessItem[];
       current_role: string;
-      canonical_owner: boolean;
     }>(`/v1/documents/${id}/access`),
   // Pins
   listPins: () => request<{ items: Pin[] }>("/v1/pins"),
@@ -570,6 +617,10 @@ export const api = {
     request<void>(`/v1/pins/${resourceType}/${resourceId}`, {
       method: "DELETE",
     }),
+  // Featured items: documents and folders that the server shows to each user.
+  listFeatured: () => request<{ items: FeaturedSection[] }>("/v1/featured"),
+  hideFeatured: (resourceId: string) =>
+    request<void>(`/v1/featured/${resourceId}`, { method: "DELETE" }),
 };
 
 export const docID = (d: Partial<Document>) => d.id || "";

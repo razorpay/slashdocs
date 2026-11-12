@@ -89,7 +89,7 @@ func roleVerb(role string) string {
 // that predates /v1/config's deployment field; those were org installs.
 func defaultShareNotice(cfg serverConfig, docID, role, grantID string) string {
 	verb := roleVerb(role)
-	revoke := fmt.Sprintf("To make it private, revoke the default grant: aidocs docs grants revoke %s %s.", docID, grantID)
+	revoke := fmt.Sprintf("To make it private, revoke the default grant: slashdocs docs grants revoke %s %s.", docID, grantID)
 	if cfg.Deployment == "public" {
 		return fmt.Sprintf("Anyone with the link can %s by default. Make sure your user knows it is publicly accessible. %s", verb, revoke)
 	}
@@ -106,13 +106,13 @@ func orgWideViewerNudge(g *globals, docID string) string {
 	}
 	cfg := serverConfigFor(g)
 	if cfg.Deployment == "public" {
-		return fmt.Sprintf("Give read-only access to anyone with the link? You can do it with: aidocs docs grants add %s --everyone --role viewer", docID)
+		return fmt.Sprintf("Give read-only access to anyone with the link? You can do it with: slashdocs docs grants add %s --everyone --role viewer", docID)
 	}
 	org := cfg.OrgName
 	if org == "" {
 		org = "your org"
 	}
-	return fmt.Sprintf("Give org-wide read-only access? We are transparent here at %s. You can do it with: aidocs docs grants add %s --everyone --role viewer", org, docID)
+	return fmt.Sprintf("Give org-wide read-only access? We are transparent here at %s. You can do it with: slashdocs docs grants add %s --everyone --role viewer", org, docID)
 }
 
 func printOrgWideViewerNudge(out io.Writer, g *globals, docID string) error {

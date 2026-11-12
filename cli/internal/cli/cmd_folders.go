@@ -122,7 +122,7 @@ func folderGrantsCmd(g *globals, out io.Writer) *cobra.Command {
 
 	var address, group, principal, role string
 	var everyone bool
-	add := &cobra.Command{Use: "add <folder_id>", Short: "Share a folder", Long: "Share a folder with a person, bot, verified Google Group, or everyone.\n\nExamples:\n  aidocs folders grants add fld_… --to user@org.example --role editor\n  aidocs folders grants add fld_… --group tech-infra@org.example --role viewer\n  aidocs folders grants add fld_… --everyone --role viewer", Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	add := &cobra.Command{Use: "add <folder_id>", Short: "Share a folder", Long: "Share a folder with a person, bot, verified Google Group, or everyone.\n\nExamples:\n  slashdocs folders grants add fld_… --to user@org.example --role editor\n  slashdocs folders grants add fld_… --group tech-infra@org.example --role viewer\n  slashdocs folders grants add fld_… --everyone --role viewer", Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		body := map[string]any{"role": role}
 		var target string
 		selected := 0
@@ -160,7 +160,7 @@ func folderGrantsCmd(g *globals, out io.Writer) *cobra.Command {
 	add.Flags().StringVar(&group, "group", "", "verified organization Google Group email")
 	add.Flags().BoolVar(&everyone, "everyone", false, "share with everyone")
 	add.Flags().StringVar(&principal, "principal", "", "legacy: sa:<id> or user:<email>")
-	add.Flags().StringVar(&role, "role", "viewer", "viewer, commenter, editor, or owner (groups only)")
+	add.Flags().StringVar(&role, "role", "viewer", "viewer, commenter, or editor")
 
 	var updRole string
 	upd := &cobra.Command{Use: "update <folder_id> <grant_id>", Short: "Update a folder grant role", Args: exactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
@@ -239,7 +239,7 @@ func renderFolderList(out io.Writer, b []byte) error {
 		}
 	}
 	if resp.HasMore {
-		if _, err := fmt.Fprintln(out, "Showing the first 50 folders. There are more. Use `aidocs folders search <name>` to find a folder."); err != nil {
+		if _, err := fmt.Fprintln(out, "Showing the first 50 folders. There are more. Use `slashdocs folders search <name>` to find a folder."); err != nil {
 			return err
 		}
 	}

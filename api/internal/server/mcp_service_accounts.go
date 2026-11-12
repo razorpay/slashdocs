@@ -87,9 +87,9 @@ func registerMCPServiceAccountTransferTools(server *mcpserver.MCPServer, api mcp
 	})
 
 	server.AddTool(mcp.NewTool("create_service_account_transfer", mutationOptions(false, false,
-		mcp.WithDescription("Request transfer of a service account to another aidocs user."),
+		mcp.WithDescription("Request transfer of a service account to another slashdocs user."),
 		mcpServiceAccountID(),
-		mcp.WithString("to_user_email", mcp.Required(), mcp.Description("Recipient's aidocs user email.")),
+		mcp.WithString("to_user_email", mcp.Required(), mcp.Description("Recipient's slashdocs user email.")),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		id, invalid := mcpRequired(request, "service_account_id")
 		if invalid != nil {

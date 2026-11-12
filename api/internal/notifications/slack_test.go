@@ -70,7 +70,7 @@ func TestSlackDeliveryUsesPrivateMessagesAndHonorsRateLimits(t *testing.T) {
 	target, _ := url.Parse(server.URL)
 	slack := NewSlack("test-only-token")
 	slack.client = &http.Client{Transport: testTransport{base: server.Client().Transport, target: target}}
-	err := slack.Send(context.Background(), "alice@example.com", Message{Reason: "mention", Link: "https://aidocs.example.com/app/d/doc_1?comment=cmt_1", DocumentTitle: "Launch review", Highlight: "Ship on Friday", Body: "Please review"})
+	err := slack.Send(context.Background(), "alice@example.com", Message{Reason: "mention", Link: "https://slashdocs.example.com/app/d/doc_1?comment=cmt_1", DocumentTitle: "Launch review", Highlight: "Ship on Friday", Body: "Please review"})
 	var delivery *DeliveryError
 	if !errors.As(err, &delivery) || delivery.RetryAfter != 42*time.Second || len(paths) != 3 {
 		t.Fatalf("delivery error=%v paths=%v", err, paths)

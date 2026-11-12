@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -13,7 +12,7 @@ import (
 
 func saRoot(g *globals, out io.Writer) *cobra.Command {
 	c := &cobra.Command{Use: "sa", Short: "Manage service accounts", PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		if os.Getenv("AIDOCS_DISABLE_SA_COMMANDS") != "" {
+		if env("SLASHDOCS_DISABLE_SA_COMMANDS") != "" {
 			return errSADisabled
 		}
 		return nil
@@ -67,9 +66,9 @@ func serviceAccountCreateCmd(g *globals, out io.Writer) *cobra.Command {
 			"  <address>   Optional. Must end in .bot. If you skip it, we'll\n" +
 			"              pick something memorable for you.\n\n" +
 			"Examples:\n" +
-			"  aidocs sa create n8n-prod\n" +
-			"  aidocs sa create ci-runner@ops.team.bot\n" +
-			"  aidocs sa create nightly@crew.bot",
+			"  slashdocs sa create n8n-prod\n" +
+			"  slashdocs sa create ci-runner@ops.team.bot\n" +
+			"  slashdocs sa create nightly@crew.bot",
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cl, err := client(g)
@@ -82,7 +81,7 @@ func serviceAccountCreateCmd(g *globals, out io.Writer) *cobra.Command {
 				domain := label[at+1:]
 				label = label[:at]
 				if !strings.HasSuffix(domain, ".bot") {
-					return errors.New("addresses must end in .bot; that's how aidocs tells bots apart from people")
+					return errors.New("addresses must end in .bot; that's how slashdocs tells bots apart from people")
 				}
 				body["domain"] = domain
 			}

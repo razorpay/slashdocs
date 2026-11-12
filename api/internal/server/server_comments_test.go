@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"testing"
@@ -11,6 +12,41 @@ func assertRFC3339Timestamp(t *testing.T, value string) {
 	t.Helper()
 	if _, err := time.Parse(time.RFC3339Nano, value); err != nil {
 		t.Fatalf("timestamp %q is not RFC3339: %v", value, err)
+	}
+}
+
+func TestCommentAuthorNeedsCurrentDocumentAccess(t *testing.T) {
+	for _, role := range []string{"revoked", "viewer"} {
+		t.Run(role, func(t *testing.T) {
+			e := newTestEnv(t)
+			grants, err := e.store.ListGrants(context.Background(), e.doc.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, grant := range grants {
+				if grant.Principal.ID == fixtureCommenter.ID {
+					rr := do(t, e.h, http.MethodDelete, "/v1/documents/"+e.doc.ID+"/grants/"+grant.ID, "", map[string]string{"X-Test-Principal": principalHeader(fixtureOwner)})
+					assertStatus(t, rr, http.StatusNoContent)
+				}
+			}
+			if role == "viewer" {
+				rr := do(t, e.h, http.MethodPost, "/v1/documents/"+e.doc.ID+"/grants", fmt.Sprintf(`{"principal":{"type":"user","id":%q},"role":"viewer"}`, fixtureCommenter.ID), map[string]string{"Content-Type": "application/json", "X-Test-Principal": principalHeader(fixtureOwner)})
+				assertStatus(t, rr, http.StatusCreated)
+			}
+			path := "/v1/documents/" + e.doc.ID + "/comments/" + e.cmt.ID
+			for _, mutation := range []struct{ method, suffix, body string }{
+				{http.MethodPatch, "", `{"body":"changed"}`},
+				{http.MethodPatch, "", `{"status":"resolved"}`},
+				{http.MethodPatch, "", `{"status":"open"}`},
+				{http.MethodDelete, "", ""},
+				{http.MethodPost, "/replies", `{"body":"reply"}`},
+				{http.MethodPut, "/reactions/heart", ""},
+				{http.MethodDelete, "/reactions/heart", ""},
+			} {
+				rr := do(t, e.h, mutation.method, path+mutation.suffix, mutation.body, map[string]string{"Content-Type": "application/json", "X-Test-Principal": principalHeader(fixtureCommenter)})
+				assertStatus(t, rr, http.StatusForbidden)
+			}
+		})
 	}
 }
 

@@ -1,328 +1,346 @@
-import { useTitle } from "@/lib/use-title";
+import { useState } from "react";
 import { Link, Navigate } from "react-router-dom";
-import { motion } from "framer-motion";
-import {
-  ArrowRight,
-  BookOpen,
-  Bot,
-  FileText,
-  LayoutDashboard,
-  Server,
-  Sparkles,
-  Terminal as TerminalIcon,
-} from "lucide-react";
+import { History, MessageSquareQuote, ShieldCheck, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Tooltip } from "@/components/ui/tooltip";
 import { CodeBlock } from "@/components/ui/misc";
-import { HowItWorks } from "@/components/marketing/how-it-works";
-import { useFrontendSignedOut } from "@/lib/auth-state";
-import { useMe } from "@/lib/hooks";
+import {
+  SELF_HOSTING_URL,
+  SiteFooter,
+  SiteHeader,
+  siteLink,
+} from "@/components/layout/site-chrome";
+import { AgentLoop } from "@/components/marketing/agent-loop";
+import { Architecture } from "@/components/marketing/architecture";
+import {
+  DeckArt,
+  GitHubArt,
+  MagazineArt,
+  ReceiptsArt,
+  ReportArt,
+  ScreenerArt,
+  SketchArt,
+  ThemeArt,
+} from "@/components/marketing/doc-art";
+import { RazorSenseBackdrop } from "@/components/razorsense-backdrop";
+import { cn } from "@/lib/cn";
 import { publicURL } from "@/lib/config";
+import { useMe } from "@/lib/hooks";
+import { useTitle } from "@/lib/use-title";
 
-// Shared animation variants for the landing page
-const stagger = {
-  hidden: {},
-  visible: { transition: { staggerChildren: 0.12, delayChildren: 0.15 } },
-};
-const fadeUp = {
-  hidden: { opacity: 0, y: 20, filter: "blur(8px)" },
-  visible: {
-    opacity: 1,
-    y: 0,
-    filter: "blur(0px)",
-    transition: { duration: 0.6, ease: [0.25, 0.4, 0.25, 1] as const },
+// The questions an HTML host leaves open, from the launch post.
+const QUESTIONS = [
+  {
+    icon: Users,
+    title: "Who can open it?",
+    body: "Give a person, a Google Group, a bot, or the whole organization the viewer, commenter, or editor role. Share a folder to share everything in it.",
   },
-};
-const fadeUpSoft = {
-  hidden: { opacity: 0, y: 12, filter: "blur(4px)" },
-  visible: {
-    opacity: 1,
-    y: 0,
-    filter: "blur(0px)",
-    transition: { duration: 0.5, ease: [0.25, 0.4, 0.25, 1] as const },
+  {
+    icon: MessageSquareQuote,
+    title: "Where does feedback go?",
+    body: "On the exact words. Comments stay through new versions, with replies and reactions. Agents pull them, then revise or reply.",
   },
-};
-
-const useCases = [
-  { icon: FileText, title: "Incident reports & RCAs" },
-  { icon: LayoutDashboard, title: "Architecture reviews" },
-  { icon: BookOpen, title: "Product specs" },
-  { icon: Bot, title: "Agent QA findings" },
-  { icon: TerminalIcon, title: "Data analysis reports" },
-  { icon: Server, title: "Internal dashboards" },
+  {
+    icon: History,
+    title: "Which copy is current?",
+    body: "Each push makes a version that never changes. You can roll back to any earlier version.",
+  },
+  {
+    icon: ShieldCheck,
+    title: "Is it safe to open?",
+    body: "Documents render in a locked iframe on a separate origin. One bridge, which the platform controls, decides what a document can do.",
+  },
 ];
+
+// What the bridge does for the reader. The agent writes the code for it.
+const BRIDGE = [
+  {
+    art: <ReceiptsArt />,
+    title: "Documents that remember",
+    body: "Clicks, checkboxes, and answers save to the document. Every reader sees the same state.",
+    uses: ["Trackers", "Approvals", "Checklists", "Read receipts"],
+  },
+  {
+    art: <GitHubArt />,
+    title: "Live files from GitHub",
+    body: "A document shows a file straight from a repository, so it stays current when the file changes.",
+    uses: ["OpenAPI specs", "READMEs", "Repository data"],
+  },
+  {
+    art: <ThemeArt />,
+    title: "Your theme, diagrams included",
+    body: "The document follows the reader's light or dark theme. Diagrams switch too, so every line stays readable.",
+    uses: ["Text", "Tables", "SVG diagrams"],
+  },
+];
+
+const CONNECT = [
+  {
+    title: "CLI and skill",
+    body: "One command installs the CLI and a skill for Claude Code and other agents. The CLI covers everything the web app does.",
+    code: `curl -fsSL ${publicURL()}/install.sh | sh
+slashdocs auth login ${publicURL()}
+slashdocs docs create report.html --title "Q3 incident review"`,
+  },
+  {
+    title: "Remote MCP",
+    body: "For agents without a terminal.",
+    code: `claude mcp add --transport http slashdocs \\
+  ${publicURL()}/mcp`,
+  },
+  {
+    title: "Bots",
+    body: "A bot has its own address, its own keys, and its own role on each document. Scheduled jobs and cloud agents publish as bots.",
+    code: `slashdocs sa create nightly-reports
+slashdocs sa key create sa_123
+# In CI, set SLASHDOCS_TOKEN to the key, then:
+slashdocs docs create report.html --title "Nightly report"`,
+  },
+];
+
+const h2 = "text-3xl font-semibold tracking-[-0.02em] md:text-5xl";
+const lead = "max-w-[60ch] text-lg text-[var(--color-fg-muted)]";
+// Slash's card: a hairline in light, a borderless lift in dark.
+const card =
+  "min-w-0 overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-card)] dark:border-transparent";
 
 export function LandingPage() {
   useTitle();
   const me = useMe();
-  const frontendSignedOut = useFrontendSignedOut();
-  if (me.data && !me.unauth && !frontendSignedOut) {
-    return <Navigate to="/app/documents" replace />;
-  }
+  if (me.data) return <Navigate to="/app/documents" replace />;
   return (
-    <div className="min-h-full bg-[var(--color-bg)]">
-      <Nav />
-      <Hero />
-      <HowItWorks />
-      <Install />
-      <UseCases />
-      <Footer />
+    <div className="relative isolate min-h-full overflow-x-clip bg-[var(--color-bg)]">
+      <RazorSenseBackdrop framing="halo" className="h-[600px]" />
+      <SiteHeader>
+        <a
+          href={SELF_HOSTING_URL}
+          target="_blank"
+          rel="noreferrer"
+          className={cn(siteLink, "max-sm:hidden")}
+        >
+          Self-hosting
+        </a>
+        <Link to="/login" className={siteLink}>
+          Sign in
+        </Link>
+      </SiteHeader>
+      <main>
+        <section className="mx-auto max-w-6xl px-6 pb-24 pt-12 md:pt-20">
+          <div className="mx-auto max-w-3xl text-center">
+            <p className="font-mono text-xs uppercase tracking-[0.14em] text-[var(--color-accent)]">
+              Open source, self-hosted
+            </p>
+            <h1 className="mt-5 text-4xl font-semibold leading-[1.05] tracking-[-0.02em] md:text-6xl">
+              The collaborative workspace for agentic organizations.
+            </h1>
+            <p className={cn(lead, "mx-auto mt-6 md:text-xl")}>
+              Agents choose the words and the form: the layout, the visuals, and how the
+              document behaves. People comment in the browser. Agents read the comments
+              and publish the next version.
+            </p>
+            <div className="mx-auto mt-10 flex max-w-xl flex-col gap-3 sm:flex-row sm:items-center">
+              <CodeBlock className="min-w-0 flex-1 bg-[var(--color-surface)] text-left">{`curl -fsSL ${publicURL()}/install.sh | sh`}</CodeBlock>
+              <Button asChild size="lg">
+                <Link to="/login">Sign in</Link>
+              </Button>
+            </div>
+          </div>
+          <div className="mt-16 md:mt-20">
+            <AgentLoop />
+          </div>
+        </section>
+
+        <section className="mx-auto max-w-6xl px-6 pb-24 md:pb-32">
+          <h2 className={h2}>What agents make when the format is open.</h2>
+          <p className={cn(lead, "mt-6")}>
+            Each document is one HTML file, so it can be anything a web page can be.
+          </p>
+          <div className="mt-12 grid gap-4 md:grid-cols-3">
+            <Shot art={<ReportArt />} title="A report that updates itself" wide>
+              Agents keep live documents up to date on a schedule. Nobody updates them
+              by hand.
+            </Shot>
+            <Shot art={<DeckArt />} title="A slide deck">
+              Slides with much more flexible animations, and much faster for agents to
+              make.
+            </Shot>
+            <Shot art={<MagazineArt />} title="A magazine">
+              Release a magazine after an event.
+            </Shot>
+            <Shot art={<SketchArt />} title="An animated PR explainer" wide>
+              A hand-drawn diagram of the change, attached to the pull request, so
+              reviewers understand it faster.
+            </Shot>
+          </div>
+        </section>
+
+        <section className="border-y border-[var(--color-border)] bg-[var(--color-surface-muted)]">
+          <div className="mx-auto grid max-w-6xl gap-14 px-6 py-24 md:grid-cols-[5fr_6fr] md:gap-20 md:py-32">
+            <div className="md:sticky md:top-24 md:self-start">
+              <h2 className={h2}>More than a link to an HTML file.</h2>
+              <p className={cn(lead, "mt-6")}>
+                A host gives you a link. A team needs four more answers, and the agent
+                needs a place in the conversation.
+              </p>
+            </div>
+            <ol className="grid gap-12">
+              {QUESTIONS.map((q) => (
+                <li key={q.title} className="grid grid-cols-[auto_1fr] gap-x-5">
+                  <span className="grid h-10 w-10 place-items-center rounded-sm bg-[var(--color-accent-muted)] text-[var(--color-accent)]">
+                    <q.icon className="h-5 w-5" strokeWidth={1.75} />
+                  </span>
+                  <div>
+                    <h3 className="text-xl font-semibold tracking-[-0.02em] md:text-2xl">
+                      {q.title}
+                    </h3>
+                    <p className="mt-2 text-[var(--color-fg-muted)]">{q.body}</p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </section>
+
+        <section className="mx-auto max-w-6xl px-6 py-24 md:py-32">
+          <h2 className={h2}>HTML that does more than display.</h2>
+          <p className={cn(lead, "mt-6")}>
+            The platform gives each document a small bridge. A document can keep state,
+            read from GitHub, and follow the reader's theme.
+          </p>
+          <div className="mt-12 grid gap-4 md:grid-cols-3">
+            {BRIDGE.map((b) => (
+              <Shot key={b.title} art={b.art} title={b.title}>
+                {b.body}
+                <ul className="mt-4 flex flex-wrap gap-1.5">
+                  {b.uses.map((use) => (
+                    <li
+                      key={use}
+                      className="rounded-full bg-[var(--color-surface-muted)] px-2.5 py-1 text-xs text-[var(--color-fg)] ring-1 ring-[var(--color-border)] dark:ring-transparent"
+                    >
+                      {use}
+                    </li>
+                  ))}
+                </ul>
+              </Shot>
+            ))}
+          </div>
+          <p className="mt-8 text-sm text-[var(--color-fg-muted)]">
+            Also: Vim keys to scroll, live presence to follow a reader, and Export as
+            PDF with the live state of the document.
+          </p>
+        </section>
+
+        <section className="border-t border-[var(--color-border)]">
+          <div className="mx-auto max-w-6xl px-6 py-24 md:py-32">
+            <h2 className={h2}>Anything a person can do, an agent can do.</h2>
+            <div className="mt-12 grid gap-8 md:grid-cols-2 md:items-center md:gap-12">
+              <Connect />
+              <Shot art={<ScreenerArt />} title="A bot that reviews">
+                A screener bot commented on every Day 0 hackathon idea. Teams pushed new
+                versions, and the bot read them again.
+              </Shot>
+            </div>
+          </div>
+        </section>
+
+        <section className="border-t border-[var(--color-border)]">
+          <div className="mx-auto max-w-6xl px-6 py-24 md:py-32">
+            <h2 className={h2}>Run it on your own servers.</h2>
+            <p className={cn(lead, "mt-6")}>
+              Your documents and your data stay with you. slashdocs is MIT licensed.
+            </p>
+            <div className="mt-12">
+              <Architecture />
+            </div>
+            <div className="mt-12 grid gap-8 md:grid-cols-2 md:gap-12">
+              <Start title="Try it with Docker Compose">{`git clone https://github.com/razorpay/slashdocs.git
+cd slashdocs
+docker compose up`}</Start>
+              <Start title="Run it in a cluster with Helm">{`helm upgrade --install slashdocs ./charts/slashdocs \\
+  --namespace slashdocs --create-namespace -f values.yaml`}</Start>
+            </div>
+            <p className="mt-6 text-sm text-[var(--color-fg-muted)]">
+              Compose starts slashdocs with Postgres, versitygw (S3), and a local Dex
+              sign-in. For production, read the{" "}
+              <a
+                href={SELF_HOSTING_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="text-[var(--color-fg)] underline underline-offset-2"
+              >
+                self-hosting guide
+              </a>
+              .
+            </p>
+          </div>
+        </section>
+      </main>
+      <SiteFooter />
     </div>
   );
 }
 
-function Nav() {
-  const me = useMe();
-  const frontendSignedOut = useFrontendSignedOut();
-  const isSignedIn = !!me.data && !me.unauth && !frontendSignedOut;
+// A real document as a card: its drawing on top, what it shows below.
+function Shot({
+  art,
+  title,
+  wide,
+  className,
+  children,
+}: {
+  art: React.ReactNode;
+  title: string;
+  wide?: boolean;
+  className?: string;
+  children: React.ReactNode;
+}) {
   return (
-    <header className="sticky top-0 z-30 border-b border-[var(--color-border)]/50 bg-[var(--color-bg)]/70 backdrop-blur-xl backdrop-saturate-150">
-      <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-6">
-        <Link to="/" className="group flex items-center gap-2 font-semibold">
-          <img
-            src="/favicon.svg"
-            alt=""
-            className="h-10 w-10 transition-transform duration-300 ease-out group-hover:rotate-[-8deg] group-hover:scale-110"
-          />
-          aidocs
-        </Link>
-        <nav className="flex items-center gap-2">
-          <Tooltip label="GitHub">
-            <a
-              href="https://github.com/razorpay/aidocs"
-              target="_blank"
-              rel="noreferrer"
-              aria-label="GitHub"
-              className="rounded-md p-2 text-[var(--color-fg-muted)] hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-fg)]"
-            >
-              <GithubIcon />
-            </a>
-          </Tooltip>
-          <Button asChild variant="ghost" size="sm">
-            <a href="#install">Install</a>
-          </Button>
-          <Button asChild size="sm">
-            <Link to={isSignedIn ? "/app/documents" : "/login"}>
-              {isSignedIn ? "Open app" : "Sign in"} <ArrowRight className="h-4 w-4" />
-            </Link>
-          </Button>
-        </nav>
-      </div>
-    </header>
+    <figure className={cn(card, "group", wide && "md:col-span-2", className)}>
+      {art}
+      <figcaption className="p-5 md:p-6">
+        <h3 className="text-lg font-semibold tracking-[-0.02em]">{title}</h3>
+        <div className="mt-1 text-sm text-[var(--color-fg-muted)]">{children}</div>
+      </figcaption>
+    </figure>
   );
 }
 
-function Hero() {
-  const me = useMe();
-  const frontendSignedOut = useFrontendSignedOut();
-  const isSignedIn = !!me.data && !me.unauth && !frontendSignedOut;
+// One way to start slashdocs, with its commands.
+function Start({ title, children }: { title: string; children: string }) {
   return (
-    <section className="relative overflow-hidden">
-      <div className="absolute inset-0 -z-10 overflow-hidden" aria-hidden>
-        <div
-          className="absolute -inset-12 animate-[float_25s_ease-in-out_infinite] opacity-60"
-          style={{
-            backgroundImage:
-              "radial-gradient(ellipse at 20% 0%, rgba(32,40,255,0.12), transparent 50%), radial-gradient(ellipse at 80% 10%, rgba(129,140,255,0.12), transparent 50%)",
-          }}
-        />
-        <div
-          className="absolute -inset-12 animate-[float_32s_ease-in-out_infinite_reverse] opacity-30"
-          style={{
-            backgroundImage:
-              "radial-gradient(ellipse at 50% 50%, rgba(32,40,255,0.15), transparent 40%)",
-          }}
-        />
-        <div
-          className="absolute inset-0 opacity-[0.35] dark:opacity-[0.15]"
-          style={{
-            backgroundImage:
-              "radial-gradient(circle, var(--color-border) 1px, transparent 1px)",
-            backgroundSize: "24px 24px",
-          }}
-        />
-      </div>
-      <div className="mx-auto max-w-6xl px-6 py-24 md:py-32">
-        <motion.div
-          className="mx-auto max-w-3xl text-center"
-          initial="hidden"
-          animate="visible"
-          variants={stagger}
-        >
-          <motion.div
-            variants={fadeUp}
-            className="mb-6 inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1 text-xs font-medium text-[var(--color-fg-muted)]"
-          >
-            <Sparkles className="h-3 w-3 text-[var(--color-accent)]" />
-            Review layer for AI-generated documents
-          </motion.div>
-          <motion.h1
-            variants={fadeUp}
-            className="text-balance text-4xl font-semibold tracking-tight md:text-6xl"
-          >
-            Give your agents the power to publish{" "}
-            <span className="bg-gradient-to-r from-[var(--color-accent)] to-[#818cff] bg-clip-text text-transparent">
-              reviewable
-            </span>{" "}
-            documents.
-          </motion.h1>
-          <motion.p
-            variants={fadeUp}
-            className="mx-auto mt-6 max-w-2xl text-pretty text-base text-[var(--color-fg-muted)] md:text-lg"
-          >
-            aidocs is a Google-Docs-style review layer for self-contained HTML
-            artifacts. Agents push reports, specs, and RCAs through a CLI. Humans review
-            them in the browser with anchored comments and immutable versions.
-          </motion.p>
-          <motion.div
-            variants={fadeUp}
-            className="mt-8 flex flex-wrap items-center justify-center gap-3"
-          >
-            <Button asChild size="lg">
-              <Link to={isSignedIn ? "/app/documents" : "/login"}>
-                {isSignedIn ? "Open app" : "Sign in"} <ArrowRight className="h-4 w-4" />
-              </Link>
-            </Button>
-            <Button asChild size="lg" variant="outline">
-              <a href="#install">Install the CLI</a>
-            </Button>
-          </motion.div>
-        </motion.div>
-      </div>
-    </section>
+    <div className="min-w-0">
+      <h3 className="text-sm font-medium text-[var(--color-fg-muted)]">{title}</h3>
+      <CodeBlock className="mt-3 bg-[var(--color-surface)]">{children}</CodeBlock>
+    </div>
   );
 }
 
-function Install() {
-  // Origin comes from the server-injected AIDOCS_APP_ORIGIN (same pattern as
-  // the setup guide and developers page), so the snippet matches this
-  // instance instead of a hard-coded host.
-  const installSnippet = `curl -fsSL ${publicURL()}/install.sh | bash
-
-aidocs auth login ${publicURL()}
-aidocs docs create report.html`;
+// Each way to connect an agent, with the commands for the selected one.
+function Connect() {
+  const [active, setActive] = useState(0);
+  const c = CONNECT[active];
   return (
-    <motion.section
-      id="install"
-      initial={{ opacity: 0, y: 32 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-80px" }}
-      transition={{ duration: 0.7, ease: [0.25, 0.4, 0.25, 1] as const }}
-      className="border-t border-[var(--color-border)] py-24"
-    >
-      <div className="mx-auto max-w-2xl px-6">
-        <div className="mb-8 text-center">
-          <h2 className="text-3xl font-semibold tracking-tight md:text-4xl">
-            Install in seconds
-          </h2>
-          <p className="mt-2 text-[var(--color-fg-muted)]">
-            One command for macOS and Linux.
-          </p>
-        </div>
-        <div className="relative">
-          <div
-            aria-hidden
-            className="pointer-events-none absolute -inset-4 rounded-2xl bg-[var(--color-accent)] opacity-[0.04] blur-2xl"
-          />
-          <CodeBlock>{installSnippet}</CodeBlock>
-        </div>
-        <p className="mt-4 text-center text-sm text-[var(--color-fg-muted)]">
-          Other install methods are documented in the{" "}
-          <a
-            href="https://github.com/razorpay/aidocs"
-            className="text-[var(--color-fg)] underline-offset-2 hover:underline"
-            target="_blank"
-            rel="noreferrer"
-          >
-            GitHub repo
-          </a>
-          .
-        </p>
-      </div>
-    </motion.section>
-  );
-}
-
-function UseCases() {
-  return (
-    <motion.section
-      initial={{ opacity: 0, y: 32 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-80px" }}
-      transition={{ duration: 0.7, ease: [0.25, 0.4, 0.25, 1] as const }}
-      className="border-t border-[var(--color-border)] bg-[var(--color-surface)]/50 py-24"
-    >
-      <div className="mx-auto max-w-6xl px-6">
-        <div className="mb-10 text-center">
-          <h2 className="text-3xl font-semibold tracking-tight md:text-4xl">
-            What agents publish
-          </h2>
-          <p className="mt-2 text-[var(--color-fg-muted)]">
-            Anything that fits in a self-contained HTML file.
-          </p>
-        </div>
-        <motion.div
-          className="grid grid-cols-2 gap-3 md:grid-cols-3"
-          initial="hidden"
-          whileInView="visible"
-          viewport={{ once: true, margin: "-60px" }}
-          variants={{ hidden: {}, visible: { transition: { staggerChildren: 0.08 } } }}
-        >
-          {useCases.map((u) => (
-            <motion.div
-              key={u.title}
-              variants={fadeUpSoft}
-              className="flex items-center gap-3 rounded-[12px] border border-[var(--color-border)] bg-[var(--color-surface)] p-4 transition-[box-shadow,transform] duration-200 ease-out hover:-translate-y-0.5 hover:shadow-md"
-            >
-              <div className="flex h-9 w-9 items-center justify-center rounded-md bg-[var(--color-accent-muted)] text-[var(--color-accent)]">
-                <u.icon className="h-4 w-4" />
-              </div>
-              <div className="text-sm font-medium">{u.title}</div>
-            </motion.div>
-          ))}
-        </motion.div>
-      </div>
-    </motion.section>
-  );
-}
-
-function GithubIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" aria-hidden>
-      <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56v-2.18c-3.2.7-3.87-1.36-3.87-1.36-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.51-1.46.11-3.05 0 0 .97-.31 3.18 1.18.92-.26 1.91-.39 2.89-.39.98 0 1.97.13 2.89.39 2.21-1.49 3.18-1.18 3.18-1.18.62 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.69 5.4-5.25 5.68.41.36.78 1.07.78 2.15v3.19c0 .31.21.67.8.56C20.22 21.39 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5z" />
-    </svg>
-  );
-}
-
-function Footer() {
-  return (
-    <footer className="relative py-10">
+    <div className="min-w-0">
       <div
-        aria-hidden
-        className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[var(--color-border-strong)] to-transparent"
-      />
-      <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-6 text-sm text-[var(--color-fg-muted)] md:flex-row">
-        <div className="flex items-center gap-2">
-          <img src="/favicon.svg" alt="" className="h-5 w-5" />
-          aidocs
-        </div>
-        <div className="flex items-center gap-4">
-          <a href="/openapi.json" className="hover:text-[var(--color-fg)]">
-            OpenAPI
-          </a>
-          <a href="/api-docs" className="hover:text-[var(--color-fg)]">
-            API docs
-          </a>
-          <a
-            href="https://github.com/razorpay/aidocs"
-            target="_blank"
-            rel="noreferrer"
-            className="hover:text-[var(--color-fg)]"
+        role="tablist"
+        aria-label="Ways to connect an agent"
+        className="flex w-fit gap-0.5 rounded-sm bg-[var(--color-surface-muted)] p-0.5 ring-1 ring-[var(--color-border)] dark:ring-transparent"
+      >
+        {CONNECT.map((t, i) => (
+          <button
+            key={t.title}
+            role="tab"
+            aria-selected={i === active}
+            onClick={() => setActive(i)}
+            className="rounded-[6px] px-3 py-1.5 text-sm text-[var(--color-fg-muted)] transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] aria-selected:bg-[var(--color-surface)] aria-selected:text-[var(--color-fg)] aria-selected:shadow-[var(--shadow-border)]"
           >
-            GitHub
-          </a>
-        </div>
+            {t.title}
+          </button>
+        ))}
       </div>
-    </footer>
+      <div role="tabpanel" key={active} className="mt-6 animate-[rise_300ms_ease-out]">
+        <p className="text-[var(--color-fg-muted)]">{c.body}</p>
+        <CodeBlock className="mt-4 bg-[var(--color-surface)]">{c.code}</CodeBlock>
+      </div>
+    </div>
   );
 }

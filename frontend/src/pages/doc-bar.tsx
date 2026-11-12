@@ -5,24 +5,25 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { errorMessage } from "@/lib/errors";
 import {
-  ArrowLeft,
   Check,
   ExternalLink,
   FileDown,
-  FolderIcon,
   ArrowUpToLine,
   Maximize2,
   GitBranch,
+  Keyboard,
   MoreHorizontal,
-  PanelRightClose,
-  PanelRightOpen,
+  MousePointer2,
+  MousePointer2Off,
   Share2,
   Tag,
   Trash2,
 } from "lucide-react";
 import { AccountMenu } from "@/components/layout/topbar";
+import { CommentsToggle, DocBarFrame } from "@/components/layout/doc-bar-frame";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Avatar } from "@/components/ui/misc";
 import {
   Dropdown,
   DropdownContent,
@@ -44,12 +45,17 @@ import { Sheet, SheetTrigger } from "@/components/ui/sheet";
 import { DeleteDocumentDialog } from "@/components/delete-document-dialog";
 import { api, type Principal, type Version } from "@/api";
 import { canManageSharing, ROLE_RANK } from "@/lib/constants";
+import { changeSummaryLines } from "@/lib/change-summary";
 import { formatTimestamp } from "@/lib/format-date";
 import { queryKeys } from "@/lib/queryKeys";
-import { samePrincipal } from "@/lib/principals";
+import { cursorsShownStore } from "@/lib/live-cursors";
+import { principalColor, samePrincipal } from "@/lib/principals";
 import { ShareSheet } from "./doc-share-sheet";
 import { useDoc } from "./doc-context";
-import { UploadVersionItem } from "./doc-upload-version";
+import { UploadVersionMenuItem, UploadVersionSheet } from "./doc-upload-version";
+import type { Viewer } from "./use-document-stream";
+
+const MAX_VIEWER_AVATARS = 4;
 
 export function DocBar({
   title,
@@ -63,8 +69,11 @@ export function DocBar({
   versions,
   labels,
   onSelectVersion,
+  viewers,
+  onFollowViewer,
   commentsOpen,
   onToggleComments,
+  onShowShortcuts,
   shareOpen,
   onShareOpenChange,
 }: {
@@ -79,13 +88,18 @@ export function DocBar({
   versions: Version[];
   labels: string[];
   onSelectVersion: (versionID: string) => void;
+  viewers: Viewer[];
+  onFollowViewer: (viewer: Viewer) => void;
   commentsOpen: boolean;
   onToggleComments: () => void;
+  onShowShortcuts: () => void;
   shareOpen: boolean;
   onShareOpenChange: (open: boolean) => void;
 }) {
   const nav = useNavigate();
   const q = useQueryClient();
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const backTo = parentFolder ? `/app/folders/${parentFolder.id}` : "/app/documents";
   const config = useQuery({ queryKey: queryKeys.config(), queryFn: api.getConfig });
   const currentVersion = versions.find((v) => v.id === current);
@@ -111,52 +125,19 @@ export function DocBar({
     },
     onError: (e) => toast.error(errorMessage(e, "Delete failed")),
   });
-  const { printDocument: exportPDF } = useDoc();
+  const { printDocument: exportPDF, signIn } = useDoc();
   return (
-    <header className="flex h-14 items-center gap-1 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-2 sm:gap-2 sm:px-3">
-      <Button asChild variant="ghost" size="icon" className="shrink-0">
-        <Link
-          to={backTo}
-          title={parentFolder ? "Back to folder" : "Back to documents"}
-          aria-label={parentFolder ? "Back to folder" : "Back to documents"}
-        >
-          <ArrowLeft className="h-4 w-4" />
-        </Link>
-      </Button>
-      <Tooltip label="All documents">
-        <Link
-          to="/app/documents"
-          aria-label="aidocs home"
-          title="All documents"
-          className="hidden h-10 w-10 shrink-0 items-center justify-center rounded-[10px] hover:bg-[var(--color-surface-muted)] sm:flex"
-        >
-          <img src="/favicon.svg" alt="" className="h-8 w-8" />
-        </Link>
-      </Tooltip>
-      <div className="flex min-w-0 flex-1 items-center gap-2">
-        {parentFolder ? (
-          <>
-            <Link
-              to={`/app/folders/${parentFolder.id}`}
-              title={parentFolder.title}
-              aria-label={`Folder: ${parentFolder.title}`}
-              className="hidden h-10 max-w-32 shrink items-center gap-1 text-sm text-[var(--color-fg-muted)] hover:text-[var(--color-fg)] lg:flex"
-            >
-              <FolderIcon className="h-4 w-4 shrink-0" />
-              <span className="truncate">{parentFolder.title}</span>
-            </Link>
-            <span
-              aria-hidden="true"
-              className="hidden text-[var(--color-fg-muted)] lg:inline"
-            >
-              /
-            </span>
-          </>
-        ) : null}
-        <div title={title} className="truncate text-sm font-semibold">
-          {title}
-        </div>
-        {currentVersion && (
+    <DocBarFrame
+      home="/app/documents"
+      folder={
+        parentFolder && {
+          to: `/app/folders/${parentFolder.id}`,
+          title: parentFolder.title,
+        }
+      }
+      title={title}
+      meta={
+        currentVersion && (
           <span
             className={`hidden shrink-0 text-xs tabular-nums sm:inline ${isViewingOlder ? "text-amber-600 dark:text-amber-300" : "text-[var(--color-fg-muted)]"}`}
             title={isViewingOlder ? "Viewing an older version" : "Latest version"}
@@ -164,8 +145,11 @@ export function DocBar({
             v{currentVersion.number}
             {isViewingOlder ? " · older" : ""}
           </span>
-        )}
-      </div>
+        )
+      }
+    >
+      <Viewers viewers={viewers} versions={versions} onFollow={onFollowViewer} />
+      {viewers.length ? <CursorsToggle /> : null}
       {isViewingOlder ? (
         <Button
           variant="ghost"
@@ -195,69 +179,56 @@ export function DocBar({
       >
         <Link
           to={`/app/d/${docId}?fullscreen=1&version=${current}`}
-          title="Full screen"
+          title="Full screen (Esc F)"
           aria-label="Full screen"
         >
           <Maximize2 className="h-4 w-4" />
         </Link>
       </Button>
-      <Sheet modal={false} open={shareOpen} onOpenChange={onShareOpenChange}>
-        <SheetTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="shrink-0"
-            title="Share"
-            aria-label="Share"
-            onPointerDown={() => {
-              const active = document.activeElement;
-              shareFrameFocusRef.current =
-                active instanceof HTMLIFrameElement &&
-                active.title === "Rendered document"
-                  ? active
-                  : null;
-            }}
-          >
-            <Share2 className="h-4 w-4" />
-          </Button>
-        </SheetTrigger>
-        <ShareSheet
-          docId={docId}
-          canManageAccess={canManageAccess}
-          isCanonicalOwner={canManage}
-          onOpenAutoFocus={(event) => {
-            const frame = shareFrameFocusRef.current;
-            shareFrameFocusRef.current = null;
-            if (!frame?.isConnected) return;
-            event.preventDefault();
-            frame.focus();
-          }}
-          onInteractOutside={(event) => {
-            const target = event.target;
-            if (
-              target instanceof HTMLIFrameElement &&
-              target.title === "Rendered document"
-            ) {
+      {!signIn && (
+        <Sheet modal={false} open={shareOpen} onOpenChange={onShareOpenChange}>
+          <SheetTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="shrink-0"
+              title="Share"
+              aria-label="Share"
+              onPointerDown={() => {
+                const active = document.activeElement;
+                shareFrameFocusRef.current =
+                  active instanceof HTMLIFrameElement &&
+                  active.title === "Rendered document"
+                    ? active
+                    : null;
+              }}
+            >
+              <Share2 className="h-4 w-4" />
+            </Button>
+          </SheetTrigger>
+          <ShareSheet
+            docId={docId}
+            canManageAccess={canManageAccess}
+            onOpenAutoFocus={(event) => {
+              const frame = shareFrameFocusRef.current;
+              shareFrameFocusRef.current = null;
+              if (!frame?.isConnected) return;
               event.preventDefault();
-            }
-          }}
-        />
-      </Sheet>
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={onToggleComments}
-        aria-label={commentsOpen ? "Hide comments" : "Show comments"}
-        tooltip={commentsOpen ? false : "Show comments"}
-        aria-pressed={commentsOpen}
-        className="shrink-0"
-      >
-        {commentsOpen ? (
-          <PanelRightClose className="h-4 w-4" />
-        ) : (
-          <PanelRightOpen className="h-4 w-4" />
-        )}
-      </Button>
+              frame.focus();
+            }}
+            onInteractOutside={(event) => {
+              const target = event.target;
+              if (
+                target instanceof HTMLIFrameElement &&
+                target.title === "Rendered document"
+              ) {
+                event.preventDefault();
+              }
+            }}
+          />
+        </Sheet>
+      )}
+      <CommentsToggle open={commentsOpen} onToggle={onToggleComments} />
       <Dropdown>
         <DropdownTrigger asChild>
           <Button
@@ -291,32 +262,130 @@ export function DocBar({
           <DropdownItem onSelect={() => void exportPDF()}>
             <FileDown className="h-4 w-4" /> Export as PDF
           </DropdownItem>
+          <DropdownItem className="hidden sm:flex" onSelect={onShowShortcuts}>
+            <Keyboard className="h-4 w-4" /> Keyboard shortcuts
+            <kbd className="ml-auto pl-4 font-mono text-xs text-[var(--color-fg-muted)]">
+              ?
+            </kbd>
+          </DropdownItem>
           {canManage ? (
             <>
-              <UploadVersionItem docId={docId} baseVersion={latest || current} />
+              <UploadVersionMenuItem onSelect={() => setUploadOpen(true)} />
               <DropdownSeparator />
-              <DeleteDocumentDialog
-                title={title}
-                onConfirm={() => del.mutate()}
-                trigger={
-                  <DropdownItem
-                    onSelect={(e) => e.preventDefault()}
-                    className="text-[var(--color-danger)] data-[highlighted]:bg-red-50 dark:data-[highlighted]:bg-red-950/40"
-                  >
-                    <Trash2 className="h-4 w-4" /> Delete document
-                  </DropdownItem>
-                }
-              />
+              <DropdownItem
+                onSelect={() => setDeleteOpen(true)}
+                className="text-[var(--color-danger)] data-[highlighted]:bg-red-50 dark:data-[highlighted]:bg-red-950/40"
+              >
+                <Trash2 className="h-4 w-4" /> Delete document
+              </DropdownItem>
             </>
           ) : null}
         </DropdownContent>
       </Dropdown>
+      {canManage ? (
+        <>
+          <UploadVersionSheet
+            docId={docId}
+            baseVersion={latest || current}
+            open={uploadOpen}
+            onOpenChange={setUploadOpen}
+          />
+          <DeleteDocumentDialog
+            title={title}
+            open={deleteOpen}
+            onOpenChange={setDeleteOpen}
+            onConfirm={() => del.mutate()}
+          />
+        </>
+      ) : null}
       {accountUser && (
         <div className="shrink-0 border-l border-[var(--color-border)] pl-2">
           <AccountMenu user={accountUser} />
         </div>
       )}
-    </header>
+      {signIn && (
+        <Button size="sm" className="ml-1 shrink-0" onClick={signIn}>
+          Sign in
+        </Button>
+      )}
+    </DocBarFrame>
+  );
+}
+
+// Other people viewing the document, in the colors of their cursors.
+// Clicking one goes to their cursor, or else to what they see.
+function Viewers({
+  viewers,
+  versions,
+  onFollow,
+}: {
+  viewers: Viewer[];
+  versions: Version[];
+  onFollow: (viewer: Viewer) => void;
+}) {
+  if (!viewers.length) return null;
+  const hidden = viewers.length - MAX_VIEWER_AVATARS;
+  return (
+    <div
+      role="group"
+      aria-label="People viewing this document"
+      className="hidden shrink-0 items-center -space-x-1.5 pr-1 sm:flex"
+    >
+      {viewers.slice(0, MAX_VIEWER_AVATARS).map((viewer) => {
+        const name = principalLabel(viewer.principal);
+        const number = versions.find((v) => v.id === viewer.version)?.number;
+        return (
+          <Tooltip
+            key={`${viewer.principal.type}:${viewer.principal.id}`}
+            label={number ? `${name} · viewing v${number}` : name}
+          >
+            <button
+              type="button"
+              aria-label={`Go to where ${name} is viewing`}
+              onClick={() => onFollow(viewer)}
+              style={{
+                boxShadow: `0 0 0 2px ${principalColor(viewer.principal)}, 0 0 0 4px var(--color-surface)`,
+              }}
+              className="relative rounded-full transition-transform duration-150 ease-out hover:z-10 hover:-translate-y-0.5 focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)] motion-reduce:transition-none"
+            >
+              <Avatar size={28} name={name} src={viewer.principal.picture_url} />
+            </button>
+          </Tooltip>
+        );
+      })}
+      {hidden > 0 ? (
+        <span
+          title={viewers
+            .slice(MAX_VIEWER_AVATARS)
+            .map((viewer) => principalLabel(viewer.principal))
+            .join(", ")}
+          className="relative flex h-7 min-w-7 items-center justify-center rounded-full bg-[var(--color-surface-muted)] px-1.5 text-xs font-medium tabular-nums text-[var(--color-fg-muted)] ring-2 ring-[var(--color-surface)]"
+        >
+          +{hidden}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function CursorsToggle() {
+  const shown = cursorsShownStore.useStore();
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={() => cursorsShownStore.write(!shown)}
+      aria-label={shown ? "Hide cursors" : "Show cursors"}
+      tooltip={shown ? "Hide cursors (Esc M)" : "Show cursors (Esc M)"}
+      aria-pressed={shown}
+      className="hidden shrink-0 sm:inline-flex"
+    >
+      {shown ? (
+        <MousePointer2 className="h-4 w-4" />
+      ) : (
+        <MousePointer2Off className="h-4 w-4" />
+      )}
+    </Button>
   );
 }
 
@@ -405,9 +474,15 @@ function VersionHistoryDialog({
   versions: Version[];
   onSelectVersion: (versionID: string) => void;
 }) {
+  const [open, setOpen] = useState(false);
   const sorted = [...versions].sort((a, b) => b.number - a.number);
+  const select = (versionID: string) => {
+    if (versionID === current) return;
+    onSelectVersion(versionID);
+    setOpen(false);
+  };
   return (
-    <Dialog>
+    <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button
           variant="ghost"
@@ -437,7 +512,7 @@ function VersionHistoryDialog({
               <button
                 key={v.id}
                 type="button"
-                onClick={() => onSelectVersion(v.id)}
+                onClick={() => select(v.id)}
                 className={`flex w-full gap-3 rounded-xl border border-[var(--color-border)] p-4 text-left transition-colors hover:bg-[var(--color-surface-muted)]/60 ${
                   v.id === current
                     ? "bg-[var(--color-accent-muted)]/35"
@@ -458,10 +533,7 @@ function VersionHistoryDialog({
                     ) : null}
                     {v.id === latest ? <Badge variant="muted">Latest</Badge> : null}
                   </div>
-                  <div className="mt-1 text-sm text-[var(--color-fg-muted)]">
-                    {v.change_summary ||
-                      (v.number === 1 ? "Initial version" : "No change summary")}
-                  </div>
+                  <ChangeSummary version={v} />
                   <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--color-fg-muted)]">
                     <span>Created by {principalLabel(v.created_by)}</span>
                     {v.created_at ? <span>{formatTimestamp(v.created_at)}</span> : null}
@@ -474,6 +546,25 @@ function VersionHistoryDialog({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+function ChangeSummary({ version }: { version: Version }) {
+  const lines = changeSummaryLines(version.change_summary);
+  const className = "mt-1 text-sm text-[var(--color-fg-muted)]";
+  if (lines.length > 1) {
+    return (
+      <ul className={`${className} list-disc space-y-0.5 pl-5`}>
+        {lines.map((line, i) => (
+          <li key={i}>{line}</li>
+        ))}
+      </ul>
+    );
+  }
+  return (
+    <p className={className}>
+      {lines[0] || (version.number === 1 ? "Initial version" : "No change summary")}
+    </p>
   );
 }
 

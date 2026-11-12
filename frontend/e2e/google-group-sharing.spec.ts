@@ -162,7 +162,7 @@ function accessItems(state: WorkspaceState, resource: "document" | "folder") {
 async function installFakeWorkspace(page: Page, state: WorkspaceState) {
   await page.addInitScript(() => {
     localStorage.setItem(
-      "aidocs.onboarding",
+      "slashdocs.onboarding",
       JSON.stringify({
         status: "skipped",
         steps: {
@@ -177,7 +177,7 @@ async function installFakeWorkspace(page: Page, state: WorkspaceState) {
   await page.route("**/fake-render**", (route) =>
     route.fulfill({
       contentType: "text/html",
-      body: '<!doctype html><title>Rendered group plan</title><body style="min-height:5000px"><p>Visible document content</p><script>document.addEventListener("click",()=>parent.postMessage({type:"aidocs:document-click"},location.origin))</script></body>',
+      body: '<!doctype html><title>Rendered group plan</title><body style="min-height:5000px"><p>Visible document content</p><script>document.addEventListener("click",()=>parent.postMessage({type:"slashdocs:document-click"},location.origin))</script></body>',
     }),
   );
   await page.route("**/v1/**", async (route) => {
@@ -280,14 +280,12 @@ async function installFakeWorkspace(page: Page, state: WorkspaceState) {
     if (path === "/v1/documents/doc_1/access") {
       return json(route, {
         current_role: documentRole(state),
-        canonical_owner: state.actor === "owner",
         items: accessItems(state, "document"),
       });
     }
     if (path === "/v1/folders/fld_1/access") {
       return json(route, {
         current_role: folderRole(state),
-        canonical_owner: state.actor === "owner",
         items: accessItems(state, "folder"),
       });
     }
@@ -335,9 +333,7 @@ async function shareWithPlatformGroup(page: Page) {
   await expect(page.getByText("Access granted.")).toBeVisible();
 }
 
-test("canonical owner shares a document and folder with a verified group", async ({
-  page,
-}) => {
+test("owner shares a document and folder with a verified group", async ({ page }) => {
   const state = newState();
   await installFakeWorkspace(page, state);
 

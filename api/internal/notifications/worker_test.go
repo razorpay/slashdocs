@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
-	"github.com/razorpay/aidocs/api/internal/repo"
-	pgrepo "github.com/razorpay/aidocs/api/internal/repo/postgres"
-	"github.com/razorpay/aidocs/api/internal/testdb"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/repo"
+	pgrepo "github.com/razorpay/slashdocs/api/internal/repo/postgres"
+	"github.com/razorpay/slashdocs/api/internal/testdb"
 )
 
 type recordingSender struct {
@@ -56,7 +56,7 @@ func TestOutboxDeliveryPreferencesAndAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	sender := &recordingSender{}
-	w := Worker{Store: store, Sender: sender, AppOrigin: "https://aidocs.example.com"}
+	w := Worker{Store: store, Sender: sender, AppOrigin: "https://slashdocs.example.com"}
 	create := func(body string, mentions []repo.CommentMention) repo.Comment {
 		t.Helper()
 		c, err := store.CreateComment(ctx, doc.ID, v.ID, body, repo.Anchor{Quote: "Review"}, author, mentions)
@@ -93,7 +93,7 @@ func TestOutboxDeliveryPreferencesAndAccess(t *testing.T) {
 		t.Fatal("delivery must delete its entry and link to the comment")
 	}
 
-	if got := sender.messages[0]; got.DocumentTitle != "Private" || got.Highlight != "Review" || got.Body != "@Owner" || got.Reply {
+	if got := sender.messages[0]; got.DocumentTitle != "Private" || got.Highlight != "Review" || got.Body != "@Owner" || got.Actor != author.Name || got.Reply {
 		t.Fatalf("wrong comment context: %+v", got)
 	}
 
@@ -233,7 +233,7 @@ func TestOutboxDeliveryPreferencesAndAccess(t *testing.T) {
 	if count() != 0 || !strings.Contains(sender.links[len(sender.links)-1], reply.ID) {
 		t.Fatal("reply notification missing")
 	}
-	if got := sender.messages[len(sender.messages)-1]; got.Highlight != "Review" || got.Body != "Reply" || !got.Reply {
+	if got := sender.messages[len(sender.messages)-1]; got.Highlight != "Review" || got.Body != "Reply" || got.Actor != author.Name || !got.Reply {
 		t.Fatalf("reply must include root highlight and reply body: %+v", got)
 	}
 
@@ -274,6 +274,26 @@ func TestOutboxDeliveryPreferencesAndAccess(t *testing.T) {
 	}
 }
 
+func TestCommentActorFallbacks(t *testing.T) {
+	tests := []struct {
+		name   string
+		author auth.Principal
+		want   string
+	}{
+		{name: "name", author: auth.Principal{Name: "Asha", Email: "asha@example.com", ID: "usr_asha"}, want: "Asha"},
+		{name: "email", author: auth.Principal{Email: "asha@example.com", ID: "usr_asha"}, want: "asha@example.com"},
+		{name: "id", author: auth.Principal{ID: "usr_asha"}, want: "usr_asha"},
+		{name: "anonymous", author: auth.Principal{}, want: "Someone"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := commentActor(tt.author); got != tt.want {
+				t.Fatalf("commentActor() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDocumentAccessNotifications(t *testing.T) {
 	ctx := context.Background()
 	store, err := pgrepo.Connect(ctx, testdb.New(t))
@@ -304,7 +324,7 @@ func TestDocumentAccessNotifications(t *testing.T) {
 		t.Fatal(err)
 	}
 	sender := &recordingSender{}
-	w := Worker{Store: store, Sender: sender, AppOrigin: "https://aidocs.example.com"}
+	w := Worker{Store: store, Sender: sender, AppOrigin: "https://slashdocs.example.com"}
 	count := func() int {
 		t.Helper()
 		var n int
@@ -438,7 +458,7 @@ func TestDocumentAccessRequestNotification(t *testing.T) {
 		t.Fatalf("queued=%d err=%v, want one owner notification", queued, err)
 	}
 	sender := &recordingSender{}
-	w := Worker{Store: store, Sender: sender, AppOrigin: "https://aidocs.example.com"}
+	w := Worker{Store: store, Sender: sender, AppOrigin: "https://slashdocs.example.com"}
 	if err := w.DeliverNextDocumentAccessRequest(ctx); err != nil {
 		t.Fatal(err)
 	}

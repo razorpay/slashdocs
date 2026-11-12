@@ -1,39 +1,40 @@
-import { useEffect, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useLocation, useNavigate } from "react-router-dom";
+import { api } from "@/api";
+import { clearCommentDrafts } from "./comment-drafts";
 
-const SIGNED_OUT_KEY = "aidocs.frontend_signed_out";
-const AUTH_STATE_EVENT = "aidocs:auth-state";
+// Sign-out once only set this flag and kept the session cookie.
+const LEGACY_SIGNED_OUT_KEY = "slashdocs.frontend_signed_out";
 
-export function isFrontendSignedOut() {
+// The sign-in page, which returns the reader to this page after sign-in.
+export function useSignInPath() {
+  const { pathname, search } = useLocation();
+  return `/login?next=${encodeURIComponent(pathname + search)}`;
+}
+
+// Ends the browser session and forgets everything cached for the user.
+export function useSignOut() {
+  const qc = useQueryClient();
+  const nav = useNavigate();
+  return useMutation({
+    mutationFn: api.logout,
+    onSuccess: () => {
+      // Unsent comments must not outlive the session on a shared browser.
+      clearCommentDrafts();
+      qc.clear();
+      nav("/", { replace: true });
+    },
+  });
+}
+
+// Ends the session of a user who signed out with the legacy flag, so the
+// upgrade does not sign them back in.
+export async function finishLegacySignOut() {
   try {
-    return localStorage.getItem(SIGNED_OUT_KEY) === "true";
+    if (localStorage.getItem(LEGACY_SIGNED_OUT_KEY) !== "true") return;
+    await api.logout();
+    localStorage.removeItem(LEGACY_SIGNED_OUT_KEY);
   } catch {
-    return false;
+    // Storage is blocked or the server is down. The next start tries again.
   }
-}
-
-export function setFrontendSignedOut(signedOut: boolean) {
-  try {
-    if (signedOut) {
-      localStorage.setItem(SIGNED_OUT_KEY, "true");
-    } else {
-      localStorage.removeItem(SIGNED_OUT_KEY);
-    }
-  } catch {}
-  window.dispatchEvent(new Event(AUTH_STATE_EVENT));
-}
-
-export function useFrontendSignedOut() {
-  const [signedOut, setSignedOut] = useState(isFrontendSignedOut);
-
-  useEffect(() => {
-    const refresh = () => setSignedOut(isFrontendSignedOut());
-    window.addEventListener(AUTH_STATE_EVENT, refresh);
-    window.addEventListener("storage", refresh);
-    return () => {
-      window.removeEventListener(AUTH_STATE_EVENT, refresh);
-      window.removeEventListener("storage", refresh);
-    };
-  }, []);
-
-  return signedOut;
 }

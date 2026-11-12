@@ -13,8 +13,8 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
-	"github.com/razorpay/aidocs/api/internal/server"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/server"
 )
 
 func TestMCPMetricsClassifyProtocolTransportAndToolOutcomes(t *testing.T) {
@@ -22,8 +22,8 @@ func TestMCPMetricsClassifyProtocolTransportAndToolOutcomes(t *testing.T) {
 	token := auth.NewMCPAccessToken(fixtureUser.ID, e.resource, oauthTestSigningMaterial, time.Minute)
 
 	assertMetricDelta(t,
-		"aidocs_mcp_requests_total", map[string]string{"method": "initialize", "outcome": "success"},
-		"aidocs_mcp_request_duration_seconds_count", map[string]string{"method": "initialize", "outcome": "success"},
+		"slashdocs_mcp_requests_total", map[string]string{"method": "initialize", "outcome": "success"},
+		"slashdocs_mcp_request_duration_seconds_count", map[string]string{"method": "initialize", "outcome": "success"},
 		func() {
 			rr := mcpPost(t, e, token, "", map[string]any{
 				"jsonrpc": "2.0", "id": 1, "method": "initialize",
@@ -45,10 +45,10 @@ func TestMCPMetricsClassifyProtocolTransportAndToolOutcomes(t *testing.T) {
 	unknownRequestLabels := map[string]string{"method": "tools_call", "outcome": "protocol_error"}
 	unknownToolLabels := map[string]string{"tool": "unknown", "outcome": "protocol_error", "actor_type": "user"}
 	unknownToolDurationLabels := map[string]string{"tool": "unknown", "outcome": "protocol_error"}
-	requestBefore := scrapeMetric(t, "aidocs_mcp_requests_total", unknownRequestLabels)
-	requestDurationBefore := scrapeMetric(t, "aidocs_mcp_request_duration_seconds_count", unknownRequestLabels)
-	toolBefore := scrapeMetric(t, "aidocs_mcp_tool_calls_total", unknownToolLabels)
-	toolDurationBefore := scrapeMetric(t, "aidocs_mcp_tool_call_duration_seconds_count", unknownToolDurationLabels)
+	requestBefore := scrapeMetric(t, "slashdocs_mcp_requests_total", unknownRequestLabels)
+	requestDurationBefore := scrapeMetric(t, "slashdocs_mcp_request_duration_seconds_count", unknownRequestLabels)
+	toolBefore := scrapeMetric(t, "slashdocs_mcp_tool_calls_total", unknownToolLabels)
+	toolDurationBefore := scrapeMetric(t, "slashdocs_mcp_tool_call_duration_seconds_count", unknownToolDurationLabels)
 	rr := mcpPost(t, e, token, "", map[string]any{
 		"jsonrpc": "2.0", "id": 20, "method": "tools/call",
 		"params": map[string]any{"name": attackerTool, "arguments": map[string]any{}},
@@ -57,10 +57,10 @@ func TestMCPMetricsClassifyProtocolTransportAndToolOutcomes(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), `"error"`) {
 		t.Fatalf("unknown tool did not produce protocol error: %s", rr.Body.String())
 	}
-	assertMetricValue(t, "aidocs_mcp_requests_total", unknownRequestLabels, requestBefore+1)
-	assertMetricValue(t, "aidocs_mcp_request_duration_seconds_count", unknownRequestLabels, requestDurationBefore+1)
-	assertMetricValue(t, "aidocs_mcp_tool_calls_total", unknownToolLabels, toolBefore+1)
-	assertMetricValue(t, "aidocs_mcp_tool_call_duration_seconds_count", unknownToolDurationLabels, toolDurationBefore+1)
+	assertMetricValue(t, "slashdocs_mcp_requests_total", unknownRequestLabels, requestBefore+1)
+	assertMetricValue(t, "slashdocs_mcp_request_duration_seconds_count", unknownRequestLabels, requestDurationBefore+1)
+	assertMetricValue(t, "slashdocs_mcp_tool_calls_total", unknownToolLabels, toolBefore+1)
+	assertMetricValue(t, "slashdocs_mcp_tool_call_duration_seconds_count", unknownToolDurationLabels, toolDurationBefore+1)
 
 	assertTransportMetric(t, e, "auth_error", func() *responseRecorderAlias {
 		return do(t, e.h, http.MethodPost, "/mcp", "not-json", map[string]string{"Content-Type": "application/json"})
@@ -84,14 +84,14 @@ func TestMCPMetricsClassifyProtocolTransportAndToolOutcomes(t *testing.T) {
 
 	unknownMethod := "attacker/method/3b17"
 	unknownMethodLabels := map[string]string{"method": "unknown", "outcome": "protocol_error"}
-	unknownBefore := scrapeMetric(t, "aidocs_mcp_requests_total", unknownMethodLabels)
-	unknownDurationBefore := scrapeMetric(t, "aidocs_mcp_request_duration_seconds_count", unknownMethodLabels)
+	unknownBefore := scrapeMetric(t, "slashdocs_mcp_requests_total", unknownMethodLabels)
+	unknownDurationBefore := scrapeMetric(t, "slashdocs_mcp_request_duration_seconds_count", unknownMethodLabels)
 	unknown := mcpPost(t, e, token, "", map[string]any{
 		"jsonrpc": "2.0", "id": 21, "method": unknownMethod, "params": map[string]any{},
 	})
 	assertStatus(t, unknown, http.StatusOK)
-	assertMetricValue(t, "aidocs_mcp_requests_total", unknownMethodLabels, unknownBefore+1)
-	assertMetricValue(t, "aidocs_mcp_request_duration_seconds_count", unknownMethodLabels, unknownDurationBefore+1)
+	assertMetricValue(t, "slashdocs_mcp_requests_total", unknownMethodLabels, unknownBefore+1)
+	assertMetricValue(t, "slashdocs_mcp_request_duration_seconds_count", unknownMethodLabels, unknownDurationBefore+1)
 
 	metrics := do(t, server.MetricsHandler(), http.MethodGet, "/metrics", "", nil)
 	assertStatus(t, metrics, http.StatusOK)
@@ -108,8 +108,8 @@ func TestGrafanaDashboardIncludesMCPMonitoring(t *testing.T) {
 		t.Fatal("could not resolve test source path")
 	}
 	root := filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", ".."))
-	sourcePath := filepath.Join(root, "monitoring", "grafana", "aidocs-dashboard.libsonnet")
-	jsonPath := filepath.Join(root, "monitoring", "grafana", "aidocs-dashboard.json")
+	sourcePath := filepath.Join(root, "monitoring", "grafana", "slashdocs-dashboard.libsonnet")
+	jsonPath := filepath.Join(root, "monitoring", "grafana", "slashdocs-dashboard.json")
 	source, err := os.ReadFile(sourcePath)
 	if err != nil {
 		t.Fatalf("read Grafana source: %v", err)
@@ -131,10 +131,10 @@ func TestGrafanaDashboardIncludesMCPMonitoring(t *testing.T) {
 	}
 
 	for _, required := range []string{
-		"aidocs_mcp_requests_total",
-		"aidocs_mcp_request_duration_seconds_bucket",
-		"aidocs_mcp_tool_calls_total",
-		"aidocs_mcp_tool_call_duration_seconds_bucket",
+		"slashdocs_mcp_requests_total",
+		"slashdocs_mcp_request_duration_seconds_bucket",
+		"slashdocs_mcp_tool_calls_total",
+		"slashdocs_mcp_tool_call_duration_seconds_bucket",
 		"MCP request rate",
 		"MCP protocol/transport error ratio",
 		"MCP tool error ratio",
@@ -149,8 +149,8 @@ func TestGrafanaDashboardIncludesMCPMonitoring(t *testing.T) {
 		}
 	}
 	for title, metric := range map[string]string{
-		"MCP protocol/transport error ratio": `aidocs_mcp_requests_total{outcome!="success"}`,
-		"MCP tool error ratio":               `aidocs_mcp_tool_calls_total{outcome!="success"}`,
+		"MCP protocol/transport error ratio": `slashdocs_mcp_requests_total{outcome!="success"}`,
+		"MCP tool error ratio":               `slashdocs_mcp_tool_calls_total{outcome!="success"}`,
 	} {
 		found := false
 		for _, panel := range dashboard.Panels {
@@ -182,31 +182,31 @@ func assertMCPMetricToolCall(t *testing.T, e *mcpOAuthTestEnv, token, tool strin
 	t.Helper()
 	requestLabels := map[string]string{"method": "tools_call", "outcome": "success"}
 	toolLabels := map[string]string{"tool": tool, "outcome": outcome, "actor_type": "user"}
-	requestBefore := scrapeMetric(t, "aidocs_mcp_requests_total", requestLabels)
-	requestDurationBefore := scrapeMetric(t, "aidocs_mcp_request_duration_seconds_count", requestLabels)
-	toolBefore := scrapeMetric(t, "aidocs_mcp_tool_calls_total", toolLabels)
+	requestBefore := scrapeMetric(t, "slashdocs_mcp_requests_total", requestLabels)
+	requestDurationBefore := scrapeMetric(t, "slashdocs_mcp_request_duration_seconds_count", requestLabels)
+	toolBefore := scrapeMetric(t, "slashdocs_mcp_tool_calls_total", toolLabels)
 	toolDurationLabels := map[string]string{"tool": tool, "outcome": outcome}
-	toolDurationBefore := scrapeMetric(t, "aidocs_mcp_tool_call_duration_seconds_count", toolDurationLabels)
+	toolDurationBefore := scrapeMetric(t, "slashdocs_mcp_tool_call_duration_seconds_count", toolDurationLabels)
 
 	result := callMCPToolHTTP(t, e, token, tool, arguments)
 	if result.IsError != wantError {
 		t.Fatalf("tool %s IsError = %v, want %v; text=%s", tool, result.IsError, wantError, result.Text)
 	}
-	assertMetricValue(t, "aidocs_mcp_requests_total", requestLabels, requestBefore+1)
-	assertMetricValue(t, "aidocs_mcp_request_duration_seconds_count", requestLabels, requestDurationBefore+1)
-	assertMetricValue(t, "aidocs_mcp_tool_calls_total", toolLabels, toolBefore+1)
-	assertMetricValue(t, "aidocs_mcp_tool_call_duration_seconds_count", toolDurationLabels, toolDurationBefore+1)
+	assertMetricValue(t, "slashdocs_mcp_requests_total", requestLabels, requestBefore+1)
+	assertMetricValue(t, "slashdocs_mcp_request_duration_seconds_count", requestLabels, requestDurationBefore+1)
+	assertMetricValue(t, "slashdocs_mcp_tool_calls_total", toolLabels, toolBefore+1)
+	assertMetricValue(t, "slashdocs_mcp_tool_call_duration_seconds_count", toolDurationLabels, toolDurationBefore+1)
 }
 
 func assertTransportMetric(t *testing.T, e *mcpOAuthTestEnv, outcome string, call func() *responseRecorderAlias, status int) {
 	t.Helper()
 	labels := map[string]string{"method": "transport", "outcome": outcome}
-	before := scrapeMetric(t, "aidocs_mcp_requests_total", labels)
-	durationBefore := scrapeMetric(t, "aidocs_mcp_request_duration_seconds_count", labels)
+	before := scrapeMetric(t, "slashdocs_mcp_requests_total", labels)
+	durationBefore := scrapeMetric(t, "slashdocs_mcp_request_duration_seconds_count", labels)
 	rr := call()
 	assertStatus(t, rr, status)
-	assertMetricValue(t, "aidocs_mcp_requests_total", labels, before+1)
-	assertMetricValue(t, "aidocs_mcp_request_duration_seconds_count", labels, durationBefore+1)
+	assertMetricValue(t, "slashdocs_mcp_requests_total", labels, before+1)
+	assertMetricValue(t, "slashdocs_mcp_request_duration_seconds_count", labels, durationBefore+1)
 }
 
 func assertMetricDelta(t *testing.T, counter string, counterLabels map[string]string, durationCounter string, durationLabels map[string]string, call func()) {

@@ -22,9 +22,6 @@ import (
 //go:embed all:frontend_dist
 var frontendFS embed.FS
 
-//go:embed onboarding/sample.html
-var onboardingFS embed.FS
-
 func registerFrontendRoutes(r *gin.Engine, publicURL string) {
 	dist, err := fs.Sub(frontendFS, "frontend_dist")
 	if err != nil {
@@ -32,16 +29,6 @@ func registerFrontendRoutes(r *gin.Engine, publicURL string) {
 	}
 	fileServer := http.FileServer(http.FS(dist))
 	publicURL = strings.TrimRight(publicURL, "/")
-
-	r.GET("/onboarding/sample.html", func(c *gin.Context) {
-		b, err := fs.ReadFile(onboardingFS, "onboarding/sample.html")
-		if err != nil {
-			c.Status(http.StatusNotFound)
-			return
-		}
-		c.Header("Content-Disposition", `attachment; filename="aidocs-sample.html"`)
-		c.Data(http.StatusOK, "text/html; charset=utf-8", b)
-	})
 
 	r.GET("/assets/*filepath", gin.WrapH(http.StripPrefix("/assets/", http.FileServer(http.FS(subOrEmpty(dist, "assets"))))))
 	r.NoRoute(func(c *gin.Context) {
@@ -59,7 +46,7 @@ func registerFrontendRoutes(r *gin.Engine, publicURL string) {
 			c.Status(http.StatusNotFound)
 			return
 		}
-		index = bytes.ReplaceAll(index, []byte("__AIDOCS_PUBLIC_URL_VALUE__"), []byte(publicURL))
+		index = bytes.ReplaceAll(index, []byte("__SLASHDOCS_PUBLIC_URL_VALUE__"), []byte(publicURL))
 		c.Data(http.StatusOK, "text/html; charset=utf-8", index)
 	})
 }

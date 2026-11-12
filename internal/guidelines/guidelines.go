@@ -1,7 +1,7 @@
-// Package guidelines holds the aidocs document authoring guidelines shared by
-// the CLI (aidocs guidelines) and the server-side MCP tool
+// Package guidelines holds the slashdocs document authoring guidelines shared by
+// the CLI (slashdocs guidelines) and the server-side MCP tool
 // (get_authoring_guidelines). Content is intentionally plain text so agents
-// can read it directly before writing an aidocs document; both surfaces offer
+// can read it directly before writing a slashdocs document; both surfaces offer
 // the same sections with progressive disclosure from an index.
 package guidelines
 
@@ -19,7 +19,7 @@ var Pages = []Page{
 	{
 		Path:    []string{"core"},
 		Summary: "The single-file HTML contract and default authoring posture.",
-		Body: `aidocs guidelines: core
+		Body: `slashdocs guidelines: core
 
 A document is ONE HTML file.
   - Anything reasonable that fits in a single .html file is fine, including
@@ -27,26 +27,26 @@ A document is ONE HTML file.
     iframes, workers, media, data: URLs, and blob: URLs.
   - Prefer semantic, selectable HTML for prose and data. Review comments anchor
     more reliably when text is real text instead of pixels.
-  - Keep the first screen useful. aidocs opens the rendered document directly,
+  - Keep the first screen useful. slashdocs opens the rendered document directly,
     so avoid marketing-style wrappers around documents that are meant to be read
     or reviewed.
   - Do not hide important content behind hover-only interactions. Readers and
     reviewers should be able to scan, select, copy, and comment on the artifact.
 
 Useful next pages:
-  aidocs guidelines core assets
-  aidocs guidelines rendering theme
-  aidocs guidelines review
+  slashdocs guidelines core assets
+  slashdocs guidelines rendering theme
+  slashdocs guidelines review
 `,
 	},
 	{
 		Path:    []string{"core", "assets"},
 		Summary: "How images, fonts, CDNs, and embedded media should be handled.",
 		Aliases: [][]string{{"assets"}},
-		Body: `aidocs guidelines: core assets
+		Body: `slashdocs guidelines: core assets
 
-aidocs stores your HTML, not a directory of supporting files.
-  - aidocs does NOT host assets for you. There is no image/file hosting.
+slashdocs stores your HTML, not a directory of supporting files.
+  - slashdocs does NOT host assets for you. There is no image/file hosting.
   - Embed important images as base64 data URLs:
       data:image/png;base64,...
   - External HTTPS URLs are allowed when you control them or they are stable
@@ -63,36 +63,39 @@ aidocs stores your HTML, not a directory of supporting files.
 		Path:    []string{"core", "publishing"},
 		Summary: "Create and update documents from the CLI.",
 		Aliases: [][]string{{"publishing"}, {"publish"}},
-		Body: `aidocs guidelines: core publishing
+		Body: `slashdocs guidelines: core publishing
 
 Publish a new document:
-  aidocs docs create report.html --title 'Report'
+  slashdocs docs create report.html --title 'Report'
 
 Push an update to an existing document:
-  aidocs docs push <doc_id> report.html --base-version <version_id> --summary 'Address comments'
+  slashdocs docs push <doc_id> report.html --base-version <version_id> --summary 'Address comments'
 
-If you previously ran aidocs docs pull <doc_id>, the CLI remembers that base
+Write one change per line in --summary; the version history shows each line
+as a list item.
+
+If you previously ran slashdocs docs pull <doc_id>, the CLI remembers that base
 version for the active context, so --base-version is optional.
 
 Publishing model:
   - Creating a document stores the uploaded HTML as version 1.
   - Pushing HTML creates a new immutable version.
-  - The aidocs UI is for review; agents and CLI/API publishers create versions.
+  - The slashdocs UI is for review; agents and CLI/API publishers create versions.
   - Runtime KV changes from uploaded HTML do not create versions; see:
-      aidocs guidelines interactivity kv
+      slashdocs guidelines interactivity kv
 
 Before publishing, run the relevant guideline pages for the kind of document you
 are authoring. For example:
-  aidocs guidelines rendering theme
-  aidocs guidelines review
+  slashdocs guidelines rendering theme
+  slashdocs guidelines review
 `,
 	},
 	{
 		Path:    []string{"rendering"},
-		Summary: "How aidocs renders uploaded HTML inside the reader.",
-		Body: `aidocs guidelines: rendering
+		Summary: "How slashdocs renders uploaded HTML inside the reader.",
+		Body: `slashdocs guidelines: rendering
 
-aidocs renders uploaded HTML inside the document reader.
+slashdocs renders uploaded HTML inside the document reader.
   - The document should be complete on its own and not depend on parent-page DOM.
   - Assume the document may be resized often as sidebars, comments, and browser
     windows change.
@@ -103,44 +106,44 @@ aidocs renders uploaded HTML inside the document reader.
     frame may reload as versions or theme settings change.
 
 Useful next pages:
-  aidocs guidelines rendering theme
-  aidocs guidelines rendering layout
-  aidocs guidelines interactivity
+  slashdocs guidelines rendering theme
+  slashdocs guidelines rendering layout
+  slashdocs guidelines interactivity
 `,
 	},
 	{
 		Path:    []string{"rendering", "theme"},
 		Summary: "Follow the reader's light/dark theme.",
 		Aliases: [][]string{{"theme"}, {"themes"}},
-		Body: `aidocs guidelines: rendering theme
+		Body: `slashdocs guidelines: rendering theme
 
-Theme: follow the reader's aidocs theme.
-  The viewer chooses light or dark in the aidocs UI. The render bridge sets
+Theme: follow the reader's slashdocs theme.
+  The viewer chooses light or dark in the slashdocs UI. The render bridge sets
   this attribute on <html> inside your document and keeps it in sync:
 
-    <html data-aidocs-theme="light">
-    <html data-aidocs-theme="dark">
+    <html data-slashdocs-theme="light">
+    <html data-slashdocs-theme="dark">
 
   Opt in by defining your palette against the attribute and driving the page
   from variables:
 
-    :root[data-aidocs-theme="dark"] {
+    :root[data-slashdocs-theme="dark"] {
       --bg: #0b0d12; --ink: #e7ecf3;
     }
     :root { --bg: #fff; --ink: #111; }
     body { background: var(--bg); color: var(--ink); }
     html { color-scheme: light; }
-    :root[data-aidocs-theme="dark"] { color-scheme: dark; }
+    :root[data-slashdocs-theme="dark"] { color-scheme: dark; }
 
   Notes:
   - "system" is resolved to a concrete light/dark before it reaches you.
   - The value updates live when the reader toggles; CSS reacts automatically.
   - For JS, listen for the event on your own window:
-      window.addEventListener('aidocs:theme', e => {
+      window.addEventListener('slashdocs:theme', e => {
         // e.detail.theme is "light" or "dark"
       });
-  - Do NOT ship your own theme toggle. The aidocs UI is the single control.
-  - A document that never references data-aidocs-theme keeps its hard-coded
+  - Do NOT ship your own theme toggle. The slashdocs UI is the single control.
+  - A document that never references data-slashdocs-theme keeps its hard-coded
     look, so theming is strictly opt-in.
 `,
 	},
@@ -148,7 +151,7 @@ Theme: follow the reader's aidocs theme.
 		Path:    []string{"rendering", "layout"},
 		Summary: "Responsive, printable, review-friendly layout guidance.",
 		Aliases: [][]string{{"layout"}},
-		Body: `aidocs guidelines: rendering layout
+		Body: `slashdocs guidelines: rendering layout
 
 Layout for reading and review:
   - Use real headings, paragraphs, tables, lists, and figures where they fit.
@@ -166,7 +169,7 @@ Layout for reading and review:
 	{
 		Path:    []string{"interactivity"},
 		Summary: "Scripts, controls, links, and stateful document behavior.",
-		Body: `aidocs guidelines: interactivity
+		Body: `slashdocs guidelines: interactivity
 
 Interactive documents are allowed.
   - Inline scripts, external scripts, iframes, workers, blob: URLs, and
@@ -178,43 +181,43 @@ Interactive documents are allowed.
     buttons for clear commands.
   - For links, make the target obvious in the visible text.
   - For persisted document-local state such as approvals, tracker rows, and
-    dropdown selections, use the aidocs KV primitive:
-      aidocs guidelines interactivity kv
+    dropdown selections, use the slashdocs KV primitive:
+      slashdocs guidelines interactivity kv
   - For documents that render files from GitHub at read time, use the GitHub
     bridge rather than embedding credentials or fetching private URLs directly:
-      aidocs guidelines interactivity github
+      slashdocs guidelines interactivity github
   - For live-state printing and generated file downloads:
-      aidocs guidelines interactivity exports
+      slashdocs guidelines interactivity exports
 `,
 	},
 	{
 		Path:    []string{"interactivity", "exports"},
 		Summary: "Print live document state and download generated files safely.",
 		Aliases: [][]string{{"print"}, {"downloads"}},
-		Body: `aidocs guidelines: interactivity exports
+		Body: `slashdocs guidelines: interactivity exports
 
 Print and download buttons:
-  - Call window.print() or window.aidocs.print() directly from a click handler.
+  - Call window.print() or window.slashdocs.print() directly from a click handler.
     Export as PDF in the document toolbar uses the same live-document snapshot.
-  - Call window.aidocs.download({ filename: "report.txt", blob: new Blob([text],
+  - Call window.slashdocs.download({ filename: "report.txt", blob: new Blob([text],
     { type: "text/plain" }) }) from a click handler. It returns a Promise.
     Prepare large or asynchronous exports before the user clicks Download.
   - Downloads accept file bytes, not a remote URL or filesystem path, and are
     limited to 20 MB. Names are normalized. Requests need browser user activation
     and are limited to one document-initiated export per five seconds.
   - Native download links remain sandboxed. Use the download API for generated
-    files. No file is automatically opened or executed by aidocs.
+    files. No file is automatically opened or executed by slashdocs.
 
 Print preparation is optional:
   - Existing synchronous beforeprint listeners can reveal collapsed sections.
   - For asynchronous preparation, register:
-      window.addEventListener("aidocs:beforeprint", event => {
+      window.addEventListener("slashdocs:beforeprint", event => {
         event.detail.waitUntil(revealSectionsForPrint());
       });
   - Register before printing, and call waitUntil synchronously in the listener.
     The platform waits up to 1.5 seconds, then snapshots the current DOM even if
     preparation rejects, hangs, or has no listener.
-  - Use afterprint or aidocs:afterprint to restore temporary document changes.
+  - Use afterprint or slashdocs:afterprint to restore temporary document changes.
   - The preview preserves live form values, open details, and readable canvases.
     Password/file inputs are excluded. The snapshot has scripts disabled;
     embedded frames, inaccessible cross-origin canvases, and unmounted content
@@ -227,30 +230,30 @@ Print preparation is optional:
 		Path:    []string{"interactivity", "kv"},
 		Summary: "Persist approval states, tracker fields, dropdowns, and other document-local state.",
 		Aliases: [][]string{{"kv"}, {"state"}, {"store"}, {"storage"}},
-		Body: `aidocs guidelines: interactivity kv
+		Body: `slashdocs guidelines: interactivity kv
 
-Uploaded HTML can use a document-scoped KV store through window.aidocs.kv.
+Uploaded HTML can use a document-scoped KV store through window.slashdocs.kv.
 This is for runtime state such as approvals, tracker fields, dropdown choices,
 checkboxes, and lightweight workflow metadata.
 
 API:
-  const value = await window.aidocs.kv.get("approval:pm");
-  const all = await window.aidocs.kv.all();
+  const value = await window.slashdocs.kv.get("approval:pm");
+  const all = await window.slashdocs.kv.all();
 
-  await window.aidocs.kv.set("approval:pm", {
+  await window.slashdocs.kv.set("approval:pm", {
     status: "approved",
     by: "pm@example.com"
   });
 
-  await window.aidocs.kv.delete("approval:pm");
+  await window.slashdocs.kv.delete("approval:pm");
 
-  await window.aidocs.kv.patch({
+  await window.slashdocs.kv.patch({
     "approval:pm": { status: "approved" },
     "tracker:old-row": null
   });
 
-  await window.aidocs.kv.undo();
-  await window.aidocs.kv.redo();
+  await window.slashdocs.kv.undo();
+  await window.slashdocs.kv.redo();
 
 Events:
   function renderFromKV(event) {
@@ -261,8 +264,8 @@ Events:
     // event.operation is "set", "delete", "patch", "undo", or "redo".
   }
 
-  window.aidocs.on("kvchange", renderFromKV);
-  window.aidocs.off("kvchange", renderFromKV);
+  window.slashdocs.on("kvchange", renderFromKV);
+  window.slashdocs.off("kvchange", renderFromKV);
 
   window.addEventListener("kvchange", e => {
     // e.detail is the same event payload.
@@ -282,15 +285,15 @@ Semantics:
     dot, underscore, colon, or dash.
   - Values can be up to 64 KiB. A patch can change up to 256 keys and the
     request body can be up to 256 KiB.
-  - aidocs keeps an in-session undo/redo stack for local KV writes made through
-    window.aidocs.kv. Ctrl/Cmd+Z undoes the last local KV write; Ctrl/Cmd+Y and
+  - slashdocs keeps an in-session undo/redo stack for local KV writes made through
+    window.slashdocs.kv. Ctrl/Cmd+Z undoes the last local KV write; Ctrl/Cmd+Y and
     Ctrl/Cmd+Shift+Z redo it. Undo/redo apply ordinary KV patches, persist
     immediately, and emit kvchange events with operation "undo" or "redo".
   - Undo/redo is scoped to the current document iframe session. It does not
     create versions and should not be used as an audit log.
   - Treat kvchange as a render/update signal and read the payload or call
     get/all for the state you need. Do not rely on remote realtime fanout unless
-    a future aidocs guideline explicitly promises it.
+    a future slashdocs guideline explicitly promises it.
 
 Small dropdown example:
   <select id="status">
@@ -303,21 +306,21 @@ Small dropdown example:
     const key = "approval:status";
     const select = document.querySelector("#status");
 
-    window.aidocs.kv.get(key).then(value => {
+    window.slashdocs.kv.get(key).then(value => {
       if (value) select.value = value;
     });
 
     select.addEventListener("change", () => {
-      window.aidocs.kv.set(key, select.value);
+      window.slashdocs.kv.set(key, select.value);
     });
 
-    window.aidocs.on("kvchange", event => {
+    window.slashdocs.on("kvchange", event => {
       if (event.items && event.items[key]) {
         select.value = event.items[key];
         return;
       }
       if ((event.changes || []).some(change => change.key === key)) {
-        window.aidocs.kv.get(key).then(value => {
+        window.slashdocs.kv.get(key).then(value => {
           if (value) select.value = value;
         });
       }
@@ -329,15 +332,15 @@ Small dropdown example:
 		Path:    []string{"interactivity", "github"},
 		Summary: "Render GitHub repository files as reviewable document content.",
 		Aliases: [][]string{{"github"}, {"github-backed"}, {"git-source"}},
-		Body: `aidocs guidelines: interactivity github
+		Body: `slashdocs guidelines: interactivity github
 
 Uploaded HTML can read a GitHub repository file through
-window.aidocs.github.getRawContent. Use this for specifications, generated
+window.slashdocs.github.getRawContent. Use this for specifications, generated
 references, package metadata, source definitions, and other content that should
-remain in GitHub while being rendered and reviewed in aidocs.
+remain in GitHub while being rendered and reviewed in slashdocs.
 
 API:
-  const file = await window.aidocs.github.getRawContent({
+  const file = await window.slashdocs.github.getRawContent({
     owner: "razorpay",
     repo: "example",
     path: "api/openapi.json",
@@ -350,7 +353,7 @@ API:
 Ref behavior:
   - ref may be a branch, tag, or commit SHA.
   - Prefer a stable commit ref unless the document intentionally needs to follow
-    a floating branch or tag. Floating refs can change without a new aidocs
+    a floating branch or tag. Floating refs can change without a new slashdocs
     version, so existing comments may need to be re-anchored.
   - Show the repository, path, and ref in the rendered document so reviewers know
     exactly what source they are reading.
@@ -360,7 +363,7 @@ Access and security:
     only read repositories that GitHub permits that account to access.
   - Private organisation repositories may also require organisation approval of
     the configured GitHub integration.
-  - aidocs keeps the GitHub token outside uploaded HTML. Never put a token in the
+  - slashdocs keeps the GitHub token outside uploaded HTML. Never put a token in the
     document or fetch a private raw.githubusercontent.com URL directly.
   - Treat repository content as untrusted input. Parse known formats and build DOM
     with textContent. Do not eval source code or assign arbitrary repository
@@ -369,7 +372,7 @@ Access and security:
 
 Connection fallback:
   If loading fails because the reader may not have connected GitHub, offer a
-  visible button that calls window.aidocs.github.connect(). The trusted aidocs
+  visible button that calls window.slashdocs.github.connect(). The trusted slashdocs
   shell starts the connection flow and returns to the same document. Also show a
   useful error because an incorrect path, ref, or repository permission can fail
   in the same place.
@@ -380,7 +383,7 @@ Reviewability:
   - Do not render important review text only into canvas, images, or inaccessible
     widgets.
   - Keep stable DOM structure and headings when possible so comments can be
-    re-anchored across aidocs versions.
+    re-anchored across slashdocs versions.
 
 Small JSON renderer example:
   <p id="source">Loading GitHub source…</p>
@@ -392,7 +395,7 @@ Small JSON renderer example:
 
     async function renderGitHubFile() {
       try {
-        const file = await window.aidocs.github.getRawContent({
+        const file = await window.slashdocs.github.getRawContent({
           owner: "razorpay",
           repo: "example",
           path: "package.json",
@@ -418,7 +421,7 @@ Small JSON renderer example:
         connect.type = "button";
         connect.textContent = "Connect GitHub";
         connect.addEventListener("click", () => {
-          window.aidocs.github.connect();
+          window.slashdocs.github.connect();
         });
         source.after(connect);
       }
@@ -432,7 +435,7 @@ Small JSON renderer example:
 		Path:    []string{"review"},
 		Summary: "Make documents easy to comment on, revise, and approve.",
 		Aliases: [][]string{{"comments"}, {"accessibility"}, {"a11y"}},
-		Body: `aidocs guidelines: review
+		Body: `slashdocs guidelines: review
 
 Write documents for review, not just display.
   - Use real text for important claims, numbers, headings, and decisions.

@@ -14,7 +14,17 @@ import { useSearchParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { errorMessage } from "@/lib/errors";
-import { CheckCircle2, Trash2, Link2, Reply, RotateCcw, Send, X } from "lucide-react";
+import {
+  CheckCircle2,
+  Link2,
+  MessageSquareText,
+  Pencil,
+  Reply,
+  RotateCcw,
+  Send,
+  Trash2,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -29,7 +39,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Center, EmptyState, Skeleton } from "@/components/ui/misc";
 import { Textarea } from "@/components/ui/input";
-import { api, type Anchor, type Comment, type UserPrincipal } from "@/api";
+import { api, type Comment, type UserPrincipal } from "@/api";
 import { cn } from "@/lib/cn";
 import { formatTimestamp } from "@/lib/format-date";
 import { queryKeys } from "@/lib/queryKeys";
@@ -55,8 +65,16 @@ import {
   matchesCommentFilter,
 } from "@/lib/constants";
 import { NotificationToggle } from "@/components/notification-toggle";
+import type { CommentDraft } from "@/lib/comment-drafts";
 import { useDoc } from "./doc-context";
 import { ReactionBar } from "./doc-comment-reactions";
+
+function submitOnModEnter(event: KeyboardEvent<HTMLTextAreaElement>) {
+  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+    event.preventDefault();
+    event.currentTarget.form?.requestSubmit();
+  }
+}
 
 function MentionTextarea({
   draft,
@@ -392,7 +410,8 @@ export function Comments({ mobile = false }: { mobile?: boolean }) {
     comments,
     commentsLoading,
     commentsError,
-    selection,
+    notifications,
+    drafts,
     commentFilter: filter,
     setCommentFilter: setFilter,
     setActiveComment,
@@ -410,12 +429,6 @@ export function Comments({ mobile = false }: { mobile?: boolean }) {
     observer.observe(header);
     return () => observer.disconnect();
   }, []);
-
-  useEffect(() => {
-    if (!selection?.quote) return;
-    setFilter(COMMENT_STATUS.open);
-    setActiveComment(undefined);
-  }, [selection, setFilter, setActiveComment]);
 
   const items = useMemo(
     () => comments.filter((c) => matchesCommentFilter(c.status, filter)),
@@ -439,7 +452,7 @@ export function Comments({ mobile = false }: { mobile?: boolean }) {
     >
       <div
         ref={headerRef}
-        className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 pt-3"
+        className="shrink-0 border-b border-[var(--color-border)] px-4 pt-3"
       >
         <div className="flex items-center gap-2 pr-10 md:pr-0">
           <h2 className="text-sm font-semibold">Comments</h2>
@@ -451,9 +464,11 @@ export function Comments({ mobile = false }: { mobile?: boolean }) {
               {items.length}
             </span>
           )}
-          <div className="ml-auto">
-            <NotificationToggle documentId={docId} />
-          </div>
+          {notifications && (
+            <div className="ml-auto">
+              <NotificationToggle documentId={docId} />
+            </div>
+          )}
         </div>
         <div
           role="group"
@@ -483,7 +498,9 @@ export function Comments({ mobile = false }: { mobile?: boolean }) {
           data-comment-scroll
           className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-4"
         >
-          <CommentComposer />
+          {drafts.map((draft) => (
+            <CommentComposer key={draft.id} draft={draft} />
+          ))}
           {commentsLoading ? (
             <>
               <Skeleton className="h-28 w-full rounded-xl" />
@@ -492,7 +509,7 @@ export function Comments({ mobile = false }: { mobile?: boolean }) {
           ) : commentsError ? (
             <Center>Could not load comments.</Center>
           ) : items.length === 0 ? (
-            <CommentsEmptyState filter={filter} />
+            drafts.length === 0 && <CommentsEmptyState filter={filter} />
           ) : (
             items.map((c) => <CommentCard key={c.id} c={c} docId={docId} />)
           )}
@@ -509,6 +526,7 @@ export function Comments({ mobile = false }: { mobile?: boolean }) {
 function CommentsEmptyState({ filter }: { filter: CommentFilter }) {
   return (
     <EmptyState
+      icon={<MessageSquareText className="h-5 w-5" />}
       title={
         filter === COMMENT_STATUS.resolved
           ? "No resolved comments yet"
@@ -525,71 +543,97 @@ function CommentsEmptyState({ filter }: { filter: CommentFilter }) {
   );
 }
 
-function CommentComposer({ className = "" }: { className?: string }) {
-  const { docId, version, selection, setSelection, setActiveComment } = useDoc();
-  const q = useQueryClient();
-  const [quote, setQuote] = useState("");
-  const [draft, setDraft] = useState<MentionDraft>(emptyMentionDraft);
-  const anchorRef = useRef<Partial<Anchor> | undefined>(undefined);
+// Typing stays in local state and reaches storage after a short pause, so a
+// keystroke does not re-render the whole page.
+const DRAFT_SAVE_DELAY = 300;
 
+function CommentComposer({ draft }: { draft: CommentDraft }) {
+  const {
+    docId,
+    activeComment,
+    setActiveComment,
+    unanchoredComments,
+    saveDraft,
+    discardDraft,
+  } = useDoc();
+  const q = useQueryClient();
+  const formRef = useRef<HTMLFormElement>(null);
+  const [text, setText] = useState<MentionDraft>(() => ({
+    body: draft.body,
+    mentions: draft.mentions,
+  }));
+  const unsaved = useRef<MentionDraft | null>(null);
+  const saveTimer = useRef<number | undefined>(undefined);
+  const save = useCallback(() => {
+    window.clearTimeout(saveTimer.current);
+    if (unsaved.current) saveDraft(draft.id, unsaved.current);
+    unsaved.current = null;
+  }, [draft.id, saveDraft]);
+  const edit = (next: MentionDraft) => {
+    setText(next);
+    unsaved.current = next;
+    window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(save, DRAFT_SAVE_DELAY);
+  };
+  useEffect(() => save, [save]);
+
+  const active = activeComment === draft.id;
   useEffect(() => {
-    if (!selection?.quote) return;
-    setQuote(selection.quote);
-    anchorRef.current = selection.anchor;
-  }, [selection]);
+    if (active)
+      formRef.current?.querySelector("textarea")?.focus({ preventScroll: true });
+  }, [active]);
 
   const create = useMutation({
     mutationFn: () =>
       api.createComment(
         docId,
-        version,
-        draft.body,
-        quote,
-        anchorRef.current,
-        draft.mentions,
+        draft.version,
+        text.body,
+        draft.quote,
+        draft.anchor,
+        text.mentions,
       ),
     onSuccess: () => {
-      setDraft(emptyMentionDraft());
-      setQuote("");
-      anchorRef.current = undefined;
-      setSelection(null);
+      unsaved.current = null;
+      discardDraft(draft.id);
       toast.success("Comment added.");
       q.invalidateQueries({ queryKey: queryKeys.comments(docId) });
     },
     onError: (e) => toast.error(errorMessage(e, "Could not add comment")),
   });
 
-  const clear = () => {
-    setQuote("");
-    setDraft(emptyMentionDraft());
-    anchorRef.current = undefined;
-    setSelection(null);
+  const discard = () => {
+    unsaved.current = null;
+    discardDraft(draft.id);
   };
 
-  if (!quote) return null;
+  const { quote } = draft;
   return (
     <form
-      onFocusCapture={() => setActiveComment(undefined)}
-      className={`space-y-2 rounded-[14px] bg-[var(--color-surface)] p-3 shadow-lg ring-1 ring-[var(--color-border)] ${className}`}
+      ref={formRef}
+      onFocusCapture={() => setActiveComment(draft.id)}
+      className={cn(
+        "space-y-2 rounded-md bg-[var(--color-surface)] p-3 shadow-lg ring-1",
+        active
+          ? "ring-2 ring-[var(--color-border-strong)]"
+          : "ring-[var(--color-border)]",
+      )}
       onSubmit={(event) => {
         event.preventDefault();
-        create.mutate();
+        if (text.body.trim() && !create.isPending) create.mutate();
       }}
     >
+      {unanchoredComments.has(draft.id) && (
+        <Badge variant="warning">Text not found in this version</Badge>
+      )}
       <div className="border-l-2 border-[var(--color-accent)] pl-2 text-xs italic text-[var(--color-fg-muted)]">
         “{quote.length > 80 ? quote.slice(0, 80) + "…" : quote}”
       </div>
       <MentionTextarea
-        autoFocus
         rows={3}
-        draft={draft}
-        onChange={setDraft}
-        onKeyDown={(event) => {
-          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-            event.preventDefault();
-            if (draft.body.trim() && !create.isPending) create.mutate();
-          }
-        }}
+        draft={text}
+        onChange={edit}
+        onKeyDown={submitOnModEnter}
         placeholder="Add a comment…"
       />
       <div className="flex justify-end gap-2">
@@ -597,7 +641,7 @@ function CommentComposer({ className = "" }: { className?: string }) {
           type="button"
           variant="ghost"
           size="icon"
-          onClick={clear}
+          onClick={discard}
           aria-label="Cancel comment"
           title="Cancel comment"
         >
@@ -609,7 +653,7 @@ function CommentComposer({ className = "" }: { className?: string }) {
           aria-label="Post comment"
           title="Post comment (⌘Enter / Ctrl+Enter)"
           aria-keyshortcuts="Meta+Enter Control+Enter"
-          disabled={!draft.body.trim() || create.isPending}
+          disabled={!text.body.trim() || create.isPending}
         >
           <Send className="h-4 w-4" />
         </Button>
@@ -634,7 +678,8 @@ function CommentRail({
     docId,
     commentsLoading,
     commentsError,
-    selection,
+    version,
+    drafts,
     activeComment,
     commentPositions,
     commentViewport,
@@ -657,33 +702,33 @@ function CommentRail({
     return () => observer.disconnect();
   }, []);
 
-  const priorityId =
-    activeComment &&
-    commentPositions.has(activeComment) &&
-    timelineComments.some((comment) => comment.id === activeComment)
-      ? activeComment
-      : selection?.quote
-        ? "__composer"
-        : undefined;
-  const priorityMaxHeight = Math.max(1, railHeight - 24);
-
   const layoutItems = useMemo(() => {
-    const items = timelineComments.map((comment) => ({
-      id: comment.id,
-      anchorTop: (commentPositions.get(comment.id)?.top ?? 0) - topInset,
-      height: heights.get(comment.id) ?? RAIL_CARD_ESTIMATE,
-      atStart: !commentPositions.has(comment.id),
-    }));
-    if (selection?.quote) {
-      items.push({
-        id: "__composer",
-        anchorTop: (selection.top ?? 0) - topInset,
-        height: heights.get("__composer") ?? RAIL_COMPOSER_ESTIMATE,
-        atStart: selection.top === undefined,
-      });
-    }
-    return items;
-  }, [commentPositions, heights, selection, timelineComments, topInset]);
+    const item = (id: string, top: number | undefined, estimate: number) => ({
+      id,
+      anchorTop: (top ?? 0) - topInset,
+      height: heights.get(id) ?? estimate,
+      atStart: top === undefined,
+    });
+    return [
+      ...timelineComments.map((comment) =>
+        item(comment.id, commentPositions.get(comment.id)?.top, RAIL_CARD_ESTIMATE),
+      ),
+      // A new draft sits at its selection until its highlight reports a
+      // position. A draft whose text is gone sits at the start.
+      ...drafts.map((draft) =>
+        item(
+          draft.id,
+          commentPositions.get(draft.id)?.top ??
+            (draft.version === version ? draft.top : undefined),
+          RAIL_COMPOSER_ESTIMATE,
+        ),
+      ),
+    ];
+  }, [commentPositions, drafts, heights, timelineComments, topInset, version]);
+  const priorityId = layoutItems.find(
+    (item) => item.id === activeComment && !item.atStart,
+  )?.id;
+  const priorityMaxHeight = Math.max(1, railHeight - 24);
 
   const timelineHeight = Math.max(
     commentViewport.scrollHeight - topInset,
@@ -706,6 +751,10 @@ function CommentRail({
   const commentByID = useMemo(
     () => new Map(timelineComments.map((comment) => [comment.id, comment])),
     [timelineComments],
+  );
+  const draftByID = useMemo(
+    () => new Map(drafts.map((draft) => [draft.id, draft])),
+    [drafts],
   );
   const onHeight = useCallback((id: string, height: number) => {
     setHeights((current) => {
@@ -806,25 +855,26 @@ function CommentRail({
     >
       {commentsLoading ? (
         <div className="sticky top-0 space-y-3 px-3 py-3">
-          <Skeleton className="h-28 w-full rounded-[14px]" />
-          <Skeleton className="h-28 w-full rounded-[14px]" />
+          <Skeleton className="h-28 w-full rounded-md" />
+          <Skeleton className="h-28 w-full rounded-md" />
         </div>
       ) : commentsError ? (
         <div className="sticky top-0 px-3 py-3">
-          <div className="rounded-[14px] bg-[var(--color-surface)] p-3 text-sm text-[var(--color-fg-muted)] shadow-lg ring-1 ring-[var(--color-border)]">
+          <div className="rounded-md bg-[var(--color-surface)] p-3 text-sm text-[var(--color-fg-muted)] shadow-lg ring-1 ring-[var(--color-border)]">
             Could not load comments.
           </div>
         </div>
       ) : (
         <div className="relative min-h-full" style={{ height: contentHeight }}>
-          {timelineComments.length === 0 && !selection?.quote && (
+          {timelineComments.length === 0 && drafts.length === 0 && (
             <div className="sticky top-0 p-4">
               <CommentsEmptyState filter={filter} />
             </div>
           )}
           {placements.map((placement) => {
             const comment = commentByID.get(placement.id);
-            if (placement.id !== "__composer" && !comment) return null;
+            const draft = draftByID.get(placement.id);
+            if (!comment && !draft) return null;
             return (
               <MeasuredRailItem
                 key={placement.id}
@@ -842,8 +892,8 @@ function CommentRail({
                 )}
                 onHeight={onHeight}
               >
-                {placement.id === "__composer" ? (
-                  <CommentComposer />
+                {draft ? (
+                  <CommentComposer draft={draft} />
                 ) : (
                   <CommentCard c={comment!} docId={docId} autoReveal={false} />
                 )}
@@ -920,7 +970,7 @@ function MeasuredRailItem({
       <div
         ref={contentRef}
         className={
-          priority ? "overflow-y-auto overscroll-contain rounded-[14px]" : undefined
+          priority ? "overflow-y-auto overscroll-contain rounded-md" : undefined
         }
         style={{ maxHeight: priority ? maxHeight : undefined }}
       >
@@ -940,10 +990,12 @@ function CommentCard({
   autoReveal?: boolean;
 }) {
   const q = useQueryClient();
-  const { activeComment, setActiveComment, principal, unanchoredComments } = useDoc();
+  const { activeComment, setActiveComment, principal, signIn, unanchoredComments } =
+    useDoc();
   const cardRef = useRef<HTMLElement>(null);
   const active = activeComment === c.id;
   const [replying, setReplying] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [linkParams] = useSearchParams();
   const linkedComment = linkParams.get("comment");
   useEffect(() => {
@@ -969,15 +1021,36 @@ function CommentCard({
     onSuccess: () => q.invalidateQueries({ queryKey: queryKeys.comments(docId) }),
     onError: (e) => toast.error(errorMessage(e, "Could not update comment")),
   });
+  const mine = samePrincipal(principal, c.author);
   const resolved = c.status === COMMENT_STATUS.resolved;
   const toggleActive = () => setActiveComment(active ? undefined : c.id);
+  const replies = c.replies || [];
+  // Reply sits on the last message of the thread, just above the composer.
+  const replyButton = (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="shrink-0 text-[var(--color-fg-muted)]"
+      aria-label="Reply"
+      title="Reply"
+      onClick={(event) => {
+        event.stopPropagation();
+        if (signIn) return signIn();
+        setReplying(true);
+        cardRef.current?.querySelector("textarea")?.focus({ preventScroll: true });
+      }}
+      aria-expanded={replying}
+    >
+      <Reply className="h-4 w-4" />
+    </Button>
+  );
   return (
     <article
       ref={cardRef}
       data-comment-id={c.id}
       role="button"
       tabIndex={0}
-      className={`group cursor-pointer rounded-[14px] bg-[var(--color-surface)] p-3 shadow-sm ring-1 transition-shadow duration-200 ease-out hover:shadow-md ${active ? "ring-2 ring-[var(--color-border-strong)]" : "ring-[var(--color-border)]"}`}
+      className={`group cursor-pointer rounded-md bg-[var(--color-surface)] p-3 shadow-sm ring-1 transition-shadow duration-200 ease-out hover:shadow-md ${active ? "ring-2 ring-[var(--color-border-strong)]" : "ring-[var(--color-border)]"}`}
       onClick={toggleActive}
       onFocusCapture={(event) => {
         if (event.target instanceof HTMLTextAreaElement) setActiveComment(c.id);
@@ -1022,33 +1095,13 @@ function CommentCard({
           {c.selected_text}
         </blockquote>
       )}
-      <CommentBody text={c.body} mentions={c.mentions} />
+      <EditableComment c={c} docId={docId} editing={editing} setEditing={setEditing} />
       <div className="mt-1">
         <ReactionBar c={c} docId={docId}>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="shrink-0 text-[var(--color-fg-muted)]"
-            aria-label="Reply"
-            title="Reply"
-            onClick={(event) => {
-              event.stopPropagation();
-              setReplying(true);
-              cardRef.current
-                ?.querySelector("textarea")
-                ?.focus({ preventScroll: true });
-            }}
-            aria-expanded={replying}
-          >
-            <Reply className="h-4 w-4" />
-          </Button>
-
-          <CopyCommentLink docId={docId} commentId={c.id} />
-          <DeleteCommentButton
-            c={c}
-            docId={docId}
-            canDelete={samePrincipal(principal, c.author)}
-          />
+          {replies.length === 0 && replyButton}
+          <CopyCommentLink commentId={c.id} />
+          {mine && !editing && <EditCommentButton onEdit={() => setEditing(true)} />}
+          <DeleteCommentButton c={c} docId={docId} canDelete={mine} />
           <Button
             variant="ghost"
             size="icon"
@@ -1062,6 +1115,7 @@ function CommentCard({
             disabled={m.isPending}
             onClick={(e) => {
               e.stopPropagation();
+              if (signIn) return signIn();
               m.mutate(resolved ? COMMENT_STATUS.open : COMMENT_STATUS.resolved);
             }}
           >
@@ -1073,15 +1127,17 @@ function CommentCard({
           </Button>
         </ReactionBar>
       </div>
-      {(c.replies || []).length > 0 && (
+      {replies.length > 0 && (
         <div className="mt-1 space-y-1 border-l border-[var(--color-border)] pl-3">
-          {(c.replies || []).map((r) => (
+          {replies.map((r, index) => (
             <ReplyItem
               key={r.id}
               r={r}
               docId={docId}
-              canDelete={samePrincipal(principal, r.author)}
-            />
+              mine={samePrincipal(principal, r.author)}
+            >
+              {index === replies.length - 1 && replyButton}
+            </ReplyItem>
           ))}
         </div>
       )}
@@ -1101,12 +1157,15 @@ function CommentCard({
 function ReplyItem({
   r,
   docId,
-  canDelete,
+  mine,
+  children,
 }: {
   r: Comment;
   docId: string;
-  canDelete: boolean;
+  mine: boolean;
+  children?: ReactNode;
 }) {
+  const [editing, setEditing] = useState(false);
   return (
     <div
       data-comment-id={r.id}
@@ -1122,14 +1181,120 @@ function ReplyItem({
           {formatTimestamp(r.created_at)}
         </div>
       ) : null}
-      <CommentBody text={r.body} mentions={r.mentions} />
+      <EditableComment c={r} docId={docId} editing={editing} setEditing={setEditing} />
       <div className="mt-1">
         <ReactionBar c={r} docId={docId}>
-          <CopyCommentLink docId={docId} commentId={r.id} />
-          <DeleteCommentButton c={r} docId={docId} canDelete={canDelete} />
+          {children}
+          <CopyCommentLink commentId={r.id} />
+          {mine && !editing && <EditCommentButton onEdit={() => setEditing(true)} />}
+          <DeleteCommentButton c={r} docId={docId} canDelete={mine} />
         </ReactionBar>
       </div>
     </div>
+  );
+}
+
+function EditableComment({
+  c,
+  docId,
+  editing,
+  setEditing,
+}: {
+  c: Comment;
+  docId: string;
+  editing: boolean;
+  setEditing: (editing: boolean) => void;
+}) {
+  if (!editing)
+    return (
+      <div>
+        <CommentBody text={c.body} mentions={c.mentions} />
+        {c.edited && <div className="text-xs text-[var(--color-fg-muted)]">edited</div>}
+      </div>
+    );
+  return <CommentEditForm c={c} docId={docId} setEditing={setEditing} />;
+}
+
+function CommentEditForm({
+  c,
+  docId,
+  setEditing,
+}: {
+  c: Comment;
+  docId: string;
+  setEditing: (editing: boolean) => void;
+}) {
+  const q = useQueryClient();
+  const [draft, setDraft] = useState<MentionDraft>({
+    body: c.body,
+    mentions: c.mentions || [],
+  });
+  const save = useMutation({
+    mutationFn: () => api.patchComment(docId, c.id, draft),
+    onSuccess: async () => {
+      await q.invalidateQueries({ queryKey: queryKeys.comments(docId) });
+      setEditing(false);
+    },
+    onError: (e) => toast.error(errorMessage(e, "Could not update comment")),
+  });
+  return (
+    <form
+      onClick={(e) => e.stopPropagation()}
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (draft.body.trim() && !save.isPending) save.mutate();
+      }}
+    >
+      <MentionTextarea
+        autoFocus
+        rows={3}
+        draft={draft}
+        onChange={setDraft}
+        onKeyDown={submitOnModEnter}
+      />
+      <div className="mt-2 flex justify-end gap-2">
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          aria-label="Cancel edit"
+          title="Cancel edit"
+          disabled={save.isPending}
+          onClick={() => setEditing(false)}
+        >
+          <X className="h-4 w-4" />
+        </Button>
+        <Button
+          type="submit"
+          size="icon"
+          aria-label="Save comment"
+          title="Save comment (⌘Enter / Ctrl+Enter)"
+          aria-keyshortcuts="Meta+Enter Control+Enter"
+          disabled={!draft.body.trim() || save.isPending}
+        >
+          <Send className="h-4 w-4" />
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function EditCommentButton({ onEdit }: { onEdit: () => void }) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      className="shrink-0 text-[var(--color-fg-muted)]"
+      aria-label="Edit comment"
+      title="Edit comment"
+      onClick={(event) => {
+        event.stopPropagation();
+        onEdit();
+      }}
+    >
+      <Pencil className="h-4 w-4" />
+    </Button>
   );
 }
 
@@ -1164,12 +1329,7 @@ function ReplyComposer({
         draft={draft}
         onChange={setDraft}
         placeholder="Reply…"
-        onKeyDown={(event) => {
-          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-            event.preventDefault();
-            event.currentTarget.form?.requestSubmit();
-          }
-        }}
+        onKeyDown={submitOnModEnter}
         className="min-h-9 text-sm"
       />
       <Button
@@ -1239,7 +1399,7 @@ function DeleteCommentButton({
   );
 }
 
-function CopyCommentLink({ docId, commentId }: { docId: string; commentId: string }) {
+function CopyCommentLink({ commentId }: { commentId: string }) {
   return (
     <Button
       variant="ghost"
@@ -1250,10 +1410,9 @@ function CopyCommentLink({ docId, commentId }: { docId: string; commentId: strin
       className="shrink-0 text-[var(--color-fg-muted)]"
       onClick={(event) => {
         event.stopPropagation();
-        const url = new URL(
-          `/app/d/${encodeURIComponent(docId)}`,
-          window.location.origin,
-        );
+        // The link opens this document page, without its version or full
+        // screen.
+        const url = new URL(window.location.pathname, window.location.origin);
         url.searchParams.set("comment", commentId);
         void navigator.clipboard.writeText(url.toString()).then(
           () => toast.success("Comment link copied."),

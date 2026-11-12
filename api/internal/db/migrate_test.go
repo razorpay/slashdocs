@@ -10,8 +10,8 @@ import (
 
 	"github.com/pressly/goose/v3"
 
-	aidb "github.com/razorpay/aidocs/api/internal/db"
-	"github.com/razorpay/aidocs/api/internal/testdb"
+	aidb "github.com/razorpay/slashdocs/api/internal/db"
+	"github.com/razorpay/slashdocs/api/internal/testdb"
 )
 
 func TestCommentMentionMigrationsSplitTriggerFromLegacyCleanup(t *testing.T) {
@@ -96,8 +96,8 @@ func TestCommentMentionMigrationsSplitTriggerFromLegacyCleanup(t *testing.T) {
 	}
 	assertMentionMigrationObjects(t, database)
 	version, err := goose.GetDBVersion(database)
-	if err != nil || version != 26 {
-		t.Fatalf("migration version = %d, %v; want 26", version, err)
+	if err != nil || version != 33 {
+		t.Fatalf("migration version = %d, %v; want 33", version, err)
 	}
 
 	// The cleanup cannot reconstruct markers, so migration 19's Down is a
@@ -233,7 +233,7 @@ func TestNotificationMigrationRecoversOccupiedVersion24(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer database.Close()
+	t.Cleanup(func() { _ = database.Close() })
 	setMigrationTestFS(t)
 	if err := goose.SetDialect("postgres"); err != nil {
 		t.Fatal(err)

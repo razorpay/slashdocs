@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/razorpay/aidocs/api/internal/googlegroups"
-	"github.com/razorpay/aidocs/api/internal/server"
+	"github.com/razorpay/slashdocs/api/internal/googlegroups"
+	"github.com/razorpay/slashdocs/api/internal/server"
 )
 
 type postgresGroupDirectory struct {

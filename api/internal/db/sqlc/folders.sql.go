@@ -30,13 +30,22 @@ const deleteFolderSubtree = `-- name: DeleteFolderSubtree :execrows
 WITH RECURSIVE d(id, depth) AS (
   SELECT $1::text, 1
   UNION ALL
-  SELECT f.id, d.depth+1 FROM folders f JOIN d ON f.parent_folder_id=d.id WHERE d.depth < 64
+  SELECT f.id, d.depth+1 FROM folders f JOIN d ON f.parent_folder_id=d.id
+  WHERE d.depth < 64 AND f.owner_type= $2 AND f.owner_id= $3
 )
 DELETE FROM folders WHERE id IN (SELECT id FROM d)
 `
 
-func (q *Queries) DeleteFolderSubtree(ctx context.Context, folderID string) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteFolderSubtree, folderID)
+type DeleteFolderSubtreeParams struct {
+	FolderID  string
+	OwnerType string
+	OwnerID   string
+}
+
+// Deletes the folder and every folder below it that the same principal owns.
+// The walk stops at folders that other principals own.
+func (q *Queries) DeleteFolderSubtree(ctx context.Context, arg DeleteFolderSubtreeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteFolderSubtree, arg.FolderID, arg.OwnerType, arg.OwnerID)
 	if err != nil {
 		return 0, err
 	}
@@ -64,9 +73,9 @@ SELECT f.id, f.title, f.owner_type, f.owner_id,
        COALESCE(u.name,sa.name,'') AS owner_name, COALESCE(u.email,'') AS owner_email
 FROM folders f
 LEFT JOIN users u ON f.owner_type='user' AND f.owner_id=u.id
-LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-  -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
-  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE COALESCE(f.parent_folder_id,'')=''
   AND lower(f.title)=lower($1)
   AND (
@@ -102,7 +111,7 @@ type FindRootFoldersByTitleRow struct {
 // Resolves the first segment of a folder path: root folders with the given
 // title that the principal owns or can reach through a grant. Owned folders
 // sort first so an owned folder wins over a same-named shared one.
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) FindRootFoldersByTitle(ctx context.Context, arg FindRootFoldersByTitleParams) ([]FindRootFoldersByTitleRow, error) {
 	rows, err := q.db.Query(ctx, findRootFoldersByTitle,
 		arg.Title,
@@ -164,9 +173,9 @@ SELECT f.id, f.title, f.owner_type, f.owner_id,
        COALESCE(u.email,'') AS owner_email
 FROM folders f
 LEFT JOIN users u ON f.owner_type='user' AND f.owner_id=u.id
-LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-  -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
-  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE f.id= $1
 `
 
@@ -180,7 +189,7 @@ type GetFolderRow struct {
 	OwnerEmail     string
 }
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) GetFolder(ctx context.Context, id string) (GetFolderRow, error) {
 	row := q.db.QueryRow(ctx, getFolder, id)
 	var i GetFolderRow
@@ -312,9 +321,9 @@ SELECT f.id, f.title, f.owner_type, f.owner_id,
        COALESCE(u.name,sa.name,'') AS owner_name, COALESCE(u.email,'') AS owner_email
 FROM folders f
 LEFT JOIN users u ON f.owner_type='user' AND f.owner_id=u.id
-LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-  -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
-  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE COALESCE(f.parent_folder_id,'')= $1::text
 ORDER BY f.title
 LIMIT 51
@@ -330,7 +339,7 @@ type ListChildFoldersRow struct {
 	OwnerEmail     string
 }
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) ListChildFolders(ctx context.Context, parentFolderID string) ([]ListChildFoldersRow, error) {
 	rows, err := q.db.Query(ctx, listChildFolders, parentFolderID)
 	if err != nil {
@@ -478,6 +487,58 @@ func (q *Queries) ListFolderAncestors(ctx context.Context, arg ListFolderAncesto
 	return items, nil
 }
 
+const listFolderSubtreeOrphans = `-- name: ListFolderSubtreeOrphans :many
+WITH RECURSIVE d(id, depth) AS (
+  SELECT $3::text, 1
+  UNION ALL
+  SELECT f.id, d.depth+1 FROM folders f JOIN d ON f.parent_folder_id=d.id
+  WHERE d.depth < 64 AND f.owner_type= $1 AND f.owner_id= $2
+)
+SELECT f.id, f.title, f.owner_type, f.owner_id
+FROM folders f JOIN d ON f.parent_folder_id=d.id
+WHERE NOT (f.owner_type= $1 AND f.owner_id= $2)
+`
+
+type ListFolderSubtreeOrphansParams struct {
+	OwnerType string
+	OwnerID   string
+	FolderID  string
+}
+
+type ListFolderSubtreeOrphansRow struct {
+	ID        string
+	Title     string
+	OwnerType string
+	OwnerID   string
+}
+
+// The folders that other principals own directly inside the folders that
+// DeleteFolderSubtree removes. Like Google Drive, a folder delete keeps them.
+func (q *Queries) ListFolderSubtreeOrphans(ctx context.Context, arg ListFolderSubtreeOrphansParams) ([]ListFolderSubtreeOrphansRow, error) {
+	rows, err := q.db.Query(ctx, listFolderSubtreeOrphans, arg.OwnerType, arg.OwnerID, arg.FolderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListFolderSubtreeOrphansRow
+	for rows.Next() {
+		var i ListFolderSubtreeOrphansRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.OwnerType,
+			&i.OwnerID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRootFolderEntries = `-- name: ListRootFolderEntries :many
 WITH RECURSIVE anc(folder_id, ancestor_id, depth) AS (
   SELECT c.id, c.parent_folder_id, 1 FROM folders c WHERE c.parent_folder_id IS NOT NULL
@@ -492,9 +553,9 @@ SELECT f.id, f.title, f.owner_type, f.owner_id,
        COALESCE(we.last_opened_at, f.created_at)::timestamptz AS last_active
 FROM folders f
 LEFT JOIN users u ON f.owner_type='user' AND f.owner_id=u.id
-LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-  -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
-  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 LEFT JOIN folder_workspace_entries we ON we.folder_id=f.id AND we.principal_type= $1 AND we.principal_id= $2
 WHERE (
   COALESCE(f.parent_folder_id,'')=''
@@ -585,7 +646,7 @@ type ListRootFolderEntriesRow struct {
 // grant on, root folders they opened that are still shared with "anyone", and
 // shared subfolders they opened whose ancestors they have no workspace entry
 // for (so a folder deep in someone else's tree surfaces at the top level).
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) ListRootFolderEntries(ctx context.Context, arg ListRootFolderEntriesParams) ([]ListRootFolderEntriesRow, error) {
 	rows, err := q.db.Query(ctx, listRootFolderEntries, arg.PrincipalType, arg.PrincipalID, arg.GoogleGroupIds)
 	if err != nil {
@@ -632,6 +693,26 @@ func (q *Queries) RecordFolderWorkspaceEntry(ctx context.Context, arg RecordFold
 	return err
 }
 
+const rootFolderTitleTaken = `-- name: RootFolderTitleTaken :one
+SELECT EXISTS(
+  SELECT 1 FROM folders
+  WHERE parent_folder_id IS NULL AND owner_type= $1 AND owner_id= $2 AND lower(title)=lower($3)
+)::bool
+`
+
+type RootFolderTitleTakenParams struct {
+	OwnerType string
+	OwnerID   string
+	Title     string
+}
+
+func (q *Queries) RootFolderTitleTaken(ctx context.Context, arg RootFolderTitleTakenParams) (bool, error) {
+	row := q.db.QueryRow(ctx, rootFolderTitleTaken, arg.OwnerType, arg.OwnerID, arg.Title)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const searchFoldersByTitle = `-- name: SearchFoldersByTitle :many
 WITH RECURSIVE accessible(id, depth) AS (
   SELECT f.id, 1 FROM folders f WHERE f.owner_type= $3 AND f.owner_id= $4
@@ -650,9 +731,9 @@ SELECT DISTINCT f.id, f.title, f.owner_type, f.owner_id,
 FROM folders f
 JOIN accessible a ON f.id = a.id
 LEFT JOIN users u ON f.owner_type='user' AND f.owner_id=u.id
-LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
-  -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type, not a Google credential.
-  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE f.title ILIKE '%' || $1::text || '%'
 ORDER BY f.title
 LIMIT $2
@@ -677,7 +758,7 @@ type SearchFoldersByTitleRow struct {
 	OwnerEmail     string
 }
 
-// nosemgrep: detected-google-gcm-service-account - aidocs-native principal type/table, not a Google credential.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) SearchFoldersByTitle(ctx context.Context, arg SearchFoldersByTitleParams) ([]SearchFoldersByTitleRow, error) {
 	rows, err := q.db.Query(ctx, searchFoldersByTitle,
 		arg.Query,

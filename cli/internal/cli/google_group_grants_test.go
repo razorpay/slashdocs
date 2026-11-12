@@ -23,16 +23,16 @@ func TestGoogleGroupGrantFlagsPayloadAndOutput(t *testing.T) {
 		})
 	}))
 	defer server.Close()
-	t.Setenv("AIDOCS_SERVER", server.URL)
-	t.Setenv("AIDOCS_TOKEN", "token")
-	t.Setenv("AIDOCS_DISABLE_AUTO_UPDATE", "1")
+	t.Setenv("SLASHDOCS_SERVER", server.URL)
+	t.Setenv("SLASHDOCS_TOKEN", "token")
+	t.Setenv("SLASHDOCS_DISABLE_AUTO_UPDATE", "1")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
-	out, err := Execute([]string{"docs", "grants", "add", "doc_1", "--group", "platform@example.com", "--role", "owner"})
+	out, err := Execute([]string{"docs", "grants", "add", "doc_1", "--group", "platform@example.com", "--role", "editor"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "platform@example.com") || !strings.Contains(out, "owner") {
+	if !strings.Contains(out, "platform@example.com") || !strings.Contains(out, "editor") {
 		t.Fatalf("human output = %q", out)
 	}
 	out, err = Execute([]string{"--json", "folders", "grants", "add", "fld_1", "--group", "platform@example.com", "--role", "viewer"})

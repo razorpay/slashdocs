@@ -8,7 +8,8 @@ import { api, docID, docTitle, type FolderEntry, type Principal } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { principalLabel, samePrincipal } from "@/lib/principals";
 import { DRAG_TYPE } from "./drag";
-import { PinButton } from "./pin-button";
+import { PinButton, PinnedMark } from "./pin-button";
+import { SearchSnippet } from "./search-snippet";
 import {
   FOLDER_DELETE_DESCRIPTION,
   useDeleteResource,
@@ -49,6 +50,7 @@ export function UnifiedGrid({
               owner={e.document.owner}
               canDelete={samePrincipal(me.data?.principal, e.document.owner)}
               pinned={pinnedIds?.has(docID(e.document))}
+              snippet={e.document.snippet}
             />
           );
         }
@@ -65,6 +67,7 @@ function DraggableEntryCard({
   owner,
   canDelete,
   pinned,
+  snippet,
 }: {
   type: ResourceType;
   id: string;
@@ -72,6 +75,7 @@ function DraggableEntryCard({
   owner?: Principal;
   canDelete: boolean;
   pinned?: boolean;
+  snippet?: string;
 }) {
   const isFolder = type === "folder";
   const {
@@ -97,24 +101,34 @@ function DraggableEntryCard({
       }}
       {...listeners}
       {...attributes}
-      className={`group relative overflow-hidden rounded-lg border bg-[var(--color-surface)] transition-[background-color,box-shadow,transform] duration-200 ease-out hover:bg-[var(--color-surface-muted)] hover:-translate-y-0.5 hover:shadow-md ${isOver ? "border-[var(--color-accent)] ring-2 ring-[var(--color-accent)]/30" : "border-[var(--color-border)]"} ${isDragging ? "opacity-40" : ""}`}
+      className={`group relative overflow-hidden rounded-lg border bg-[var(--color-surface)] bg-[radial-gradient(ellipse_at_85%_0%,rgb(84_120_205/0.12),transparent_65%)] shadow-[var(--shadow-card)] transition-[border-color,transform] duration-200 ease-out hover:-translate-y-0.5 ${isOver ? "border-[var(--color-accent)] ring-2 ring-[var(--color-accent)]/30" : "border-[var(--color-border)] hover:border-[var(--color-border-strong)] dark:border-transparent dark:hover:border-[var(--color-border)]"} ${isDragging ? "opacity-40" : ""}`}
     >
       <Link
         to={isFolder ? `/app/folders/${id}` : `/app/d/${id}`}
-        className="relative flex h-36 cursor-default flex-col items-center justify-center px-3 pb-8"
+        className="flex h-40 cursor-default flex-col p-4"
         draggable={false}
       >
-        {isFolder ? (
-          <FolderIcon className="h-10 w-10 text-[var(--color-accent)]/60" />
-        ) : (
-          <FileText className="h-10 w-10 text-[var(--color-fg-muted)]/30" />
+        <span className="flex items-center gap-2">
+          <span className="flex h-9 w-9 items-center justify-center rounded-sm bg-[var(--color-accent-muted)] text-[var(--color-accent)]">
+            {isFolder ? (
+              <FolderIcon className="h-[18px] w-[18px]" />
+            ) : (
+              <FileText className="h-[18px] w-[18px]" />
+            )}
+          </span>
+          {pinned && <PinnedMark />}
+        </span>
+        {snippet && (
+          <SearchSnippet text={snippet} className="mt-3 line-clamp-2 text-xs" />
         )}
-        <div className="absolute inset-x-3 bottom-2.5">
-          <div className="truncate text-sm font-medium">{title}</div>
-          <div className="truncate text-xs text-[var(--color-fg-muted)]">
+        <span className="mt-auto min-w-0">
+          <span className="line-clamp-2 font-heading text-[15px] font-medium leading-snug">
+            {title}
+          </span>
+          <span className="mt-1 block truncate text-xs text-[var(--color-fg-muted)]">
             {principalLabel(owner)}
-          </div>
-        </div>
+          </span>
+        </span>
       </Link>
       <GridCardActions
         resourceType={type}

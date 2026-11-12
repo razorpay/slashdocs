@@ -68,12 +68,12 @@ func TestFolderAccessControl(t *testing.T) {
 		assertStatus(t, rr, http.StatusOK)
 	})
 
-	t.Run("commenter can manage folder grants", func(t *testing.T) {
+	t.Run("editor can manage folder grants", func(t *testing.T) {
 		e := newTestEnv(t)
 		folderID := createFolder(t, e, `{"title":"Shared"}`, owner)
 
 		rr := do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/grants",
-			`{"address":"`+otherEmail+`","role":"commenter"}`,
+			`{"address":"`+otherEmail+`","role":"editor"}`,
 			map[string]string{"X-Test-Principal": owner, "Content-Type": "application/json"})
 		assertStatus(t, rr, http.StatusCreated)
 
@@ -92,12 +92,12 @@ func TestFolderAccessControl(t *testing.T) {
 		assertStatus(t, rr, http.StatusNoContent)
 	})
 
-	t.Run("viewer cannot manage folder grants", func(t *testing.T) {
+	t.Run("commenter cannot manage folder grants", func(t *testing.T) {
 		e := newTestEnv(t)
 		folderID := createFolder(t, e, `{"title":"Shared"}`, owner)
 
 		rr := do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/grants",
-			`{"address":"`+otherEmail+`","role":"viewer"}`,
+			`{"address":"`+otherEmail+`","role":"commenter"}`,
 			map[string]string{"X-Test-Principal": owner, "Content-Type": "application/json"})
 		assertStatus(t, rr, http.StatusCreated)
 
@@ -172,6 +172,53 @@ func TestFolderAccessControl(t *testing.T) {
 			`{"parent_folder_id":"`+destID+`"}`,
 			map[string]string{"X-Test-Principal": other, "Content-Type": "application/json"})
 		assertStatus(t, rr, http.StatusForbidden)
+	})
+
+	t.Run("moving doc out of a folder requires editor on that folder unless owner", func(t *testing.T) {
+		e := newTestEnv(t)
+
+		// Owner files a doc in Shared and gives other editor on the doc only.
+		sharedID := createFolder(t, e, `{"title":"Shared"}`, owner)
+		docID, _ := e.createDocument("MyDoc", "<p>hi</p>", fixtureOwner)
+		rr := do(t, e.h, http.MethodPost, "/v1/folders/"+sharedID+"/documents",
+			`{"document_id":"`+docID+`"}`,
+			map[string]string{"X-Test-Principal": owner, "Content-Type": "application/json"})
+		assertStatus(t, rr, http.StatusOK)
+		rr = do(t, e.h, http.MethodPost, "/v1/documents/"+docID+"/grants",
+			`{"address":"`+otherEmail+`","role":"editor"}`,
+			map[string]string{"X-Test-Principal": owner, "Content-Type": "application/json"})
+		assertStatus(t, rr, http.StatusCreated)
+
+		// Other cannot pull the doc out of Shared into a private folder.
+		privateID := createFolder(t, e, `{"title":"Private"}`, other)
+		move := func() int {
+			return do(t, e.h, http.MethodPost, "/v1/folders/"+privateID+"/documents",
+				`{"document_id":"`+docID+`"}`,
+				map[string]string{"X-Test-Principal": other, "Content-Type": "application/json"}).Code
+		}
+		if code := move(); code != http.StatusForbidden {
+			t.Fatalf("move without editor on source = %d, want 403", code)
+		}
+
+		rr = do(t, e.h, http.MethodPost, "/v1/folders/"+sharedID+"/grants",
+			`{"address":"`+otherEmail+`","role":"editor"}`,
+			map[string]string{"X-Test-Principal": owner, "Content-Type": "application/json"})
+		assertStatus(t, rr, http.StatusCreated)
+		if code := move(); code != http.StatusOK {
+			t.Fatalf("move with editor on source = %d, want 200", code)
+		}
+
+		// The owner has no role on Private, but can still take the doc back.
+		rr = do(t, e.h, http.MethodDelete, "/v1/folders/"+privateID+"/documents/"+docID, "", map[string]string{"X-Test-Principal": owner})
+		assertStatus(t, rr, http.StatusNoContent)
+		rr = do(t, e.h, http.MethodGet, "/v1/documents/"+docID, "", map[string]string{"X-Test-Principal": owner})
+		assertStatus(t, rr, http.StatusOK)
+		var doc struct {
+			ParentFolderID string `json:"parent_folder_id"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &doc); err != nil || doc.ParentFolderID != "" {
+			t.Fatalf("doc parent = %q err=%v, want root", doc.ParentFolderID, err)
+		}
 	})
 
 	t.Run("ambiguous root path returns 409 with candidates", func(t *testing.T) {

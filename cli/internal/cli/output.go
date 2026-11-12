@@ -204,9 +204,12 @@ func printPushedVersion(out io.Writer, g *globals, docID, server string, b []byt
 		}
 		return render(out, g, nb)
 	}
-	num := fmt.Sprint(value(m, "number"))
-	id := fmt.Sprint(value(m, "id"))
-	if err := confirm(out, g, fmt.Sprintf("Pushed version %s (%s) to %s. Review it at %s", num, id, docID, url)); err != nil {
+	// slashdocs local keeps only the current version, so it has no number.
+	version := fmt.Sprint(value(m, "id"))
+	if num := value(m, "number"); num != nil {
+		version = fmt.Sprint(num) + " (" + version + ")"
+	}
+	if err := confirm(out, g, fmt.Sprintf("Pushed version %s to %s. Review it at %s", version, docID, url)); err != nil {
 		return err
 	}
 	return printOrgWideViewerNudge(out, g, docID)
@@ -220,7 +223,7 @@ func humanize(hint string, x any) string {
 		}
 		// Service accounts get the same treatment as users: merge the identity
 		// object onto the principal so the bot's name (its address) and status
-		// nosemgrep: generic.secrets.security.detected-google-gcm-service-account.detected-google-gcm-service-account - aidocs service-account principal type, not a Google credential.
+		// nosemgrep: generic.secrets.security.detected-google-gcm-service-account.detected-google-gcm-service-account - slashdocs service-account principal type, not a Google credential.
 		// show, not just type=service_account.
 		if sa, ok := m["service_account"].(map[string]any); ok {
 			return compactRow(mergeMaps(p, sa))

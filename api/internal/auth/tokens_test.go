@@ -4,21 +4,21 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/auth"
 )
 
 func TestNewBearerToken(t *testing.T) {
-	raw, hash, err := auth.NewBearerToken("aidocs_cli_")
+	raw, hash, err := auth.NewBearerToken("slashdocs_cli_")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(raw, "aidocs_cli_") {
+	if !strings.HasPrefix(raw, "slashdocs_cli_") {
 		t.Fatalf("token %q missing prefix", raw)
 	}
 	if got := auth.HashToken(raw); got != hash {
 		t.Fatalf("HashToken(raw) = %q, want %q", got, hash)
 	}
-	raw2, _, err := auth.NewBearerToken("aidocs_cli_")
+	raw2, _, err := auth.NewBearerToken("slashdocs_cli_")
 	if err != nil {
 		t.Fatal(err)
 	}

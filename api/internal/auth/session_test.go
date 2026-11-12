@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/auth"
 )
 
 func TestSessionCodecRoundTrip(t *testing.T) {

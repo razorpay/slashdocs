@@ -8,7 +8,7 @@ import { bridgeSourceHash } from "./bridge-source-files.mjs";
 const here = dirname(fileURLToPath(import.meta.url));
 const frontendRoot = resolve(here, "..");
 const sourcePath = resolve(frontendRoot, "bridge/bridge.ts");
-const outputDirectory = resolve(frontendRoot, "../api/internal/server/bridge_dist");
+const outputDirectory = resolve(frontendRoot, "../internal/render/bridge_dist");
 const outputPath = resolve(outputDirectory, "bridge.js");
 const sourceHash = await bridgeSourceHash();
 

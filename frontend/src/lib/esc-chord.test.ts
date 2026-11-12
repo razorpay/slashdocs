@@ -9,7 +9,7 @@ import {
   type ChordState,
 } from "./esc-chord";
 
-const ALL: ChordKey[] = ["t", "f", "c", "h"];
+const ALL: ChordKey[] = ["t", "f", "c", "m", "h"];
 
 function press(state: ChordState, key: string, available: ChordKey[] = ALL) {
   return reduceChord(state, { type: "keydown", key }, available);

@@ -15,7 +15,7 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
-        "/.well-known/aidocs.json": {
+        "/.well-known/slashdocs.json": {
             "get": {
                 "produces": [
                     "application/json"
@@ -254,6 +254,20 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/auth/logout": {
+            "post": {
+                "description": "Clears the session cookie. CLI credentials stay valid.",
+                "tags": [
+                    "auth"
+                ],
+                "summary": "End the browser session",
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
         "/v1/auth/oidc/callback": {
             "get": {
                 "tags": [
@@ -367,13 +381,19 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Search query; supports author:, labels:, in:, and /regex/ values",
+                        "description": "Slack-style search of titles and text: words, \\",
                         "name": "q",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "Deprecated exact label filter; use q=labels:\u003clabel\u003e",
+                        "description": "IANA time zone for date modifiers; defaults to UTC",
+                        "name": "tz",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Deprecated exact label filter; use q=label:\u003clabel\u003e",
                         "name": "label",
                         "in": "query"
                     }
@@ -620,10 +640,10 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "Requests with non-empty mentions must use Content-Type application/vnd.aidocs.comment-mentions+json so mixed-version deployments fail closed instead of dropping metadata.",
+                "description": "Requests with non-empty mentions must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed instead of dropping metadata.",
                 "consumes": [
                     "application/json",
-                    "application/vnd.aidocs.comment-mentions+json"
+                    "application/vnd.slashdocs.comment-mentions+json"
                 ],
                 "tags": [
                     "comments"
@@ -702,10 +722,10 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "Any request containing the mentions key, including an empty array, must use Content-Type application/vnd.aidocs.comment-mentions+json so mixed-version deployments fail closed.",
+                "description": "Any request containing the mentions key, including an empty array, must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed.",
                 "consumes": [
                     "application/json",
-                    "application/vnd.aidocs.comment-mentions+json"
+                    "application/vnd.slashdocs.comment-mentions+json"
                 ],
                 "tags": [
                     "comments"
@@ -866,10 +886,10 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "Requests with non-empty mentions must use Content-Type application/vnd.aidocs.comment-mentions+json so mixed-version deployments fail closed instead of dropping metadata.",
+                "description": "Requests with non-empty mentions must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed instead of dropping metadata.",
                 "consumes": [
                     "application/json",
-                    "application/vnd.aidocs.comment-mentions+json"
+                    "application/vnd.slashdocs.comment-mentions+json"
                 ],
                 "tags": [
                     "comments"
@@ -1985,6 +2005,10 @@ const docTemplate = `{
                 "parent_folder_id": {
                     "type": "string"
                 },
+                "snippet": {
+                    "description": "Snippet is set in search results when the text matches. U+0002 and\nU+0003 surround each match.",
+                    "type": "string"
+                },
                 "title": {
                     "type": "string"
                 },
@@ -2353,9 +2377,6 @@ const docTemplate = `{
                 },
                 "provider_name": {
                     "type": "string"
-                },
-                "search_tags_enabled": {
-                    "type": "boolean"
                 }
             }
         },
@@ -2595,8 +2616,7 @@ const docTemplate = `{
                     "enum": [
                         "viewer",
                         "commenter",
-                        "editor",
-                        "owner"
+                        "editor"
                     ],
                     "allOf": [
                         {
@@ -2926,7 +2946,7 @@ const docTemplate = `{
         },
         "cookieAuth": {
             "type": "apiKey",
-            "name": "aidocs_session",
+            "name": "slashdocs_session",
             "in": "cookie"
         }
     }
@@ -2938,8 +2958,8 @@ var SwaggerInfo = &swag.Spec{
 	Host:             "",
 	BasePath:         "/",
 	Schemes:          []string{},
-	Title:            "aidocs API",
-	Description:      "This API powers a review tool where people can upload one self-contained HTML file, view it, and leave comments anchored to specific text ranges inside that HTML.",
+	Title:            "slashdocs API",
+	Description:      "This API powers slashdocs, a collaborative workspace where agents and people publish self-contained HTML documents, comment on specific text ranges inside them, and publish new versions.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

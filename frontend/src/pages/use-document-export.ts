@@ -33,7 +33,7 @@ export function useDocumentExport(
         preview.close();
         pending.current = null;
         frame.current?.contentWindow?.postMessage(
-          { type: "aidocs:print-finished" },
+          { type: "slashdocs:print-finished" },
           origin,
         );
         toast.error(
@@ -42,7 +42,7 @@ export function useDocumentExport(
       }, 5000);
       pending.current = { id, preview, timer };
       frame.current.contentWindow.postMessage(
-        { type: "aidocs:print-snapshot", requestId: id },
+        { type: "slashdocs:print-snapshot", requestId: id },
         origin,
       );
     } catch (error) {
@@ -66,14 +66,14 @@ export function useDocumentExport(
       )
         return;
       const data = event.data;
-      if (data?.type === "aidocs:print-snapshot-result") {
+      if (data?.type === "slashdocs:print-snapshot-result") {
         const current = pending.current;
         if (!current || current.id !== data.requestId) return;
         clearTimeout(current.timer);
         pending.current = null;
         const finish = () =>
           frame.current?.contentWindow?.postMessage(
-            { type: "aidocs:print-finished" },
+            { type: "slashdocs:print-finished" },
             origin,
           );
         try {
@@ -92,13 +92,13 @@ export function useDocumentExport(
         return;
       }
       if (
-        data?.type !== "aidocs:print-request" &&
-        data?.type !== "aidocs:download-request"
+        data?.type !== "slashdocs:print-request" &&
+        data?.type !== "slashdocs:download-request"
       )
         return;
       const reply = (ok: boolean) =>
         frame.current?.contentWindow?.postMessage(
-          { type: "aidocs:export-response", requestId: data.requestId, ok },
+          { type: "slashdocs:export-response", requestId: data.requestId, ok },
           origin,
         );
       // Check browser-owned activation in the trusted parent, not a boolean
@@ -111,7 +111,7 @@ export function useDocumentExport(
         return;
       }
       lastDocumentAction.current = performance.now();
-      if (data.type === "aidocs:print-request") {
+      if (data.type === "slashdocs:print-request") {
         print();
         reply(true);
         return;

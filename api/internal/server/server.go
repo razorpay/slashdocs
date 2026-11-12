@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strings"
@@ -11,19 +12,23 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/oauth2"
+	"golang.org/x/sync/singleflight"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
-	"github.com/razorpay/aidocs/api/internal/googlegroups"
-	"github.com/razorpay/aidocs/api/internal/kvevents"
-	"github.com/razorpay/aidocs/api/internal/notifications"
-	"github.com/razorpay/aidocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/googlegroups"
+	"github.com/razorpay/slashdocs/api/internal/kvevents"
+	"github.com/razorpay/slashdocs/api/internal/notifications"
+	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
 // Config holds static configuration for the server.
 type Config struct {
-	Environment         string
-	AppOrigin           string
-	RenderOrigin        string
+	Environment  string
+	AppOrigin    string
+	RenderOrigin string
+	// PreviousOrigins are app origins that this deployment used before. A
+	// request to one of them is sent to AppOrigin (see movedOriginMiddleware).
+	PreviousOrigins     []string
 	OIDC                auth.OIDC
 	OIDCProviderName    string
 	SessionSecret       string
@@ -35,16 +40,16 @@ type Config struct {
 	// newly created documents when the request does not override it via the
 	// default_permission form field. repo.RoleNone means private: no grant.
 	DefaultDocPermission      repo.Role
+	Featured                  []FeaturedSection
 	GitHubClientID            string
 	GitHubClientSecret        string
 	GoogleGroupsEnabled       bool
 	GoogleGroupsMembershipTTL time.Duration
 	GoogleGroupsRetryCooldown time.Duration
-	// DisableLabels and DisableSearchTags are temporary rollout switches. They
-	// default to false so programmatic users of server.New retain the existing
-	// feature set unless the application entrypoint explicitly disables them.
-	DisableLabels     bool
-	DisableSearchTags bool
+	// DisableLabels is a temporary rollout switch. It defaults to false so
+	// programmatic users of server.New retain the existing feature set unless
+	// the application entrypoint explicitly disables labels.
+	DisableLabels bool
 }
 
 // Server wraps the gin engine.
@@ -72,15 +77,16 @@ type dependencies struct {
 	deployment                string
 	orgName                   string
 	defaultDocPermission      repo.Role
+	featured                  []FeaturedSection
 	readinessChecks           []readinessCheck
 	documentKVEvents          kvevents.Subscriber
 	githubOAuth               *oauth2.Config
 	githubHTTPClient          *http.Client
+	githubAccessChecks        *singleflight.Group
 	googleGroupsEnabled       bool
 	googleGroupDirectory      googlegroups.GoogleGroupDirectory
 	googleGroupResolver       *googlegroups.Resolver
 	labelsEnabled             bool
-	searchTagsEnabled         bool
 }
 
 // Option configures the Server.
@@ -150,10 +156,11 @@ func New(cfg Config, opts ...Option) *Server {
 		deployment:           cfg.Deployment,
 		orgName:              cfg.OrgName,
 		defaultDocPermission: cfg.DefaultDocPermission,
+		featured:             cfg.Featured,
 		githubHTTPClient:     http.DefaultClient,
+		githubAccessChecks:   new(singleflight.Group),
 		googleGroupsEnabled:  cfg.GoogleGroupsEnabled,
 		labelsEnabled:        !cfg.DisableLabels,
-		searchTagsEnabled:    !cfg.DisableSearchTags,
 	}
 	if cfg.GitHubClientID != "" && cfg.GitHubClientSecret != "" && cfg.AppOrigin != "" {
 		deps.githubOAuth = &oauth2.Config{
@@ -189,7 +196,11 @@ func New(cfg Config, opts ...Option) *Server {
 		r.Use(accessLogMiddleware())
 	}
 	r.Use(recoveryMiddleware())
+	r.Use(requestBodyMiddleware())
 	r.Use(prometheusMiddleware())
+	if len(cfg.PreviousOrigins) > 0 && cfg.AppOrigin != "" {
+		r.Use(movedOriginMiddleware(cfg.AppOrigin, cfg.PreviousOrigins))
+	}
 	s := &Server{engine: r}
 	if deps.commentNotificationSender != nil {
 		store, ok := deps.repository.(notifications.Store)
@@ -211,11 +222,16 @@ func (unavailableDocumentKVEvents) Subscribe(context.Context, string) (<-chan re
 	return nil, func() {}, errors.New("repository does not support document KV event streaming")
 }
 
+func (unavailableDocumentKVEvents) Relay(context.Context, repo.DocumentKVEvent) error {
+	return errors.New("repository does not support document KV event streaming")
+}
+
 func (s *Server) Handler() http.Handler { return s.engine }
 
 func (s *Server) routes(deps dependencies) {
 	h := handlers{deps: deps}
-	s.engine.GET("/.well-known/aidocs.json", h.discovery)
+	s.engine.GET("/.well-known/slashdocs.json", h.discovery)
+	s.engine.GET("/.well-known/aidocs.json", h.discovery) // pre-rename path
 	s.engine.GET("/.well-known/oauth-protected-resource", h.mcpProtectedResourceMetadata)
 	s.engine.GET("/.well-known/oauth-protected-resource/mcp", h.mcpProtectedResourceMetadata)
 	s.engine.GET("/.well-known/oauth-authorization-server", h.mcpAuthorizationServerMetadata)
@@ -248,10 +264,28 @@ func (s *Server) routes(deps dependencies) {
 	v1.GET("/auth/oidc/start", h.oauthStart)
 	v1.GET("/auth/oidc/callback", h.oauthCallback)
 	v1.POST("/auth/cli/exchange", h.cliExchange)
+	v1.POST("/auth/logout", h.logout)
+
+	// These routes read a document. A public deployment also serves them to
+	// anonymous readers of a document that is shared with anyone.
+	reader := v1.Group("", requireAuth(deps.readerAuthenticator(), deps.appOrigin, deps.googleGroupResolver))
+	reader.GET("/documents/:id", h.getDocument)
+	reader.GET("/documents/:id/versions", h.listVersions)
+	reader.GET("/documents/:id/versions/:version_id", h.getVersion)
+	reader.GET("/documents/:id/versions/:version_id/html", h.getVersionHTML)
+	reader.POST("/documents/:id/versions/:version_id/render-token", h.createRenderToken)
+	reader.POST("/documents/:id/versions/:version_id/print-token", h.createPrintToken)
+	reader.GET("/documents/:id/comments", h.listComments)
+	reader.GET("/documents/:id/kv", h.listDocumentKV)
+	reader.GET("/documents/:id/kv/events", h.streamDocumentKVEvents)
 
 	// Every route below requires authentication.
 	authed := v1.Group("", requireAuth(deps.authenticator, deps.appOrigin, deps.googleGroupResolver))
-	activityLimit := activityRateLimit()
+	activityLimit := activityRateLimit(60)
+	// Separate budgets: presence heartbeats and cursor moves must not starve
+	// other activity. A moving cursor reports about 12 times a second.
+	presenceLimit := activityRateLimit(60)
+	cursorLimit := activityRateLimit(1200)
 	authed.GET("/me", h.me)
 	authed.GET("/users", h.searchUsers)
 	authed.GET("/google-groups", h.searchGoogleGroups)
@@ -269,7 +303,6 @@ func (s *Server) routes(deps dependencies) {
 	authed.POST("/service-accounts/transfers/:id/decline", h.declineOwnershipTransfer)
 	authed.POST("/documents", h.createDocument)
 	authed.GET("/documents", h.listDocuments)
-	authed.GET("/documents/:id", h.getDocument)
 	authed.POST("/documents/:id/access-requests", activityLimit, h.requestDocumentAccess)
 	authed.GET("/documents/:id/access", h.documentAccess)
 	authed.PATCH("/documents/:id", h.patchDocument)
@@ -278,24 +311,18 @@ func (s *Server) routes(deps dependencies) {
 	authed.PATCH("/documents/:id/grants/:grant_id", h.patchGrant)
 	authed.DELETE("/documents/:id/grants/:grant_id", h.deleteGrant)
 	authed.POST("/documents/:id/versions", h.createVersion)
-	authed.GET("/documents/:id/versions", h.listVersions)
-	authed.GET("/documents/:id/versions/:version_id", h.getVersion)
-	authed.GET("/documents/:id/versions/:version_id/html", h.getVersionHTML)
-	authed.POST("/documents/:id/versions/:version_id/render-token", h.createRenderToken)
-	authed.POST("/documents/:id/versions/:version_id/print-token", h.createPrintToken)
 	authed.GET("/documents/:id/labels", h.listDocumentLabels)
 	authed.PUT("/documents/:id/labels", h.replaceDocumentLabels)
 	authed.POST("/documents/:id/github/raw", h.githubRawContent)
 	authed.POST("/documents/:id/comments", h.createComment)
-	authed.GET("/documents/:id/comments", h.listComments)
 	authed.GET("/me/notifications", activityLimit, h.notificationPreferences)
 	authed.PUT("/me/notifications", activityLimit, h.setNotificationPreferences)
 	authed.GET("/documents/:id/notifications", activityLimit, h.documentNotificationPreferences)
 	authed.GET("/documents/:id/headings", activityLimit, h.documentHeadings)
 	authed.GET("/documents/:id/link", activityLimit, h.documentLink)
 	authed.PUT("/documents/:id/notifications", activityLimit, h.setDocumentNotificationPreferences)
-	authed.GET("/documents/:id/kv", h.listDocumentKV)
-	authed.GET("/documents/:id/kv/events", h.streamDocumentKVEvents)
+	authed.POST("/documents/:id/presence", presenceLimit, h.postDocumentPresence)
+	authed.POST("/documents/:id/cursor", cursorLimit, h.postDocumentCursor)
 	authed.PATCH("/documents/:id/kv", h.patchDocumentKV)
 	authed.POST("/documents/:id/comments/:comment_id/replies", h.createCommentReply)
 	authed.PATCH("/documents/:id/comments/:comment_id", h.patchComment)
@@ -317,6 +344,8 @@ func (s *Server) routes(deps dependencies) {
 	authed.GET("/pins", h.listPins)
 	authed.PUT("/pins/:resource_type/:resource_id", h.putPin)
 	authed.DELETE("/pins/:resource_type/:resource_id", h.deletePin)
+	authed.GET("/featured", h.listFeatured)
+	authed.DELETE("/featured/:id", h.hideFeatured)
 	authed.GET("/integrations/github", h.githubStatus)
 	authed.GET("/integrations/github/start", h.githubOAuthStart)
 	authed.GET("/integrations/github/callback", h.githubOAuthCallback)
@@ -335,14 +364,60 @@ func (h handlers) needDocRole(c *gin.Context, docID string, need repo.Role) bool
 		return false
 	}
 	if !atLeast(role, need) {
-		if groupMembershipUnavailable(current(c)) {
-			groupMembershipUnavailableResponse(c)
-			return false
-		}
-		forbidden(c, string(need)+" role required")
+		denyDocRole(c, need)
 		return false
 	}
 	return true
+}
+
+// denyDocRole answers a caller whose role on a document is less than need.
+func denyDocRole(c *gin.Context, need repo.Role) {
+	switch p := current(c); {
+	case p.Type == auth.PrincipalAnonymous:
+		// After sign-in, the reader can have a role that anyone does not have.
+		unauthorized(c)
+	case groupMembershipUnavailable(p):
+		groupMembershipUnavailableResponse(c)
+	default:
+		forbidden(c, string(need)+" role required")
+	}
+}
+
+// readerAuthenticator authenticates the routes that read a document. On a
+// public deployment, a caller without credentials reads as anonymous.
+func (d dependencies) readerAuthenticator() auth.Authenticator {
+	if d.deployment == DeploymentOrg {
+		return d.authenticator
+	}
+	return anonymousReader{d.authenticator}
+}
+
+// anonymousReader gives the anonymous principal to a caller without
+// credentials. An invalid bearer token still fails, so that a CLI or an
+// agent does not mistake an expired token for a smaller audience.
+type anonymousReader struct{ auth.Authenticator }
+
+func (a anonymousReader) Authenticate(r *http.Request) (*auth.Principal, error) {
+	p, err := a.Authenticator.Authenticate(r)
+	if errors.Is(err, auth.ErrUnauthorized) && auth.BearerFromHeader(r.Header.Get("Authorization")) == "" {
+		return &auth.Principal{Type: auth.PrincipalAnonymous}, nil
+	}
+	return p, err
+}
+
+// unauthorized asks the caller to sign in. A browser that opens the URL goes
+// to the login page and then comes back.
+func unauthorized(c *gin.Context) {
+	if wantsBrowserLogin(c) {
+		redirect := c.Request.URL.RequestURI()
+		if !safeWebRedirect(redirect) {
+			redirect = "/"
+		}
+		c.Abort()
+		c.Redirect(http.StatusFound, "/v1/auth/google/start?mode=web&redirect="+url.QueryEscape(redirect))
+		return
+	}
+	c.AbortWithStatusJSON(http.StatusUnauthorized, errorResponse("unauthorized", "authentication required", nil))
 }
 
 func requireAuth(a auth.Authenticator, appOrigin string, groups *googlegroups.Resolver) gin.HandlerFunc {
@@ -350,16 +425,7 @@ func requireAuth(a auth.Authenticator, appOrigin string, groups *googlegroups.Re
 		p, err := a.Authenticate(c.Request)
 		if err != nil {
 			incAuth("request", "failure")
-			if wantsBrowserLogin(c) {
-				redirect := c.Request.URL.RequestURI()
-				if !safeWebRedirect(redirect) {
-					redirect = "/"
-				}
-				c.Abort()
-				c.Redirect(http.StatusFound, "/v1/auth/google/start?mode=web&redirect="+url.QueryEscape(redirect))
-				return
-			}
-			c.AbortWithStatusJSON(http.StatusUnauthorized, errorResponse("unauthorized", "authentication required", nil))
+			unauthorized(c)
 			return
 		}
 		if !allowCookieUnsafeRequest(c, appOrigin) {
@@ -446,6 +512,10 @@ const maxHTMLBytes = 50 * 1024 * 1024
 func readMultipartFile(c *gin.Context, field string) ([]byte, error) {
 	f, err := c.FormFile(field)
 	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) || errors.Is(err, multipart.ErrMessageTooLarge) {
+			return nil, errPayloadTooLarge
+		}
 		return nil, err
 	}
 	rc, err := f.Open()

@@ -18,10 +18,10 @@ export function SheetContent({
 }) {
   return (
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Overlay className="sheet-overlay fixed inset-0 z-50 bg-black/40 backdrop-blur-sm" />
+      <DialogPrimitive.Overlay className="sheet-overlay fixed inset-0 z-50 bg-[hsl(218_30%_12%/0.24)] backdrop-blur-[2px] dark:bg-black/60" />
       <DialogPrimitive.Content
         className={cn(
-          "fixed z-50 top-0 flex h-full w-full max-w-md flex-col border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl focus:outline-none",
+          "fixed z-50 top-0 flex h-full w-full max-w-md flex-col border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-pop)] focus:outline-none",
           side === "right"
             ? "right-0 border-l sheet-right"
             : "left-0 border-r sheet-left",

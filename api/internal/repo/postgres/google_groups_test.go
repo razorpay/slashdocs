@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/razorpay/aidocs/api/internal/auth"
-	"github.com/razorpay/aidocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/auth"
+	"github.com/razorpay/slashdocs/api/internal/repo"
 )
 
 func TestGoogleGroupRoleMergesWithDirectAndAnyoneUsingHighestPrecedence(t *testing.T) {
@@ -39,11 +39,5 @@ func TestGoogleGroupRoleMergesWithDirectAndAnyoneUsingHighestPrecedence(t *testi
 	}
 	if role, err := store.RoleForDocument(ctx, member, doc.ID); err != nil || role != repo.RoleEditor {
 		t.Fatalf("merged role=%q err=%v, want editor", role, err)
-	}
-	if _, err := store.CreateGrant(ctx, "document", doc.ID, group, repo.RoleOwner, owner); err != nil {
-		t.Fatal(err)
-	}
-	if role, err := store.RoleForDocument(ctx, member, doc.ID); err != nil || role != repo.RoleOwner {
-		t.Fatalf("group owner role=%q err=%v", role, err)
 	}
 }

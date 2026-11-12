@@ -4,8 +4,24 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
 	"testing"
 )
+
+// TestMain points HOME and XDG_CONFIG_HOME at a temporary directory, so no test
+// can write config or agent skills into the real home directory.
+func TestMain(m *testing.M) {
+	home, err := os.MkdirTemp("", "slashdocs-cli-test-")
+	if err != nil {
+		panic(err)
+	}
+	if os.Setenv("HOME", home) != nil || os.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config")) != nil {
+		panic("set test home")
+	}
+	code := m.Run()
+	_ = os.RemoveAll(home)
+	os.Exit(code)
+}
 
 func writeTestJSON(t *testing.T, w io.Writer, value any) {
 	t.Helper()

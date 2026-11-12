@@ -17,77 +17,74 @@ function jsonResponse(body: unknown) {
   });
 }
 
-function Harness() {
-  const [value, setValue] = useState("");
-  return <DocumentSearchInput value={value} onChange={setValue} />;
-}
-
-function DisabledHarness() {
-  const [value, setValue] = useState("");
-  return (
-    <DocumentSearchInput value={value} onChange={setValue} searchTagsEnabled={false} />
+function setup(responses: Record<string, unknown> = {}) {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+    jsonResponse(responses[String(input)] || { items: [] }),
   );
+  vi.stubGlobal("fetch", fetchMock);
+  function Harness() {
+    const [value, setValue] = useState("");
+    return <DocumentSearchInput value={value} onChange={setValue} />;
+  }
+  render(
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+    >
+      <Harness />
+    </QueryClientProvider>,
+  );
+  return {
+    fetchMock,
+    user: userEvent.setup(),
+    input: screen.getByRole("combobox", { name: "Search documents" }),
+  };
 }
 
 describe("DocumentSearchInput", () => {
-  it("uses plain search and does not query author suggestions when tags are disabled", async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    const user = userEvent.setup();
-    render(
-      <QueryClientProvider client={client}>
-        <DisabledHarness />
-      </QueryClientProvider>,
-    );
-
-    const input = screen.getByRole("combobox", { name: "Search documents" });
-    expect(input).toHaveAttribute("placeholder", "Search documents…");
-    await user.type(input, "author:ali");
-    await new Promise((resolve) => window.setTimeout(resolve, 200));
-    expect(fetchMock).not.toHaveBeenCalled();
+  it("offers modifiers on focus and completes one with the keyboard", async () => {
+    const { user, input } = setup();
+    await user.click(input);
+    expect(screen.getByRole("listbox", { name: "Narrow your search" })).toBeVisible();
+    await user.type(input, "du");
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+    await user.keyboard("{Tab}");
+    expect(input).toHaveValue("during:");
+    expect(screen.getByRole("option", { name: /this month/i })).toBeVisible();
   });
 
-  it("autocompletes an author token with keyboard navigation", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url === "/v1/users?q=ali") {
-        return jsonResponse({
-          items: [
-            {
-              type: "user",
-              id: "usr_alice",
-              email: "alice@example.com",
-              name: "Alice",
-            },
-          ],
-        });
-      }
-      return jsonResponse({ items: [] });
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    const user = userEvent.setup();
-    render(
-      <QueryClientProvider client={client}>
-        <Harness />
-      </QueryClientProvider>,
-    );
+  it("completes a date phrase", async () => {
+    const { user, input } = setup();
+    await user.type(input, "budget after:last w");
+    await user.keyboard("{Enter}");
+    expect(input).toHaveValue("budget after:last week ");
+  });
 
-    const input = screen.getByRole("combobox", { name: "Search documents" });
-    await user.type(input, "incident author:ali");
+  it("autocompletes a person with keyboard navigation", async () => {
+    const { user, input, fetchMock } = setup({
+      "/v1/users?q=ali": {
+        items: [
+          { type: "user", id: "usr_alice", email: "alice@example.com", name: "Alice" },
+        ],
+      },
+    });
+    await user.type(input, "incident from:ali");
     expect(
       await screen.findByRole("option", { name: /alice@example\.com/i }),
     ).toBeVisible();
-    await user.keyboard("{Enter}");
+    await user.keyboard("{ArrowDown}{Enter}");
 
-    await waitFor(() =>
-      expect(input).toHaveValue("incident author:alice@example.com "),
-    );
+    await waitFor(() => expect(input).toHaveValue("incident from:alice@example.com "));
     expect(fetchMock).toHaveBeenCalledWith("/v1/users?q=ali", expect.anything());
+  });
+
+  it("quotes a folder title that has spaces", async () => {
+    const { user, input } = setup({
+      "/v1/folders?q=prod": {
+        items: [{ type: "folder", folder: { id: "fld_1", title: "Product Specs" } }],
+      },
+    });
+    await user.type(input, "in:prod");
+    await user.click(await screen.findByRole("option", { name: /Product Specs/ }));
+    expect(input).toHaveValue('in:"Product Specs" ');
   });
 });

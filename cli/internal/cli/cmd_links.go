@@ -24,7 +24,7 @@ func documentHeadingsCmd(g *globals, out io.Writer) *cobra.Command {
 	return cmd
 }
 
-func documentLinkCmd(g *globals, out io.Writer) *cobra.Command {
+func documentLinkCmd(g *globals, out io.Writer) *cobra.Command { //nolint:gocyclo // flag validation for the link kinds is intentionally exhaustive and flat.
 	var heading, comment, version, text, prefix, suffix string
 	cmd := &cobra.Command{Use: "link <doc_id>", Short: "Get a URL to a document, heading, text, or comment", Args: exactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
 		if text != "" && (heading != "" || comment != "") {
@@ -86,6 +86,6 @@ func documentLinkCmd(g *globals, out io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&heading, "heading", "", "HTML heading ID (discover with docs headings)")
 	cmd.Flags().StringVar(&comment, "comment", "", "comment or reply ID")
 	cmd.Flags().StringVar(&version, "version", "", "pin document, heading, or text link to a version")
-	cmd.Example = "  aidocs docs headings doc_123 --json\n  aidocs docs link doc_123 --heading rollout\n  aidocs docs link doc_123 --comment cmt_456\n  aidocs docs link doc_123 --text \"The selected passage\" --version ver_123"
+	cmd.Example = "  slashdocs docs headings doc_123 --json\n  slashdocs docs link doc_123 --heading rollout\n  slashdocs docs link doc_123 --comment cmt_456\n  slashdocs docs link doc_123 --text \"The selected passage\" --version ver_123"
 	return cmd
 }

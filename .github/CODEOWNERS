@@ -1,1 +1,3 @@
-* @anuragrao04
+# Maintainers. Reviews from a code owner are required to merge, and only
+# maintainers can push release tags (see docs/releasing.md).
+* @anuragrao04 @razvi-razorpay
