@@ -20,6 +20,7 @@ import { Center, Skeleton } from "@/components/ui/misc";
 import { Button } from "@/components/ui/button";
 import { DocBar } from "./doc-bar";
 import { DocWorkspace } from "./doc-workspace";
+import { OlderVersionBanner } from "./doc-older-version-banner";
 import { cursorsShownStore } from "@/lib/live-cursors";
 import { useDocumentStream, type Viewer } from "./use-document-stream";
 
@@ -247,6 +248,15 @@ export function DocumentPage() {
           onFollowViewer={followViewer}
           shareOpen={shareOpen}
           onShareOpenChange={setShareOpen}
+        />
+      )}
+      banner={(floating) => (
+        <OlderVersionBanner
+          current={current}
+          latest={latest}
+          versions={versionItems}
+          onViewLatest={() => setSelectedVersion(latest)}
+          floating={floating}
         />
       )}
     />
