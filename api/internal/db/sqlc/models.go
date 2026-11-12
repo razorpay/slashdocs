@@ -8,6 +8,30 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Approval struct {
+	ID                   string
+	DocumentID           string
+	VersionID            string
+	ApproverType         string
+	ApproverID           string
+	Decision             string
+	DecidedAt            pgtype.Timestamptz
+	CarriedFromVersionID pgtype.Text
+	RevokedAt            pgtype.Timestamptz
+	Note                 string
+}
+
+type ApprovalRequest struct {
+	ID              string
+	DocumentID      string
+	ApproverType    string
+	ApproverID      string
+	RequestedByType string
+	RequestedByID   string
+	CreatedAt       pgtype.Timestamptz
+	RevokedAt       pgtype.Timestamptz
+}
+
 type CliCredential struct {
 	ID         string
 	UserID     string

@@ -43,6 +43,7 @@ type renderTokenResponse struct {
 // @Param id path string true "Document ID"
 // @Param base_version_id formData string true "Base version ID"
 // @Param change_summary formData string false "Change summary"
+// @Param keep_approvals formData string false "Set to true to carry approved decisions forward to the new version. By default a change of content resets every approval; re-uploading identical content always keeps them."
 // @Param file formData file true "HTML file"
 // @Success 201 {object} createVersionResponse
 // @Router /v1/documents/{id}/versions [post]
@@ -61,7 +62,8 @@ func (h handlers) createVersion(c *gin.Context) {
 		return
 	}
 	observeHTML("version_create", len(html))
-	v, err := h.deps.repository.CreateVersion(c.Request.Context(), c.Param("id"), c.PostForm("base_version_id"), c.PostForm("change_summary"), html, *p)
+	keepApprovals := c.PostForm("keep_approvals") == "true"
+	v, err := h.deps.repository.CreateVersion(c.Request.Context(), c.Param("id"), c.PostForm("base_version_id"), c.PostForm("change_summary"), html, *p, keepApprovals)
 	if err != nil {
 		// A conflict means the base version was stale; report the current one.
 		if errors.Is(err, repo.ErrVersionConflict) {
@@ -77,6 +79,9 @@ func (h handlers) createVersion(c *gin.Context) {
 		return
 	}
 	incVersion("created", actorType(c))
+	if v.CarriedApprovals > 0 {
+		addApprovals("carried", labelUnknown, actorType(c), v.CarriedApprovals)
+	}
 	h.announce(c, repo.DocumentEventDocument)
 	c.JSON(http.StatusCreated, createVersionResponse{ID: v.ID, Number: v.Number, SHA256: v.SHA256, ChangeSummary: v.ChangeSummary})
 }

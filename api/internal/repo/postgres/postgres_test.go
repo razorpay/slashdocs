@@ -42,12 +42,12 @@ func TestPostgresRepositoryDocumentGrantVersionCommentFlow(t *testing.T) {
 		t.Fatalf("sa role=%s err=%v", role, err)
 	}
 
-	_, err = store.CreateVersion(context.Background(), doc.ID, "stale", "bad", []byte("<html>bad</html>"), owner)
+	_, err = store.CreateVersion(context.Background(), doc.ID, "stale", "bad", []byte("<html>bad</html>"), owner, false)
 	if err == nil || err.Error() != "version_conflict" {
 		t.Fatalf("want version_conflict, got %v", err)
 	}
 
-	ver2, err := store.CreateVersion(context.Background(), doc.ID, ver.ID, "updated", []byte("<html>v2</html>"), owner)
+	ver2, err := store.CreateVersion(context.Background(), doc.ID, ver.ID, "updated", []byte("<html>v2</html>"), owner, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +215,7 @@ func TestPostgresCreateVersionDeletesBlobWhenDBFailsAfterPut(t *testing.T) {
 	blobs.puts, blobs.deletes, blobs.putKey, blobs.deletedKey = 0, 0, "", ""
 	ctx, cancel := context.WithCancel(context.Background())
 	blobs.cancel = cancel
-	_, err = store.CreateVersion(ctx, doc.ID, ver.ID, "will fail", []byte("<html>v2</html>"), owner)
+	_, err = store.CreateVersion(ctx, doc.ID, ver.ID, "will fail", []byte("<html>v2</html>"), owner, false)
 	if err == nil {
 		t.Fatal("CreateVersion succeeded; want context cancellation after blob put")
 	}

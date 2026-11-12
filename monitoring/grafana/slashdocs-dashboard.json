@@ -1255,6 +1255,60 @@
             ],
             "title": "MCP request latency p50/p95",
             "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "custom": {
+                        "drawStyle": "line",
+                        "fillOpacity": 10,
+                        "lineInterpolation": "linear",
+                        "lineWidth": 2,
+                        "showPoints": "never",
+                        "spanNulls": false
+                    },
+                    "decimals": 2,
+                    "unit": "ops"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 72
+            },
+            "id": 24,
+            "options": {
+                "legend": {
+                    "displayMode": "table",
+                    "placement": "bottom",
+                    "showLegend": true
+                },
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "none"
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${DS_PROMETHEUS}"
+                    },
+                    "editorMode": "code",
+                    "expr": "sum(rate(slashdocs_approval_events_total[$__rate_interval])) by (event, decision, actor_type)",
+                    "legendFormat": "{{event}} {{decision}} {{actor_type}}",
+                    "range": true,
+                    "refId": "A"
+                }
+            ],
+            "title": "Approval events",
+            "type": "timeseries"
         }
     ],
     "refresh": "30s",

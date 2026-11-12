@@ -209,6 +209,9 @@ func (h handlers) listDocuments(c *gin.Context) {
 			internalErr(c, err)
 			return
 		}
+		// Search hits are the same documents as the plain listing, so they
+		// carry the same approval status rather than losing it mid-query.
+		h.annotateApprovalSummaries(c, items)
 		c.JSON(http.StatusOK, documentListResponse{Items: items, HasMore: more})
 		return
 	}
@@ -217,6 +220,7 @@ func (h handlers) listDocuments(c *gin.Context) {
 		internalErr(c, err)
 		return
 	}
+	h.annotateApprovalSummaries(c, items)
 	c.JSON(http.StatusOK, documentListResponse{Items: items, HasMore: more})
 }
 
@@ -266,7 +270,9 @@ func (h handlers) getDocument(c *gin.Context) {
 	if h.deps.labelsEnabled {
 		d.Labels, _ = h.deps.repository.ListDocumentLabels(c.Request.Context(), d.ID)
 	}
-	c.JSON(http.StatusOK, d)
+	docs := []repo.Document{d}
+	h.annotateApprovalSummaries(c, docs)
+	c.JSON(http.StatusOK, docs[0])
 }
 
 // PatchDocument godoc

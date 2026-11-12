@@ -159,7 +159,7 @@ func TestGitHubRawContentNeedsEveryVersionCreatorToReadTheRepository(t *testing.
 
 	// An editor who cannot read the repository adds a version. The old
 	// author still passes from the cache, and the new author is stopped.
-	if _, err := store.CreateVersion(ctx, doc.ID, ver.ID, "edit", []byte("<html>2</html>"), users["editor"]); err != nil {
+	if _, err := store.CreateVersion(ctx, doc.ID, ver.ID, "edit", []byte("<html>2</html>"), users["editor"], false); err != nil {
 		t.Fatal(err)
 	}
 	rr := read("viewer", "acme", "app")
