@@ -86,6 +86,55 @@ func TestCreateDocument(t *testing.T) {
 	}
 }
 
+func TestCreateDocumentInFolder(t *testing.T) {
+	e := newTestEnv(t)
+	owner := principalHeader(fixtureOwner)
+	folderID := createFolder(t, e, `{"title":"Engineering"}`, owner)
+	create := func(title, folderID, principal string) *httptest.ResponseRecorder {
+		t.Helper()
+		body, contentType := multipartBody(t, map[string]string{"title": title, "folder_id": folderID}, "file", "doc.html", "<html><body>text</body></html>")
+		return doRaw(t, e.h, http.MethodPost, "/v1/documents", body, map[string]string{"Content-Type": contentType, "X-Test-Principal": principal})
+	}
+	folderDocuments := func() string {
+		t.Helper()
+		rr := do(t, e.h, http.MethodGet, "/v1/folders/"+folderID+"/documents", "", map[string]string{"X-Test-Principal": owner})
+		assertStatus(t, rr, http.StatusOK)
+		return rr.Body.String()
+	}
+
+	rr := create("Spec", folderID, owner)
+	assertStatus(t, rr, http.StatusCreated)
+	if got := jsonField(t, rr.Body.Bytes(), "folder_id"); got != folderID {
+		t.Fatalf("folder_id = %q, want %q", got, folderID)
+	}
+	if strings.Contains(rr.Body.String(), "permission_warning") {
+		t.Fatalf("a private folder gave a warning: %s", rr.Body.String())
+	}
+	if docID := jsonField(t, rr.Body.Bytes(), "id"); !strings.Contains(folderDocuments(), docID) {
+		t.Fatalf("folder documents do not have %s", docID)
+	}
+	if root := do(t, e.h, http.MethodGet, "/v1/documents", "", map[string]string{"X-Test-Principal": owner}); strings.Contains(root.Body.String(), "Spec") {
+		t.Fatalf("the root has the document: %s", root.Body.String())
+	}
+
+	// A folder that the caller cannot edit, or that does not exist, refuses
+	// the document before it exists.
+	assertStatus(t, create("Refused", folderID, principalHeader(fixtureStranger)), http.StatusForbidden)
+	assertStatus(t, create("Refused", "fld_missing", owner), http.StatusForbidden)
+	if strings.Contains(folderDocuments(), "Refused") {
+		t.Fatal("a refused create made a document")
+	}
+
+	rr = do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/grants", `{"address":"`+fixtureStranger.Email+`","role":"viewer"}`,
+		map[string]string{"X-Test-Principal": owner, "Content-Type": "application/json"})
+	assertStatus(t, rr, http.StatusCreated)
+	rr = create("Shared spec", folderID, owner)
+	assertStatus(t, rr, http.StatusCreated)
+	if !strings.Contains(rr.Body.String(), `"kind":"may_broaden_access"`) {
+		t.Fatalf("a shared folder gave no warning: %s", rr.Body.String())
+	}
+}
+
 func TestDocumentSearchPrimitives(t *testing.T) {
 	e := newTestEnv(t)
 	headers := map[string]string{

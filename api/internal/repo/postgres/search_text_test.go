@@ -23,7 +23,7 @@ func TestPostgresSearchDocumentText(t *testing.T) {
 	owner := auth.Principal{Type: auth.PrincipalUser, ID: "usr_text_owner", Email: "text-owner@test.com"}
 	create := func(title, body string) repo.Document {
 		t.Helper()
-		doc, _, err := store.CreateDocument(ctx, owner, title, []byte("<html><body>"+body+"<script>secret</script></body></html>"))
+		doc, _, err := store.CreateDocument(ctx, owner, title, "", []byte("<html><body>"+body+"<script>secret</script></body></html>"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -139,7 +139,7 @@ func TestPostgresSearchRanksTitlesThenLatest(t *testing.T) {
 	owner := auth.Principal{Type: auth.PrincipalUser, ID: "usr_rank_owner", Email: "rank-owner@test.com"}
 	create := func(title, body string) repo.Document {
 		t.Helper()
-		doc, _, err := store.CreateDocument(ctx, owner, title, []byte("<html><body>"+body+"</body></html>"))
+		doc, _, err := store.CreateDocument(ctx, owner, title, "", []byte("<html><body>"+body+"</body></html>"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -191,7 +191,7 @@ func TestPostgresSearchPages(t *testing.T) {
 	owner := auth.Principal{Type: auth.PrincipalUser, ID: "usr_page_owner", Email: "page-owner@test.com"}
 	// The same title gives the documents the same rank.
 	for _, text := range []string{"error budget", "budget error", "error budget", "the error budget"} {
-		if _, _, err := store.CreateDocument(ctx, owner, "Same title", []byte("<p>"+text+"</p>")); err != nil {
+		if _, _, err := store.CreateDocument(ctx, owner, "Same title", "", []byte("<p>"+text+"</p>")); err != nil {
 			t.Fatal(err)
 		}
 	}

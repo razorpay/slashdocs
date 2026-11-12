@@ -455,6 +455,12 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
+                        "description": "The folder for the document. The caller needs editor on it. The default is the root.",
+                        "name": "folder_id",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
                         "description": "Default sharing applied at create: viewer, commenter, editor or private. Overrides the server-wide default.",
                         "name": "default_permission",
                         "in": "formData"
@@ -2481,8 +2487,14 @@ const docTemplate = `{
                 "default_grant": {
                     "$ref": "#/definitions/server.defaultGrant"
                 },
+                "folder_id": {
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
+                },
+                "permission_warning": {
+                    "$ref": "#/definitions/server.permissionWarning"
                 }
             }
         },
@@ -2925,6 +2937,17 @@ const docTemplate = `{
                     }
                 },
                 "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "server.permissionWarning": {
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string"
+                },
+                "message": {
                     "type": "string"
                 }
             }

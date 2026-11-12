@@ -29,7 +29,12 @@ func e2eMux(t *testing.T) *http.ServeMux {
 			writeTestJSON(t, w, map[string]any{"items": []any{map[string]any{"id": "doc_1", "title": "Doc", "current_version_id": "ver_1"}}, "has_more": page})
 		case "POST":
 			requireMultipart(t, r)
-			writeTestJSON(t, w, map[string]any{"id": "doc_new", "current_version_id": "ver_new", "default_grant": map[string]any{"grant_id": "gr_new", "principal": map[string]any{"type": "anyone"}, "role": "viewer"}})
+			created := map[string]any{"id": "doc_new", "current_version_id": "ver_new", "default_grant": map[string]any{"grant_id": "gr_new", "principal": map[string]any{"type": "anyone"}, "role": "viewer"}}
+			if folderID := r.FormValue("folder_id"); folderID != "" {
+				created["folder_id"] = folderID
+				created["permission_warning"] = map[string]any{"kind": "may_broaden_access", "message": "This folder has active grants."}
+			}
+			writeTestJSON(t, w, created)
 		default:
 			w.WriteHeader(405)
 		}
@@ -201,6 +206,7 @@ func TestCommandOutputsAreConversational(t *testing.T) {
 	}{
 		{[]string{"auth", "whoami"}, []string{"me@example.com", "server=" + srv.URL}},
 		{[]string{"docs", "create", html}, []string{"Created document", "doc_new", "Gave org-wide read-only access by default", "shared org-wide by default", "grants revoke doc_new gr_new"}},
+		{[]string{"docs", "create", html, "--folder-id", "fld_1"}, []string{"Created document", "Warning: This folder has active grants."}},
 		{[]string{"docs", "update", "doc_1", "--title", "New"}, []string{"Renamed document", "doc_1"}},
 		{[]string{"docs", "labels", "set", "doc_1", "API,review"}, []string{"Set labels", "api, review"}},
 		{[]string{"docs", "labels", "clear", "doc_1"}, []string{"Cleared labels", "doc_1"}},

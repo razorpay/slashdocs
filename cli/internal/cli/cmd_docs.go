@@ -76,6 +76,8 @@ func documentListCmd(g *globals, out io.Writer) *cobra.Command {
 			"a month, or a year (last week, september, this year, 2026), or last 7 days.\n" +
 			"Dates use UTC. Repeat from: or in: to match any value.\n" +
 			"Quote the whole query when it contains spaces.\n\n" +
+			"Search reads the first 256 KiB of the text of a document (about 40,000 words).\n" +
+			"An exact phrase matches in the first 16,383 words only.\n\n" +
 			"A list shows 25 documents. Use --limit for up to 100, and --offset to see the next documents.\n\n" +
 			"With --local, the query finds each word in the title or the path of a document, and modifiers are not available.",
 		Example: "  slashdocs docs list 'incident from:alice@example.com label:api,review in:\"Product Specs\"'\n" +
@@ -197,8 +199,8 @@ func normalizedLabelArgs(args []string) ([]string, error) {
 }
 
 func documentCreateCmd(g *globals, out io.Writer) *cobra.Command {
-	var title string
-	cmd := &cobra.Command{Use: "create <file>", Short: "Create a document from an HTML file", Long: "Create a document from a single self-contained HTML file.\n\nThe sharing default for new documents is controlled by the server. Set SLASHDOCS_DEFAULT_DOC_PERMISSION to viewer, commenter, editor, or private to override it per-user; private keeps new documents private.\n\nRun 'slashdocs guidelines' for authoring rules (single-file, base64 images, reader theme).", Example: "  slashdocs docs create report.html --title 'Report'", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	var title, folderID string
+	cmd := &cobra.Command{Use: "create <file>", Short: "Create a document from an HTML file", Long: "Create a document from a single self-contained HTML file.\n\nWith --folder-id, the document is in the folder from the start. Use 'slashdocs docs labels set' to label it.\n\nThe sharing default for new documents is controlled by the server. Set SLASHDOCS_DEFAULT_DOC_PERMISSION to viewer, commenter, editor, or private to override it per-user; private keeps new documents private.\n\nRun 'slashdocs guidelines' for authoring rules (single-file, base64 images, reader theme).", Example: "  slashdocs docs create report.html --title 'Report'\n  slashdocs docs create report.html --title 'Report' --folder-id fld_123", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		perm, err := defaultDocPermission()
 		if err != nil {
 			return err
@@ -214,7 +216,7 @@ func documentCreateCmd(g *globals, out io.Writer) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		fields := map[string]string{"title": title}
+		fields := map[string]string{"title": title, "folder_id": folderID}
 		if perm != "" {
 			fields["default_permission"] = perm
 		}
@@ -235,6 +237,7 @@ func documentCreateCmd(g *globals, out io.Writer) *cobra.Command {
 		return renderCreatedDocument(out, g, cl, title, perm, b)
 	}}
 	cmd.Flags().StringVar(&title, "title", "", "document title (defaults to the file name)")
+	cmd.Flags().StringVar(&folderID, "folder-id", "", "folder for the document (defaults to the root)")
 	return cmd
 }
 
@@ -287,7 +290,11 @@ func renderCreatedDocument(out io.Writer, g *globals, cl *Client, title, request
 	if g.json {
 		return renderCreatedDocumentJSON(out, g, id, requestedPermission, documentURL, role, grantID, payload)
 	}
-	if err := confirm(out, g, fmt.Sprintf("Created document %q (%s). Review it at %s", title, id, documentURL)); err != nil {
+	msg := fmt.Sprintf("Created document %q (%s). Review it at %s", title, id, documentURL)
+	if w, ok := payload["permission_warning"].(map[string]any); ok {
+		msg += " Warning: " + fmt.Sprint(value(w, "message"))
+	}
+	if err := confirm(out, g, msg); err != nil {
 		return err
 	}
 	if grantID != "" {

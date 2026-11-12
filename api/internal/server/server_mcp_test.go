@@ -64,6 +64,7 @@ var expectedMCPTools = []string{
 	"revoke_folder_grant",
 	"revoke_service_account_key",
 	"search_folders",
+	"set_document_labels",
 	"share_document",
 	"share_folder",
 	"unreact_comment",
@@ -157,6 +158,7 @@ func TestMCPStreamableHTTPInitializeListAndCall(t *testing.T) {
 		"revoke_document_grant":            true,
 		"revoke_folder_grant":              true,
 		"revoke_service_account_key":       true,
+		"set_document_labels":              true,
 		"update_comment":                   true,
 		"update_document_grant":            true,
 		"update_folder_grant":              true,
@@ -558,7 +560,7 @@ func TestMCPToolPermissionsAndConcurrentVersionConflict(t *testing.T) {
 			t.Fatalf("seed user %s: %v", p.ID, err)
 		}
 	}
-	document, version, err := e.store.CreateDocument(context.Background(), fixtureOwner, "MCP permissions", []byte("<html><body>permission text</body></html>"))
+	document, version, err := e.store.CreateDocument(context.Background(), fixtureOwner, "MCP permissions", "", []byte("<html><body>permission text</body></html>"))
 	if err != nil {
 		t.Fatalf("create permission document: %v", err)
 	}
@@ -620,7 +622,7 @@ func TestMCPToolPermissionsAndConcurrentVersionConflict(t *testing.T) {
 func TestMCPCommentAuthorNeedsCurrentDocumentAccess(t *testing.T) {
 	e := newMCPOAuthTestEnv(t)
 	ctx := context.Background()
-	doc, version, err := e.store.CreateDocument(ctx, fixtureOwner, "private", []byte("<p>test</p>"))
+	doc, version, err := e.store.CreateDocument(ctx, fixtureOwner, "private", "", []byte("<p>test</p>"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -866,6 +868,32 @@ func TestMCPCreateDocumentPrivateDefaultServer(t *testing.T) {
 	if strings.Contains(access.Text, `"anyone"`) {
 		t.Fatalf("private-by-default server granted org-wide access: %s", access.Text)
 	}
+}
+
+func TestMCPCreateDocumentInFolderAndSetLabels(t *testing.T) {
+	e := newMCPOAuthTestEnv(t)
+	token := auth.NewMCPAccessToken(fixtureUser.ID, e.resource, oauthTestSigningMaterial, time.Minute)
+	folder := mustMCPObject(t, assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "create_folder", map[string]any{"title": "Reports"}), "id"))
+	folderID := requiredMCPString(t, folder, "id")
+
+	created := mustMCPObject(t, assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "create_document", map[string]any{
+		"title": "In a folder", "html": "<html><body>x</body></html>", "folder_id": folderID,
+	}), folderID))
+	docID := requiredMCPString(t, created, "id")
+	assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "list_folder_documents", map[string]any{"folder_id": folderID}), docID)
+	assertMCPToolError(t, callMCPToolHTTP(t, e, token, "create_document", map[string]any{
+		"title": "Refused", "html": "<html><body>x</body></html>", "folder_id": "fld_missing",
+	}), "forbidden")
+
+	assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "set_document_labels", map[string]any{
+		"document_id": docID, "labels": []string{"Review", "api", "api"},
+	}), `["api","review"]`)
+	assertMCPToolError(t, callMCPToolHTTP(t, e, token, "set_document_labels", map[string]any{
+		"document_id": docID, "labels": []string{"not a label"},
+	}), "labels must use")
+	assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "set_document_labels", map[string]any{
+		"document_id": docID, "labels": []string{},
+	}), "items")
 }
 
 // The guidelines tool mirrors the CLI's sectioned progressive disclosure from
