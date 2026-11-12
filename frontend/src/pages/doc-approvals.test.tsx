@@ -34,6 +34,8 @@ type FetchOptions = {
   users?: Array<{ id: string; email: string; name: string }>;
   // The approvals endpoint fails with this status.
   approvalsStatus?: number;
+  // The server refuses each decision: people type in the document.
+  superseded?: boolean;
   // The role of each address on the document ("anyone" for everyone). Without
   // it, the access does not load, and the server decides.
   roles?: Record<string, string>;
@@ -50,7 +52,15 @@ type FetchOptions = {
 };
 
 // Decisions the page posted, in order.
-type PostedDecision = { version_id: string; decision: string; note?: string };
+type PostedDecision = {
+  version_id: string;
+  decision: string;
+  note?: string;
+  seq?: number;
+};
+
+// The message of the server for a decision while people type.
+const EDITING = "People are editing this document. Approve it when they are done.";
 
 function installFetch(options: FetchOptions = {}, posted: PostedDecision[] = []) {
   const calls: string[] = [];
@@ -65,6 +75,11 @@ function installFetch(options: FetchOptions = {}, posted: PostedDecision[] = [])
       if (url === "/v1/documents/doc_1/approvals" && init?.method === "POST") {
         const body = JSON.parse(String(init.body)) as PostedDecision;
         posted.push(body);
+        if (options.superseded)
+          return jsonResponse(
+            { error: { code: "version_superseded", message: EDITING } },
+            409,
+          );
         return jsonResponse(
           {
             id: "apv_1",
@@ -204,6 +219,7 @@ function renderDialog(
   },
   viewedVersion = "ver_2",
   comments: unknown[] = [],
+  typists: Principal[] = [],
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -211,12 +227,15 @@ function renderDialog(
   const ctx = {
     docId: "doc_1",
     version: viewedVersion,
-    showLatest: vi.fn(),
+    // The seq of the document that the frame of the approver shows.
+    shownSeq: 12,
+    showCurrent: vi.fn(),
     principal: OWNER,
     comments,
     commentsLoading: false,
     commentsError: false,
     setActiveComment: vi.fn(),
+    typists,
   } as unknown as DocContextValue;
   const view = render(
     <QueryClientProvider client={client}>
@@ -321,6 +340,22 @@ describe("ApprovalsDialog", () => {
       screen.getByText("No approvers assigned").parentElement?.nextElementSibling
         ?.tagName,
     ).toBe("FORM");
+  });
+
+  it("holds no place for a list while the decisions of a document with no approvers load", async () => {
+    installFetch();
+    const answer = globalThis.fetch;
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).startsWith("/v1/documents/doc_1/approvals")
+        ? new Promise(() => {})
+        : answer(input, init),
+    );
+    renderDialog({ isOwner: true, defaultOpen: true });
+    const field = await screen.findByRole("combobox", { name: "Approver" });
+    // Only the status line, which keeps its height, is above the field.
+    expect(
+      field.closest("form")?.previousElementSibling?.previousElementSibling,
+    ).toBeNull();
   });
 
   it("says that the people search failed, with Retry, and keeps a full address", async () => {
@@ -630,7 +665,7 @@ describe("the approver's review actions", () => {
 
     await userEvent.click(within(dialog).getByRole("button", { name: "Reject" }));
     await waitFor(() => expect(posted).toHaveLength(1));
-    expect(posted[0]).toEqual({ version_id: "ver_2", decision: "rejected" });
+    expect(posted[0]).toEqual({ version_id: "ver_2", decision: "rejected", seq: 12 });
   });
 
   it("needs a reason when the reviewer has no open comments", async () => {
@@ -664,7 +699,7 @@ describe("the approver's review actions", () => {
     expect(posted).toHaveLength(0);
     await userEvent.click(screen.getByRole("button", { name: "Approve anyway" }));
     await waitFor(() => expect(posted).toHaveLength(1));
-    expect(posted[0]).toEqual({ version_id: "ver_2", decision: "approved" });
+    expect(posted[0]).toEqual({ version_id: "ver_2", decision: "approved", seq: 12 });
   });
 
   it("approves straight away when the reviewer has no open comments", async () => {
@@ -679,7 +714,45 @@ describe("the approver's review actions", () => {
     await userEvent.click(screen.getByRole("button", { name: "Approve" }));
 
     await waitFor(() => expect(posted).toHaveLength(1));
-    expect(posted[0]).toEqual({ version_id: "ver_2", decision: "approved" });
+    expect(posted[0]).toEqual({ version_id: "ver_2", decision: "approved", seq: 12 });
+  });
+
+  it("shows the message of a refused decision as it is, with no Approved toast, and keeps the decision open", async () => {
+    const success = vi.spyOn(toast, "success");
+    const error = vi.spyOn(toast, "error");
+    const posted: PostedDecision[] = [];
+    const calls = installFetch(
+      { approvalsByVersion: { ver_2: pendingOwn }, superseded: true },
+      posted,
+    );
+    renderDialog({ status: "pending", approved: 0, total: 1 }, "ver_2", [
+      comment("c1"),
+    ]);
+    await openApprovals();
+    await userEvent.click(await screen.findByRole("button", { name: "Approve" }));
+    calls.length = 0;
+    await userEvent.click(screen.getByRole("button", { name: "Approve anyway" }));
+
+    await waitFor(() => expect(error).toHaveBeenCalledExactlyOnceWith(EDITING));
+    expect(success).not.toHaveBeenCalled();
+    expect(posted).toHaveLength(1);
+    // The approver can decide again when the people are done.
+    expect(screen.getByRole("button", { name: "Approve anyway" })).toBeEnabled();
+    expect(screen.queryByText("Approved")).toBeNull();
+    // The document and the decisions load again.
+    await waitFor(() => expect(calls).toContain("/v1/documents/doc_1"));
+  });
+
+  it("waits while another person types, and says who", async () => {
+    installFetch({ approvalsByVersion: { ver_2: pendingOwn } });
+    const admin: Principal = { type: "user", id: "admin", name: "admin" };
+    renderDialog({ status: "pending", approved: 0, total: 1 }, "ver_2", [], [admin]);
+    await openApprovals();
+
+    expect(await screen.findByRole("button", { name: "Approve" })).toBeDisabled();
+    expect(
+      screen.getByText("admin is editing. You can approve when they stop."),
+    ).toBeVisible();
   });
 
   it("styles Reject and Revoke as destructive buttons", async () => {
@@ -775,13 +848,14 @@ describe("the reason of a rejection", () => {
     await user.click(
       within(dialog).getByRole("button", { name: "Use it for version 3" }),
     );
-    expect(ctx.showLatest).toHaveBeenCalled();
+    expect(ctx.showCurrent).toHaveBeenCalled();
     await user.click(submit);
     await waitFor(() => expect(posted).toHaveLength(1));
     expect(posted[0]).toEqual({
       version_id: "ver_3",
       decision: "rejected",
       note: REASON,
+      seq: 12,
     });
   });
 

@@ -41,7 +41,9 @@ export type Input = {
 export const REFUSED = {
   // Text that a script shows.
   script: "script",
-  // A selection over content that a script shows.
+  // Fixed content: a drawing, a formula, or an element that a script moved.
+  fixed: "fixed",
+  // A selection over content that a script shows, or over fixed content.
   crossesScript: "crosses-script",
   drop: "drop",
   // Formatting other than bold, italic, links and lists.
@@ -157,14 +159,15 @@ export function createStructure(e: Editor) {
   }
 
   // change deletes the selection, joining its end blocks, and then runs
-  // edit at the caret that is left.
+  // edit at the caret that is left. The caret is in the joined block, where
+  // the range of the deleted contents need not be.
   function change(r: Range, edit: (caret: Range) => void): Change {
     return {
       blocks: blocksIn(d, r),
       run() {
         const at = selection(d)!;
         if (!at.collapsed) removeRange(at);
-        edit(at);
+        edit(selection(d)!);
       },
     };
   }
@@ -249,6 +252,8 @@ export function createStructure(e: Editor) {
     next.append(extract(tail, block));
     fill(block);
     fill(next);
+    showSpace(block, false);
+    showSpace(next, true);
     block.after(next);
     d.getSelection()!.collapse(next, 0);
   }
@@ -284,7 +289,8 @@ export function createStructure(e: Editor) {
 
   // join moves the inline content of from to the end of into, or, when into
   // holds from, to just before the block that holds from. It then removes
-  // what is left of from when it is empty.
+  // what is left of from when it is empty. An into that is left empty keeps
+  // a line for the caret.
   function join(into: Element, from: Element) {
     dropFiller(into);
     const anchor = [...into.childNodes].find((child) => child.contains(from)) ?? null;
@@ -297,6 +303,7 @@ export function createStructure(e: Editor) {
       el.remove();
       el = parent;
     }
+    fill(into);
     d.getSelection()!.collapse(into, at);
   }
 
@@ -907,6 +914,20 @@ function shows(r: Range): boolean {
 function empty(el: Element, nothing = false): boolean {
   if (nothing) return !el.firstElementChild && !VISIBLE.test(el.textContent ?? "");
   return !VISIBLE.test(el.textContent ?? "") && !el.querySelector("img,ul,ol");
+}
+
+// showSpace makes a white space at the start or the end of the text of a
+// block a no-break space, as the browser does when Enter splits a block
+// there. A white space at the edge of a block does not show, and the browser
+// drops it when the reader types next to it.
+function showSpace(block: Element, start: boolean) {
+  if (!VISIBLE.test(block.textContent ?? "")) return;
+  const walker = block.ownerDocument.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+  let text = walker.nextNode() as Text;
+  if (!start)
+    for (let n: Node | null = text; n; n = walker.nextNode()) text = n as Text;
+  const at = start ? 0 : text.length - 1;
+  if (/^[ \t\n\r\f]$/.test(text.data.charAt(at))) text.replaceData(at, 1, "\u00a0");
 }
 
 // An empty block holds a line break, so that it keeps a line for the caret.

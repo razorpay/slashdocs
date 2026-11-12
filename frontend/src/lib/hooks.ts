@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, APIError, type Principal } from "@/api";
 import { ROLE_RANK } from "@/lib/constants";
@@ -111,4 +111,17 @@ export function useMounted() {
     return () => void (mounted.current = false);
   }, []);
   return mounted;
+}
+
+const NETWORK_EVENTS = ["online", "offline"] as const;
+function subscribeOnline(notify: () => void) {
+  for (const type of NETWORK_EVENTS) window.addEventListener(type, notify);
+  return () => {
+    for (const type of NETWORK_EVENTS) window.removeEventListener(type, notify);
+  };
+}
+
+// useOnline tells whether the browser has a network, as the browser says.
+export function useOnline() {
+  return useSyncExternalStore(subscribeOnline, () => navigator.onLine);
 }

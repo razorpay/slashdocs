@@ -6,7 +6,9 @@
 // the pristine element at that offset has the same tag name. The editor can
 // change original content and its own new nodes. Content that a script made,
 // and original elements whose text a script changed, are not editable, and
-// a save never takes them from the DOM.
+// a save never takes them from the DOM. Fixed content is not editable either:
+// drawings and formulas, whose changes a patch cannot carry, and original
+// elements that a script moved to another parent.
 //
 // regions() describes all the editor's changes as source pieces. The
 // bridge's own nodes, such as comment highlights and heading links, are left
@@ -32,8 +34,15 @@ export type EditorChanges = {
 };
 
 // The live place of a patch: the original element that holds its run, and
-// the original children of that element around the run.
-export type Place = { in: Element; after: Element | null; before: Element | null };
+// the original children of that element around the run, or the original
+// element whose start tag, style text or script code it changes. sourceOf
+// gives the element of the source for an original element, else null.
+export type Place = {
+  in: Element;
+  after: Element | null;
+  before: Element | null;
+  sourceOf(el: Element): Element | null;
+};
 
 export interface SourceMap {
   // The source offset of el when el is the one live element for an original
@@ -42,6 +51,8 @@ export interface SourceMap {
   // Whether node is in content that a script made or changed, which is not
   // editable as HTML.
   scriptOwned(node: Node): boolean;
+  // Whether node is in fixed content.
+  fixed(node: Node): boolean;
   // The source attributes of an original element without id and SOURCE_ATTR,
   // for the element that Enter opens.
   attributesOf(el: Element): [string, string][];
@@ -64,6 +75,22 @@ const BRIDGE_WRAPPER = "mark.slashdocs-mark";
 export const BRIDGE_NODE =
   ".slashdocs-heading-link,.slashdocs-selection-action,.slashdocs-text-flash," +
   ".slashdocs-svg-mark-rect,[data-slashdocs-injected],[id^='slashdocs-']";
+
+// The <br> elements that a patch put in. Each other new <br> is one that
+// the browser put in.
+export const patchBreaks = new WeakSet<Node>();
+// The start tags of the elements that a patch put in, as the patch has
+// them. A region writes such an element with that tag, which the app takes
+// because it is already in the document. An element that the parser made,
+// with no tag in the patch, has the empty tag: a region writes only its
+// children.
+export const patchTags = new WeakMap<Element, string>();
+// The elements that have no end tag.
+const VOID = /^(area|base|br|col|embed|hr|img|input|link|meta|source|track|wbr)$/;
+
+// Drawings and formulas. Their content is not HTML, and a patch does not go
+// into it.
+const FOREIGN = /^(svg|math)$/;
 
 // The tags that new content can have. Other new elements are unwrapped.
 const NEW_TAG = /^(p|br|strong|b|em|i|a|ul|ol|li)$/;
@@ -131,12 +158,16 @@ export function createSourceMap(
   };
 
   // The elements that the source map made not editable, and the value of
-  // their contenteditable attribute before that.
+  // their contenteditable attribute before that. Of those, fixed holds the
+  // fixed content, and moved the original elements that a script moved.
   const marked = new Map<Element, string | null>();
-  const mark = (el: Element) => {
+  const fixed = new Set<Element>();
+  const moved = new Set<Element>();
+  const mark = (el: Element, ...sets: Set<Element>[]) => {
     if (marked.has(el)) return;
     marked.set(el, el.getAttribute("contenteditable"));
     el.setAttribute("contenteditable", "false");
+    sets.forEach((set) => set.add(el));
   };
 
   // view reads the live document as it is now. Scripts can copy or move
@@ -233,10 +264,22 @@ export function createSourceMap(
   // text of their own that it changed.
   type Edited = { touched: Set<Element>; own: Set<Node | null> };
 
+  const sourceOf = (v: View, el: Element) =>
+    v.offset(el) === null ? null : v.twin(el);
+
   // ownText tells whether the text of an original element is still the text
   // of the source. Elements may move: only the text counts.
   const ownText = (v: View, el: Element) =>
     joinText(v.children(el)) === joinText(pristineChildren(v.twin(el)!));
+
+  // outOfPlace tells whether an original element is not in the parent that
+  // the source puts it in.
+  const outOfPlace = (v: View, el: Element) => {
+    let parent = v.twin(el)!.parentNode!;
+    while (parent !== pristine && !(parent as Element).hasAttribute(SOURCE_ATTR))
+      parent = parent.parentNode!;
+    return v.pristineOf(v.parentOf(el)!) !== parent;
+  };
 
   // examine marks the content at el that a script made, and the original
   // elements under it whose text a script changed. The editor's own content
@@ -247,6 +290,8 @@ export function createSourceMap(
     if (k === "bridge" || marked.has(el)) return;
     if (k === "script") return mark(el);
     edited ||= k === "editor" || by.touched.has(el);
+    if (k === "original" && FOREIGN.test(el.localName)) return mark(el, fixed);
+    if (k === "original" && !edited && outOfPlace(v, el)) return mark(el, fixed, moved);
     const own = edited || by.own.has(el) || el === d.body || el === d.documentElement;
     if (k === "original" && !own && !ownText(v, el)) return mark(el);
     for (const child of Array.from(el.children)) examine(v, child, by, edited);
@@ -306,7 +351,7 @@ export function createSourceMap(
     if (k === "original") {
       const at = v.offset(el)!;
       if (unchanged(v, el)) return [{ keep: at }];
-      return [{ element: at, children: aligned(v, v.children(el), el, false) }];
+      return [{ element: at, children: aligned(v, v.children(el), el, null) }];
     }
     const children = v
       .children(el)
@@ -318,15 +363,23 @@ export function createSourceMap(
             : [],
       );
     const name = el.localName;
+    const tag = patchTags.get(el);
+    // A patch had no tag for an element that the parser made, as a <tbody>.
+    if (tag === "") return children;
+    if (tag)
+      return [{ open: tag, close: VOID.test(name) ? "" : `</${name}>`, children }];
     if (name === "br") {
-      // A new <br> at the end of a block shows no line: it only keeps an
-      // emptied block open. After another <br>, it shows the line that the
-      // one before it starts.
+      // A <br> that the browser put at the end of a block shows no line: it
+      // only keeps an emptied block open. After another <br>, it shows the
+      // line that the one before it starts.
       const items = v.children(v.parentOf(el)!);
       const last = items.at(-1);
       const before = items.at(-2);
       const breaks = before?.kind === "element" && before.element.localName === "br";
-      return last?.kind === "element" && last.element === el && !breaks
+      return last?.kind === "element" &&
+        last.element === el &&
+        !breaks &&
+        !patchBreaks.has(el)
         ? []
         : [{ open: "<br>", close: "", children: [] }];
     }
@@ -356,12 +409,30 @@ export function createSourceMap(
       )
       .join("");
 
+  // owned tells whether node is in content that a script made or changed.
+  const owned = (v: View, node: Node) =>
+    ancestors(node).some(
+      (el) => (marked.has(el) && !fixed.has(el)) || v.kind(el) === "script",
+    );
+
+  // takenAway tells whether a script took the source element p out of the
+  // live parent: it removed p, moved it, or put it in its own content. The
+  // editor did not remove p.
+  const takenAway = (v: View, p: Element, parent: Node) => {
+    const at = Number(p.getAttribute(SOURCE_ATTR));
+    const live = v.liveAt(at);
+    return live
+      ? v.parentOf(live) !== parent && (moved.has(live) || owned(v, live))
+      : ![...changes.removed].includes(at);
+  };
+
   // aligned writes the live items of parent. Text and comments between two
   // original elements line up with the pristine ones between their twins.
-  // With edges, the items before the first original element and after the
-  // last one are outside the source that the region replaces, so their
-  // text is written again rather than kept.
-  const aligned = (v: View, items: Item[], parent: Node, edges: boolean): Piece[] => {
+  // With the run of a region, the items before the first original element
+  // and after the last one are outside the source that the region replaces,
+  // so their text is written again rather than kept.
+  const aligned = (v: View, items: Item[], parent: Node, run: Run | null): Piece[] => {
+    const edges = run !== null;
     const source = pristineChildren(v.pristineOf(parent)!);
     const ref = parent === d ? -1 : v.offset(parent as Element)!;
     const places = placesOf(source);
@@ -369,6 +440,15 @@ export function createSourceMap(
     let segment: Item[] = [];
     let last = -1;
     const flush = (next: number, outside: boolean) => {
+      // A source element of the run that a script took away stays in the
+      // source.
+      for (let i = last + 1; i < next; i++) {
+        const item = source[i];
+        if (item.kind !== "element") continue;
+        const at = Number(item.element.getAttribute(SOURCE_ATTR));
+        const inRun = !run || (run.from <= at && at <= run.to);
+        if (inRun && takenAway(v, item.element, parent)) pieces.push({ keep: at });
+      }
       const old = next > last ? indexes(source, last + 1, next) : [];
       const live = segment.filter(
         (item) => item.kind === "text" || item.kind === "comment",
@@ -379,8 +459,9 @@ export function createSourceMap(
       const texts = old.filter((i) => source[i].kind === "text");
       let n = 0;
       for (const item of segment) {
+        // An element that a script moved here stays in its own place.
         if (item.kind === "element") {
-          pieces.push(...piecesOf(v, item.element));
+          if (!moved.has(item.element)) pieces.push(...piecesOf(v, item.element));
           continue;
         }
         if (item.kind === "other") continue;
@@ -440,28 +521,43 @@ export function createSourceMap(
         return groupOf(parent).nodes.add(el);
       }
     };
-    for (const el of [...changes.touched, ...changes.beside])
-      if (el.isConnected && v.offset(el) !== null) add(el);
+    // homeOf gives the live element for the parent of a pristine element in
+    // the source, or the document.
+    const homeOf = (p: Element) => {
+      let parent = p.parentNode!;
+      while (parent !== pristine && !(parent as Element).hasAttribute(SOURCE_ATTR)) {
+        parent = parent.parentNode!;
+      }
+      return parent === pristine
+        ? d
+        : v.liveAt(Number((parent as Element).getAttribute(SOURCE_ATTR)));
+    };
+    // A script can wrap or move an original element. Its region is then the
+    // element alone, in the place of its source.
+    const strays = new Map<Group, Run>();
+    for (const el of [...changes.touched, ...changes.beside]) {
+      const at = el.isConnected ? v.offset(el) : null;
+      if (at === null) continue;
+      const home = homeOf(v.twin(el)!);
+      if (!home || home === v.parentOf(el)) add(el);
+      else
+        strays.set(
+          { parent: home, nodes: new Set([el]), removed: [], inner: [] },
+          { from: at, to: at, items: [{ kind: "element", element: el }] },
+        );
+    }
     for (const el of Array.from(d.body?.querySelectorAll("*") ?? [])) {
       if (changes.made.has(el) && v.kind(el) === "editor") add(el);
     }
     for (const at of changes.removed) {
       const p = byOffset.get(at);
-      if (!p || v.liveAt(at)) continue;
-      let parent = p.parentNode!;
-      while (parent !== pristine && !(parent as Element).hasAttribute(SOURCE_ATTR)) {
-        parent = parent.parentNode!;
-      }
-      const live =
-        parent === pristine
-          ? d
-          : v.liveAt(Number((parent as Element).getAttribute(SOURCE_ATTR)));
+      const live = p && !v.liveAt(at) && homeOf(p);
       if (live) groupOf(live).removed.push(p);
     }
 
     // When no original element is next to the new content of a parent, the
     // change belongs to the parent itself, one level up.
-    const runs = new Map<Group, Run>();
+    const runs = new Map<Group, Run>(strays);
     const queue = [...groups.values()];
     for (let group = queue.shift(); group; group = queue.shift()) {
       const run = runOf(v, group);
@@ -499,7 +595,7 @@ export function createSourceMap(
       return {
         from: run.from,
         to: run.to,
-        pieces: aligned(v, run.items, group.parent, true),
+        pieces: aligned(v, run.items, group.parent, run),
         removed: elements.map((p) => Number(p.getAttribute(SOURCE_ATTR))),
       };
     });
@@ -560,29 +656,27 @@ export function createSourceMap(
 
   return {
     offsetOf: (el) => view().offset(el),
-    scriptOwned(node) {
-      const v = view();
-      for (
-        let el =
-          node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
-        el;
-        el = el.parentElement
-      ) {
-        if (marked.has(el) || v.kind(el) === "script") return true;
-      }
-      return false;
-    },
+    scriptOwned: (node) => owned(view(), node),
+    fixed: (node) => ancestors(node).some((el) => fixed.has(el)),
     attributesOf(el) {
-      const v = view();
-      const twin = v.offset(el) === null ? null : v.twin(el);
-      return Array.from(twin?.attributes ?? [])
+      return Array.from(sourceOf(view(), el)?.attributes ?? [])
         .filter(({ name }) => name !== "id" && name !== SOURCE_ATTR)
         .map(({ name, value }) => [name, value]);
     },
     refresh: examineAt,
     regions,
-    find({ in: at, after, before }) {
+    find(patch) {
       const v = view();
+      const sourceOfLive = (el: Element) => sourceOf(v, el);
+      if (!("in" in patch)) {
+        const el = v.liveAt(
+          "tag" in patch ? patch.tag : "style" in patch ? patch.style : patch.script,
+        );
+        return el
+          ? { in: el, after: null, before: null, sourceOf: sourceOfLive }
+          : null;
+      }
+      const { in: at, after, before } = patch;
       const parent = at === null ? d.body : v.liveAt(at);
       // The live child of parent for an offset, or undefined when it is not
       // one. Flat elements between the two do not count.
@@ -599,7 +693,9 @@ export function createSourceMap(
         !first ||
         !last ||
         first.compareDocumentPosition(last) & Node.DOCUMENT_POSITION_FOLLOWING;
-      return ordered ? { in: parent, after: first, before: last } : null;
+      return ordered
+        ? { in: parent, after: first, before: last, sourceOf: sourceOfLive }
+        : null;
     },
     stop() {
       for (const [el, value] of marked) {
@@ -609,6 +705,15 @@ export function createSourceMap(
       marked.clear();
     },
   };
+}
+
+// ancestors gives the element of node, or its parent, and the elements above
+// it.
+function ancestors(node: Node): Element[] {
+  const list: Element[] = [];
+  let el = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+  for (; el; el = el.parentElement) list.push(el);
+  return list;
 }
 
 // itemsOf gives the logical children of parent: the children of flat

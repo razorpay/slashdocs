@@ -39,6 +39,41 @@ describe("createCursorBatch", () => {
     expect(batches[1][0].t).toBeLessThan(batches[1][1].t);
   });
 
+  it("holds the points while the text of the reader is not on the server, and sends them when it is", async () => {
+    const batches: CursorPoint[][] = [];
+    const batch = createCursorBatch(async (points) => {
+      batches.push(points);
+    });
+
+    // A key: the text goes after the caret that moved past it.
+    batch.hold(true);
+    batch.add(spot(0.25));
+    await vi.advanceTimersByTimeAsync(CURSOR_BATCH_INTERVAL * 10);
+    expect(batches).toEqual([]);
+
+    // The server answered the operation.
+    batch.hold(false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(batches.map((points) => points.map((point) => point.x))).toEqual([[0.25]]);
+  });
+
+  it("holds a point that waits for its interval when a key comes", async () => {
+    const batches: CursorPoint[][] = [];
+    const batch = createCursorBatch(async (points) => {
+      batches.push(points);
+    });
+    batch.add(spot(0));
+    await vi.advanceTimersByTimeAsync(0);
+
+    batch.add(spot(0.25));
+    batch.hold(true);
+    await vi.advanceTimersByTimeAsync(CURSOR_BATCH_INTERVAL * 10);
+    expect(batches).toHaveLength(1);
+    batch.hold(false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(batches).toHaveLength(2);
+  });
+
   it("sends a hidden point once, after a shown point, and keeps the newest 16", async () => {
     const batches: CursorPoint[][] = [];
     const batch = createCursorBatch(async (points) => {
@@ -119,6 +154,35 @@ describe("parseCursorSpot of a pointer that left", () => {
       });
     // A caret is in a block.
     expect(parseCursorSpot({ ...spot(1), c: 4 })).toEqual(spot(1));
+  });
+
+  it("keeps the other end of a selection, in the unit of the caret, only with a caret", () => {
+    const edit = { ...spot(1), e: "2", c: 4 };
+    expect(parseCursorSpot({ ...edit, a: 0 })).toEqual({ ...edit, a: 0 });
+    expect(parseCursorSpot({ ...edit, a: 1_000_000 })).toEqual({
+      ...edit,
+      a: 1_000_000,
+    });
+    expect(parseCursorSpot({ hidden: true, e: "2", c: 4, a: 9 })).toEqual({
+      path: "",
+      x: 0,
+      y: 0,
+      hidden: true,
+      e: "2",
+      c: 4,
+      a: 9,
+    });
+    for (const a of [-1, 1.5, 1_000_001, "3", null])
+      expect(parseCursorSpot({ ...edit, a })).toEqual(edit);
+    // A selection end has no meaning without a caret.
+    expect(parseCursorSpot({ ...spot(1), e: "2", a: 3 })).toEqual({
+      ...spot(1),
+      e: "2",
+    });
+    expect(parseCursorSpot({ ...spot(1), e: "2", c: -1, a: 3 })).toEqual({
+      ...spot(1),
+      e: "2",
+    });
   });
 });
 

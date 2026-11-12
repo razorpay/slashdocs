@@ -31,7 +31,8 @@ export function LoginPage() {
     window.addEventListener("pageshow", reset);
     return () => window.removeEventListener("pageshow", reset);
   }, []);
-  if (me.data) return <Navigate to={next} replace />;
+  // A session that ended keeps the reader of before in me.data.
+  if (me.data && !me.unauth) return <Navigate to={next} replace />;
   return (
     <div className="flex min-h-full flex-col overflow-x-clip bg-[var(--color-bg)]">
       {/* The backdrop fills the space above the footer and fades out at it. */}

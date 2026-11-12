@@ -2,9 +2,11 @@ import { describe, expect, test, vi } from "vitest";
 import { SOURCE_ATTR } from "../../bridge/source-pieces";
 import { parseSource } from "./source-edits";
 import {
+  checkCodeChange,
   checkScriptChange,
   findLiterals,
   replaceLiteral,
+  stringChange,
   type Render,
 } from "./script-literals";
 
@@ -167,6 +169,95 @@ describe("checkScriptChange", () => {
     });
     expect(await check(render(), { ...change, after: " " })).toEqual({
       refused: "Script text cannot be empty.",
+    });
+  });
+});
+
+describe("stringChange", () => {
+  test("gives the one string that changed, and not a change of other code", async () => {
+    const code = `const t = { label: "Save" }; go('Try it.', \`Done\`);`;
+    expect(
+      await stringChange(undefined, code, code.replace("Try it.", "Run it")),
+    ).toEqual({
+      from: "Try it.",
+      to: "Run it",
+    });
+    expect(
+      await stringChange("module", code, code.replace("`Done`", "`All done`")),
+    ).toEqual({ from: "Done", to: "All done" });
+    for (const next of [
+      code.replace("Save", "Keep").replace("Done", "Over"),
+      code.replace("go(", "stop("),
+      code.replace("label", "title"),
+      code.replace("'Try it.'", "'Try ' + it"),
+      code.replace("'Try it.'", '"Try it."'),
+      code.replace("'Try it.'", "' '"),
+      code.replace("const", "const const"),
+    ])
+      expect(await stringChange(undefined, code, next)).toBeNull();
+  });
+
+  test("reads a JSON block as JSON", async () => {
+    const code = `{"title": "One", "items": ["a", "b"]}`;
+    expect(
+      await stringChange("application/json", code, code.replace('"b"', '"c"')),
+    ).toEqual({ from: "b", to: "c" });
+    expect(
+      await stringChange("application/json", code, code.replace('"title"', '"name"')),
+    ).toBeNull();
+  });
+});
+
+describe("checkCodeChange", () => {
+  const source = `<p id="a"></p><script>a.textContent = "One";</script>`;
+  const code = `a.textContent = "One";`;
+  const range: [number, number] = [
+    source.indexOf(code),
+    source.indexOf(code) + code.length,
+  ];
+  const change = { from: "One", to: "Uno" };
+  const shown = (html: string) => html.match(/textContent = "([^"]*)"/)![1];
+  const render = (counts = (html: string, s: string) => (shown(html) === s ? 1 : 0)) =>
+    vi.fn<Render>(async (html, _locator, strings) => ({
+      text: null,
+      counts: strings.map((s) => counts(html, s)),
+      texts: 1,
+      errors: 0,
+    }));
+
+  test("gives the places that show the new string, from the code that the frame shows", async () => {
+    const r = render();
+    const next = code.replace("One", "Uno");
+    expect(await checkCodeChange(source, range, [code, next], change, r)).toEqual({
+      places: 1,
+    });
+    const [[was], [now]] = r.mock.calls;
+    expect(shown(was)).toBe("One");
+    expect(shown(now)).toBe("Uno");
+    // A change after an earlier one starts from the code that the frame
+    // shows.
+    const again = await checkCodeChange(
+      source,
+      range,
+      [next, code.replace("One", "Eins")],
+      { from: "Uno", to: "Eins" },
+      render(),
+    );
+    expect(again).toEqual({ places: 1 });
+  });
+
+  test("refuses a string that the page does not show", async () => {
+    const next = code.replace("One", "Uno");
+    expect(
+      await checkCodeChange(
+        source,
+        range,
+        [code, next],
+        change,
+        render(() => 0),
+      ),
+    ).toEqual({
+      refused: "The page does not show the new text where you typed it.",
     });
   });
 });

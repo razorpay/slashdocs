@@ -10,13 +10,13 @@ import {
 import { MemoryRouter, useNavigate, type NavigateFunction } from "react-router-dom";
 import { toast } from "sonner";
 import { afterEach, expect, it, vi } from "vitest";
-import { api, type Document, type Version } from "@/api";
+import { api, type Document, type SavedVersion, type Version } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { DocProvider, type DocContextValue } from "./doc-context";
 import { RestoreButton } from "./doc-history";
 
 vi.mock("sonner", () => ({
-  toast: { success: vi.fn(), error: vi.fn(), promise: vi.fn() },
+  toast: { success: vi.fn(), info: vi.fn(), error: vi.fn(), promise: vi.fn() },
 }));
 
 afterEach(() => {
@@ -30,12 +30,16 @@ const v5 = { id: "v5", number: 5 } as Version;
 
 // A Restore whose answer waits until the test releases it.
 function renderHeldRestore() {
-  let answer!: (v: Version) => void;
+  let answer!: (v: SavedVersion) => void;
   vi.spyOn(api, "restoreVersion").mockReturnValue(
     new Promise((resolve) => (answer = resolve)),
   );
-  const doc = { showLatest: vi.fn(), stayOnVersion: vi.fn() };
+  const doc = { docId: "doc_1", showCurrent: vi.fn() };
   const client = new QueryClient();
+  // The page reads the document again after a save.
+  client.setQueryDefaults(queryKeys.document("doc_1"), {
+    queryFn: async () => ({ title: "Plan B" }) as Document,
+  });
   client.setQueryData(queryKeys.document("doc_1"), { title: "Plan B" } as Document);
   client.setQueryData(queryKeys.versions("doc_1"), { items: [v3, v5] });
   const invalidate = vi.spyOn(client, "invalidateQueries");
@@ -65,7 +69,8 @@ function renderHeldRestore() {
     view.rerender(ui(version));
   };
   fireEvent.click(screen.getByRole("button", { name: "Restore" }));
-  const release = () => act(async () => answer({ id: "v6", number: 6 } as Version));
+  const release = (saved: SavedVersion = { id: "v6", number: 6, seq: 6 }) =>
+    act(async () => answer(saved));
   return { doc, view, preview, invalidate, release };
 }
 
@@ -82,8 +87,7 @@ it("refreshes the document but stays where the reader went, after a Restore ends
     ),
   );
   expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.versions("doc_1") });
-  expect(doc.showLatest).not.toHaveBeenCalled();
-  expect(doc.stayOnVersion).not.toHaveBeenCalled();
+  expect(doc.showCurrent).not.toHaveBeenCalled();
 });
 
 it("leaves another preview on screen, after a Restore ends", async () => {
@@ -92,7 +96,7 @@ it("leaves another preview on screen, after a Restore ends", async () => {
   await release();
 
   await waitFor(() => expect(toast.success).toHaveBeenCalled());
-  expect(doc.showLatest).not.toHaveBeenCalled();
+  expect(doc.showCurrent).not.toHaveBeenCalled();
 });
 
 it("shows the restored document to a reader who stays on the preview", async () => {
@@ -104,6 +108,21 @@ it("shows the restored document to a reader who stays on the preview", async () 
   );
   await release();
 
-  await waitFor(() => expect(doc.stayOnVersion).toHaveBeenCalledWith("v6"));
-  expect(doc.showLatest).toHaveBeenCalled();
+  await waitFor(() => expect(doc.showCurrent).toHaveBeenCalledOnce());
+});
+
+it("says that the document already has the content when the restore changes nothing, and shows the document", async () => {
+  const { doc, release } = renderHeldRestore();
+  // The entry is the document as it is: the server makes no version.
+  await release({ ...v5, seq: 5, unchanged: true });
+
+  await waitFor(() =>
+    expect(toast.info).toHaveBeenCalledExactlyOnceWith(
+      "“Plan B” already has this content.",
+    ),
+  );
+  // Nothing was restored, so there is nothing to undo.
+  expect(toast.success).not.toHaveBeenCalled();
+  expect(toast.error).not.toHaveBeenCalled();
+  await waitFor(() => expect(doc.showCurrent).toHaveBeenCalledOnce());
 });

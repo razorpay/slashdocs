@@ -7,6 +7,7 @@ import { api } from "@/api";
 import { useAccountSync, useSignOut } from "./auth-state";
 import { readFieldDraft, saveFieldDraft } from "./field-drafts";
 import { clearOneTimeKeys, keepOneTimeKey, useOneTimeKeys } from "./one-time-keys";
+import { readTextDrafts, writeTextDraft } from "./text-drafts";
 
 // Another tab of the app, on the same channel.
 const otherTab = new BroadcastChannel("slashdocs.account");
@@ -14,6 +15,7 @@ const otherTab = new BroadcastChannel("slashdocs.account");
 afterEach(() => {
   cleanup();
   clearOneTimeKeys();
+  localStorage.clear();
   vi.restoreAllMocks();
 });
 
@@ -71,4 +73,37 @@ it("tells the other tabs of a sign-out", async () => {
   const { result } = renderTab();
   await act(() => result.current.signOut.mutateAsync());
   await waitFor(() => expect(heard).toHaveBeenCalledWith(null));
+});
+
+// Text that did not save, of this account and of the account before.
+const draft = { version: "ver_1", copy: "Words" };
+const keepDrafts = () => {
+  writeTextDraft("admin", "doc_1", "load_1", draft);
+  writeTextDraft("reviewer", "doc_1", "load_2", draft);
+};
+
+it("removes the text that other accounts did not save, and keeps its own", async () => {
+  keepDrafts();
+  renderTab();
+  await waitFor(() => expect(readTextDrafts("reviewer", "doc_1")).toEqual({}));
+  expect(readTextDrafts("admin", "doc_1")).toHaveProperty("load_1");
+});
+
+it("keeps the text that did not save when another tab tells of a sign-out, for the next sign-in", async () => {
+  const { result } = renderTab();
+  await waitFor(() => expect(api.me).toHaveBeenCalled());
+  keepDrafts();
+
+  otherTab.postMessage(null);
+  await waitFor(() => expect(result.current.path).toBe("/"));
+  expect(readTextDrafts("admin", "doc_1")).toHaveProperty("load_1");
+});
+
+it("forgets all text that did not save on a sign-out", async () => {
+  vi.spyOn(api, "logout").mockResolvedValue(undefined as never);
+  const { result } = renderTab();
+  keepDrafts();
+  await act(() => result.current.signOut.mutateAsync());
+  expect(readTextDrafts("admin", "doc_1")).toEqual({});
+  expect(readTextDrafts("reviewer", "doc_1")).toEqual({});
 });

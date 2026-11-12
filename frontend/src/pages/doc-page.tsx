@@ -1,5 +1,5 @@
 import { useTitle } from "@/lib/use-title";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Navigate,
   useLocation,
@@ -8,7 +8,13 @@ import {
   useSearchParams,
 } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  replaceEqualDeep,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { toast } from "sonner";
 import { Check, KeyRound, Send } from "lucide-react";
 import {
   api,
@@ -17,7 +23,9 @@ import {
   docTitle,
   versionID,
   type Document,
+  type DocumentEvent,
 } from "@/api";
+import { principalLabel, samePrincipal } from "@/lib/principals";
 import { queryKeys } from "@/lib/queryKeys";
 import { useDocumentRole, useMe, useMounted } from "@/lib/hooks";
 import { useSignInPath } from "@/lib/auth-state";
@@ -33,10 +41,25 @@ import { UpdateBanner, type DocUpdate } from "./doc-update-banner";
 import { useDocumentStream } from "./use-document-stream";
 import { useFollowViewer } from "./use-follow-viewer";
 import { useRefreshLists } from "./use-refresh-lists";
+import { useTypists } from "./use-typists";
 
 // The frame follows a change in place in less time than this. A page that
-// stays behind the latest version for longer offers it to the reader.
+// stays behind the document for longer offers its latest state to the
+// reader.
 const BEHIND_MS = 1500;
+
+// newestSeq gives the document that the cache keeps when an answer comes.
+// An answer that was on its way can name an earlier seq than the one that
+// the page learned from an operation. The cache then keeps the larger seq
+// and the version that holds it, and takes the rest of the answer.
+function newestSeq(known: unknown, answer: unknown) {
+  const [was, next] = [known as Document | undefined, answer as Document];
+  const { seq, current_version_id } = was ?? {};
+  return replaceEqualDeep(
+    known,
+    (seq ?? 0) > (next.seq ?? 0) ? { ...next, seq, current_version_id } : next,
+  );
+}
 
 // A reader without access waits on the page. The page asks for the document
 // again while they wait, and on Check access, so it opens the document by
@@ -143,6 +166,12 @@ export function DocumentPage() {
   const q = useQueryClient();
   const [searchParams] = useSearchParams();
   const queryVersion = searchParams.get("version") || undefined;
+  // Each query of the document has its own request, and newestSeq is the
+  // rule for the answers of all of them. The page sets the rule once, before
+  // its first query: each document has its own page.
+  useState(() =>
+    q.setQueryDefaults(queryKeys.document(id), { structuralSharing: newestSeq }),
+  );
   const doc = useQuery({
     queryKey: queryKeys.document(id),
     queryFn: () => api.getDocument(id),
@@ -155,10 +184,9 @@ export function DocumentPage() {
     enabled: !!id && !doc.error,
     meta: { suppressGlobalError: true },
   });
-  // The version on screen when the document changed: the page stays on it
-  // until the frame shows a newer one in place, or the reader asks for the
-  // latest.
-  const [pinnedVersion, setPinnedVersion] = useState<string>();
+  // The seq of the live document that the frame shows. The frame tells it
+  // when it is ready, and tells none while it loads, and in a preview.
+  const [shownSeq, setShownSeq] = useState<number>();
   const [shareOpen, setShareOpen] = useState(searchParams.get("share") === "1");
   const closeShare = useCallback(() => setShareOpen(false), []);
   const nav = useNavigate();
@@ -174,12 +202,14 @@ export function DocumentPage() {
   const latest =
     currentVersionID(doc.data || {}) ||
     versionID(versionItems[versionItems.length - 1] || {});
-  const current = queryVersion || pinnedVersion || latest;
-  // An earlier version from the history is a preview: it does not change.
+  // The page follows the live document, and its version is then the current
+  // one of the document: a comment or an approval is made on it. An earlier
+  // version from the history is a preview: it does not change.
+  const current = queryVersion || latest;
   const previewing = !!queryVersion && queryVersion !== latest;
   const role = useDocumentRole(id, doc.data?.owner, me.data?.principal);
   const canEdit = role.canEdit && !previewing;
-  // Each document opens in Comment mode, and so does each version that the
+  // Each document opens in Comment mode, and so does each preview that the
   // reader goes to. An editor turns on Edit mode to type in the document.
   const [editingIn, setEditingIn] = useState<string>();
   const editing = canEdit && editingIn === id;
@@ -188,52 +218,78 @@ export function DocumentPage() {
     [id],
   );
 
-  // The version on screen is in the link, so a reload or a copied link keeps
-  // a preview from the history. The link keeps its fragment, such as a text
-  // link. Going to the latest version follows it, so the reader's own edits
-  // keep the page on it. A page that the reader left changes no link, so a
-  // late result, such as the Undo of a Restore, does not bring them back.
+  // A preview from the history is in the link, so a reload or a copied link
+  // keeps it. The link keeps its fragment, such as a text link. A page that
+  // the reader left changes no link, so a late result, such as the Undo of a
+  // Restore, does not bring them back. Only a preview ends Edit mode: an
+  // editor who goes to a person on the live document types on.
   const onPage = useMounted();
   const showVersion = useCallback(
     (version?: string, hash = location.hash) => {
       if (!onPage.current) return;
-      setEditingIn(undefined);
       const search = new URLSearchParams(location.search);
-      if (!version || version === latest) {
-        setPinnedVersion(undefined);
-        search.delete("version");
-      } else search.set("version", version);
+      if (!version || version === latest) search.delete("version");
+      else {
+        search.set("version", version);
+        setEditingIn(undefined);
+      }
       nav({ search: search.toString(), hash }, { replace: true });
     },
     [onPage, nav, location.search, location.hash, latest],
   );
-  const showLatest = useCallback(() => showVersion(), [showVersion]);
   // A link to the latest version is a link to the document.
   useEffect(() => {
-    if (queryVersion && queryVersion === latest) showLatest();
-  }, [queryVersion, latest, showLatest]);
-  const currentRef = useRef(current);
-  currentRef.current = current;
-  const stayOnVersion = useCallback(
-    (version?: string) =>
-      setPinnedVersion((pinned) => version || pinned || currentRef.current),
-    [],
-  );
+    if (queryVersion && queryVersion === latest) showVersion();
+  }, [queryVersion, latest, showVersion]);
 
   // A change that waits for the reader, as the frame scored it. The banner
   // for it also shows when the page stays behind for another reason, as
   // when the frame cannot follow.
   const [update, setUpdate] = useState<DocUpdate>();
-  const behind = !previewing && !!current && !!latest && current !== latest;
+  const seq = doc.data?.seq;
+  const behind =
+    !previewing && shownSeq !== undefined && seq !== undefined && shownSeq < seq;
   const [stuck, setStuck] = useState(false);
   useEffect(() => {
     if (!behind) return setStuck(false);
     const timer = window.setTimeout(() => setStuck(true), BEHIND_MS);
     return () => window.clearTimeout(timer);
-  }, [behind, current]);
-  const offered = behind && (!!update || stuck);
+  }, [behind, shownSeq]);
+  // An editor gets no banner: they would type into text that is no longer
+  // there. The frame takes each change for them (see useLiveText).
+  const offered = behind && !editing && (!!update || stuck);
 
+  // learn keeps the newest seq of the document and the version that holds
+  // it. The lists of versions and approvals change with the version, not
+  // with each operation.
   const refreshLists = useRefreshLists(id);
+  const learn = useCallback(
+    (seq: number, version: string) => {
+      const queryKey = queryKeys.document(id);
+      const known = q.getQueryData<Document>(queryKey);
+      if (!known || (known.seq ?? 0) >= seq) return;
+      q.setQueryData<Document>(queryKey, {
+        ...known,
+        seq,
+        current_version_id: version,
+      });
+      if (version !== known.current_version_id) refreshLists();
+    },
+    [q, id, refreshLists],
+  );
+  // The frame can show a seq before the stream tells of it, as after the
+  // operation of this reader, or while the stream is down.
+  const frameShows = useCallback(
+    (seq: number | undefined, version: string) => {
+      setShownSeq(seq);
+      if (seq !== undefined) learn(seq, version);
+    },
+    [learn],
+  );
+  // The last event of the document. The frame takes a small operation from
+  // it with no request.
+  const [event, setEvent] = useState<DocumentEvent>();
+  const { typists, hear, madeBy } = useTypists(me.data?.principal, shownSeq);
   const stream = useDocumentStream({
     docId: id,
     // A document that does not open has no viewers to report to or hear from.
@@ -241,22 +297,22 @@ export function DocumentPage() {
     version: current,
     following: !previewing && !offered,
     principal: me.data?.principal,
-    // The page stays on the version on screen, and the frame moves it to
-    // the new one when it shows that version (see RenderFrame). The event
-    // names the new version, so the page learns of it without a request. An
-    // event with no version, or a stream that opens, asks for the document.
-    onDocumentChange: (version) => {
-      stayOnVersion();
-      const queryKey = queryKeys.document(id);
-      if (!version) return void q.invalidateQueries({ queryKey });
-      // The answer of a request that is on its way can name an earlier
-      // version, so it must not come after this one.
-      void q.cancelQueries({ queryKey });
-      q.setQueryData<Document>(
-        queryKey,
-        (doc) => doc && { ...doc, current_version_id: version },
-      );
-      refreshLists();
+    // The event names the new seq and its version, so the page learns of
+    // them without a request, and the frame follows (see RenderFrame). An
+    // event with no data, or a stream that opens, asks for the document.
+    onDocumentChange: (event) => {
+      if (!event) return void q.invalidateQueries({ queryKey: queryKeys.document(id) });
+      hear(event);
+      setEvent(event);
+      learn(event.seq, event.version_id);
+      // The people are done. That changes no seq and no version id, but the
+      // entry of the history and the approvals that count, with the state
+      // of the approval in the document.
+      if (event.sealed) refreshLists();
+      // The person who restored has their own toast, with Undo.
+      const by = event.restored ? event.updated_by : undefined;
+      if (by && !samePrincipal(by, me.data?.principal))
+        toast.info(`${principalLabel(by)} restored an earlier state of this document.`);
     },
   });
 
@@ -309,12 +365,15 @@ export function DocumentPage() {
       canEdit={canEdit}
       editing={editing}
       onEditingChange={setEditing}
-      stayOnVersion={stayOnVersion}
-      showLatest={showLatest}
-      showsLatest={current === latest}
-      latest={latest}
+      frameShows={frameShows}
+      onLeavePreview={showVersion}
+      showsLatest={!previewing}
+      latest={seq}
+      event={event}
+      typists={typists}
+      madeBy={madeBy}
+      shownSeq={shownSeq}
       live={!previewing}
-      others={stream.viewers.length > 0}
       holdUpdate={setUpdate}
       bar={(controls) => (
         <DocBar
@@ -343,16 +402,15 @@ export function DocumentPage() {
           approvalsOpen={searchParams.get("approvals") === "1"}
         />
       )}
-      banner={(floating) =>
+      banner={
         previewing ? (
           <PreviewBanner
             docId={id}
             version={versionItems.find((v) => v.id === current)}
             canRestore={role.canEdit}
-            floating={floating}
           />
         ) : offered ? (
-          <UpdateBanner update={update} onShowLatest={showLatest} floating={floating} />
+          <UpdateBanner update={update} />
         ) : null
       }
     />

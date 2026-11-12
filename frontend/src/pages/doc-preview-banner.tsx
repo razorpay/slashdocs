@@ -16,16 +16,13 @@ export function PreviewBanner({
   docId,
   version,
   canRestore,
-  floating,
 }: {
   docId: string;
   // The previewed entry, once the history has loaded.
   version?: Version;
   canRestore: boolean;
-  // In full screen there is no doc bar, so the banner floats over the document.
-  floating?: boolean;
 }) {
-  const { showLatest } = useDoc();
+  const { showCurrent } = useDoc();
   // The entry, with its date and Restore, comes from the history. When the
   // history did not load, the banner says so, with Retry.
   const versions = useVersions(docId);
@@ -33,7 +30,6 @@ export function PreviewBanner({
   return (
     <DocBanner
       icon={History}
-      floating={floating}
       actions={
         <>
           {failed ? (
@@ -41,7 +37,7 @@ export function PreviewBanner({
           ) : canRestore ? (
             <RestoreButton docId={docId} version={version} />
           ) : null}
-          <Button size="sm" variant="outline" onClick={showLatest}>
+          <Button size="sm" variant="outline" onClick={showCurrent}>
             Current document
           </Button>
         </>

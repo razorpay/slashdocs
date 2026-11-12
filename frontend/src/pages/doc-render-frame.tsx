@@ -4,11 +4,12 @@ import {
   textLinkFragment,
   TEXT_LINK_PREFIX,
 } from "../../bridge/text-link";
+import { isCaret, type Caret } from "../../bridge/caret";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type Anchor, type Document } from "@/api";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { api, type Anchor } from "@/api";
 import { queryKeys } from "@/lib/queryKeys";
 import { COMMENT_STATUS } from "@/lib/constants";
 import { Center, CodeBlock } from "@/components/ui/misc";
@@ -24,12 +25,12 @@ import { CHORD_KEYS } from "@/lib/esc-chord";
 import { cursorsShownStore, parseCursorSpot } from "@/lib/live-cursors";
 import { agentRequestBody } from "@/lib/agent-request";
 import { principalColor } from "@/lib/principals";
+import { randomId } from "@/lib/uuid";
 import { useDocumentExport } from "./use-document-export";
 import { useDoc } from "./doc-context";
 import { useBridgeHost } from "./use-bridge-host";
 import { useFrameMessage } from "./use-frame-message";
 import { useLiveText } from "./use-live-text";
-import { useRefreshLists } from "./use-refresh-lists";
 import { typingOrInLayer, useCommentPins } from "./use-comment-pins";
 import { CommentPopovers } from "./doc-comment-popover";
 import { useCommentJumps } from "./use-comment-jumps";
@@ -57,6 +58,9 @@ const VIM_KEYS = new Set(["j", "k", "g", "G"]);
 
 // How long a control in the document shows that it copied.
 const COPIED_MS = 1500;
+// How long a load of the frame waits for the frame on screen to tell its
+// scroll. A frame that failed tells nothing.
+const SCROLL_MS = 500;
 
 // Renders the sandboxed document iframe for the document page. useBridgeHost
 // serves the theme and KV; this adds comments, selection, zoom, and links.
@@ -95,18 +99,23 @@ export function RenderFrame({
     subscribeDocumentKV,
     reportViewport,
     moveCursor,
+    holdCursor,
     subscribeCursors,
     followedCursor,
     onUnfollowCursor,
     editing,
-    registerTextSettle,
+    registerLiveText,
     setSaveState,
     setFrameReady,
-    stayOnVersion,
-    showLatest,
+    frameShows,
+    frameLoad,
+    reloadFrame,
+    onPage,
+    liveLoads,
     latest,
     live,
-    others,
+    event,
+    madeBy,
     holdUpdate,
     leaving,
   } = useDoc();
@@ -114,36 +123,30 @@ export function RenderFrame({
   const versionRef = useRef(version);
   versionRef.current = version;
   const location = useLocation();
-  const q = useQueryClient();
-  const refreshLists = useRefreshLists(docId);
 
-  // The frame already shows the version that it saved or that a patch made,
-  // so moving to it keeps the frame on the version it loaded: the reader
-  // keeps their caret and scroll. Any other version, an earlier save too,
-  // loads the frame again, as does a reload.
-  const [kept, setKept] = useState<{ loaded: string; saved: string }>();
-  const [reloads, setReloads] = useState(0);
-  const frameVersion = kept?.saved === version ? kept.loaded : version;
-  const previousVersion = useRef(version);
-  useEffect(() => {
-    const moved = previousVersion.current !== version;
-    previousVersion.current = version;
-    if (!moved || !kept || kept.saved === version) return;
-    setKept(undefined);
-    // The frame holds edits on top of the version it loaded.
-    if (version === kept.loaded) setReloads((n) => n + 1);
-  }, [kept, version]);
-  const loaded = useMemo(
-    () => ({ version: frameVersion, load: reloads }),
-    [frameVersion, reloads],
-  );
-
+  // What the frame shows: the live document, or the preview of a version.
+  // A frame that follows the live document loads the version that is
+  // current then, at the seq that the render token names. A later version
+  // of the document does not load it again: the frame follows the document
+  // in place. Each load asks for a new token, because a token renders one
+  // seq, and so does each frame: a frame that mounts again, as full screen
+  // does, loads again. A token is never asked for again by itself, because
+  // its URL would load the frame under the text of the reader. The frame on
+  // screen stays until the token of the next load of the same document
+  // comes.
+  const showing = live ? "live" : version;
+  const [frame] = useState(randomId);
   const token = useQuery({
-    queryKey: queryKeys.render(docId, frameVersion),
-    queryFn: () => api.renderToken(docId, frameVersion),
-    staleTime: 4 * 60_000,
-    enabled: !!frameVersion,
+    queryKey: queryKeys.render(docId, showing, frameLoad, frame),
+    queryFn: async () => {
+      const { url, seq } = await api.renderToken(docId, version);
+      return { url: reloadURL(url, frameLoad), seq, version };
+    },
+    staleTime: Infinity,
+    enabled: !!version,
+    placeholderData: keepPreviousData,
   });
+  const loaded = { version: "", ...token.data };
   const {
     ref,
     frameSrc,
@@ -154,22 +157,19 @@ export function RenderFrame({
     retry,
     postToFrame,
     deliverKV,
-  } = useBridgeHost(docId, token.data?.url && reloadURL(token.data.url, reloads), {
-    signIn,
-    refresh: token.refetch,
-  });
+  } = useBridgeHost(docId, token.data?.url, { signIn, refresh: token.refetch });
   // The bar says that the reader can edit only once the frame shows the text.
-  // A frame that loads its version again, as after a save, keeps the bar as
-  // it was, unless that load fails.
-  const [readyVersion, setReadyVersion] = useState<string>();
+  // A frame that loads again what it shows, as after a patch that failed,
+  // keeps the bar as it was, unless that load fails.
+  const [readyFor, setReadyFor] = useState<string>();
   useEffect(() => {
-    if (ready) setReadyVersion(frameVersion);
-  }, [ready, frameVersion]);
-  const shown = ready || (readyVersion === frameVersion && !failed && !token.error);
+    if (ready) setReadyFor(showing);
+  }, [ready, showing]);
+  const usable = ready || (readyFor === showing && !failed && !token.error);
   useEffect(() => {
-    setFrameReady(shown);
+    setFrameReady(usable);
     return () => setFrameReady(false);
-  }, [shown, setFrameReady]);
+  }, [usable, setFrameReady]);
   // Paint results from a frame that is navigating away (its WindowProxy
   // survives navigation) must not bring back the state reset below.
   const readyRef = useRef(ready);
@@ -273,14 +273,38 @@ export function RenderFrame({
   );
   // The frame hands over its text changes on request.
   const takeTextEdits = useCallback(
-    () => ask<TextEditResult>({ type: "slashdocs:text-collect" }),
+    (timeout?: number) =>
+      ask<TextEditResult>({ type: "slashdocs:text-collect" }, timeout),
     [ask],
   );
   // The frame shows the text of other people in place. It gives no answer
   // to a patch that it cannot read.
   const patchFrame = useCallback(
-    (patches: Patch[], edits: number, flash: boolean) =>
-      ask<TextPatchResult>({ type: "slashdocs:text-patch", patches, edits, flash }),
+    (patches: Patch[], edits: number, flash: boolean, hold: boolean) =>
+      ask<TextPatchResult>({
+        type: "slashdocs:text-patch",
+        patches,
+        edits,
+        flash,
+        ask: hold,
+      }),
+    [ask],
+  );
+  // The frame describes the text of the highlight of a comment on request,
+  // on the seq that it shows.
+  const shownSeq = useRef<number>(undefined);
+  const showsAt = useCallback<typeof frameShows>(
+    (seq, version) => {
+      shownSeq.current = seq;
+      frameShows(seq, version);
+    },
+    [frameShows],
+  );
+  const anchorOf = useCallback(
+    (id: string) =>
+      ask<{ anchor?: Anchor }>({ type: "slashdocs:anchor", id }).then(
+        ({ anchor }) => anchor && { anchor, seq: shownSeq.current },
+      ),
     [ask],
   );
   // The frame renders a changed source in a hidden frame on request. A probe
@@ -290,67 +314,73 @@ export function RenderFrame({
       ask({ type: "slashdocs:probe", html, locator, strings }, 10_000),
     [ask],
   );
-  // The scroll of the frame at its last report, which a load for a save
-  // keeps.
+  // The scroll and the selection of the frame at its last report, which a
+  // load that the hook asks for keeps: the reader stays where they are in
+  // the document, and their caret stays at its characters.
   const frameTop = useRef(0);
   const restoreTop = useRef<number | undefined>(undefined);
+  const frameCaret = useRef<Caret | null>(null);
+  const restoreCaret = useRef<Caret | null>(null);
   const {
     changed: textChanged,
-    drafted: textDrafted,
+    scrolled: textScrolled,
+    restarted: frameRestarted,
     scriptEditable,
     focused: textFocused,
-    settle: settleText,
+    settle,
+    showUpdate,
   } = useLiveText({
     docId,
+    owner: principal?.id,
+    signIn,
     loaded,
     latest,
-    live: live && ready,
-    others,
-    take: takeTextEdits,
+    event,
+    // The frame that stays while the next token loads follows nothing.
+    live: live && ready && !token.isPlaceholderData,
+    editing,
+    onPage,
+    loads: liveLoads,
+    take: () => takeTextEdits(),
     patch: patchFrame,
     setState: setSaveState,
-    move: (shown, from) => {
-      setKept((k) => ({ loaded: k?.loaded ?? frameVersion, saved: shown }));
-      stayOnVersion(shown);
-      // The server made the version on top of from. The page learns of it
-      // here too, because the event for it does not come while the stream
-      // is down. A page that already knows a later version keeps that one.
-      if (from)
-        q.setQueryData<Document>(
-          queryKeys.document(docId),
-          (doc) =>
-            doc &&
-            (doc.current_version_id === from
-              ? { ...doc, current_version_id: shown }
-              : doc),
-        );
-      refreshLists();
-    },
+    holdCursor,
+    frameShows: showsAt,
     holdUpdate,
-    // A load of a given version keeps the page on it: the document stream
-    // must not keep the frame on the version before it.
-    reload: (saved) => {
-      if (saved) stayOnVersion(saved);
-      else showLatest();
-      setKept(undefined);
-      restoreTop.current = frameTop.current;
-      setReloads((n) => n + 1);
+    madeBy,
+    reload: () => {
+      // The frame takes no more keys: the server holds its text, and a key
+      // from now on would go with the frame. The answer of the frame tells
+      // its scroll.
+      postToFrame({ type: "slashdocs:text-editing", on: false });
+      void takeTextEdits(SCROLL_MS)
+        .catch(() => undefined)
+        .then(() => {
+          restoreTop.current = frameTop.current;
+          restoreCaret.current = frameCaret.current;
+          reloadFrame();
+        });
     },
     probe,
     replaceText: (from, to) =>
       postToFrame({ type: "slashdocs:script-replace", from, to }),
   });
   useEffect(() => {
-    registerTextSettle(settleText);
-    return () => registerTextSettle(null);
-  }, [registerTextSettle, settleText]);
+    registerLiveText({ settle, showUpdate, anchorOf });
+    return () => registerLiveText(null);
+  }, [registerLiveText, settle, showUpdate, anchorOf]);
   // Each load flashes what changed since the reader saw the document last,
   // after the scroll, so that the flash is where they look.
   useEffect(() => {
     if (!ready) return;
     if (restoreTop.current !== undefined)
-      postToFrame({ type: "slashdocs:scroll-to", top: restoreTop.current });
+      postToFrame({
+        type: "slashdocs:scroll-to",
+        top: restoreTop.current,
+        ...(restoreCaret.current && { caret: restoreCaret.current }),
+      });
     restoreTop.current = undefined;
+    restoreCaret.current = null;
     postToFrame({ type: "slashdocs:show-changes" });
   }, [ready, postToFrame]);
 
@@ -425,21 +455,19 @@ export function RenderFrame({
   const scaleRef = useRef(1);
   const cursorRef = useRef({ x: 0, y: 0 });
 
-  const scrollDocumentTo = useCallback(
-    (top: number) => {
-      const wrapperScrollTop = wrapperRef.current?.scrollTop || 0;
-      postToFrame({
-        type: "slashdocs:scroll-to",
-        top: Math.max(0, (top - wrapperScrollTop) / scaleRef.current),
-      });
-    },
-    [postToFrame],
-  );
-
+  // The page scrolls the document to a place, in pixels of the page.
   useEffect(() => {
-    registerDocumentScroller(scrollDocumentTo);
+    registerDocumentScroller({
+      to: (top) => {
+        const wrapperScrollTop = wrapperRef.current?.scrollTop || 0;
+        postToFrame({
+          type: "slashdocs:scroll-to",
+          top: Math.max(0, (top - wrapperScrollTop) / scaleRef.current),
+        });
+      },
+    });
     return () => registerDocumentScroller(null);
-  }, [registerDocumentScroller, scrollDocumentTo]);
+  }, [registerDocumentScroller, postToFrame]);
 
   const applyZoom = useCallback(
     (deltaY: number, cursor?: { x: number; y: number }) => {
@@ -532,8 +560,10 @@ export function RenderFrame({
         const quote = anchor?.quote ?? e.data.quote;
         if (quote) startDraft({ quote, anchor });
       }
+      // The frame tells its view when a scroll rests.
       if (e.data?.type === "slashdocs:viewport") {
         reportViewport(textLinkAnchor(e.data.anchor) ?? undefined);
+        textScrolled();
       }
       if (e.data?.type === "slashdocs:pointer") {
         moveCursor(parseCursorSpot(e.data.spot));
@@ -577,29 +607,41 @@ export function RenderFrame({
       if (e.data?.type === "slashdocs:unfollowed") {
         onUnfollowCursor?.();
       }
-      // The document reloaded itself in place: it has no highlights until it
-      // is painted again.
+      // The document loaded itself again in place, as some do on a theme
+      // change. It has no highlights, and it shows the source that the page
+      // loaded, at its seq: it gets its highlights, and the page follows
+      // the document again from that seq.
       if (e.data?.type === "slashdocs:ready" && readyRef.current) {
         paintRef.current();
+        frameRestarted();
       }
       const answer = (result: unknown) =>
         requests.current.get(e.data.requestId)?.(result);
       if (/^slashdocs:text-(changes|draft|patched)$/.test(e.data?.type)) {
         if (isOffset(e.data.top)) frameTop.current = e.data.top;
+        if (e.data.type !== "slashdocs:text-draft")
+          frameCaret.current = isCaret(e.data.caret) ? e.data.caret : null;
         const result = parseTextEditResult(e.data);
-        if (e.data.type === "slashdocs:text-draft") {
-          if (result) textDrafted(result);
-        } else if (e.data.type === "slashdocs:text-changes") answer(result);
+        // The frame sends its edits after each change of the reader.
+        if (e.data.type === "slashdocs:text-draft") textChanged(result);
+        else if (e.data.type === "slashdocs:text-changes") answer(result);
         else
           answer(
             result && {
               ...result,
               ok: e.data.ok === true,
               stale: e.data.stale === true,
+              withdrawn: e.data.withdrawn === true,
             },
           );
       }
       if (e.data?.type === "slashdocs:probe-result") answer(parseProbeResult(e.data));
+      if (e.data?.type === "slashdocs:anchor-result")
+        answer(
+          e.data.anchor === null
+            ? {}
+            : isAnchor(e.data.anchor) && { anchor: e.data.anchor },
+        );
       if (
         e.data?.type === "slashdocs:script-text" &&
         typeof e.data.requestId === "string" &&
@@ -631,9 +673,6 @@ export function RenderFrame({
       }
       if (e.data?.type === "slashdocs:text-focus" && e.data.on === true)
         void textFocused();
-      if (e.data?.type === "slashdocs:text-dirty" && typeof e.data.count === "number") {
-        textChanged(e.data.count);
-      }
       if (e.data?.type === "slashdocs:text-refused") {
         toast.info(REFUSALS.get(e.data.reason) ?? "This change does not work here.", {
           id: "text-refused",
@@ -732,8 +771,9 @@ export function RenderFrame({
     setDocumentHeight,
     applyZoom,
     textChanged,
-    textDrafted,
+    textScrolled,
     textFocused,
+    frameRestarted,
     scriptEditable,
     postToFrame,
     onUnfollowCursor,
@@ -812,7 +852,7 @@ export function RenderFrame({
 
   // The parent (DocPage) only mounts RenderFrame when a current version
   // exists, so version is always set here.
-  if (token.isLoading) return <Center>Preparing secure render…</Center>;
+  if (token.isPending) return <Center>Preparing secure render…</Center>;
   if (token.error || failed)
     return (
       <Center>
@@ -919,9 +959,10 @@ function reloadURL(url: string, reloads: number): string {
 const REFUSALS = new Map([
   // The hint at script text says the same.
   ["script", "A script on the page writes this text."],
+  ["fixed", "You cannot change this part of the page here."],
   [
     "crosses-script",
-    "The selection includes content that a script makes. Select less text.",
+    "The selection includes content that you cannot change here. Select less text.",
   ],
   ["drop", "Dragging content into the document does not work. Copy and paste it."],
   ["format", "Only bold, italic, links and lists can change here."],
@@ -971,6 +1012,11 @@ const isLocator = (v: unknown): v is Locator =>
   (v.at === null || isOffset(v.at)) &&
   Array.isArray(v.path) &&
   v.path.every(isOffset);
+const isAnchor = (v: unknown): v is Anchor =>
+  isObject(v) &&
+  ["quote", "prefix", "suffix", "dom_path"].every((k) => typeof v[k] === "string") &&
+  isOffset(v.start_offset) &&
+  isOffset(v.end_offset);
 const isScriptChange = (v: unknown): v is ScriptChange =>
   isObject(v) &&
   isLocator(v.locator) &&

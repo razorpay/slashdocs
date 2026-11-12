@@ -7,10 +7,11 @@ import { SOURCE_ATTR, type Locator, type ScriptChange } from "./source-pieces.ts
 // save it from the page, because the script writes it again on every load.
 // When the reader clicks it, the bridge asks the app whether one string in
 // the source holds it. If so, the reader can type there, and the app writes
-// the new text into that string. If not, a hint offers to ask an agent.
+// the new text into that string. If not, a hint offers to ask an agent. Fixed
+// content gets the same hint, with no question to the app.
 
 // The parts of the source map that script text uses.
-export type ScriptSource = Pick<SourceMap, "offsetOf" | "scriptOwned">;
+export type ScriptSource = Pick<SourceMap, "offsetOf" | "scriptOwned" | "fixed">;
 
 export interface ScriptText {
   // Takes the app's answer to a slashdocs:script-text request: whether the
@@ -18,9 +19,9 @@ export interface ScriptText {
   answer(requestId: string, editable: boolean, failed?: boolean): void;
   // Draws the eye to the hint that shows, and tells whether one shows.
   pulse(): boolean;
-  // Shows to in every place of the page that shows from, as a load of the
-  // saved source would, and gives the texts that changed. The reader can
-  // then type in each of those places.
+  // Shows to in every place of the page where a script shows from, as a
+  // load of the saved source would, and gives the texts that changed. The
+  // reader can then type in each of those places.
   replace(from: string, to: string): Text[];
   // Each script string that the reader typed in since editing started, with
   // its text at the start and its text now, which can be the same again.
@@ -44,6 +45,9 @@ const NOT_SHOWN = "script,style,template,noscript,title";
 // The sentence for script text that cannot change here. The app says the
 // same when there is no hint.
 const SCRIPT_WRITES = "A script on the page writes this text.";
+// The sentence for fixed content. The app says the same when there is no
+// hint.
+const FIXED = "You cannot change this part of the page here.";
 // What a screen reader says about script text that the reader can change.
 const EDITABLE = "A script on the page writes this text. You can change it here.";
 
@@ -145,8 +149,9 @@ export function startScriptText(
       if (hint?.el !== place) noteOthers(place);
       return;
     }
-    if (!source.scriptOwned(el) || !el.textContent?.trim()) return;
-    askAbout(el);
+    if (!el.textContent?.trim()) return;
+    if (source.fixed(el)) readOnlyHint(el, FIXED);
+    else if (source.scriptOwned(el)) askAbout(el);
   }
 
   function askAbout(el: Element): void {
@@ -205,15 +210,12 @@ export function startScriptText(
     typing.observe(el, { characterData: true, childList: true, subtree: true });
   }
 
-  function readOnlyHint(el: Element): void {
+  function readOnlyHint(el: Element, message = SCRIPT_WRITES): void {
     const range = d.createRange();
     range.selectNodeContents(el);
     const anchor = describeAnchor(d.body, snapToWords(range));
-    showHint(
-      el,
-      SCRIPT_WRITES,
-      anchor ? "Ask an agent to change this" : undefined,
-      () => post({ type: "slashdocs:ask-agent", anchor }),
+    showHint(el, message, anchor ? "Ask an agent to change this" : undefined, () =>
+      post({ type: "slashdocs:ask-agent", anchor }),
     );
   }
 
@@ -371,7 +373,10 @@ export function startScriptText(
     answer,
     pulse,
     replace(from, to) {
-      const texts = textsShowing(from);
+      // The same text in the source is not the string.
+      const texts = textsShowing(from).filter((t) =>
+        source.scriptOwned(t.parentElement!),
+      );
       // The string of the place that the reader typed in.
       const edit =
         texts.map((t) => edits.get(t.parentElement!)).find(Boolean) ??
@@ -381,7 +386,7 @@ export function startScriptText(
         const lead = data.slice(0, data.length - data.trimStart().length);
         t.data = lead + to.trim() + data.slice(data.trimEnd().length);
         // The other places are the same string, so the reader can type there
-        // too, and the next save changes every place again.
+        // too, and the next change of the string changes every place again.
         const el = t.parentElement!;
         if (edit && !edits.has(el)) allowTyping(el, edit);
       }
@@ -469,10 +474,10 @@ const COUNT_ERRORS =
   "addEventListener('unhandledrejection',function(){slashdocsProbeErrors++});";
 
 // A document can render text in a timer or after a promise once it loads.
-// 100 ms takes in that work and keeps a save quick.
+// 100 ms takes in that work and keeps the send of the text quick.
 const SETTLE_MS = 100;
 // A probe that does not load in this time measures what it has, so that a
-// slow resource does not hold the save.
+// slow resource does not stop the send of the text.
 const LOAD_LIMIT_MS = 5000;
 
 // probe renders html as the live frame renders a document: in a hidden frame

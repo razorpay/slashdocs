@@ -117,7 +117,8 @@ describe("a form dialog that closes before its response", () => {
     renderDialog((open, setOpen) => (
       <UploadVersionSheet
         docId="doc_1"
-        baseVersion="ver_1"
+        base={{ version: "ver_1" }}
+        live={{ version: "ver_1" }}
         open={open}
         onOpenChange={setOpen}
       />

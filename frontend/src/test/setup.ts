@@ -30,3 +30,30 @@ window.matchMedia ??= (query: string) =>
     addEventListener: () => {},
     removeEventListener: () => {},
   }) as unknown as MediaQueryList;
+
+// jsdom has no Web Locks. A lock here is exclusive: a request waits while
+// another holds it, and one with ifAvailable gets null then.
+const held = new Map<string, Promise<unknown>>();
+Object.defineProperty(navigator, "locks", {
+  value: {
+    request(
+      name: string,
+      ...args:
+        [LockGrantedCallback<unknown>] | [LockOptions, LockGrantedCallback<unknown>]
+    ) {
+      const [options, work] = args.length === 1 ? [{}, args[0]] : args;
+      const before = held.get(name);
+      if (before && options.ifAvailable) return Promise.resolve(work(null));
+      const run = Promise.resolve(before)
+        .catch(() => {})
+        .then(() => work({ name, mode: "exclusive" }));
+      const done = run.then(
+        () => {},
+        () => {},
+      );
+      held.set(name, done);
+      void done.then(() => held.get(name) === done && held.delete(name));
+      return run;
+    },
+  },
+});

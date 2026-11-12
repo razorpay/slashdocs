@@ -23,7 +23,7 @@ const earlier = { id: "v3", number: 3, created_at: "2026-09-01T10:00:00Z" } as V
 const newest = { id: "v8", number: 8 } as Version;
 
 function renderBanner(props: { version?: Version; canRestore: boolean }) {
-  const doc = { showLatest: vi.fn(), stayOnVersion: vi.fn() };
+  const doc = { docId: "doc_1", showCurrent: vi.fn() };
   const client = new QueryClient();
   client.setQueryData(queryKeys.versions("doc_1"), { items: [earlier, newest] });
   // The preview is in the link, as on the document page.
@@ -74,15 +74,14 @@ it("says when the previewed entry is from and goes back to the current document"
   );
   expect(screen.queryByRole("button", { name: /Restore/ })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Current document" }));
-  expect(doc.showLatest).toHaveBeenCalledOnce();
+  expect(doc.showCurrent).toHaveBeenCalledOnce();
 });
 
 it("restores the previewed entry and shows the restored document", async () => {
   const fetch = stubRestores({ id: "v9", number: 9 });
   const doc = renderBanner({ version: earlier, canRestore: true });
   fireEvent.click(screen.getByRole("button", { name: /Restore/ }));
-  await waitFor(() => expect(doc.stayOnVersion).toHaveBeenCalledWith("v9"));
-  expect(doc.showLatest).toHaveBeenCalled();
+  await waitFor(() => expect(doc.showCurrent).toHaveBeenCalledOnce());
   expect(fetch).toHaveBeenCalledWith(
     "/v1/documents/doc_1/versions/v3/restore",
     expect.objectContaining({ method: "POST" }),
@@ -100,7 +99,7 @@ it("undoes a restore by restoring the entry that was the newest", async () => {
     "/v1/documents/doc_1/versions/v8/restore",
     expect.objectContaining({ method: "POST" }),
   );
-  expect(doc.stayOnVersion).toHaveBeenLastCalledWith("v10");
+  expect(doc.showCurrent).toHaveBeenCalledTimes(2);
   expect(messages).toMatchObject({ success: "Undid the restore of “Untitled”." });
 });
 
@@ -141,7 +140,7 @@ it("says that the history did not load, with Retry, and does not just drop Resto
     const version = versions.data?.items.find((v) => v.id === earlier.id);
     return <PreviewBanner docId="doc_1" version={version} canRestore />;
   }
-  const doc = { showLatest: vi.fn(), stayOnVersion: vi.fn() };
+  const doc = { docId: "doc_1", showCurrent: vi.fn() };
   render(
     <QueryClientProvider
       client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}

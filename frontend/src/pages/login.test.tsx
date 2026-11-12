@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, expect, it, vi } from "vitest";
-import { api } from "@/api";
+import { api, APIError } from "@/api";
+import { queryKeys } from "@/lib/queryKeys";
 import { LoginPage } from "./login";
 
 afterEach(() => {
@@ -50,3 +51,29 @@ it.each(["//evil.example", "/\\evil.example", "https://evil.example"])(
     );
   },
 );
+
+it("stays for a reader whose session ended, though the page still knows who they were", async () => {
+  window.matchMedia = () =>
+    ({ matches: false, addEventListener() {}, removeEventListener() {} }) as never;
+  vi.spyOn(api, "getConfig").mockResolvedValue({} as never);
+  vi.spyOn(api, "me").mockRejectedValue(new APIError(401, "unauthorized", "sign in"));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client.setQueryData(queryKeys.me(), { principal: { type: "user", id: "usr_1" } });
+  await client
+    .fetchQuery({ queryKey: queryKeys.me(), queryFn: api.me })
+    .catch(() => {});
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={["/login?next=%2Fapp%2Fd%2Fdoc_1"]}>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="*" element={<Where />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+  // The page asks who the reader is again, and stays.
+  await waitFor(() => expect(api.me).toHaveBeenCalledTimes(2));
+  expect(screen.getByRole("link", { name: /Continue with/ })).toBeInTheDocument();
+  expect(screen.queryByLabelText("Path")).toBeNull();
+});

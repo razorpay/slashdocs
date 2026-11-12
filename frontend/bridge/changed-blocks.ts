@@ -1,4 +1,4 @@
-import { blockOf } from "./dom.ts";
+import { blockOf, equalPairs, sameEnds } from "./dom.ts";
 
 // Changed blocks tell a reader what changed when a new version loads: the
 // bridge keeps the text of each block as the document goes, and the next load
@@ -7,9 +7,6 @@ import { blockOf } from "./dom.ts";
 // Text that is not the document's words: code, and the bridge's controls.
 const NOT_WORDS =
   "script,style,noscript,template,.slashdocs-selection-action,.slashdocs-heading-link";
-// The comparison of the blocks between the first and the last change takes at
-// most this many steps. A larger change counts every block in it as changed.
-const MAX_STEPS = 1_000_000;
 
 export type Block = { nodes: Text[]; text: string };
 
@@ -38,46 +35,22 @@ export function blockTexts(d: Document): Block[] {
 
 // changedBlocks gives the indexes of the blocks in after that are not in
 // before, from the longest run of blocks that both have in the same order.
+// When the blocks between the first and the last change are too many to
+// compare, each of them counts as changed.
 export function changedBlocks(
   before: readonly string[],
   after: readonly string[],
 ): number[] {
-  let start = 0;
-  while (
-    start < before.length &&
-    start < after.length &&
-    before[start] === after[start]
-  )
-    start++;
-  let end = 0;
-  while (
-    end < Math.min(before.length, after.length) - start &&
-    before[before.length - 1 - end] === after[after.length - 1 - end]
-  )
-    end++;
-  const a = before.slice(start, before.length - end);
-  const b = after.slice(start, after.length - end);
-  const changed = b.map((_, j) => start + j);
-  if (!a.length || a.length * b.length > MAX_STEPS) return changed;
-  // common[i][j] is the length of the longest common run of a from i and b from j.
-  const common = Array.from(
-    { length: a.length + 1 },
-    () => new Uint32Array(b.length + 1),
+  const [start, end] = sameEnds(before, after);
+  const count = after.length - start - end;
+  const kept = new Set(
+    equalPairs(
+      before.length - start - end,
+      count,
+      (i, j) => before[start + i] === after[start + j],
+    ).map(([, j]) => j),
   );
-  for (let i = a.length - 1; i >= 0; i--)
-    for (let j = b.length - 1; j >= 0; j--)
-      common[i][j] =
-        a[i] === b[j]
-          ? common[i + 1][j + 1] + 1
-          : Math.max(common[i + 1][j], common[i][j + 1]);
-  const kept = new Set<number>();
-  for (let i = 0, j = 0; i < a.length && j < b.length;) {
-    if (a[i] === b[j]) {
-      kept.add(start + j);
-      i++;
-      j++;
-    } else if (common[i + 1][j] >= common[i][j + 1]) i++;
-    else j++;
-  }
-  return changed.filter((j) => !kept.has(j));
+  return Array.from({ length: count }, (_, j) => start + j).filter(
+    (_, j) => !kept.has(j),
+  );
 }

@@ -6,7 +6,11 @@ export const queryKeys = {
   documents: () => ["documents"] as const,
   document: (id: string) => ["document", id] as const,
   versions: (doc: string) => ["versions", doc] as const,
-  render: (docId: string, version: string) => ["render", docId, version] as const,
+  // load is the number of the frame load that the render URL is for, where
+  // each load takes its own URL.
+  // frame names the frame that asks: each one has its own tokens.
+  render: (docId: string, version: string, load: number, frame: string) =>
+    ["render", docId, version, load, frame] as const,
   comments: (doc: string) => ["comments", doc] as const,
   serviceAccounts: () => ["service-accounts"] as const,
   serviceAccountKeys: (id: string) => ["service-account-keys", id] as const,

@@ -1,8 +1,16 @@
 import { createContext, useContext, type Dispatch, type SetStateAction } from "react";
-import type { Anchor, AnchorPoint, Comment, CursorSpot, Principal } from "@/api";
+import type {
+  Anchor,
+  AnchorPoint,
+  Comment,
+  CursorSpot,
+  DocumentEvent,
+  Principal,
+} from "@/api";
 import type { CommentDraft, DraftText } from "@/lib/comment-drafts";
 import type { Region, ScriptChange } from "../../bridge/source-pieces";
 import type { DocUpdate } from "./doc-update-banner";
+import type { Loads } from "./live-load";
 import type { CursorListener, DocumentKVListener } from "./use-document-stream";
 
 // What a new comment anchors to, from the render bridge: a text selection, or
@@ -35,16 +43,41 @@ export type TextEditResult = {
 // What the rendered document reports after a patch: its text edits, and
 // whether the patch applied. A patch is stale, and changes nothing, when the
 // reader made an operation after the count that the patch was made for.
-export type TextPatchResult = TextEditResult & { ok: boolean; stale: boolean };
+export type TextPatchResult = TextEditResult & {
+  ok: boolean;
+  stale: boolean;
+  // The frame took the change out again, because it would change much of
+  // what the reader sees.
+  withdrawn?: boolean;
+};
 
-// Where the editor's typing is: none yet, waiting for a pause, being saved,
-// saved, failed and waiting to try again, or refused because a change
-// cannot save.
-export type SaveState = "idle" | "unsaved" | "saving" | "saved" | "failed" | "refused";
+// Whether the server holds the text that the editor typed: it does or will
+// soon, or the sends fail for some time and go again by themselves, or a
+// change cannot save. The editor acts only on the last two.
+export type SaveState = "idle" | "failed" | "refused";
+
+// What the frame gives the page for the text that it holds. settle sends the
+// edits on screen at once, and tells whether the reader can leave them: not
+// when a change cannot save. showUpdate shows the change that waits behind
+// the banner, in place when the frame can. anchorOf describes the text that
+// the highlight of a comment holds now, as for a new comment, when the frame
+// shows the highlight.
+export type LiveText = {
+  settle: () => Promise<boolean>;
+  showUpdate: () => Promise<void>;
+  anchorOf: (id: string) => Promise<HeldAnchor | undefined>;
+};
+
+// The anchor of the text that a highlight holds, on the document at seq. The
+// server moves it over the changes after that seq.
+export type HeldAnchor = { anchor: Anchor; seq?: number };
+
+// What scrolls the rendered document to a place, in pixels of the page.
+export type DocumentScroller = { to: (top: number) => void };
 
 // notSaved tells whether the edits on screen did not save. The editor sees
 // only this state of a save.
-export const notSaved = (state: SaveState) => state === "failed" || state === "refused";
+export const notSaved = (state: SaveState) => state !== "idle";
 
 // A request to go to another viewer: once to their cursor, or continuously
 // to their view. Each request is a new object, so the same viewer can be
@@ -96,7 +129,7 @@ export type DocContextValue = {
   setDocumentHeight: (height: number) => void;
   registerDocumentPrinter: (print: (() => void) | null) => void;
   printDocument: () => void;
-  registerDocumentScroller: (scroller: ((top: number) => void) | null) => void;
+  registerDocumentScroller: (scroller: DocumentScroller | null) => void;
   scrollDocumentTo: (top: number) => void;
   handleDocCommentClick: (id: string) => void;
   handleRenderedDocumentClick: () => void;
@@ -108,6 +141,9 @@ export type DocContextValue = {
   subscribeDocumentKV: (listener: DocumentKVListener) => () => void;
   reportViewport: (anchor?: Partial<Anchor>) => void;
   moveCursor: (spot: CursorSpot | null) => void;
+  // Holds the points of the cursor while the text that the reader typed is
+  // not on the server (see useLiveText).
+  holdCursor: (held: boolean) => void;
   subscribeCursors: (listener: CursorListener) => () => void;
   // The viewer the reader asked to go to, if any.
   followedCursor?: FollowRequest;
@@ -116,38 +152,60 @@ export type DocContextValue = {
   onUnfollowCursor?: () => void;
   // The reader may edit the words of the version on screen.
   canEdit: boolean;
-  // Edit mode: the editor types in the rendered document, and the edits
-  // save as they pause. Otherwise they comment on it, as every reader does.
+  // Edit mode: the editor types in the rendered document, and the edits go
+  // to the server as they type. Otherwise they comment on it, as every
+  // reader does.
   editing: boolean;
-  // Starts Edit mode, or leaves it once the edits on screen are saved. It
-  // stays when they do not save.
-  setEditing: (on: boolean) => Promise<void>;
-  // The frame gives the way to save the edits on screen at once, which
-  // tells whether all of them are saved.
-  registerTextSettle: (settle: (() => Promise<boolean>) | null) => void;
+  // Starts Edit mode, or leaves it after the edits on screen went to the
+  // server. It stays when a change cannot save. It tells whether the mode
+  // is the one that was asked for.
+  setEditing: (on: boolean) => Promise<boolean>;
+  registerLiveText: (text: LiveText | null) => void;
   saveState: SaveState;
   setSaveState: (state: SaveState) => void;
-  // Saves the edits on screen again at once, or says again why they cannot
+  // Sends the edits on screen again at once, or says again why they cannot
   // save, with the choices.
   retrySave: () => void;
   // The frame shows the text and takes edits. Until then, and when it did
   // not load, the bar does not say that the reader can edit.
   frameReady: boolean;
   setFrameReady: (ready: boolean) => void;
-  // Keeps the reader on the version on screen when the document changes
-  // under them, as when edits land on top of someone else's, or on a given
-  // version that holds what is on screen.
-  stayOnVersion: (version?: string) => void;
-  // Shows the latest version again.
-  showLatest: () => void;
-  // The newest version of the document, when the page knows it. The frame
+  // The frame shows the document at this seq, which this version holds. It
+  // shows no seq of the live document while it loads, and in a preview.
+  frameShows: (seq: number | undefined, versionID: string) => void;
+  // Leaves a preview, and loads the document in the frame again.
+  showCurrent: () => void;
+  // Each load of the frame has its own number. reloadFrame loads the
+  // document in the frame again, in place of what is on screen.
+  frameLoad: number;
+  reloadFrame: () => void;
+  // The page of the document is there. The frame can mount again while it
+  // is, as full screen does.
+  onPage: { readonly current: boolean };
+  // The loads of the frame that the page answers for (see Loads).
+  liveLoads: Loads;
+  // The newest seq of the document, when the page knows it. The frame
   // follows it in place while live is set: a preview stays as it is.
-  latest?: string;
+  latest?: number;
   live: boolean;
-  // Other people have the document open.
-  others: boolean;
+  // The last event of the document, which can hold a small operation.
+  event?: DocumentEvent;
+  // The other people who typed in the document a short time ago (see
+  // useTypists). The server takes no approval while they type.
+  typists: Principal[];
+  // The people who made the changes that are not typing after a seq, up to
+  // another one, when the events named them (see useTypists).
+  madeBy: (after: number, upto: number) => Principal[] | undefined;
+  // The seq of the document that the frame shows, when it has live state.
+  // An approver decides on what they see.
+  shownSeq?: number;
   // Shows the banner for a change that waits for the reader, or removes it.
   holdUpdate: (update?: DocUpdate) => void;
+  // Shows the change that waits, where the reader is in the document.
+  showUpdate: () => void;
+  // The anchor of the text that the highlight of a comment holds now (see
+  // LiveText). The highlight follows the text that people type.
+  anchorOf: (id: string) => Promise<HeldAnchor | undefined>;
 };
 
 const DocContext = createContext<DocContextValue | null>(null);

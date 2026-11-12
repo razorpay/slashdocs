@@ -3,7 +3,7 @@ import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, expect, it, vi } from "vitest";
-import { api, type Comment, type Principal } from "@/api";
+import { api, type Anchor, type Comment, type Principal } from "@/api";
 import { saveReplyDraft, setEdit, type CommentDraft } from "@/lib/comment-drafts";
 import { CommentComposer, CommentThread, CommentsList } from "./doc-comments";
 import { DocProvider, type DocContextValue } from "./doc-context";
@@ -279,9 +279,13 @@ it("tells how to start a thread", () => {
   ).toBeInTheDocument();
 });
 
-function renderComposer() {
+// highlight is the anchor of the text that the highlight of the draft holds
+// in the frame now.
+function renderComposer(highlight?: Anchor) {
   const ctx = {
     docId: "doc-1",
+    version: "v2",
+    anchorOf: vi.fn(async () => highlight && { anchor: highlight, seq: 7 }),
     principal: reader,
     unanchoredComments: new Set<string>(),
     saveDraft: vi.fn(),
@@ -306,13 +310,16 @@ it("keeps the words typed while a comment posts, as a reply to the new thread", 
     .mockReturnValue(new Promise((resolve) => (settle = resolve)));
   const { ctx, box } = renderComposer();
   await userEvent.type(box, "Fix this{Enter}KEEP THE LATER WORDS");
-  expect(post).toHaveBeenCalledWith(
-    "doc-1",
-    "v1",
-    "Fix this",
-    "drafted text",
-    undefined,
-    [],
+  await vi.waitFor(() =>
+    expect(post).toHaveBeenCalledWith(
+      "doc-1",
+      "v1",
+      "Fix this",
+      "drafted text",
+      undefined,
+      [],
+      undefined,
+    ),
   );
   await act(async () => settle(thread("cmt_new", "open")));
   expect(ctx.discardDraft).toHaveBeenCalledWith("draft:1");
@@ -323,6 +330,33 @@ it("keeps the words typed while a comment posts, as a reply to the new thread", 
   expect(
     JSON.parse(localStorage.getItem("slashdocs.reply-drafts")!)["doc-1"].cmt_new,
   ).toMatchObject({ body: "KEEP THE LATER WORDS" });
+});
+
+it("posts the comment on the text that its highlight holds now, in the version on screen", async () => {
+  const post = vi.spyOn(api, "createComment").mockReturnValue(new Promise(() => {}));
+  // Another person typed inside the text while the reader wrote.
+  const moved: Anchor = {
+    quote: "drafted NEW text",
+    prefix: "the second copy of ",
+    suffix: ".",
+    dom_path: "body/p[2]",
+    start_offset: 19,
+    end_offset: 35,
+  };
+  const { ctx, box } = renderComposer(moved);
+  await userEvent.type(box, "Fix this{Enter}");
+  await vi.waitFor(() =>
+    expect(post).toHaveBeenCalledWith(
+      "doc-1",
+      "v2",
+      "Fix this",
+      "drafted NEW text",
+      moved,
+      [],
+      7,
+    ),
+  );
+  expect(ctx.anchorOf).toHaveBeenCalledWith("draft:1");
 });
 
 it("keeps the comment in its draft when it does not post", async () => {

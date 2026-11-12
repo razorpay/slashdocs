@@ -6,17 +6,29 @@
 
 import type { DefaultTreeAdapterTypes as P } from "parse5";
 import type { Patch } from "../../bridge/source-pieces.ts";
-import { childrenOf, type Change, type SourceTree } from "./source-edits";
-import { changesBetween } from "./source-merge";
+import { childrenOf, VOID, type Change, type SourceTree } from "./source-edits";
+import { changesBetween, type Range } from "./source-merge";
 
 // The patches for a change, or the reason that the change cannot apply in
-// place, so that the frame must load the version again.
-export type Patches = { patches: Patch[] } | { reload: string };
+// place, so that the frame must load the version again. codes are the
+// scripts whose code changes: the app finds the string that changed in
+// each one, and makes its patch.
+// tags are the start tags of the elements that the patches put in, as the
+// target has them.
+export type Patches =
+  { patches: Patch[]; codes: Code[]; tags: string[] } | { reload: string };
+export type Code = { script: number; html: string };
 
 // The content that a patch never carries: it runs code, loads a resource,
-// or holds state that a change of nodes does not keep.
+// or holds state that a change of nodes does not keep. The content of a
+// noscript is text for the parser here, where scripts run, and elements for
+// the frame, which parses a patch in a document with no scripts.
 const ACTIVE =
-  /^(script|style|link|meta|base|iframe|frame|object|embed|canvas|svg|math|template|slot|form|input|button|select|textarea|video|audio|source|track|dialog)$/;
+  /^(script|noscript|style|link|meta|base|iframe|frame|object|embed|canvas|svg|math|template|slot|form|input|button|select|textarea|video|audio|source|track|dialog)$/;
+// An attribute that runs code: an event handler, or a URL of a script. The
+// browser takes no space or control character in a URL scheme.
+const runsCode = ({ name, value }: { name: string; value: string }) =>
+  name.startsWith("on") || /^javascript:/i.test(value.replace(/[\0- ]/g, ""));
 // The elements whose content is not HTML of the document: raw text, foreign
 // content, and a template.
 const OPAQUE =
@@ -32,14 +44,25 @@ type Run = {
   to: number;
 };
 
-export function patchBetween(tree: SourceTree, target: string): Patches {
+// marks are the ranges of target that other people put in. Each patch gets
+// those that lie in its html. A range that crosses the edge of a run is
+// left out. shows is the source that the frame shows, when it is not the
+// loaded source. The patches also bring each change of it that the target
+// does not have back to the target, as when a person typed a word and took
+// it out again.
+export function patchBetween(
+  tree: SourceTree,
+  target: string,
+  marks: Range[] = [],
+  shows = tree.source,
+): Patches {
   const { source } = tree;
-  const changes: Change[] = [];
-  changesBetween(source, target).forEach((change, i, all) => {
-    const low = changes.at(-1)?.end ?? 0;
-    changes.push(settle(source, change, low, all[i + 1]?.start ?? source.length));
-  });
-  if (!changes.length) return { patches: [] };
+  const changes = changesOf(source, target);
+  for (const { start, end } of changesOf(source, shows))
+    if (!changes.some((change) => change.start <= end && start <= change.end))
+      changes.push({ start, end, text: source.slice(start, end) });
+  changes.sort((a, b) => a.start - b.start);
+  if (!changes.length) return { patches: [], codes: [], tags: [] };
   const next = tree.parse(target);
   const body = bodyOf(tree);
   const nextBody = bodyOf(next);
@@ -59,9 +82,9 @@ export function patchBetween(tree: SourceTree, target: string): Patches {
   };
 
   // twin gives the element of the target that an element of the loaded
-  // source became, when its tags are the same and at the same places. A body
-  // with no start tag has a twin when the two bodies start at the same
-  // place.
+  // source became, when it has the same tag name and its tags are at the
+  // same places. Its attributes can change. A body with no start tag has a
+  // twin when the two bodies start at the same place.
   const twin = (element: P.Element): P.Element | undefined => {
     const from = element.sourceCodeLocation;
     if (!from?.startTag) {
@@ -78,8 +101,6 @@ export function patchBetween(tree: SourceTree, target: string): Patches {
       closed(element) &&
       !tree.copied.has(from.startTag.startOffset) &&
       !next.copied.has(to.startTag.startOffset) &&
-      source.slice(from.startTag.startOffset, from.startTag.endOffset) ===
-        target.slice(to.startTag.startOffset, to.startTag.endOffset) &&
       to.endTag?.startOffset === (from.endTag && at(from.endTag.startOffset, true)) &&
       to.endOffset === at(from.endOffset, false);
     return same ? other : undefined;
@@ -99,12 +120,72 @@ export function patchBetween(tree: SourceTree, target: string): Patches {
     return parent;
   };
 
+  // The patches of start tags, styles and scripts, by the offset of their
+  // element.
+  const others = new Map<number, Patch | Code>();
+  // retext gives the patch for a change in the text of a style or a script,
+  // which can be in the head. One in foreign content or in a template is
+  // not one: the html element is above each other one.
+  const retext = (
+    change: Change,
+  ): Code | { style: number; html: string } | undefined => {
+    for (const [at, element] of tree.elements) {
+      const up = above(element);
+      const other = /^(style|script)$/.test(element.tagName) && twin(element);
+      if (
+        !other ||
+        up.at(-1)?.tagName !== "html" ||
+        up.some((el) => OPAQUE.test(el.tagName))
+      )
+        continue;
+      const [from, to] = contentOf(tree, element);
+      if (from > change.start || change.end > to) continue;
+      const html = target.slice(...contentOf(next, other));
+      return element.tagName === "style" ? { style: at, html } : { script: at, html };
+    }
+    return undefined;
+  };
+  // retag gives the patch for a change of the attributes of a child of
+  // parent, or why the change cannot apply in place. A change of an
+  // attribute that runs code never applies in place.
+  const retag = (parent: P.Element, change: Change) => {
+    const element = elementsOf(parent).find((child) => {
+      const { startOffset, endOffset } = child.sourceCodeLocation!.startTag!;
+      return change.start === change.end
+        ? startOffset < change.start && change.start < endOffset
+        : startOffset <= change.start && change.end <= endOffset;
+    });
+    const other = element && twin(element);
+    // A new tag name, or a start tag of active content, goes in a run.
+    if (!other || ACTIVE.test(element.tagName)) return undefined;
+    const was = new Map(element.attrs.map(({ name, value }) => [name, value]));
+    const now = new Map(other.attrs.map(({ name, value }) => [name, value]));
+    const changed = [...was.keys(), ...now.keys()].filter(
+      (name) => was.get(name) !== now.get(name),
+    );
+    if (changed.some((name) => runsCode({ name, value: now.get(name) ?? "" })))
+      return "a change has an event handler or a script URL in it";
+    const { startOffset, endOffset } = other.sourceCodeLocation!.startTag!;
+    return { tag: startOf(element)!, html: target.slice(startOffset, endOffset) };
+  };
+
   const runs: Run[] = [];
   for (const change of changes) {
+    const text = retext(change);
+    if (text) {
+      others.set("style" in text ? text.style : text.script, text);
+      continue;
+    }
     const parent = holderOf(body, change);
     if (!parent) return { reload: "a change is outside the body" };
     const opaque = [parent, ...above(parent)].find((el) => OPAQUE.test(el.tagName));
     if (opaque) return { reload: `a change is in <${opaque.tagName}>` };
+    const tag = retag(parent, change);
+    if (typeof tag === "string") return { reload: tag };
+    if (tag) {
+      others.set(tag.tag, tag);
+      continue;
+    }
     // A child stays when it has a twin that is a child of the parent's twin.
     const nextChildren = new Set(elementsOf(twin(parent)!));
     const stays = (child: P.Element) => nextChildren.has(twin(child)!);
@@ -124,6 +205,7 @@ export function patchBetween(tree: SourceTree, target: string): Patches {
   }
 
   const patches: Patch[] = [];
+  const tags: string[] = [];
   for (const run of runs) {
     // The run of an outer parent already carries a change in it.
     const parentAt = startOf(run.parent);
@@ -133,20 +215,43 @@ export function patchBetween(tree: SourceTree, target: string): Patches {
       unfitIn(tree, run.parent, run.from, run.to) ??
       unfitIn(next, twin(run.parent)!, from, to);
     if (unfit) return { reload: `a change has ${unfit} in it` };
+    const inside = marks
+      .filter(([start, end]) => from <= start && end <= to)
+      .map(([start, end]): Range => [start - from, end - from]);
+    for (const [offset, element] of next.elements)
+      if (from <= offset && offset < to)
+        tags.push(
+          target.slice(offset, element.sourceCodeLocation!.startTag!.endOffset),
+        );
     patches.push({
       in: parentAt ?? null,
       after: run.after ? startOf(run.after)! : null,
       before: run.before ? startOf(run.before)! : null,
       html: target.slice(from, to),
+      ...(inside.length > 0 && { marks: inside }),
     });
   }
-  return { patches };
+  // A run that holds a start tag changes it already.
+  const codes: Code[] = [];
+  for (const [at, patch] of others) {
+    if (runs.some((run) => run.from <= at && at < run.to)) continue;
+    if ("script" in patch) codes.push(patch);
+    else patches.push(patch);
+  }
+  return { patches, codes, tags };
 }
 
 // patchRun gives the range of the loaded source that a patch replaces.
-export function patchRun(tree: SourceTree, patch: Patch): [number, number] {
+export function patchRun(tree: SourceTree, patch: Patch | Code): [number, number] {
   const element = (at: number | null) =>
     at === null ? undefined : tree.elements.get(at);
+  if ("tag" in patch) {
+    const { startOffset, endOffset } = element(patch.tag)!.sourceCodeLocation!
+      .startTag!;
+    return [startOffset, endOffset];
+  }
+  if ("style" in patch) return contentOf(tree, element(patch.style)!);
+  if ("script" in patch) return contentOf(tree, element(patch.script)!);
   return runOf(
     tree,
     element(patch.in) ?? bodyOf(tree)!,
@@ -166,6 +271,16 @@ function runOf(
     after?.sourceCodeLocation!.endOffset ?? from,
     before?.sourceCodeLocation!.startOffset ?? to,
   ];
+}
+
+// changesOf gives the changes from source to target, each one settled.
+function changesOf(source: string, target: string): Change[] {
+  const changes: Change[] = [];
+  changesBetween(source, target).forEach((change, i, all) => {
+    const low = changes.at(-1)?.end ?? 0;
+    changes.push(settle(source, change, low, all[i + 1]?.start ?? source.length));
+  });
+  return changes;
 }
 
 // settle moves a change that only adds or only removes text to the nearest
@@ -195,7 +310,6 @@ function settle(source: string, change: Change, low: number, high: number): Chan
 }
 
 const TAG = /<(\/?)([a-z][^\s/>]*)[^>]*>/gi;
-const VOID = /^(area|base|br|col|embed|hr|img|input|link|meta|source|track|wbr)$/i;
 
 // Whether HTML does not start or end in a tag, and has an end tag for each
 // start tag, after it.
@@ -250,8 +364,7 @@ function unfitIn(tree: SourceTree, parent: P.Element, from: number, to: number) 
   for (const [start, element] of tree.elements) {
     if (start < from || start >= to) continue;
     if (ACTIVE.test(element.tagName)) return `<${element.tagName}>`;
-    if (element.attrs.some((attribute) => attribute.name.startsWith("on")))
-      return "an event handler";
+    if (element.attrs.some(runsCode)) return "an event handler or a script URL";
     if (tree.copied.has(start) || !above(element).includes(parent))
       return "markup that the parser moves";
   }

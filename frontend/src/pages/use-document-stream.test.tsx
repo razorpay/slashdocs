@@ -73,12 +73,77 @@ describe("useDocumentStream", () => {
     );
   });
 
-  it("tells the page of each change to the document, with the version that it made", () => {
+  it("tells the page of each change to the document, with its seq and version", () => {
     const { onDocumentChange, source } = setup();
 
-    source.send("document", { data: { version_id: "ver_2" } });
-    expect(onDocumentChange).toHaveBeenLastCalledWith("ver_2");
-    // A change of the title makes no version.
+    source.send("document", { data: { seq: 44, version_id: "ver_2" } });
+    expect(onDocumentChange).toHaveBeenLastCalledWith({
+      seq: 44,
+      version_id: "ver_2",
+      typed: false,
+    });
+    // The people are done: the seq and the version stay.
+    source.send("document", { data: { seq: 44, version_id: "ver_2", sealed: true } });
+    expect(onDocumentChange).toHaveBeenLastCalledWith({
+      seq: 44,
+      version_id: "ver_2",
+      typed: false,
+      sealed: true,
+    });
+    // A restore names the person who restored.
+    source.send("document", {
+      updated_by: asha,
+      data: { seq: 45, version_id: "ver_3", restored: true },
+    });
+    expect(onDocumentChange).toHaveBeenLastCalledWith({
+      seq: 45,
+      version_id: "ver_3",
+      typed: false,
+      authors: [asha],
+      restored: true,
+      updated_by: asha,
+    });
+    // A small operation comes with its event, from the person who made it.
+    const replacements = [{ start: 3, end: 3, old_html: "", new_html: "x" }];
+    source.send("document", {
+      updated_by: asha,
+      data: {
+        seq: 45,
+        version_id: "ver_2",
+        prev_seq: 44,
+        replacements,
+        typed: true,
+        sum: 9,
+      },
+    });
+    expect(onDocumentChange).toHaveBeenLastCalledWith({
+      seq: 45,
+      version_id: "ver_2",
+      typed: true,
+      authors: [asha],
+      prev_seq: 44,
+      changes: {
+        seq: 45,
+        version_id: "ver_2",
+        ops: [replacements],
+        typed: true,
+        authors: [asha],
+        sum: 9,
+      },
+    });
+    // A large operation comes with no changes, and names who made it, and
+    // whether they typed it.
+    source.send("document", {
+      updated_by: asha,
+      data: { seq: 46, version_id: "ver_2", typed: true },
+    });
+    expect(onDocumentChange).toHaveBeenLastCalledWith({
+      seq: 46,
+      version_id: "ver_2",
+      typed: true,
+      authors: [asha],
+    });
+    // A change of the title names no seq.
     source.send("document");
     expect(onDocumentChange).toHaveBeenLastCalledWith(undefined);
   });

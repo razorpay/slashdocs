@@ -39,8 +39,7 @@ export async function findLiterals(
   const found: LiteralCandidate[] = [];
   for (const { code, at, type } of inlineScripts(tree, source)) {
     const json = !JS_TYPES.test(type);
-    const values = json ? jsonStrings(acorn, code) : jsStrings(acorn, code);
-    for (const { start, end, value } of values)
+    for (const { start, end, value } of stringsOf(acorn, code, json))
       if (value.trim() === wanted)
         found.push({ start: at + start, end: at + end, value, json });
   }
@@ -102,11 +101,56 @@ function* inlineScripts(
       text?.sourceCodeLocation
     ) {
       const { startOffset, endOffset } = text.sourceCodeLocation;
-      const type = (attr("type") ?? "").split(";")[0].trim().toLowerCase();
-      yield { code: source.slice(startOffset, endOffset), at: startOffset, type };
+      yield {
+        code: source.slice(startOffset, endOffset),
+        at: startOffset,
+        type: typeOf(attr("type")),
+      };
     }
     yield* inlineScripts(child, source);
   }
+}
+
+// typeOf gives the type of a script from its type attribute.
+const typeOf = (type = "") => type.split(";")[0].trim().toLowerCase();
+
+// stringsOf gives the strings of the code of a script, or of a JSON block,
+// in their order in the code.
+const stringsOf = (acorn: Acorn, code: string, json: boolean) =>
+  (json ? jsonStrings(acorn, code) : jsStrings(acorn, code)).sort(
+    (a, b) => a.start - b.start,
+  );
+
+// A script string whose value changed from one text to another.
+export type StringChange = { from: string; to: string };
+
+// stringChange gives the one string that changed from the code of a script
+// to next, or null when the code changed in another way. type is the type
+// attribute of the script. The other code and the other strings must stay
+// exactly as they are, and the string must have text before and after.
+export async function stringChange(
+  type: string | undefined,
+  code: string,
+  next: string,
+): Promise<StringChange | null> {
+  const acorn = await import("acorn");
+  const json = !JS_TYPES.test(typeOf(type));
+  const [was, now] = [stringsOf(acorn, code, json), stringsOf(acorn, next, json)];
+  // The code between the strings, and each string as the source has it.
+  const parts = (text: string, strings: StringNode[]) =>
+    strings
+      .flatMap(({ start, end }, i) => [
+        text.slice(strings[i - 1]?.end ?? 0, start),
+        text.slice(start, end),
+      ])
+      .concat(text.slice(strings.at(-1)?.end ?? 0));
+  const [a, b] = [parts(code, was), parts(next, now)];
+  const changed = a.flatMap((part, i) => (part === b[i] ? [] : [i]));
+  if (a.length !== b.length || changed.length !== 1 || changed[0] % 2 === 0)
+    return null;
+  const at = (changed[0] - 1) / 2;
+  const [from, to] = [was[at].value, now[at].value];
+  return from.trim() && to.trim() && from.trim() !== to.trim() ? { from, to } : null;
 }
 
 // jsStrings parses code as a classic script, else as a module, as the
@@ -199,19 +243,61 @@ export async function checkScriptChange(
   // probe gives them their loaded offsets, so that the locator finds them.
   const moved = changed.length - loaded.source.length;
   const offsetOf = (at: number) => (at > found[0].start ? at - moved : at);
-  const strings = [before, after];
-  const [was, now] = await Promise.all([
-    render(tagSource(loaded.tree), locator, strings),
-    render(tagSource(await parseSource(changed), offsetOf), locator, strings),
-  ]);
-  const places = now.counts[1] - was.counts[1];
-  const shows =
-    now.text?.trim() === after.trim() &&
-    places >= 1 &&
-    was.counts[0] - now.counts[0] === places;
+  const shown = await placesOf(
+    render,
+    locator,
+    [tagSource(loaded.tree), tagSource(await parseSource(changed), offsetOf)],
+    { from: before, to: after },
+  );
+  if ("refused" in shown) return shown;
+  return shown.text?.trim() === after.trim()
+    ? { places: shown.places }
+    : { refused: NOT_SHOWN };
+}
+
+// checkCodeChange makes sure that the page shows a change of the code of a
+// script, from was to next, as a change of one string in places. range is
+// the range of the code in source. It gives that number of places, or why
+// the page does not show the change so.
+export async function checkCodeChange(
+  source: string,
+  [start, end]: [number, number],
+  [was, next]: [string, string],
+  change: StringChange,
+  render: Render,
+): Promise<{ places: number } | { refused: string }> {
+  const tagged = async (code: string) =>
+    tagSource(await parseSource(source.slice(0, start) + code + source.slice(end)));
+  const body = { at: null, path: [] };
+  const shown = await placesOf(
+    render,
+    body,
+    [await tagged(was), await tagged(next)],
+    change,
+  );
+  return "refused" in shown ? shown : { places: shown.places };
+}
+
+const NOT_SHOWN = "The page does not show the new text where you typed it.";
+
+// placesOf renders two tagged sources, and gives the number of places where
+// the second shows to in place of from, and the text at locator. As many
+// places must stop showing from as start showing to. The scripts must throw
+// no new errors, and no other text may go.
+async function placesOf(
+  render: Render,
+  locator: Locator,
+  sources: [string, string],
+  { from, to }: StringChange,
+): Promise<{ places: number; text: string | null } | { refused: string }> {
+  const strings = [from, to];
+  const [was, now] = await Promise.all(
+    sources.map((html) => render(html, locator, strings)),
+  );
   if (now.errors > was.errors || now.texts < was.texts)
     return { refused: "This change stops a script on the page." };
-  return shows
-    ? { places }
-    : { refused: "The page does not show the new text where you typed it." };
+  const places = now.counts[1] - was.counts[1];
+  return places >= 1 && was.counts[0] - now.counts[0] === places
+    ? { places, text: now.text }
+    : { refused: NOT_SHOWN };
 }

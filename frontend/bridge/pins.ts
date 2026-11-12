@@ -4,18 +4,13 @@ import {
   type CommentAnchor,
 } from "./anchoring/index.ts";
 import { TextRange } from "./anchoring/text-range.ts";
-import {
-  elementAtPath,
-  MAX_VIEW_FRACTION,
-  pathOf,
-  scrollerOf,
-  sharedElement,
-} from "./cursors.ts";
+import { elementAtPath, MAX_VIEW_FRACTION, pathOf, sharedElement } from "./cursors.ts";
 import {
   covered,
   holds,
   reducedMotion,
   scrollBehavior,
+  scrollerOf,
   textLines,
   viewOf,
 } from "./dom.ts";
@@ -716,7 +711,6 @@ export function createPinLayer(host: PinHost) {
     const key = JSON.stringify(results);
     if (key !== lastResults) host.post({ type: "slashdocs:pins-result", results });
     lastResults = key;
-    lastSignature = null;
     lastPositions = null;
     // Drawn at once, so a new pin shows, and has its spot for its popover,
     // before the next frame.
@@ -1188,6 +1182,9 @@ export function createPinLayer(host: PinHost) {
       pins = next;
       active = nextActive;
       pressed = undefined;
+      // New pins draw new buttons. A change of the page alone keeps them, so
+      // that a press, a drag or a measure does not meet a swap.
+      lastSignature = null;
       layout();
       if (opened && !pins.find((p) => p.id === nextActive)?.draft) reveal(nextActive);
     },

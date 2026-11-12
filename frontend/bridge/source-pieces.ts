@@ -52,14 +52,29 @@ export type Locator = { at: number | null; path: number[] };
 // A change to text that a script shows: its text before and after the edit.
 export type ScriptChange = { locator: Locator; before: string; after: string };
 
-// A patch brings the frame to a newer source without a load. It changes the
-// nodes of the original element `in` that lie between its original child
-// elements `after` and `before` to html. null is the start or the end of the
-// element. `in` is null for a body that has no start tag in the source. The
-// offsets are those of the version that the frame loaded.
-export type Patch = {
-  in: number | null;
-  after: number | null;
-  before: number | null;
-  html: string;
-};
+// A patch brings the frame to a newer source without a load. The offsets
+// are those of the version that the frame loaded.
+export type Patch =
+  // A run changes the nodes of the original element `in` that lie between
+  // its original child elements `after` and `before` to html. null is the
+  // start or the end of the element. `in` is null for a body that has no
+  // start tag in the source. marks are the ranges of html that other people
+  // put in, as [start, end) offsets in html (UTF-16 code units), in order,
+  // with no overlap. The frame puts that text at exactly those places.
+  | {
+      in: number | null;
+      after: number | null;
+      before: number | null;
+      html: string;
+      marks?: Mark[];
+    }
+  // The start tag of an original element changes to html: the element gets
+  // its attributes.
+  | { tag: number; html: string }
+  // The text of an original style element changes to html.
+  | { style: number; html: string }
+  // The code of an original script changes to html, in one string that the
+  // page shows: each of its places shows to in place of from. places is the
+  // count of those places. The script does not run again.
+  | { script: number; html: string; from: string; to: string; places: number };
+export type Mark = [start: number, end: number];

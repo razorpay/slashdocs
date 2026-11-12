@@ -151,3 +151,16 @@ test("a repeated quote anchors on any copy whose context agrees, not only the ne
     second,
   );
 });
+
+test("a quote whose text went does not anchor on text that only looks like it", () => {
+  const anchor = anchorOn(
+    "<p>Typing here LONG-OFFLINE hotel and MORE-OFFLINE india.</p>",
+    "LONG-OFFLINE",
+    0,
+  );
+
+  // The API places only verbatim text, so the viewer does not highlight a
+  // similar word: the comment shows as detached, as the API reports it.
+  const v2 = render("<p>Typing here hotel and MORE-OFFLINE india.</p>");
+  assert.strictEqual(resolveAnchor(v2, anchor), null);
+});
