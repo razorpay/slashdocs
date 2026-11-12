@@ -401,27 +401,32 @@ func (s *Store) resolveFolderPath(ctx context.Context, p auth.Principal, folderI
 	return parent, nil
 }
 
-func (s *Store) SearchFoldersByTitle(ctx context.Context, p auth.Principal, query string, includeOrgWide bool, limit int32) ([]repo.Folder, error) {
+func (s *Store) SearchFoldersByTitle(ctx context.Context, p auth.Principal, query string, includeOrgWide bool, minRole repo.Role, limit int32) ([]repo.Folder, error) {
 	rows, err := s.q.SearchFoldersByTitle(ctx, dbsqlc.SearchFoldersByTitleParams{
 		PrincipalType:  string(p.Type),
 		PrincipalID:    p.ID,
 		GoogleGroupIds: p.GoogleGroupIDs,
 		IncludeOrgWide: includeOrgWide,
 		Query:          query,
+		MinRole:        string(minRole),
 		RowLimit:       limit,
 	})
 	if err != nil {
 		return nil, err
 	}
-	// Each result has its breadcrumbs, which tell apart folders with the
-	// same title.
+	// Each result has the breadcrumbs that the principal can see, which tell
+	// apart folders with the same title.
 	var out []repo.Folder
 	for _, r := range rows {
-		f := repo.Folder{ID: r.ID, Title: r.Title, ParentFolderID: r.ParentFolderID, Owner: auth.Principal{Type: auth.PrincipalType(r.OwnerType), ID: r.OwnerID, Name: r.OwnerName, Email: r.OwnerEmail}}
-		if f.Ancestors, err = ancestors(ctx, s.q, f.ParentFolderID); err != nil {
+		chain, err := s.FolderAccessChain(ctx, p, r.ID)
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, f)
+		out = append(out, repo.Folder{
+			ID: r.ID, Title: r.Title, ParentFolderID: r.ParentFolderID,
+			Owner:     auth.Principal{Type: auth.PrincipalType(r.OwnerType), ID: r.OwnerID, Name: r.OwnerName, Email: r.OwnerEmail},
+			Ancestors: repo.VisibleAncestors(chain),
+		})
 	}
 	return out, nil
 }

@@ -73,6 +73,17 @@ export function useAccessRequests() {
   });
 }
 
+// useInbox is what waits on the reader. A read of a thread and a decision
+// load it again, so that the item leaves, and so does a return to the tab.
+export function useInbox() {
+  return useQuery({
+    queryKey: queryKeys.inbox(),
+    queryFn: api.inbox,
+    refetchOnWindowFocus: true,
+    meta: { suppressGlobalError: true },
+  });
+}
+
 // useDebounced is the value after it stays the same for `delay` ms.
 export function useDebounced<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState(value);

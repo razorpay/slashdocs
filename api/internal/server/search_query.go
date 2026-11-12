@@ -16,6 +16,7 @@ import (
 // the title or the text, "quoted text" matches its words in order, and -word
 // excludes documents that contain the word. Modifiers filter the results:
 //
+//	title:<word>     a word in the title; title:"a phrase" is a phrase there
 //	from:<person>    the owner: an email, the name before the @, or me
 //	in:<folder>      a folder title or ID, or a folder above it
 //	label:<name>     a label; every label is required
@@ -68,7 +69,7 @@ func parseDocumentSearch(raw string, me auth.Principal, now time.Time) (repo.Doc
 			out.Terms = append(out.Terms, text)
 		}
 	}
-	for _, values := range [][]string{out.Terms, out.ExcludedTerms, out.Owners, out.Folders, out.Labels} {
+	for _, values := range [][]string{out.Terms, out.TitleTerms, out.ExcludedTerms, out.Owners, out.Folders, out.Labels} {
 		if len(values) > maxSearchValues {
 			return repo.DocumentSearch{}, fmt.Errorf("%w: use at most %d of each search term", errInvalidSearch, maxSearchValues)
 		}
@@ -87,6 +88,8 @@ func applySearchModifier(out *repo.DocumentSearch, key, value string, me auth.Pr
 			value = strings.ToLower(me.ID)
 		}
 		out.Owners = appendNonEmpty(out.Owners, value)
+	case "title":
+		out.TitleTerms = appendNonEmpty(out.TitleTerms, value)
 	case "in":
 		out.Folders = appendNonEmpty(out.Folders, strings.TrimPrefix(value, "#"))
 	case "label":

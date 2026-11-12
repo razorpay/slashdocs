@@ -1,8 +1,8 @@
 import { type FrameLocator, type Page } from "@playwright/test";
 import { APP_ORIGIN, expect, reviewerOn, test, uniqueName } from "./fixtures";
 
-// Reading a commented document: unread threads across two readers, J and K
-// from thread to thread in document order with no popover flicker, resolve
+// Reading a commented document: unread threads across two readers, N and
+// Shift+N from thread to thread in document order with no popover flicker, resolve
 // with Undo, and the pulse after a link.
 
 function renderedDocument(page: Page): FrameLocator {
@@ -68,7 +68,7 @@ test("a reply by another reader shows unread until the reader reads it, also aft
   ).toHaveCount(0);
 });
 
-test("J and K go from thread to thread in document order, and the popover never closes between", async ({
+test("N and Shift+N go from thread to thread in document order, and the popover never closes between", async ({
   page,
   slashdocs,
 }) => {
@@ -93,17 +93,17 @@ test("J and K go from thread to thread in document order, and the popover never 
   ]);
   await list.getByRole("button", { name: "Close comments" }).click();
 
-  await page.keyboard.press("j");
+  await page.keyboard.press("n");
   await expect(thread(page).getByText("R12 first")).toBeVisible();
   // The same popover stays open through every jump.
   await thread(page).evaluate((el) => (el.dataset.kept = "yes"));
-  await page.keyboard.press("j");
+  await page.keyboard.press("n");
   await expect(thread(page).getByText("R12 second")).toBeVisible();
   await page.keyboard.press("n");
   await expect(thread(page).getByText("R12 third")).toBeVisible();
-  await page.keyboard.press("k");
+  await page.keyboard.press("Shift+N");
   await expect(thread(page).getByText("R12 second")).toBeVisible();
-  await page.keyboard.press("p");
+  await page.keyboard.press("Shift+N");
   await expect(thread(page).getByText("R12 first")).toBeVisible();
   await expect(thread(page)).toHaveAttribute("data-kept", "yes");
 
@@ -111,7 +111,7 @@ test("J and K go from thread to thread in document order, and the popover never 
   await page.keyboard.press("Escape");
   await expect(thread(page)).toBeHidden();
   await renderedDocument(page).locator("h1").click();
-  await page.keyboard.press("j");
+  await page.keyboard.press("n");
   await expect(thread(page).getByText("R12 first")).toBeVisible();
 });
 

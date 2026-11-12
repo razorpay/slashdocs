@@ -102,6 +102,10 @@ definitions:
         type: string
       approval_summary:
         $ref: '#/definitions/repo.ApprovalSummary'
+      can_move:
+        description: 'CanMove is set by GET /v1/documents/{id}: the caller may move
+          it.'
+        type: boolean
       current_version_id:
         type: string
       id:
@@ -193,6 +197,29 @@ definitions:
         type: string
       role:
         $ref: '#/definitions/repo.Role'
+    type: object
+  repo.InboxItem:
+    properties:
+      at:
+        type: string
+      body:
+        type: string
+      comment_id:
+        type: string
+      document_id:
+        type: string
+      document_title:
+        type: string
+      from:
+        allOf:
+        - $ref: '#/definitions/auth.Principal'
+        description: From asked for the approval, or wrote the newest unread message,
+          Body.
+      kind:
+        description: |-
+          Kind is "approval" for a document to approve, or "thread" for a thread
+          with a message to read.
+        type: string
     type: object
   repo.NotificationPreferences:
     properties:
@@ -841,6 +868,13 @@ definitions:
       items:
         items:
           $ref: '#/definitions/repo.DocumentAccessRequest'
+        type: array
+    type: object
+  server.listResponse-repo_InboxItem:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/repo.InboxItem'
         type: array
     type: object
   server.listResponse-repo_OwnershipTransfer:
@@ -2587,6 +2621,24 @@ paths:
       summary: Current principal
       tags:
       - auth
+  /v1/me/inbox:
+    get:
+      description: 'The newest first, at most 50: each document that the caller approves
+        and did not decide on (kind approval), and each open thread on a document
+        of the caller, that they wrote in, or that mentions them, with a message by
+        someone else after their last read or message (kind thread). It holds only
+        documents that the caller can read now.'
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/server.listResponse-repo_InboxItem'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: List what waits on the caller
+      tags:
+      - documents
   /v1/me/notifications:
     get:
       responses:

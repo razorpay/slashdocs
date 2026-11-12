@@ -83,3 +83,32 @@ it("tells a missing folder and a denied one apart", async () => {
   renderFolder();
   expect(await screen.findByText("You don't have access to this folder")).toBeVisible();
 });
+
+it("reads numbered documents in order when sorted by name", async () => {
+  const user = userEvent.setup();
+  vi.mocked(api.listFolders).mockResolvedValue({
+    items: [
+      {
+        type: "document",
+        document: { id: "d10", title: "10 · Agents" },
+        last_active: "2026-03-02T00:00:00Z",
+      },
+      {
+        type: "document",
+        document: { id: "d2", title: "2 · Prompts" },
+        last_active: "2026-03-01T00:00:00Z",
+      },
+    ],
+    has_more: false,
+  });
+  renderFolder();
+  const order = async () =>
+    (await screen.findAllByRole("link", { name: /Agents|Prompts/ })).map(
+      (l) => l.textContent,
+    );
+  expect((await order())[0]).toMatch(/Agents/);
+  await user.click(screen.getByRole("button", { name: "Sort by name" }));
+  expect((await order())[0]).toMatch(/Prompts/);
+  // The folder keeps the choice, so set it back for the next test.
+  await user.click(screen.getByRole("button", { name: "Sort by recent activity" }));
+});

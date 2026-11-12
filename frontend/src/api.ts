@@ -27,6 +27,8 @@ export type Document = {
   seq?: number;
   parent_folder_id?: string;
   parent_folder?: { id: string; title: string };
+  // Set on a single document: the reader may move it.
+  can_move?: boolean;
   approval_status?: ApprovalStatus;
   approval_summary?: ApprovalSummary;
   updated_at?: string;
@@ -375,6 +377,18 @@ export type AccessRequest = {
 export type DocumentAccessRequest = AccessRequest & {
   document_id: string;
   document_title: string;
+};
+// InboxItem is a thing that waits on the reader: a document to approve, or an
+// open thread with a message that they did not read.
+export type InboxItem = {
+  kind: "approval" | "thread";
+  document_id: string;
+  document_title: string;
+  comment_id?: string;
+  // Who asked for the approval, or wrote the newest unread message, body.
+  from: Principal;
+  body?: string;
+  at: string;
 };
 export type ServiceAccount = {
   id: string;
@@ -819,11 +833,14 @@ export const api = {
       method: "DELETE",
     }),
   // Folders
-  listFolders: (folderId?: string, path?: string, q?: string) => {
+  // A q or a minRole searches every folder, and minRole keeps only the
+  // folders where the reader has at least that role.
+  listFolders: (folderId?: string, path?: string, q?: string, minRole?: string) => {
     const params = new URLSearchParams();
     if (folderId) params.set("folder_id", folderId);
     if (path) params.set("path", path);
     if (q) params.set("q", q);
+    if (minRole) params.set("min_role", minRole);
     const qs = params.toString();
     return request<{ folder?: Folder; items: FolderEntry[]; has_more: boolean }>(
       `/v1/folders${qs ? `?${qs}` : ""}`,
@@ -906,6 +923,7 @@ export const api = {
   // The requests on every document on which the reader manages access.
   managedAccessRequests: () =>
     request<{ items: DocumentAccessRequest[] }>("/v1/access-requests"),
+  inbox: () => request<{ items: InboxItem[] }>("/v1/me/inbox"),
   declineAccessRequest: (doc: string, requester: Principal) =>
     request<void>(
       `/v1/documents/${doc}/access-requests/${requester.type}/${encodeURIComponent(requester.id)}`,

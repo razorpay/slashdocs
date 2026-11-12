@@ -45,6 +45,7 @@ func docsCmd(g *globals, out io.Writer) *cobra.Command {
 		docsEditCmd(g, out),
 		versionsCmd(g, out),
 		commentsCmd(g, out),
+		waitCmd(g, out),
 		documentLabelsCmd(g, out),
 		grantsCmd(g, out),
 		approversCmd(g, out),
@@ -80,6 +81,7 @@ func documentListCmd(g *globals, out io.Writer) *cobra.Command {
 			"Modifiers narrow the results:\n" +
 			"  \"exact phrase\"       Match the words together\n" +
 			"  -word                Exclude documents that contain the word\n" +
+			"  title:<word>         Match the word in the title only (title:\"a phrase\" for a phrase)\n" +
 			"  from:<person>        The owner: an email, the name before the @, or me\n" +
 			"  in:<folder>          A folder, or any folder above the document\n" +
 			"  label:<a,b>          Require every label\n" +
@@ -95,6 +97,7 @@ func documentListCmd(g *globals, out io.Writer) *cobra.Command {
 			"A list shows 25 documents. Use --limit for up to 100, and --offset to see the next documents.\n\n" +
 			"With --local, the query finds each word in the title or the path of a document, and modifiers are not available.",
 		Example: "  slashdocs docs list 'incident from:alice@example.com label:api,review in:\"Product Specs\"'\n" +
+			"  slashdocs docs list 'title:\"rollout plan\"'\n" +
 			"  slashdocs docs list --query 'rollout -draft from:me after:last week'",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -938,7 +941,7 @@ func commentsCmd(g *globals, out io.Writer) *cobra.Command {
 			return usageError{errors.New("--quote is required, or --target with --x and --y for a point comment")}
 		}
 		return action(g, out, func(c *Client) ([]byte, error) {
-			return c.commentJSON("POST", apiPath("/v1/documents/%s/comments", args[0]), map[string]any{"body": createBody, "version_id": createVersion, "anchor": anchor}, createMentions, false)
+			return mine(g, args[0])(c.commentJSON("POST", apiPath("/v1/documents/%s/comments", args[0]), map[string]any{"body": createBody, "version_id": createVersion, "anchor": anchor}, createMentions, false))
 		}, func(m map[string]any) string {
 			return "Added comment " + fmt.Sprint(value(m, "id")) + " on " + args[0] + "."
 		})
@@ -968,7 +971,7 @@ func commentsCmd(g *globals, out io.Writer) *cobra.Command {
 			return usageError{errors.New("--body (or --body-file) is required")}
 		}
 		return action(g, out, func(c *Client) ([]byte, error) {
-			return c.commentJSON("POST", apiPath("/v1/documents/%s/comments/%s/replies", args[0], args[1]), map[string]any{"body": replyBody}, replyMentions, false)
+			return mine(g, args[0])(c.commentJSON("POST", apiPath("/v1/documents/%s/comments/%s/replies", args[0], args[1]), map[string]any{"body": replyBody}, replyMentions, false))
 		}, func(m map[string]any) string {
 			return "Created reply " + fmt.Sprint(value(m, "id")) + " on comment " + args[1] + "."
 		})

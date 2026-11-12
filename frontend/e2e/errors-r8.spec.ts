@@ -64,10 +64,10 @@ test("the inbox marks requests for access that did not load, and loads them on R
 }) => {
   const requests = await answer(page, "**/v1/access-requests", unavailable);
   await page.goto("/app/documents");
-  const inbox = page.getByRole("button", { name: "Requests for access did not load" });
+  const inbox = page.getByRole("button", { name: "Inbox did not load" });
   await expect(inbox).toBeVisible(afterRetries);
   await inbox.click();
-  await expect(page.getByText("Could not load the requests for access.")).toBeVisible();
+  await expect(page.getByText("Could not load the inbox.")).toBeVisible();
   requests.response = {
     json: {
       items: [

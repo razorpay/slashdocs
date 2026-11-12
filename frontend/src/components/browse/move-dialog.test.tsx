@@ -53,10 +53,20 @@ describe("MoveDialog", () => {
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
   });
 
-  it("searches every folder and moves a folder to the top level", async () => {
+  it("searches the folders the reader can edit and moves a folder to the top level", async () => {
     const user = userEvent.setup();
+    const inside: FolderEntry = {
+      type: "folder",
+      folder: {
+        id: "fld_in",
+        title: "Deep inside",
+        ancestors: [{ id: "fld_1", title: "Q3 plan" }],
+      },
+    };
     const list = vi.spyOn(api, "listFolders").mockImplementation(async (_, __, q) => ({
-      items: q ? [folder("fld_deep", "Deep reports")] : [folder("fld_parent", "Team")],
+      items: q
+        ? [folder("fld_deep", "Deep reports"), inside]
+        : [folder("fld_parent", "Team")],
       has_more: false,
     }));
     const update = vi
@@ -67,7 +77,9 @@ describe("MoveDialog", () => {
     expect(await screen.findByRole("button", { name: /Team/ })).toBeDisabled();
     await user.type(screen.getByRole("searchbox", { name: "Search folders" }), "deep");
     expect(await screen.findByRole("button", { name: "Deep reports" })).toBeEnabled();
-    expect(list).toHaveBeenLastCalledWith(undefined, undefined, "deep");
+    expect(list).toHaveBeenLastCalledWith(undefined, undefined, "deep", "editor");
+    // A folder cannot move into a folder in it.
+    expect(screen.queryByRole("button", { name: /Deep inside/ })).toBeNull();
 
     await user.clear(screen.getByRole("searchbox", { name: "Search folders" }));
     await user.click(await screen.findByRole("button", { name: "Documents" }));
@@ -101,6 +113,15 @@ describe("MoveDialog", () => {
       await screen.findByRole("button", { name: "Reports, in North" }),
     ).toBeEnabled();
     expect(screen.getByRole("button", { name: "Reports, in South" })).toBeEnabled();
+  });
+
+  it("says that a search finds more folders than the list shows", async () => {
+    vi.spyOn(api, "listFolders").mockResolvedValue({
+      items: [folder("fld_a", "Reports")],
+      has_more: true,
+    });
+    renderMove({ type: "document", id: "doc_1" });
+    expect(await screen.findByText("Search to find more folders.")).toBeVisible();
   });
 
   it("offers Retry when the folders do not load", async () => {

@@ -170,8 +170,10 @@ type Document struct {
 	Seq            int64             `json:"seq,omitempty"`
 	ParentFolderID string            `json:"parent_folder_id,omitempty"`
 	ParentFolder   *FolderBreadcrumb `json:"parent_folder,omitempty"`
-	UpdatedAt      string            `json:"updated_at,omitempty"`
-	Labels         []string          `json:"labels,omitempty"`
+	// CanMove is set by GET /v1/documents/{id}: the caller may move it.
+	CanMove   bool     `json:"can_move,omitempty"`
+	UpdatedAt string   `json:"updated_at,omitempty"`
+	Labels    []string `json:"labels,omitempty"`
 	// Snippet is set in search results when the text matches. U+0002 and
 	// U+0003 surround each match.
 	Snippet string `json:"snippet,omitempty"`
@@ -255,6 +257,21 @@ type FolderAccess struct {
 	Role  Role   `json:"role"`
 }
 
+// VisibleAncestors returns the breadcrumbs of the folder at the end of chain
+// (root first). It keeps the ancestors nearest the folder up to the first one
+// that the principal cannot view, so a breadcrumb shows no hidden title.
+func VisibleAncestors(chain []FolderAccess) []FolderBreadcrumb {
+	from := len(chain) - 1
+	for from > 0 && chain[from-1].Role != RoleNone {
+		from--
+	}
+	out := make([]FolderBreadcrumb, 0, len(chain)-1-from)
+	for _, a := range chain[from : len(chain)-1] {
+		out = append(out, FolderBreadcrumb{ID: a.ID, Title: a.Title})
+	}
+	return out
+}
+
 type FolderEntry struct {
 	Type       string    `json:"type"`
 	Folder     *Folder   `json:"folder,omitempty"`
@@ -272,6 +289,7 @@ type Page struct {
 // fields do not filter.
 type DocumentSearch struct {
 	Terms         []string // Every term is in the title or the text.
+	TitleTerms    []string // Every term is in the title.
 	ExcludedTerms []string // No term is in the title or the text.
 	Owners        []string // The owner's ID, email, or email name is one of these.
 	Folders       []string // A folder that holds the document has one of these titles or IDs.
@@ -314,6 +332,23 @@ type DocumentAccessRequest struct {
 	AccessRequest
 	DocumentID    string `json:"document_id"`
 	DocumentTitle string `json:"document_title"`
+}
+
+// InboxPage is how many items one read of an inbox gives at most.
+const InboxPage = 50
+
+// InboxItem is a thing that waits on a principal.
+type InboxItem struct {
+	// Kind is "approval" for a document to approve, or "thread" for a thread
+	// with a message to read.
+	Kind          string `json:"kind"`
+	DocumentID    string `json:"document_id"`
+	DocumentTitle string `json:"document_title"`
+	CommentID     string `json:"comment_id,omitempty"`
+	// From asked for the approval, or wrote the newest unread message, Body.
+	From auth.Principal `json:"from"`
+	Body string         `json:"body,omitempty"`
+	At   string         `json:"at"`
 }
 
 type ServiceAccount struct {
@@ -662,6 +697,12 @@ type Repository interface {
 	// ListManagedAccessRequests returns the requests for every document on
 	// which the principal manages access, the newest first.
 	ListManagedAccessRequests(ctx context.Context, principal auth.Principal) ([]DocumentAccessRequest, error)
+	// Inbox returns a page of what waits on the principal, the newest first,
+	// after offset items: the documents that they approve and did not decide
+	// on, and the open threads on their documents, that they wrote in, or that
+	// mention them, with a message by someone else after their last read or
+	// message. It does not check access to the documents.
+	Inbox(ctx context.Context, principal auth.Principal, offset int) ([]InboxItem, error)
 	ResolveBearerToken(ctx context.Context, tokenHash string) (auth.Principal, error)
 	ResolveUser(ctx context.Context, id string) (auth.Principal, error)
 	// UpsertGoogleUser returns *EmailIdentityConflictError when the email
@@ -824,7 +865,7 @@ type Repository interface {
 	ListDocumentPresence(ctx context.Context, documentID string, maxAge time.Duration) ([]DocumentKVEvent, error)
 	CreateFolder(ctx context.Context, owner auth.Principal, title, parentFolderID string) (Folder, error)
 	ListFolder(ctx context.Context, principal auth.Principal, folderID, path string) ([]FolderEntry, bool, *Folder, error)
-	SearchFoldersByTitle(ctx context.Context, principal auth.Principal, query string, includeOrgWide bool, limit int32) ([]Folder, error)
+	SearchFoldersByTitle(ctx context.Context, principal auth.Principal, query string, includeOrgWide bool, minRole Role, limit int32) ([]Folder, error)
 	RecordFolderOpened(ctx context.Context, folderID string, principal auth.Principal) error
 	GetFolder(ctx context.Context, id string) (Folder, error)
 	UpdateFolder(ctx context.Context, id, title string, parentFolderID *string) (Folder, error)

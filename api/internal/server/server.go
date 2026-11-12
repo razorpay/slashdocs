@@ -363,6 +363,7 @@ func (s *Server) routes(deps dependencies) {
 	// affects, and a change of a folder wakes all open streams.
 	accessLimit := activityRateLimit(30)
 	authed.GET("/me", h.me)
+	authed.GET("/me/inbox", h.inbox)
 	authed.GET("/users", h.searchUsers)
 	authed.GET("/google-groups", h.searchGoogleGroups)
 	authed.GET("/auth/cli/credentials", h.listCLICredentials)

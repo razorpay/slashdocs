@@ -1,6 +1,6 @@
 import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { CloudOff, LogOut } from "lucide-react";
-import { AccessRequestsMenu, AccountMenu, GetStarted, TopBar } from "./topbar";
+import { InboxMenu, AccountMenu, GetStarted, TopBar } from "./topbar";
 import { useMe } from "@/lib/hooks";
 import { useAccountSync, useSignInPath, useSignOut } from "@/lib/auth-state";
 import { Button } from "@/components/ui/button";
@@ -20,7 +20,7 @@ export function AppBar() {
       {user && (
         <>
           <GetStarted />
-          <AccessRequestsMenu />
+          <InboxMenu />
           <AccountMenu user={user} />
         </>
       )}

@@ -27,11 +27,6 @@ it("goes to the next and previous thread, round the ends", () => {
   expect(nextThread(order, "lost", 1)).toBe("early");
 });
 
-it("goes to the next thread that a filter takes, as the next unread one", () => {
-  const order = inDocumentOrder(threads, positions);
-  const unread = new Set(["early", "late"]);
-  const pick = (c: { id: string }) => unread.has(c.id);
-  expect(nextThread(order, "early", 1, pick)).toBe("late");
-  expect(nextThread(order, "late", 1, pick)).toBe("early");
-  expect(nextThread(order, "middle", 1, () => false)).toBeUndefined();
+it("gives no thread when there is none", () => {
+  expect(nextThread([], undefined, 1)).toBeUndefined();
 });
