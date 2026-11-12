@@ -51,16 +51,15 @@ async function placeAt(page: Page, at: { x: number; y: number }, body: string) {
   return spot;
 }
 
-// tipOf gives the spot that a pin marks: the bottom left of its button, or
-// the bottom right when its body turns left.
+// tipOf gives the spot that a pin marks, which its transform origin is. A
+// new pin pops in, scaled around that spot, so its box is read after that.
 async function tipOf(pin: ReturnType<FrameLocator["getByRole"]>) {
-  let box: Awaited<ReturnType<typeof pin.boundingBox>> = null;
-  await expect.poll(async () => (box = await pin.boundingBox())).not.toBeNull();
-  // The spot that a pin marks is its transform origin.
+  await pin.evaluate((b) => Promise.all(b.getAnimations().map((a) => a.finished)));
+  const box = (await pin.boundingBox())!;
   const [x, y] = (await pin.evaluate((b) => getComputedStyle(b).transformOrigin))
     .split(" ")
     .map(parseFloat);
-  return { x: box!.x + x, y: box!.y + y };
+  return { x: box.x + x, y: box.y + y };
 }
 
 test("a pin placed in the page margin stays at the click after a reload", async ({

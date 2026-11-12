@@ -42,10 +42,12 @@ test("a change made elsewhere flashes the changed item while a pin is open", asy
   for (const step of ["once more", "a 4th time", "a 5th time"]) {
     await slashdocs.pushVersion(document.id, documentHTML(title, step));
     await expect(doc.locator("#step")).toHaveText(`Write the notes ${step}.`);
+    // Each run of changed words has a flash of its own, on the line of the
+    // item.
     const flash = doc.locator(".slashdocs-text-flash");
-    await expect(flash).toHaveCount(1);
+    await expect(flash).not.toHaveCount(0);
     const [box, words] = await Promise.all([
-      flash.boundingBox(),
+      flash.first().boundingBox(),
       doc.locator("#step").boundingBox(),
     ]);
     expect(Math.abs(box!.y - words!.y)).toBeLessThan(words!.height);

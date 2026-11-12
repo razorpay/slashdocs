@@ -62,9 +62,11 @@ async function post(page: Page, body: string) {
   };
 }
 
-// tipOf gives the spot that a pin marks, which its transform origin is.
+// tipOf gives the spot that a pin marks, which its transform origin is. A
+// new pin pops in, scaled around that spot, so its box is read after that.
 async function tipOf(pin: Locator) {
   await expect(pin).toBeVisible();
+  await pin.evaluate((b) => Promise.all(b.getAnimations().map((a) => a.finished)));
   const box = (await pin.boundingBox())!;
   const [x, y] = (await pin.evaluate((b) => getComputedStyle(b).transformOrigin))
     .split(" ")
