@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import cases from "./merge-cases.json";
 import { replacementsBetween } from "./source-edits";
 import {
@@ -124,10 +124,10 @@ describe("merge3", () => {
     );
   });
 
-  test("moves two deletions in a long run of one character toward each other in little time", () => {
-    // Each step reads the tags only where it passes a "<" or a ">", and
-    // the steps stop after PLACE_REACH characters. Else each step reads the
-    // whole run.
+  test("moves two deletions in a long run of one character toward each other with few reads of the run", () => {
+    // Each step reads the tags only where it passes a "<" or a ">". Else
+    // each of the PLACE_REACH steps reads the whole run, and a merge reads
+    // it thousands of times. A read of the tags starts with lastIndexOf.
     const n = 1 << 20;
     const base = `<p>${"a".repeat(n)}</p>`;
     const ours = base.slice(0, 3) + base.slice(3 + n / 2);
@@ -139,9 +139,13 @@ describe("merge3", () => {
         new_html: "",
       },
     ];
-    const started = performance.now();
-    merge3(base, ours, theirs);
-    expect(performance.now() - started).toBeLessThan(1000);
+    const reads = vi.spyOn(String.prototype, "lastIndexOf");
+    try {
+      merge3(base, ours, theirs);
+      expect(reads.mock.calls.length).toBeLessThan(100);
+    } finally {
+      reads.mockRestore();
+    }
   });
 });
 
