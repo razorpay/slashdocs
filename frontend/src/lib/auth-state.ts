@@ -1,10 +1,16 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "@/api";
 import { clearCommentDrafts } from "./comment-drafts";
 
 // Sign-out once only set this flag and kept the session cookie.
 const LEGACY_SIGNED_OUT_KEY = "slashdocs.frontend_signed_out";
+
+// The sign-in page, which returns the reader to this page after sign-in.
+export function useSignInPath() {
+  const { pathname, search } = useLocation();
+  return `/login?next=${encodeURIComponent(pathname + search)}`;
+}
 
 // Ends the browser session and forgets everything cached for the user.
 export function useSignOut() {

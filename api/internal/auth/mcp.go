@@ -22,7 +22,7 @@ const (
 // cookies are deliberately not accepted: every MCP request must carry a bearer
 // token so identity cannot leak between clients or transport sessions.
 //
-// Human access tokens are short-lived, audience-bound tokens minted by the MCP
+// Human access tokens are expiring, audience-bound tokens minted by the MCP
 // OAuth flow. Existing service-account keys remain available for unattended
 // agents and are resolved through the normal API authenticator.
 type MCPAuthenticator struct {

@@ -37,6 +37,7 @@ export function RenderFrame() {
     drafts,
     activeComment,
     startDraft,
+    signIn,
     handleDocCommentClick,
     setUnanchoredComments,
     setCommentPositions,
@@ -65,6 +66,7 @@ export function RenderFrame() {
   const { ref, frameSrc, frameOrigin, ready, postToFrame, deliverKV } = useBridgeHost(
     docId,
     token.data?.url,
+    signIn,
   );
   // Paint results from a frame that is navigating away (its WindowProxy
   // survives navigation) must not bring back the state reset below.

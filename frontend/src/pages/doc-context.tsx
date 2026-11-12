@@ -33,6 +33,8 @@ export type DocContextValue = {
   // The server can notify about comments. `slashdocs local` cannot.
   notifications: boolean;
   principal?: Principal;
+  // Set for a signed-out reader, who must sign in to comment or edit.
+  signIn?: () => void;
   drafts: CommentDraft[];
   startDraft: (selection: PendingSelection) => void;
   saveDraft: (id: string, text: Pick<CommentDraft, "body" | "mentions">) => void;
