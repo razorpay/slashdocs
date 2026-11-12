@@ -144,6 +144,16 @@ The CLI updates itself from the server it uses. It installs only a newer release
 
 Use `--json` for machine-readable output. Without `--json`, commands print concise human-readable summaries.
 
+With `--json`, stdout holds exactly one JSON value:
+
+- The response of the server, when it has a JSON body.
+- `{"ok": true}`, when the server returns no body. A status line, such as the result of `context use`, is `{"ok": true, "message": "..."}`.
+- A JSON string, when the result is not JSON, such as the HTML of `docs pull` or `docs versions html`.
+- `{"items": [...]}` for `docs comments resolve` and `reopen`, with one item for each comment: the comment, or its error with its `id`. The command tries every comment.
+- `{"error": {"code", "message", "details"}}` when the command fails. An API error is the error response of the server, with its code and details, such as `current_version_id` on a `version_conflict`. Other errors have the code `usage`, `network`, `api_error`, or `cli_error`.
+
+The exit code does not change, and stderr still gets the error text. `--quiet` removes the stdout output.
+
 ## Exit codes
 
 - `0`: success
