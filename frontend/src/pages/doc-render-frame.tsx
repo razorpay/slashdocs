@@ -51,7 +51,8 @@ const FORWARDED_KEYS = new Set<string>([
   "e",
   ...CHORD_KEYS.map((item) => item.key),
   // The keys that go from thread to thread.
-  ..."jknpJ",
+  "n",
+  "N",
 ]);
 const VIM_KEYS = new Set(["j", "k", "g", "G"]);
 
