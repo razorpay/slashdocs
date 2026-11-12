@@ -535,6 +535,9 @@ func TestFolderAccessChangesHaveABudgetForEachPrincipal(t *testing.T) {
 	}
 }
 
+// A folder search with min_role lists only the folders where the caller has
+// that role, as the move dialog needs. Its breadcrumbs show no folder that
+// the caller cannot see.
 func TestFolderSearchMinRoleAndHiddenAncestors(t *testing.T) {
 	e := newTestEnv(t)
 	owner, other := principalHeader(fixtureOwner), principalHeader(fixtureStranger)
@@ -607,6 +610,8 @@ func TestFolderSearchMinRoleAndHiddenAncestors(t *testing.T) {
 	}
 }
 
+// GET /v1/documents/{id} says if the caller can move the document: an editor
+// of the document also needs editor on its folder, and the owner does not.
 func TestGetDocumentCanMove(t *testing.T) {
 	e := newTestEnv(t)
 	owner := map[string]string{"X-Test-Principal": principalHeader(fixtureOwner), "Content-Type": "application/json"}
