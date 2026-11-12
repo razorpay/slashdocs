@@ -534,3 +534,96 @@ func TestFolderAccessChangesHaveABudgetForEachPrincipal(t *testing.T) {
 		t.Fatalf("another principal: status = %d", got)
 	}
 }
+
+func TestFolderSearchMinRoleAndHiddenAncestors(t *testing.T) {
+	e := newTestEnv(t)
+	owner, other := principalHeader(fixtureOwner), principalHeader(fixtureStranger)
+	grant := func(folderID, role string) {
+		rr := do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/grants",
+			`{"address":"`+fixtureStranger.Email+`","role":"`+role+`"}`,
+			map[string]string{"X-Test-Principal": owner, "Content-Type": "application/json"})
+		assertStatus(t, rr, http.StatusCreated)
+	}
+	private := createFolder(t, e, `{"title":"Private"}`, owner)
+	shared := createFolder(t, e, `{"title":"Team shared","parent_folder_id":"`+private+`"}`, owner)
+	grant(shared, "editor")
+	readOnly := createFolder(t, e, `{"title":"Team read"}`, owner)
+	grant(readOnly, "viewer")
+	createFolder(t, e, `{"title":"Team sub","parent_folder_id":"`+shared+`"}`, other)
+
+	search := func(principal, query string) map[string][]string {
+		rr := do(t, e.h, http.MethodGet, "/v1/folders?"+query, "", map[string]string{"X-Test-Principal": principal})
+		assertStatus(t, rr, http.StatusOK)
+		var out struct {
+			Items []struct {
+				Folder struct {
+					Title     string
+					Ancestors []struct{ Title string }
+				}
+			}
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		paths := map[string][]string{}
+		for _, item := range out.Items {
+			paths[item.Folder.Title] = []string{}
+			for _, a := range item.Folder.Ancestors {
+				paths[item.Folder.Title] = append(paths[item.Folder.Title], a.Title)
+			}
+		}
+		return paths
+	}
+
+	if got := search(other, "q=Team"); len(got) != 3 || len(got["Team shared"]) != 0 || strings.Join(got["Team sub"], "/") != "Team shared" {
+		t.Errorf("search = %v, want three folders and no Private in a path", got)
+	}
+	if got := search(other, "q=Team&min_role=editor"); len(got) != 2 || got["Team read"] != nil {
+		t.Errorf("editor search = %v, want Team shared and Team sub", got)
+	}
+	// The owner of a folder is an editor of the subfolder that another user
+	// made in it, not its owner.
+	if got := search(owner, "min_role=editor"); len(got) != 4 {
+		t.Errorf("owner editor search = %v, want all four folders", got)
+	}
+	if got := search(owner, "min_role=owner"); got["Team sub"] != nil || len(got) != 3 {
+		t.Errorf("owner search = %v, want the three folders of the owner", got)
+	}
+	rr := do(t, e.h, http.MethodGet, "/v1/folders?min_role=admin", "", map[string]string{"X-Test-Principal": owner})
+	assertStatus(t, rr, http.StatusBadRequest)
+
+	// A grant to anyone counts for the role, as it does for access. But this
+	// deployment is public, so a folder that only anyone can open is not
+	// listed.
+	anyone := func(folderID string) {
+		rr := do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/grants", `{"principal":{"type":"anyone"},"role":"editor"}`,
+			map[string]string{"X-Test-Principal": owner, "Content-Type": "application/json"})
+		assertStatus(t, rr, http.StatusCreated)
+	}
+	anyone(readOnly)
+	anyone(createFolder(t, e, `{"title":"Team open"}`, owner))
+	if got := search(other, "q=Team&min_role=editor"); len(got) != 3 || got["Team read"] == nil {
+		t.Errorf("editor search with anyone grants = %v, want Team read and no Team open", got)
+	}
+}
+
+func TestGetDocumentCanMove(t *testing.T) {
+	e := newTestEnv(t)
+	owner := map[string]string{"X-Test-Principal": principalHeader(fixtureOwner), "Content-Type": "application/json"}
+	other := map[string]string{"X-Test-Principal": principalHeader(fixtureStranger)}
+	folderID := createFolder(t, e, `{"title":"Kept"}`, owner["X-Test-Principal"])
+	docID, _ := e.createDocument("Movable", "<p>x</p>", fixtureOwner)
+	assertStatus(t, do(t, e.h, http.MethodPost, "/v1/documents/"+docID+"/grants", `{"address":"`+fixtureStranger.Email+`","role":"editor"}`, owner), http.StatusCreated)
+	canMove := func(headers map[string]string) bool {
+		rr := do(t, e.h, http.MethodGet, "/v1/documents/"+docID, "", headers)
+		assertStatus(t, rr, http.StatusOK)
+		return strings.Contains(rr.Body.String(), `"can_move":true`)
+	}
+	if !canMove(other) {
+		t.Error("an editor of a top-level document cannot move it")
+	}
+	assertStatus(t, do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/documents", `{"document_id":"`+docID+`"}`, owner), http.StatusOK)
+	if canMove(other) || !canMove(owner) {
+		t.Errorf("can_move = %v for the editor and %v for the owner, want false and true", canMove(other), canMove(owner))
+	}
+}

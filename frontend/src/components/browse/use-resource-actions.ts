@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { api } from "@/api";
+import { api, APIError } from "@/api";
 import { errorMessage } from "@/lib/errors";
 import { useMounted } from "@/lib/hooks";
 import { queryKeys } from "@/lib/queryKeys";
@@ -113,7 +113,12 @@ export function useMoveResource() {
           },
         });
     },
-    onError: (e) => toast.error(errorMessage(e, "Move failed")),
+    onError: (e) =>
+      toast.error(
+        e instanceof APIError && e.status === 403
+          ? "You cannot move it there. Ask for edit access to the folder."
+          : errorMessage(e, "Move failed"),
+      ),
   });
   return { move, warning, clearWarning: () => setWarning(null) };
 }

@@ -17,9 +17,10 @@ import { AccessWarningDialog } from "./dialogs";
 import { useMoveResource, type ResourceType } from "./use-resource-actions";
 
 // The keyboard way to do what drag and drop does: pick the folder that a
-// document or folder moves to. The list shows the top level and its folders,
-// and a search finds any folder. The current place cannot be picked, and a
-// folder does not list itself.
+// document or folder moves to. The list shows the top level and the folders
+// that the reader can edit, as only those take the move. A search finds more
+// of them. The current place cannot be picked, and a folder does not list
+// itself or a folder in it.
 export function MoveDialog({
   open,
   onOpenChange,
@@ -38,16 +39,18 @@ export function MoveDialog({
   const [query, setQuery] = useState("");
   const search = useDebounced(query.trim(), 250);
   const folders = useQuery({
-    queryKey: [...queryKeys.folders(), search],
-    queryFn: () => api.listFolders(undefined, undefined, search || undefined),
+    queryKey: [...queryKeys.folders(), "editor", search],
+    queryFn: () => api.listFolders(undefined, undefined, search, "editor"),
     enabled: open,
     placeholderData: (prev) => prev,
   });
   const { move, warning, clearWarning } = useMoveResource();
   const destinations = [
     ...(search ? [] : [{ id: null, title: "Documents", ancestors: [] }]),
-    ...(folders.data?.items || []).flatMap((e) =>
-      e.type === "folder" && e.folder && e.folder.id !== id ? [e.folder] : [],
+    ...(folders.data?.items || []).flatMap(({ folder }) =>
+      folder && folder.id !== id && !folder.ancestors?.some((a) => a.id === id)
+        ? [folder]
+        : [],
     ),
   ];
   const close = (next: boolean) => {
@@ -66,7 +69,7 @@ export function MoveDialog({
           <Input
             type="search"
             aria-label="Search folders"
-            placeholder="Search all folders"
+            placeholder="Search folders"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             autoFocus
@@ -124,6 +127,11 @@ export function MoveDialog({
                 );
               })
             )}
+            {folders.data?.has_more ? (
+              <li className="px-3 py-2 text-sm text-[var(--color-fg-muted)]">
+                Search to find more folders.
+              </li>
+            ) : null}
             {search && folders.isSuccess && destinations.length === 0 ? (
               <li className="px-3 py-2 text-sm text-[var(--color-fg-muted)]">
                 No folders match “{search}”.

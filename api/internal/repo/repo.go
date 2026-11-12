@@ -170,8 +170,10 @@ type Document struct {
 	Seq            int64             `json:"seq,omitempty"`
 	ParentFolderID string            `json:"parent_folder_id,omitempty"`
 	ParentFolder   *FolderBreadcrumb `json:"parent_folder,omitempty"`
-	UpdatedAt      string            `json:"updated_at,omitempty"`
-	Labels         []string          `json:"labels,omitempty"`
+	// CanMove is set by GET /v1/documents/{id}: the caller may move it.
+	CanMove   bool     `json:"can_move,omitempty"`
+	UpdatedAt string   `json:"updated_at,omitempty"`
+	Labels    []string `json:"labels,omitempty"`
 	// Snippet is set in search results when the text matches. U+0002 and
 	// U+0003 surround each match.
 	Snippet string `json:"snippet,omitempty"`
@@ -253,6 +255,21 @@ type FolderAccess struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
 	Role  Role   `json:"role"`
+}
+
+// VisibleAncestors returns the breadcrumbs of the folder at the end of chain
+// (root first). It keeps the ancestors nearest the folder up to the first one
+// that the principal cannot view, so a breadcrumb shows no hidden title.
+func VisibleAncestors(chain []FolderAccess) []FolderBreadcrumb {
+	from := len(chain) - 1
+	for from > 0 && chain[from-1].Role != RoleNone {
+		from--
+	}
+	out := make([]FolderBreadcrumb, 0, len(chain)-1-from)
+	for _, a := range chain[from : len(chain)-1] {
+		out = append(out, FolderBreadcrumb{ID: a.ID, Title: a.Title})
+	}
+	return out
 }
 
 type FolderEntry struct {
@@ -824,7 +841,7 @@ type Repository interface {
 	ListDocumentPresence(ctx context.Context, documentID string, maxAge time.Duration) ([]DocumentKVEvent, error)
 	CreateFolder(ctx context.Context, owner auth.Principal, title, parentFolderID string) (Folder, error)
 	ListFolder(ctx context.Context, principal auth.Principal, folderID, path string) ([]FolderEntry, bool, *Folder, error)
-	SearchFoldersByTitle(ctx context.Context, principal auth.Principal, query string, includeOrgWide bool, limit int32) ([]Folder, error)
+	SearchFoldersByTitle(ctx context.Context, principal auth.Principal, query string, includeOrgWide bool, minRole Role, limit int32) ([]Folder, error)
 	RecordFolderOpened(ctx context.Context, folderID string, principal auth.Principal) error
 	GetFolder(ctx context.Context, id string) (Folder, error)
 	UpdateFolder(ctx context.Context, id, title string, parentFolderID *string) (Folder, error)

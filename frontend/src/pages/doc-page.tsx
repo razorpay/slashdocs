@@ -384,6 +384,8 @@ export function DocumentPage() {
           principal={me.data?.principal}
           accountUser={me.data?.user || me.data?.principal}
           parentFolder={doc.data.parent_folder}
+          parentFolderId={doc.data.parent_folder_id}
+          canMove={!!doc.data.can_move}
           current={current}
           latest={latest}
           previewing={previewing}

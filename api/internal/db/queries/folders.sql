@@ -250,29 +250,38 @@ ORDER BY f.title
 LIMIT 51;
 
 -- name: SearchFoldersByTitle :many
-WITH RECURSIVE accessible(id, depth) AS (
-  SELECT f.id, 1 FROM folders f WHERE f.owner_type= @principal_type AND f.owner_id= @principal_id
+-- The folders whose title matches, where the principal has at least min_role
+-- ('' is any role). The role is the one of ListFolderAccessChain: a role on a
+-- folder cascades to its subfolders, ownership cascades as editor, and a grant
+-- to anyone counts. But a folder that only anyone can open is listed in an org
+-- deployment only, as it is not shared with the principal.
+WITH RECURSIVE ranks(role, rank) AS (
+  VALUES ('viewer', 1), ('commenter', 2), ('editor', 3), ('owner', 4)
+), accessible(id, rank, listed, depth) AS (
+  SELECT f.id, 4, true, 1 FROM folders f WHERE f.owner_type= @principal_type AND f.owner_id= @principal_id
   UNION
-  SELECT g.resource_id, 1 FROM resource_grants g
+  SELECT g.resource_id, r.rank, g.principal_type <> 'anyone' OR @include_org_wide::boolean, 1
+  FROM resource_grants g JOIN ranks r ON r.role=g.role
   WHERE g.resource_type='folder' AND g.revoked_at IS NULL
     AND ((g.principal_type= @principal_type AND g.principal_id= @principal_id)
       OR (g.principal_type='google_group' AND g.principal_id=ANY(@google_group_ids::text[]))
-      OR (@include_org_wide::boolean AND g.principal_type='anyone'))
+      OR g.principal_type='anyone')
   UNION ALL
-  SELECT c.id, a.depth+1 FROM folders c JOIN accessible a ON c.parent_folder_id = a.id WHERE a.depth < 20
+  SELECT c.id, LEAST(a.rank, 3), a.listed, a.depth+1 FROM folders c JOIN accessible a ON c.parent_folder_id = a.id WHERE a.depth < 20
 )
-SELECT DISTINCT f.id, f.title, f.owner_type, f.owner_id,
+SELECT f.id, f.title, f.owner_type, f.owner_id,
        COALESCE(f.parent_folder_id,'') AS parent_folder_id,
        COALESCE(u.name,sa.name,'') AS owner_name, COALESCE(u.email,'') AS owner_email
 FROM folders f
-JOIN accessible a ON f.id = a.id
+JOIN (SELECT id, max(rank) AS rank FROM accessible GROUP BY id HAVING bool_or(listed)) a ON f.id = a.id
 LEFT JOIN users u ON f.owner_type='user' AND f.owner_id=u.id
 -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
   -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
   ON f.owner_type='service_account' AND f.owner_id=sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE f.title ILIKE '%' || @query::text || '%'
-ORDER BY f.title
+  AND a.rank >= COALESCE((SELECT rank FROM ranks WHERE role= @min_role::text), 0)
+ORDER BY f.title, f.id
 LIMIT @row_limit;
 
 -- name: FolderMayBroadenAccess :one
