@@ -74,12 +74,11 @@ func (f *fakeUnfurler) none(t *testing.T) {
 
 func slackEnv(t *testing.T, deployment string, u *fakeUnfurler) *testEnv {
 	return newConfiguredTestEnv(t, server.Config{
-		Environment:        "test",
-		AppOrigin:          "https://docs.example",
-		PreviousOrigins:    []string{"https://aidocs.example"},
-		Deployment:         deployment,
-		SlackSigningSecret: testSlackSecret,
-	}, server.WithSlackUnfurler(u))
+		Environment:     "test",
+		AppOrigin:       "https://docs.example",
+		PreviousOrigins: []string{"https://aidocs.example"},
+		Deployment:      deployment,
+	}, server.WithSlackLinkPreviews(testSlackSecret, u))
 }
 
 func postSlack(t *testing.T, h http.Handler, body string, sentAt time.Time, extra map[string]string) *httptest.ResponseRecorder {

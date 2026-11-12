@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/fstest"
 
 	"github.com/gin-gonic/gin"
 )
@@ -12,7 +13,11 @@ func TestFrontendRoutesRedirectRenderHost(t *testing.T) {
 	r := gin.New()
 	r.GET("/v/:id/:version_id", func(c *gin.Context) { c.Status(http.StatusOK) })
 	r.GET("/print/:id/:version_id", func(c *gin.Context) { c.Status(http.StatusOK) })
-	registerFrontendRoutes(r, "https://app.example", "https://render.example")
+	registerFrontendRoutes(r, handlers{deps: dependencies{
+		appOrigin:    "https://app.example",
+		renderOrigin: "https://render.example",
+		frontend:     fstest.MapFS{"index.html": {Data: []byte(shellTitle)}},
+	}})
 
 	for _, tc := range []struct {
 		method, target, location string
@@ -20,6 +25,7 @@ func TestFrontendRoutesRedirectRenderHost(t *testing.T) {
 	}{
 		{http.MethodGet, "https://render.example/", "https://app.example/", http.StatusTemporaryRedirect},
 		{http.MethodHead, "https://render.example/login", "https://app.example/login", http.StatusTemporaryRedirect},
+		{http.MethodGet, "https://render.example/app/d/doc_1", "https://app.example/app/d/doc_1", http.StatusTemporaryRedirect},
 		{http.MethodGet, "https://RENDER.EXAMPLE.:443/app/documents?sort=updated", "https://app.example/app/documents?sort=updated", http.StatusTemporaryRedirect},
 		{http.MethodPost, "https://render.example/login", "", http.StatusNotFound},
 		{http.MethodGet, "https://render.example/v/doc_1/ver_1", "", http.StatusOK},

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -50,9 +51,6 @@ type Config struct {
 	// programmatic users of server.New retain the existing feature set unless
 	// the application entrypoint explicitly disables labels.
 	DisableLabels bool
-	// SlackSigningSecret turns on Slack link previews (POST /v1/slack/events)
-	// when it is set together with WithSlackUnfurler. Empty means off.
-	SlackSigningSecret string
 }
 
 // Server wraps the gin engine.
@@ -93,6 +91,7 @@ type dependencies struct {
 	slackSigningSecret   string
 	slackUnfurler        notifications.Unfurler
 	previousOrigins      []string
+	frontend             fs.FS
 }
 
 // Option configures the Server.
@@ -108,10 +107,10 @@ func WithNotificationSenders(senders map[string]notifications.Sender) Option {
 	return func(d *dependencies) { d.notificationSenders = senders }
 }
 
-// WithSlackUnfurler supplies the Slack client for link previews. Previews are
-// only served when Config.SlackSigningSecret is also set.
-func WithSlackUnfurler(u notifications.Unfurler) Option {
-	return func(d *dependencies) { d.slackUnfurler = u }
+// WithSlackLinkPreviews serves Slack link previews at POST /v1/slack/events.
+// signingSecret verifies that Slack sent each event.
+func WithSlackLinkPreviews(signingSecret string, unfurler notifications.Unfurler) Option {
+	return func(d *dependencies) { d.slackSigningSecret, d.slackUnfurler = signingSecret, unfurler }
 }
 
 func (s *Server) RunCommentNotifications(ctx context.Context) {
@@ -121,6 +120,9 @@ func (s *Server) RunCommentNotifications(ctx context.Context) {
 }
 
 func WithRepository(r repo.Repository) Option { return func(d *dependencies) { d.repository = r } }
+
+// WithFrontend serves the web app from fsys instead of the embedded build.
+func WithFrontend(fsys fs.FS) Option { return func(d *dependencies) { d.frontend = fsys } }
 
 func WithGoogleGroupDirectory(directory googlegroups.GoogleGroupDirectory) Option {
 	return func(d *dependencies) { d.googleGroupDirectory = directory }
@@ -175,8 +177,8 @@ func New(cfg Config, opts ...Option) *Server {
 		githubAccessChecks:   new(singleflight.Group),
 		googleGroupsEnabled:  cfg.GoogleGroupsEnabled,
 		labelsEnabled:        !cfg.DisableLabels,
-		slackSigningSecret:   cfg.SlackSigningSecret,
 		previousOrigins:      cfg.PreviousOrigins,
+		frontend:             embeddedFrontend(),
 	}
 	if cfg.GitHubClientID != "" && cfg.GitHubClientSecret != "" && cfg.AppOrigin != "" {
 		deps.githubOAuth = &oauth2.Config{
@@ -265,7 +267,7 @@ func (s *Server) routes(deps dependencies) {
 	registerAPIDocsRoutes(s.engine, deps)
 	s.engine.GET("/v/:id/:version_id", h.renderVersion)
 	s.engine.GET("/print/:id/:version_id", h.renderPrintVersion)
-	registerFrontendRoutes(s.engine, deps.appOrigin, deps.renderOrigin)
+	registerFrontendRoutes(s.engine, h)
 
 	s.engine.GET("/livez", h.livez)
 	s.engine.GET("/readyz", h.readyz)
@@ -283,7 +285,7 @@ func (s *Server) routes(deps dependencies) {
 	v1.POST("/auth/logout", h.logout)
 	// Slack link previews. Public, because Slack cannot sign in; every request
 	// must carry a valid Slack signature instead (see verifySlackSignature).
-	if deps.slackSigningSecret != "" && deps.slackUnfurler != nil {
+	if deps.slackUnfurler != nil {
 		v1.POST("/slack/events", verifySlackSignature(deps.slackSigningSecret, time.Now), h.slackEvents)
 	}
 
