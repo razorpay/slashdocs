@@ -509,21 +509,6 @@ func eligibleFolderSearchResults(rows []dbsqlc.SearchFoldersByTitleRow, chains m
 	return out
 }
 
-func roleRankForSearch(role repo.Role) int32 {
-	switch role {
-	case repo.RoleViewer:
-		return 1
-	case repo.RoleCommenter:
-		return 2
-	case repo.RoleEditor:
-		return 3
-	case repo.RoleOwner:
-		return 4
-	default:
-		return 0
-	}
-}
-
 func roleAtLeast(got, need repo.Role) bool {
 	return repo.MaxRole(got, need) == got
 }

@@ -136,7 +136,7 @@ func (h handlers) moveDestinations(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-func (h handlers) moveDestinationChildren(c *gin.Context) {
+func (h handlers) moveDestinationChildren(c *gin.Context) { //nolint:gocyclo // Cursor, anchor, and signed pagination validation stay together at the HTTP boundary.
 	if !requireResolvedGroupsForAggregate(c) {
 		return
 	}

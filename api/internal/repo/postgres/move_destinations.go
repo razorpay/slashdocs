@@ -374,7 +374,7 @@ func (s *Store) SearchMoveDestinations(ctx context.Context, p auth.Principal, re
 		IncludeOrgWide:    includeOrgWide,
 		Query:             escapeMoveDestinationSearch(query),
 		ExcludedFolderIds: moveDestinationExcludedIDs(moveCtx.excluded),
-		RowLimit:          int32(limit + 1),
+		RowLimit:          int32(limit + 1), //nolint:gosec // HTTP and MCP callers cap move-search limits at 50.
 	})
 	if err != nil {
 		return repo.MoveDestinationSearchResult{}, err
@@ -526,7 +526,9 @@ func (r moveDestinationReader) candidatePage(ctx context.Context, p auth.Princip
 	}
 	selectedBefore := append([]moveDestinationCandidate(nil), beforeRows[:beforeTake]...)
 	reverseMoveDestinationCandidates(selectedBefore)
-	candidates := append(selectedBefore, anchor)
+	candidates := make([]moveDestinationCandidate, 0, limit)
+	candidates = append(candidates, selectedBefore...)
+	candidates = append(candidates, anchor)
 	candidates = append(candidates, afterRows[:afterTake]...)
 	page.items = candidates
 	page.hasBefore, page.hasAfter = len(beforeRows) > beforeTake, len(afterRows) > afterTake
