@@ -18,7 +18,7 @@ func notificationsCmd(g *globals, out io.Writer, document bool) *cobra.Command {
 		root.Long = "Control notifications for this document, only for you. Global disable overrides document enable. Muting includes @mentions."
 	}
 	for _, verb := range []string{"status", "enable", "disable"} {
-		cmd := &cobra.Command{Use: verb + suffix, Short: verb + " notifications", Args: exactArgs(count), RunE: func(_ *cobra.Command, args []string) error {
+		cmd := &cobra.Command{Use: verb + suffix, Short: verb + " notifications", Args: cobra.ExactArgs(count), RunE: func(_ *cobra.Command, args []string) error {
 			path := "/v1/me/notifications"
 			if document {
 				path = apiPath("/v1/documents/%s/notifications", args[0])

@@ -455,6 +455,16 @@ func registerMCPDocumentAccessTools(server *mcpserver.MCPServer, api mcpAPIAdapt
 		return api.json(ctx, http.MethodPost, "/v1/documents/"+doc+"/access-requests", map[string]any{}, mcpParams("id", doc), api.handlers.requestDocumentAccess)
 	})
 
+	server.AddTool(mcp.NewTool("list_document_access_requests", readOnlyOptions(
+		mcp.WithDescription("List requests for access to a document, the newest first. Needs the editor role. Share the document with a requester to grant access and remove the request."), mcpDocumentID(),
+	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		doc, invalid := mcpRequired(request, "document_id")
+		if invalid != nil {
+			return invalid, nil
+		}
+		return api.get(ctx, "/v1/documents/"+doc+"/access-requests", mcpParams("id", doc), api.handlers.listDocumentAccessRequests)
+	})
+
 	server.AddTool(mcp.NewTool("list_document_access", readOnlyOptions(
 		mcp.WithDescription("List effective access to a document and the grants that provide it."), mcpDocumentID(),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

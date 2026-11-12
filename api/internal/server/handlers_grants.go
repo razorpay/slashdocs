@@ -136,6 +136,9 @@ func resolveStoredGrantPrincipal(ctx context.Context, r repo.Repository, princip
 		if principal.ID == "" {
 			return auth.Principal{}, errPrincipalIDRequired
 		}
+		if principal.Type == auth.PrincipalUser {
+			return r.ResolveUser(ctx, principal.ID)
+		}
 		exists, err := r.PrincipalExists(ctx, principal)
 		if err != nil {
 			return auth.Principal{}, err

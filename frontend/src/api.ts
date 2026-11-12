@@ -110,6 +110,7 @@ export type Comment = {
   };
   created_at?: string;
   resolved_at?: string;
+  edited?: boolean;
 };
 export type CommentPatch = {
   body?: string;
@@ -217,6 +218,10 @@ export type EffectiveAccessItem = {
   principal: Principal;
   effective_role: string;
   sources: AccessSource[];
+};
+export type AccessRequest = {
+  requester: Principal;
+  requested_at: string;
 };
 export type ServiceAccount = {
   id: string;
@@ -608,6 +613,8 @@ export const api = {
       items: EffectiveAccessItem[];
       current_role: string;
     }>(`/v1/documents/${id}/access`),
+  documentAccessRequests: (id: string) =>
+    request<{ items: AccessRequest[] }>(`/v1/documents/${id}/access-requests`),
   // Pins
   listPins: () => request<{ items: Pin[] }>("/v1/pins"),
   putPin: (resourceType: string, resourceId: string) =>

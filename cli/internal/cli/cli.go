@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 type globals struct {
@@ -36,46 +37,41 @@ var errSADisabled = errors.New("service account commands are disabled by SLASHDO
 
 func Execute(args []string) (string, error) {
 	var out bytes.Buffer
-	root := NewRoot(&out)
-	root.SetArgs(args)
-	err := root.Execute()
+	err := Run(&out, args)
 	return out.String(), err
 }
 
-func NewRoot(out io.Writer) *cobra.Command {
+// Run runs the CLI with args and writes command output to out. With --json, a
+// failure also writes its error envelope to out, so out holds one JSON value.
+func Run(out io.Writer, args []string) error {
 	g := &globals{}
-	root := &cobra.Command{Use: "slashdocs", Short: "CLI for slashdocs HTML document review", Long: "CLI for slashdocs HTML document review.\n\nAgents: before authoring or publishing a slashdocs document, run `slashdocs guidelines` and follow that output.\n\nDefault output is compact, agent-friendly key=value text. Use --json for machine-readable JSON.\n\nTo try slashdocs without a server or login, add --local to a command: `slashdocs --local docs create report.html`. It uses slashdocs local on this computer, and starts it the first time. slashdocs local keeps documents and comments in a folder on this computer. Sharing, version history, full-text search, labels, and notifications need a slashdocs server.", SilenceUsage: true, SilenceErrors: true}
+	root := newRoot(g, out)
+	root.SetArgs(args)
+	err := root.Execute()
+	if err != nil && g.json && !errors.As(err, new(reportedError)) {
+		_ = renderValue(out, g, errorEnvelope(err))
+	}
+	return err
+}
+
+func newRoot(g *globals, out io.Writer) *cobra.Command {
+	root := &cobra.Command{Use: "slashdocs", Short: "CLI for slashdocs HTML document review", Long: "CLI for slashdocs HTML document review.\n\nAgents: before authoring or publishing a slashdocs document, run `slashdocs guidelines` and follow that output.\n\nDefault output is compact, agent-friendly key=value text. Use --json for machine-readable JSON: stdout then holds exactly one JSON value, which is {\"ok\": true} when the server returns no body, and {\"error\": {\"code\", \"message\", \"details\"}} when the command fails.\n\nTo try slashdocs without a server or login, add --local to a command: `slashdocs --local docs create report.html`. It uses slashdocs local on this computer, and starts it the first time. slashdocs local keeps documents and comments in a folder on this computer. Sharing, version history, full-text search, labels, and notifications need a slashdocs server.", SilenceUsage: true, SilenceErrors: true}
 	// Each command runs the hooks of all its parents, so --local applies to
 	// commands that have their own hooks, such as `sa`.
 	cobra.EnableTraverseRunHooks = true
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		// cobra checks required flags and flag groups after this hook, and
+		// does not mark the errors as usage errors, so check them first.
+		if err := errors.Join(cmd.ValidateRequiredFlags(), cmd.ValidateFlagGroups()); err != nil {
+			return usageError{err}
+		}
 		if !g.local || strings.HasPrefix(cmd.CommandPath(), "slashdocs local") {
 			return nil
 		}
 		return useLocal(g)
 	}
-	// The root command has no action of its own, so any leftover positional
-	// argument is an unknown subcommand. Classifying it here as a typed
-	// usageError keeps the usage exit code reliable without string-matching
-	// cobra's error text. Root needs a RunE (help, matching cobra's default
-	// for bare `slashdocs`) because cobra only validates Args on runnable
-	// commands.
-	root.RunE = func(cmd *cobra.Command, args []string) error { return cmd.Help() }
-	root.Args = func(cmd *cobra.Command, args []string) error {
-		if len(args) == 0 {
-			return nil
-		}
-		msg := fmt.Sprintf("unknown command %q for %q", args[0], cmd.CommandPath())
-		if s := cmd.SuggestionsFor(args[0]); len(s) > 0 {
-			msg += "\n\nDid you mean this?\n\t" + strings.Join(s, "\n\t")
-		}
-		return usageError{errors.New(msg)}
-	}
 	root.PersistentPostRun = func(cmd *cobra.Command, args []string) {
-		// Bare `slashdocs` (help) is excluded so printing usage never hits the
-		// network; root only became runnable to get typed unknown-command
-		// errors from Args validation.
-		if cmd.CommandPath() == "slashdocs" || cmd.CommandPath() == "slashdocs update" || cmd.CommandPath() == "slashdocs skills update" || cmd.CommandPath() == "slashdocs version" || cmd.CommandPath() == "slashdocs guidelines" || strings.HasPrefix(cmd.CommandPath(), "slashdocs local") || g.local {
+		if cmd.CommandPath() == "slashdocs update" || cmd.CommandPath() == "slashdocs skills update" || cmd.CommandPath() == "slashdocs version" || cmd.CommandPath() == "slashdocs guidelines" || strings.HasPrefix(cmd.CommandPath(), "slashdocs local") || g.local {
 			return
 		}
 		c, err := client(g)
@@ -87,7 +83,7 @@ func NewRoot(out io.Writer) *cobra.Command {
 	root.SetOut(out)
 	root.SetErr(os.Stderr)
 	root.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
-		return usageError{err}
+		return usageError{fmt.Errorf("%w\n\n%s", err, helpHint(cmd))}
 	})
 	root.PersistentFlags().StringVar(&g.server, "server", "", "API server URL")
 	root.PersistentFlags().StringVar(&g.token, "token", "", "Bearer token")
@@ -95,22 +91,74 @@ func NewRoot(out io.Writer) *cobra.Command {
 	root.PersistentFlags().BoolVarP(&g.quiet, "quiet", "q", false, "quiet")
 	root.PersistentFlags().BoolVarP(&g.verbose, "verbose", "v", false, "verbose")
 	root.PersistentFlags().BoolVar(&g.local, "local", false, "use slashdocs local on this computer, and start it if it is not running")
-	root.AddCommand(notificationsCmd(g, out, false), authCmd(g, out), contextCmd(g, out), docsCmd(g, out), foldersCmd(g, out), saRoot(g, out), openCmd(g, out), guidelinesCmd(g, out), configCmd(g, out), versionCmd(out), updateCmd(g, out), skillsCmd(g, out), localCmd(g, out))
+	root.AddCommand(notificationsCmd(g, out, false), authCmd(g, out), contextCmd(g, out), docsCmd(g, out), foldersCmd(g, out), saRoot(g, out), openCmd(g, out), guidelinesCmd(g, out), configCmd(g, out), versionCmd(g, out), updateCmd(g, out), skillsCmd(g, out), localCmd(g, out))
+	checkArgs(root)
 	return root
 }
 
-// exactArgs and minArgs validate the positional argument count and report a
-// usageError (exit code 2) when it is wrong.
-func exactArgs(n int) cobra.PositionalArgs { return wrapArgs(cobra.ExactArgs(n)) }
-func minArgs(n int) cobra.PositionalArgs   { return wrapArgs(cobra.MinimumNArgs(n)) }
-
-func wrapArgs(v cobra.PositionalArgs) cobra.PositionalArgs {
-	return func(cmd *cobra.Command, args []string) error {
-		if err := v(cmd, args); err != nil {
-			return usageError{err}
+// checkArgs makes cmd and its subcommands reject positional arguments that
+// they do not take, with a usageError that names the problem. A command
+// without Args takes none. A command group prints its help, and rejects an
+// unknown subcommand: cobra validates Args only on runnable commands, so the
+// group gets a RunE.
+func checkArgs(cmd *cobra.Command) {
+	for _, sub := range cmd.Commands() {
+		checkArgs(sub)
+	}
+	if cmd.HasSubCommands() && !cmd.Runnable() {
+		cmd.Args = unknownSubcommand
+		// The default of cobra, which SuggestionsFor does not apply.
+		cmd.SuggestionsMinimumDistance = 2
+		cmd.RunE = func(*cobra.Command, []string) error { return pflag.ErrHelp }
+		return
+	}
+	validate := cmd.Args
+	if validate == nil {
+		validate = cobra.NoArgs
+	}
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		if err := validate(cmd, args); err != nil {
+			return usageError{argsError(cmd, args, err)}
 		}
 		return nil
 	}
+}
+
+// unknownSubcommand is the Args of a command group. Without arguments, it asks
+// cobra for the help, as cobra does for a group that is not runnable. Args
+// runs before the run hooks, so the help never starts slashdocs local or
+// calls the server.
+func unknownSubcommand(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return pflag.ErrHelp
+	}
+	msg := fmt.Sprintf("unknown command %q for %q", args[0], cmd.CommandPath())
+	if s := cmd.SuggestionsFor(args[0]); len(s) > 0 {
+		msg += "\n\nDid you mean this?\n\t" + strings.Join(s, "\n\t")
+	}
+	return usageError{fmt.Errorf("%s\n\n%s", msg, helpHint(cmd))}
+}
+
+func helpHint(cmd *cobra.Command) string {
+	return fmt.Sprintf("Run '%s --help' for usage.", cmd.CommandPath())
+}
+
+// argsError names the missing or extra argument when it can, and adds the
+// usage line, the examples, and a pointer to the help.
+func argsError(cmd *cobra.Command, args []string, err error) error {
+	want := strings.Fields(cmd.Use)[1:]
+	problem := err.Error()
+	switch {
+	case len(args) < len(want) && strings.HasPrefix(want[len(args)], "<"):
+		problem = "missing argument " + want[len(args)]
+	case len(args) > len(want):
+		problem = fmt.Sprintf("unexpected argument %q", args[len(want)])
+	}
+	usage := "Usage: " + cmd.UseLine()
+	if cmd.Example != "" {
+		usage += "\nExamples:\n" + cmd.Example
+	}
+	return fmt.Errorf("%s\n\n%s\n\n%s", problem, usage, helpHint(cmd))
 }
 
 // run is the shared command body: build a client, perform the call, then render
@@ -124,10 +172,7 @@ func run(g *globals, out io.Writer, fn func(*Client) ([]byte, error)) error {
 	if err != nil {
 		return err
 	}
-	if err := render(out, g, b); err != nil {
-		return err
-	}
-	return nil
+	return render(out, g, b)
 }
 
 func ExitCode(err error) int {
@@ -163,16 +208,17 @@ func ExitCode(err error) int {
 // simple builds a GET/DELETE-style command that takes a fixed arg count and
 // posts no body.
 func simple(g *globals, out io.Writer, use, method, path string, n int) *cobra.Command {
-	return &cobra.Command{Use: use, Short: shortFor(use), Args: exactArgs(n), RunE: func(cmd *cobra.Command, args []string) error {
+	return &cobra.Command{Use: use, Short: shortFor(use), Args: cobra.ExactArgs(n), RunE: func(cmd *cobra.Command, args []string) error {
 		return run(g, out, func(c *Client) ([]byte, error) {
 			return c.do(method, path, nil, "")
 		})
 	}}
 }
 
-// simplePath builds a single-id command whose path template has one %s.
+// simplePath builds a single-id command whose path template has one %s. use
+// names the id, such as "show <doc_id>".
 func simplePath(g *globals, out io.Writer, use, method, tmpl string) *cobra.Command {
-	return &cobra.Command{Use: use + " <id>", Short: shortFor(use), Args: exactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	return &cobra.Command{Use: use, Short: shortFor(strings.Fields(use)[0]), Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return run(g, out, func(c *Client) ([]byte, error) {
 			return c.do(method, apiPath(tmpl, args[0]), nil, "")
 		})
@@ -184,7 +230,7 @@ func simplePath(g *globals, out io.Writer, use, method, tmpl string) *cobra.Comm
 // template's %s segments are filled from the positional args, and msg builds
 // the confirmation line from those same args.
 func mutate(g *globals, out io.Writer, use, short, method, tmpl string, n int, msg func(args []string) string) *cobra.Command {
-	return &cobra.Command{Use: use, Short: short, Args: exactArgs(n), RunE: func(cmd *cobra.Command, args []string) error {
+	return &cobra.Command{Use: use, Short: short, Args: cobra.ExactArgs(n), RunE: func(cmd *cobra.Command, args []string) error {
 		return action(g, out, func(c *Client) ([]byte, error) {
 			return c.do(method, apiPath(tmpl, args...), nil, "")
 		}, func(map[string]any) string { return msg(args) })
@@ -232,6 +278,16 @@ func normalizeServer(s string) string {
 		}
 	}
 	return strings.TrimRight(s, "/")
+}
+
+// serverURL normalizes a server that the user gave, and rejects one that has
+// no host, such as "https://".
+func serverURL(s string) (string, error) {
+	server := normalizeServer(s)
+	if u, err := url.Parse(server); err != nil || u.Hostname() == "" {
+		return "", usageError{fmt.Errorf("invalid server %q: give a host, such as slashdocs.example.com", s)}
+	}
+	return server, nil
 }
 
 // isLoopbackHost reports whether host is exactly a loopback address, so we only

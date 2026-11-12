@@ -18,6 +18,7 @@ import {
   CheckCircle2,
   Link2,
   MessageSquareText,
+  Pencil,
   Reply,
   RotateCcw,
   Send,
@@ -67,6 +68,13 @@ import { NotificationToggle } from "@/components/notification-toggle";
 import type { CommentDraft } from "@/lib/comment-drafts";
 import { useDoc } from "./doc-context";
 import { ReactionBar } from "./doc-comment-reactions";
+
+function submitOnModEnter(event: KeyboardEvent<HTMLTextAreaElement>) {
+  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+    event.preventDefault();
+    event.currentTarget.form?.requestSubmit();
+  }
+}
 
 function MentionTextarea({
   draft,
@@ -612,7 +620,7 @@ function CommentComposer({ draft }: { draft: CommentDraft }) {
       )}
       onSubmit={(event) => {
         event.preventDefault();
-        create.mutate();
+        if (text.body.trim() && !create.isPending) create.mutate();
       }}
     >
       {unanchoredComments.has(draft.id) && (
@@ -625,12 +633,7 @@ function CommentComposer({ draft }: { draft: CommentDraft }) {
         rows={3}
         draft={text}
         onChange={edit}
-        onKeyDown={(event) => {
-          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-            event.preventDefault();
-            if (text.body.trim() && !create.isPending) create.mutate();
-          }
-        }}
+        onKeyDown={submitOnModEnter}
         placeholder="Add a comment…"
       />
       <div className="flex justify-end gap-2">
@@ -992,6 +995,7 @@ function CommentCard({
   const cardRef = useRef<HTMLElement>(null);
   const active = activeComment === c.id;
   const [replying, setReplying] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [linkParams] = useSearchParams();
   const linkedComment = linkParams.get("comment");
   useEffect(() => {
@@ -1017,6 +1021,7 @@ function CommentCard({
     onSuccess: () => q.invalidateQueries({ queryKey: queryKeys.comments(docId) }),
     onError: (e) => toast.error(errorMessage(e, "Could not update comment")),
   });
+  const mine = samePrincipal(principal, c.author);
   const resolved = c.status === COMMENT_STATUS.resolved;
   const toggleActive = () => setActiveComment(active ? undefined : c.id);
   const replies = c.replies || [];
@@ -1090,16 +1095,13 @@ function CommentCard({
           {c.selected_text}
         </blockquote>
       )}
-      <CommentBody text={c.body} mentions={c.mentions} />
+      <EditableComment c={c} docId={docId} editing={editing} setEditing={setEditing} />
       <div className="mt-1">
         <ReactionBar c={c} docId={docId}>
           {replies.length === 0 && replyButton}
           <CopyCommentLink commentId={c.id} />
-          <DeleteCommentButton
-            c={c}
-            docId={docId}
-            canDelete={samePrincipal(principal, c.author)}
-          />
+          {mine && !editing && <EditCommentButton onEdit={() => setEditing(true)} />}
+          <DeleteCommentButton c={c} docId={docId} canDelete={mine} />
           <Button
             variant="ghost"
             size="icon"
@@ -1132,7 +1134,7 @@ function CommentCard({
               key={r.id}
               r={r}
               docId={docId}
-              canDelete={samePrincipal(principal, r.author)}
+              mine={samePrincipal(principal, r.author)}
             >
               {index === replies.length - 1 && replyButton}
             </ReplyItem>
@@ -1155,14 +1157,15 @@ function CommentCard({
 function ReplyItem({
   r,
   docId,
-  canDelete,
+  mine,
   children,
 }: {
   r: Comment;
   docId: string;
-  canDelete: boolean;
+  mine: boolean;
   children?: ReactNode;
 }) {
+  const [editing, setEditing] = useState(false);
   return (
     <div
       data-comment-id={r.id}
@@ -1178,15 +1181,120 @@ function ReplyItem({
           {formatTimestamp(r.created_at)}
         </div>
       ) : null}
-      <CommentBody text={r.body} mentions={r.mentions} />
+      <EditableComment c={r} docId={docId} editing={editing} setEditing={setEditing} />
       <div className="mt-1">
         <ReactionBar c={r} docId={docId}>
           {children}
           <CopyCommentLink commentId={r.id} />
-          <DeleteCommentButton c={r} docId={docId} canDelete={canDelete} />
+          {mine && !editing && <EditCommentButton onEdit={() => setEditing(true)} />}
+          <DeleteCommentButton c={r} docId={docId} canDelete={mine} />
         </ReactionBar>
       </div>
     </div>
+  );
+}
+
+function EditableComment({
+  c,
+  docId,
+  editing,
+  setEditing,
+}: {
+  c: Comment;
+  docId: string;
+  editing: boolean;
+  setEditing: (editing: boolean) => void;
+}) {
+  if (!editing)
+    return (
+      <div>
+        <CommentBody text={c.body} mentions={c.mentions} />
+        {c.edited && <div className="text-xs text-[var(--color-fg-muted)]">edited</div>}
+      </div>
+    );
+  return <CommentEditForm c={c} docId={docId} setEditing={setEditing} />;
+}
+
+function CommentEditForm({
+  c,
+  docId,
+  setEditing,
+}: {
+  c: Comment;
+  docId: string;
+  setEditing: (editing: boolean) => void;
+}) {
+  const q = useQueryClient();
+  const [draft, setDraft] = useState<MentionDraft>({
+    body: c.body,
+    mentions: c.mentions || [],
+  });
+  const save = useMutation({
+    mutationFn: () => api.patchComment(docId, c.id, draft),
+    onSuccess: async () => {
+      await q.invalidateQueries({ queryKey: queryKeys.comments(docId) });
+      setEditing(false);
+    },
+    onError: (e) => toast.error(errorMessage(e, "Could not update comment")),
+  });
+  return (
+    <form
+      onClick={(e) => e.stopPropagation()}
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (draft.body.trim() && !save.isPending) save.mutate();
+      }}
+    >
+      <MentionTextarea
+        autoFocus
+        rows={3}
+        draft={draft}
+        onChange={setDraft}
+        onKeyDown={submitOnModEnter}
+      />
+      <div className="mt-2 flex justify-end gap-2">
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          aria-label="Cancel edit"
+          title="Cancel edit"
+          disabled={save.isPending}
+          onClick={() => setEditing(false)}
+        >
+          <X className="h-4 w-4" />
+        </Button>
+        <Button
+          type="submit"
+          size="icon"
+          aria-label="Save comment"
+          title="Save comment (⌘Enter / Ctrl+Enter)"
+          aria-keyshortcuts="Meta+Enter Control+Enter"
+          disabled={!draft.body.trim() || save.isPending}
+        >
+          <Send className="h-4 w-4" />
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function EditCommentButton({ onEdit }: { onEdit: () => void }) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      className="shrink-0 text-[var(--color-fg-muted)]"
+      aria-label="Edit comment"
+      title="Edit comment"
+      onClick={(event) => {
+        event.stopPropagation();
+        onEdit();
+      }}
+    >
+      <Pencil className="h-4 w-4" />
+    </Button>
   );
 }
 
@@ -1221,12 +1329,7 @@ function ReplyComposer({
         draft={draft}
         onChange={setDraft}
         placeholder="Reply…"
-        onKeyDown={(event) => {
-          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-            event.preventDefault();
-            event.currentTarget.form?.requestSubmit();
-          }
-        }}
+        onKeyDown={submitOnModEnter}
         className="min-h-9 text-sm"
       />
       <Button
