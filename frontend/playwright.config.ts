@@ -16,6 +16,11 @@ export default defineConfig({
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
     video: "retain-on-failure",
+    // The Chromium of CI stops a frame that takes the focus with no key or
+    // click in it. This flag gives the same rule on each platform.
+    launchOptions: {
+      args: ["--enable-blink-features=BlockingFocusWithoutUserActivation"],
+    },
   },
   projects: [
     {

@@ -374,6 +374,10 @@ export function RenderFrame({
   // after the scroll, so that the flash is where they look.
   useEffect(() => {
     if (!ready) return;
+    // A load takes the focus out of the frame, and the browser can stop a
+    // frame that takes it back with no key or click in it. Thus the app
+    // gives the focus back to the frame before the frame puts the caret.
+    if (restoreCaret.current) ref.current?.focus({ preventScroll: true });
     if (restoreTop.current !== undefined)
       postToFrame({
         type: "slashdocs:scroll-to",
@@ -383,7 +387,7 @@ export function RenderFrame({
     restoreTop.current = undefined;
     restoreCaret.current = null;
     postToFrame({ type: "slashdocs:show-changes" });
-  }, [ready, postToFrame]);
+  }, [ready, postToFrame, ref]);
 
   // Undo and Redo of the reader's edits work in both modes, also with the
   // focus on the bar, as on Done after Edit mode. A field keeps its own.
