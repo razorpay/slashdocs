@@ -1,9 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { Bot, CloudOff, MapPin, MessageSquareText, X } from "lucide-react";
+import { CloudOff, MapPin, MessageSquareText, X } from "lucide-react";
 import { api, type Comment, type Principal } from "@/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,7 +21,7 @@ import { principalLabel, samePrincipal } from "@/lib/principals";
 import { queryKeys } from "@/lib/queryKeys";
 import { anchorLabel, canMovePin } from "@/lib/comment-pins";
 import { inDocumentOrder } from "@/lib/comment-order";
-import { agentPrompt, agentRequestBody, isAgentRequest } from "@/lib/agent-request";
+import { agentRequestBody, isAgentRequest } from "@/lib/agent-request";
 import {
   changed,
   copyWords,
@@ -95,44 +95,6 @@ function PlacementBadge({
       Not found in this version
     </Badge>
   ) : null;
-}
-
-// CopyForAgent copies the open threads, in document order, as one message
-// that the reader pastes to an agent.
-function CopyForAgent() {
-  const { docId, comments, commentPositions, leaving } = useDoc();
-  const doc = useQuery({
-    queryKey: queryKeys.document(docId),
-    queryFn: () => api.getDocument(docId),
-  });
-  const open = comments.filter(
-    (c) => c.status === COMMENT_STATUS.open && c.id !== leaving,
-  );
-  if (!open.length) return null;
-  const copy = () => {
-    const url = new URL(window.location.pathname, window.location.origin).toString();
-    const prompt = agentPrompt(
-      { id: docId, title: doc.data?.title, url },
-      inDocumentOrder(open, commentPositions),
-    );
-    void navigator.clipboard.writeText(prompt).then(
-      () => toast.success("Open threads copied. Paste them to your agent."),
-      () => toast.error("Could not copy the open threads."),
-    );
-  };
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon"
-      onClick={copy}
-      aria-label="Copy for an agent"
-      tooltip="Copy the open threads for an agent"
-      className="h-8 w-8 text-[var(--color-fg-muted)]"
-    >
-      <Bot className="h-4 w-4" />
-    </Button>
-  );
 }
 
 function CloseButton({ label, onClick }: { label: string; onClick: () => void }) {
@@ -569,7 +531,6 @@ export function CommentsList({
           )}
           <span className="ml-auto flex items-center gap-1">
             {notifications && <NotificationToggle documentId={docId} />}
-            <CopyForAgent />
             {signIn ? (
               <Button type="button" variant="outline" size="sm" onClick={onPlacePin}>
                 Sign in to comment

@@ -406,29 +406,3 @@ it("keeps the drafts in reach when the comments do not load", () => {
   // It cannot know yet whether the thread is gone.
   expect(drafts.queryByText("Thread deleted")).toBeNull();
 });
-
-it("copies the open threads for an agent, in the order of the document", async () => {
-  const user = userEvent.setup();
-  const writeText = vi.spyOn(navigator.clipboard, "writeText");
-  vi.spyOn(api, "getDocument").mockResolvedValue({
-    id: "doc-1",
-    title: "Retry spec",
-  } as never);
-  renderList({ commentPositions: new Map([["pin", { top: 10, bottom: 10 }]]) });
-  await vi.waitFor(() => expect(api.getDocument).toHaveBeenCalledWith("doc-1"));
-  await user.click(screen.getByRole("button", { name: "Copy for an agent" }));
-  const prompt = writeText.mock.calls[0][0];
-  expect(prompt).toMatch(
-    /^Review comments on the slashdocs document “Retry spec” \(doc-1\): http/,
-  );
-  // The pin comes first in the document, and the resolved thread stays out.
-  expect(prompt.indexOf("Thread pin on “Revenue chart”")).toBeLessThan(
-    prompt.indexOf("Thread open on “quoted text”"),
-  );
-  expect(prompt).not.toContain("resolved");
-});
-
-it("offers no copy for an agent without open threads", () => {
-  renderList({ comments: [thread("resolved", "resolved")] });
-  expect(screen.queryByRole("button", { name: "Copy for an agent" })).toBeNull();
-});
