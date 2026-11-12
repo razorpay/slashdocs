@@ -14,14 +14,16 @@ const NOT_SAVED: Partial<Record<SaveState, string>> = {
 };
 const OFFLINE = "Your edits are kept here. They save when you are online again.";
 const CHIP = "h-7 rounded-full px-2.5 text-xs font-medium";
+// The button and its label move with one spring, so that they stop together.
+const RESIZE = { layout: { type: "spring", duration: 0.2, bounce: 0 } } as const;
 
 // ModeButton starts Edit mode for a reader who can edit. Comment mode is the
 // default, and needs no button. In Edit mode the button is Done, which
 // leaves after the edits on screen went to the server. Edits that the
 // server cannot get now go on by themselves. Edit mode stays only when a
 // change cannot save. It is one button, so that the focus stays on it as
-// the mode changes: its width springs to the new label, and the labels
-// cross-fade. It shows once the document takes edits.
+// the mode changes: its width springs to the new label, and the new label
+// fades in. It shows once the document takes edits.
 export function ModeButton() {
   const { canEdit, editing, setEditing, frameReady } = useDoc();
   // Done waits while the edits on screen go to the server.
@@ -52,7 +54,7 @@ export function ModeButton() {
         <motion.button
           type="button"
           layout
-          transition={{ layout: { type: "spring", duration: 0.2, bounce: 0 } }}
+          transition={RESIZE}
           aria-label={editing ? "Done" : "Edit"}
           aria-keyshortcuts={editing ? "Escape" : "E"}
           aria-busy={leaving || undefined}
@@ -65,25 +67,26 @@ export function ModeButton() {
               : "size-8 text-[var(--color-fg)] hover:bg-[var(--color-highlight)] touch:size-10",
           )}
         >
-          <AnimatePresence initial={false} mode="popLayout">
-            <motion.span
-              key={editing ? "done" : "edit"}
-              layout="position"
-              {...swap}
-              className={cn("flex items-center gap-1.5", leaving && "busy-label")}
-            >
-              {editing ? (
-                <>
-                  Done
-                  <kbd className="hidden rounded-[4px] bg-white/20 px-1 font-sans text-[11px] leading-4 text-white/80 xl:pointer-fine:inline-block">
-                    Esc
-                  </kbd>
-                </>
-              ) : (
-                <TextCursor className="size-4" aria-hidden="true" />
-              )}
-            </motion.span>
-          </AnimatePresence>
+          {/* Each mode mounts a new label, so that two labels never show
+              together while the button changes its size. */}
+          <motion.span
+            key={editing ? "done" : "edit"}
+            layout="position"
+            transition={RESIZE}
+            {...swap}
+            className={cn("flex items-center gap-1.5", leaving && "busy-label")}
+          >
+            {editing ? (
+              <>
+                Done
+                <kbd className="hidden rounded-[4px] bg-white/20 px-1 font-sans text-[11px] leading-4 text-white/80 xl:pointer-fine:inline-block">
+                  Esc
+                </kbd>
+              </>
+            ) : (
+              <TextCursor className="size-4" aria-hidden="true" />
+            )}
+          </motion.span>
           {leaving ? (
             <LoaderCircle
               aria-hidden="true"

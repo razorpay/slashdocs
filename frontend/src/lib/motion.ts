@@ -84,9 +84,9 @@ export const rowOut = (reduced: boolean | null): MotionProps => ({
   transition: { layout: { duration: 0.18, ease: [0.23, 1, 0.32, 1] } },
 });
 
-// One label gives way to another in the same place.
+// A new label fades in where the old one was. The old one goes at once, so
+// that two labels never show together in a control that changes its size.
 export const swap: MotionProps = {
   initial: { opacity: 0 },
   animate: { opacity: 1, transition: { duration: 0.2, ease: "easeOut" } },
-  exit: { opacity: 0, transition: { duration: 0.12, ease: "easeIn" } },
 };
