@@ -1,7 +1,6 @@
 import { type Browser, type FrameLocator, type Page } from "@playwright/test";
 import {
   expect,
-  notSaved,
   openHistory,
   reviewerOn,
   startEditing,
@@ -136,9 +135,32 @@ test("two people type in one paragraph at once, and both texts stay", async ({
   // The history shows the burst of both people as one entry.
   await openHistory(page);
   const history = page.getByRole("dialog", { name: "History" });
-  await expect(history.getByText(/reviewer/).first()).toBeVisible();
-  await expect(history.getByRole("button", { name: /earlier edit/ })).toHaveCount(1);
+  await expect(
+    history.getByText(/^(admin and reviewer|reviewer and admin)$/),
+  ).toBeVisible();
+  await expect(history.getByRole("button", { name: /earlier edit/ })).toHaveCount(0);
   await shot(page, "03-history-one-entry");
+  await page.keyboard.press("Escape");
+
+  // An agent pushes in the middle of the sitting, and the reviewer types on.
+  // History shows one row for the sitting, as the newest, and one row for
+  // the push under it.
+  const pushed = (await latestSource(page, document.id)).replace(
+    "Section 6 holds the notes of the team.",
+    "Section 6 holds the notes of the agent.",
+  );
+  await slashdocs.pushVersion(document.id, pushed);
+  await expect(renderedDocument(reviewer).locator("#s6")).toContainText("agent");
+  await reviewer.keyboard.type(" and July", { delay: 60 });
+  await expect
+    .poll(() => latestSource(page, document.id))
+    .toContain("in June and July.");
+  await openHistory(page);
+  const rows = history.getByRole("button").filter({ hasText: "admin" });
+  await expect(rows).toHaveCount(3);
+  await expect(rows.nth(0)).toContainText(/admin and reviewer|reviewer and admin/);
+  await expect(rows.nth(0)).toContainText("Current");
+  await expect(rows.nth(1)).toContainText("agent");
   await reviewer.context().close();
 });
 
@@ -184,7 +206,7 @@ for (const [where, mine, theirs, merged] of [
     // The reviewer starts after the first save of the admin, and types
     // while the admin types on.
     const first = page.keyboard.type(FIRST, { delay: 25 });
-    await page.waitForResponse((r) => r.url().endsWith("/source-edits"));
+    await page.waitForResponse((r) => r.url().endsWith("/ops"));
     await Promise.all([first, reviewer.keyboard.type(LATER, { delay: 35 })]);
 
     for (const p of [page, reviewer]) {
@@ -197,6 +219,338 @@ for (const [where, mine, theirs, merged] of [
     await reviewer.context().close();
   });
 }
+
+test("two people start a sentence at one caret at the same moment, and each sentence stays whole", async ({
+  page,
+  browser,
+  slashdocs,
+}) => {
+  const title = uniqueName("Coedit caret");
+  const document = await slashdocs.createDocument(title, documentHTML(title));
+  await slashdocs.shareWithAnyone(document.id, "editor");
+  const path = `/app/d/${document.id}`;
+  await page.goto(path);
+  const reviewer = await reviewerOn(browser, path);
+  await expect(page.getByRole("button", { name: /^reviewer/ })).toBeVisible();
+  await startEditing(page);
+  await startEditing(reviewer);
+
+  // Each sentence starts with a space, so the first keys of the two people
+  // are equal characters at one place. Each key comes as a person types it.
+  const type = async (p: Page, text: string, pause: number) => {
+    for (const key of text) {
+      await p.keyboard.type(key);
+      await p.waitForTimeout(pause);
+    }
+  };
+  await placeCaret(page, "#shared", "starts here");
+  await placeCaret(reviewer, "#shared", "starts here");
+  await Promise.all([type(page, " Me too.", 110), type(reviewer, " We agree.", 90)]);
+
+  const either = (space: string) =>
+    new RegExp(
+      `^The plan starts here(${space}Me too\\.${space}We agree\\.|${space}We agree\\.${space}Me too\\.) and ends there\\.$`,
+    );
+  // A space that the browser shows at the end of a text is a no-break space
+  // in the frame for a moment. The source has only spaces.
+  for (const p of [page, reviewer])
+    await expect(renderedDocument(p).locator("#shared")).toHaveText(either("\\s"));
+  await expect
+    .poll(
+      async () =>
+        (await latestSource(page, document.id)).match(/<p id="shared">(.*?)<\/p>/)?.[1],
+    )
+    .toMatch(either(" "));
+  await reviewer.context().close();
+});
+
+// Both texts start with a space, so the first keys of the two people are
+// equal characters at one place. Only the server knows whose each space is,
+// and the next key of each person must go after the space of that person.
+for (const gap of [30, 60, 90, 120])
+  test(`two people type in turn at one caret, ${gap} ms apart, and the text of each stays whole`, async ({
+    page,
+    browser,
+    slashdocs,
+  }) => {
+    const title = uniqueName("Coedit turns");
+    const document = await slashdocs.createDocument(title, documentHTML(title));
+    await slashdocs.shareWithAnyone(document.id, "editor");
+    const path = `/app/d/${document.id}`;
+    await page.goto(path);
+    const reviewer = await reviewerOn(browser, path);
+    await expect(page.getByRole("button", { name: /^reviewer/ })).toBeVisible();
+    await startEditing(page);
+    await startEditing(reviewer);
+
+    await placeCaret(page, "#shared", "starts here");
+    await placeCaret(reviewer, "#shared", "starts here");
+    // A key of the admin, at once a key of the reviewer, then a pause.
+    const [mine, theirs] = [" AAAA one", " RRRR two"];
+    for (let i = 0; i < mine.length; i++) {
+      await page.keyboard.type(mine[i]);
+      await reviewer.keyboard.type(theirs[i]);
+      await page.waitForTimeout(gap);
+    }
+
+    const either = (space: string) =>
+      new RegExp(
+        `^The plan starts here(${space}AAAA one${space}RRRR two|${space}RRRR two${space}AAAA one)${space}and ends there\\.$`,
+      );
+    for (const p of [page, reviewer])
+      await expect(renderedDocument(p).locator("#shared")).toHaveText(either("\\s"));
+    await expect
+      .poll(
+        async () =>
+          (await latestSource(page, document.id)).match(
+            /<p id="shared">(.*?)<\/p>/,
+          )?.[1],
+      )
+      .toMatch(either(" "));
+    await reviewer.context().close();
+  });
+
+// The admin removes the text of a paragraph while the reviewer types in it.
+// The keys that the admin did not see stay, whole and in their order, at
+// the place of the removed text, and the next keys of the reviewer go after
+// them.
+test("a person who types in a paragraph that another person empties keeps their text in order", async ({
+  page,
+  browser,
+  slashdocs,
+}) => {
+  const title = uniqueName("Coedit delete");
+  const document = await slashdocs.createDocument(title, documentHTML(title));
+  await slashdocs.shareWithAnyone(document.id, "editor");
+  const path = `/app/d/${document.id}`;
+  await page.goto(path);
+  const reviewer = await reviewerOn(browser, path);
+  await expect(page.getByRole("button", { name: /^reviewer/ })).toBeVisible();
+  await startEditing(page);
+  await startEditing(reviewer);
+
+  const typed = " REVIEWER-IN-DOOMED-PARA";
+  await placeCaret(reviewer, "#s2", "Section 2 holds");
+  const typing = reviewer.keyboard.type(typed, { delay: 60 });
+  await page.waitForTimeout(300);
+  await renderedDocument(page)
+    .locator("#s2")
+    .evaluate((element) => {
+      const d = element.ownerDocument;
+      d.body.focus();
+      d.getSelection()!.selectAllChildren(element);
+    });
+  await page.keyboard.press("Backspace");
+  await typing;
+
+  // The admin removed the keys that they saw: the rest of the text stays.
+  const text = async (p: Page) =>
+    (await renderedDocument(p).locator("#s2").textContent())?.trim();
+  await expect.poll(() => text(reviewer)).not.toContain("Section 2");
+  await expect.poll(() => text(page)).toBe(await text(reviewer));
+  const rest = (await text(reviewer)) ?? "";
+  expect(rest).not.toBe("");
+  expect(typed.endsWith(rest), rest).toBe(true);
+  await expect.poll(() => latestSource(page, document.id)).toContain(rest);
+  await reviewer.context().close();
+});
+
+// paragraphsHTML gives a document with a paragraph for each text, with the
+// ids b, c, d and on.
+function paragraphsHTML(title: string, ...texts: string[]) {
+  const body = texts.map((text, i) => `<p id="${"bcdefg"[i]}">${text}</p>`).join("\n");
+  return `<!doctype html>
+<html>
+  <head><meta charset="utf-8"><title>${title}</title></head>
+  <body>
+<h1>${title}</h1>
+${body}
+  </body>
+</html>`;
+}
+
+// tagsWhole tells whether each tag of html ends before the next one starts.
+const tagsWhole = (html: string) => !/<[a-zA-Z/!?][^>]*</.test(html);
+
+// selectNode selects all of an element, with its tags.
+const selectNode = (page: Page, selector: string) =>
+  renderedDocument(page)
+    .locator(selector)
+    .evaluate((element) => {
+      const d = element.ownerDocument;
+      const range = d.createRange();
+      range.selectNode(element);
+      d.body.focus();
+      d.getSelection()!.removeAllRanges();
+      d.getSelection()!.addRange(range);
+    });
+
+// Each removal has the texts that the document then holds. The keys of the
+// person stay in their paragraph, which the removal keeps for them, and
+// their last key "Z" is saved there too.
+const removals: [string, (reviewer: Page) => Promise<void>, string[]][] = [
+  [
+    "removes the paragraph",
+    async (reviewer) => {
+      await selectNode(reviewer, "#c");
+      await reviewer.keyboard.press("Delete");
+    },
+    ["Z"],
+  ],
+  [
+    "removes all the text and types",
+    async (reviewer) => {
+      await placeCaret(reviewer, "#d", "After");
+      await reviewer.keyboard.press("ControlOrMeta+a");
+      await reviewer.keyboard.press("Delete");
+      await reviewer.keyboard.type("fresh", { delay: 30 });
+    },
+    ["fresh", "Z"],
+  ],
+];
+for (const [name, remove, held] of removals) {
+  test(`a person who types while another person ${name} keeps the later keys as text, out of the tags`, async ({
+    page,
+    browser,
+    slashdocs,
+  }) => {
+    const title = uniqueName("Coedit remove");
+    const html = paragraphsHTML(title, "Before.", "Third paragraph here.", "After.");
+    const document = await slashdocs.createDocument(title, html);
+    await slashdocs.shareWithAnyone(document.id, "editor");
+    const path = `/app/d/${document.id}`;
+    await page.goto(path);
+    const reviewer = await reviewerOn(browser, path);
+    await expect(page.getByRole("button", { name: /^reviewer/ })).toBeVisible();
+    await startEditing(page);
+    await startEditing(reviewer);
+
+    await placeCaret(page, "#c", "Third");
+    const typing = page.keyboard.type(" mid", { delay: 100 });
+    await page.waitForTimeout(150);
+    await remove(reviewer);
+    await typing;
+    await page.keyboard.type("Z");
+
+    // The keys stay in the paragraph of the person, and the two pages show
+    // the same text. The page that removed all the text can keep the
+    // <br> of its empty block after the text that it typed, which shows no
+    // line: empty lines do not count.
+    const text = async (p: Page) =>
+      (await renderedDocument(p).locator("body").innerText()).replace(/\n+/g, "\n");
+    for (const part of held) {
+      await expect.poll(() => text(reviewer)).toContain(part);
+      await expect.poll(() => latestSource(page, document.id)).toContain(part);
+    }
+    await expect.poll(() => text(page)).toBe(await text(reviewer));
+    const source = await latestSource(page, document.id);
+    expect(tagsWhole(source), source).toBe(true);
+    for (const [, id] of source.matchAll(/ id="([^"]*)"/g))
+      expect(["b", "c", "d"], source).toContain(id);
+    await reviewer.context().close();
+  });
+}
+
+// bareText tells whether the body holds text outside its elements.
+const bareText = (page: Page) =>
+  renderedDocument(page)
+    .locator("body")
+    .evaluate((body) =>
+      Array.from(body.childNodes).some(
+        (node) => node.nodeType === Node.TEXT_NODE && node.textContent!.trim(),
+      ),
+    );
+
+test("a person who types while another person deletes all the text keeps the text in its paragraph", async ({
+  page,
+  browser,
+  slashdocs,
+}) => {
+  const title = uniqueName("Coedit select all");
+  const html = paragraphsHTML(title, "Before.", "Third paragraph here.", "After.");
+  const document = await slashdocs.createDocument(title, html);
+  await slashdocs.shareWithAnyone(document.id, "editor");
+  const path = `/app/d/${document.id}`;
+  await page.goto(path);
+  const reviewer = await reviewerOn(browser, path);
+  await expect(page.getByRole("button", { name: /^reviewer/ })).toBeVisible();
+  await startEditing(page);
+  await startEditing(reviewer);
+
+  await placeCaret(page, "#c", "here");
+  const typing = page.keyboard.type(" typing on", { delay: 100 });
+  await page.waitForTimeout(150);
+  await placeCaret(reviewer, "#d", "After");
+  await reviewer.keyboard.press("ControlOrMeta+a");
+  await reviewer.keyboard.press("Delete");
+  await typing;
+
+  // The select-all leaves the heading empty. The text of the person stays
+  // in their paragraph, in both frames, and after a load.
+  for (const p of [page, reviewer]) {
+    await expect(renderedDocument(p).locator("p#c")).toHaveText(/ping on$/);
+    await expect(renderedDocument(p).locator("#b, #d")).toHaveCount(0);
+    expect(await bareText(p)).toBe(false);
+  }
+  await expect
+    .poll(() => latestSource(page, document.id))
+    .toMatch(/<h1><\/h1>\s*<p id="c">[^<]*ping on<\/p>/);
+  await page.reload();
+  await expect(renderedDocument(page).locator("p#c")).toHaveText(/ping on$/);
+  expect(await bareText(page)).toBe(false);
+  await reviewer.context().close();
+});
+
+test("a person whose paragraph another person removes types on after their own text", async ({
+  page,
+  browser,
+  slashdocs,
+}) => {
+  const title = uniqueName("Coedit replace");
+  const html = paragraphsHTML(
+    title,
+    "Top line.",
+    "Middle line.",
+    "Lower line.",
+    "Bottom line.",
+  );
+  const document = await slashdocs.createDocument(title, html);
+  await slashdocs.shareWithAnyone(document.id, "editor");
+  const path = `/app/d/${document.id}`;
+  await page.goto(path);
+  const reviewer = await reviewerOn(browser, path);
+  await expect(page.getByRole("button", { name: /^reviewer/ })).toBeVisible();
+  await startEditing(page);
+  await startEditing(reviewer);
+
+  await placeCaret(page, "#c", "Middle");
+  const typing = page.keyboard.type(" typing", { delay: 100 });
+  await page.waitForTimeout(250);
+  // The reviewer types over the first three paragraphs.
+  await renderedDocument(reviewer)
+    .locator("#b")
+    .evaluate((element) => {
+      const d = element.ownerDocument;
+      const last = d.querySelector("#d")!.firstChild as Text;
+      d.body.focus();
+      d.getSelection()!.setBaseAndExtent(element.firstChild!, 0, last, last.length);
+    });
+  await reviewer.keyboard.press("Backspace");
+  await reviewer.keyboard.type("R");
+  await typing;
+  await page.keyboard.type("Z");
+
+  // The merge keeps the rest of the typing in the first paragraph, and the
+  // last key goes after it, not into the next paragraph.
+  for (const p of [page, reviewer]) {
+    await expect(renderedDocument(p).locator("#b")).toHaveText(/^R.*Z$/);
+    await expect(renderedDocument(p).locator("#e")).toHaveText("Bottom line.");
+  }
+  await expect
+    .poll(() => latestSource(page, document.id))
+    .toMatch(/<p id="b">R[^<]*Z<\/p>/);
+  await reviewer.context().close();
+});
 
 test("a reader sees what an editor types, live and in place", async ({
   page,
@@ -237,7 +591,7 @@ test("a reader sees what an editor types, live and in place", async ({
   await reader.context().close();
 });
 
-test("a small push applies in place, and a large push shows the banner", async ({
+test("a push of a few words goes in, and one that rewrites what the reader reads waits behind the banner", async ({
   page,
   browser,
   slashdocs,
@@ -263,8 +617,8 @@ test("a small push applies in place, and a large push shows the banner", async (
   await expect(banner).toHaveCount(0);
   await shot(reader, "05-small-push-in-place");
 
-  // An agent writes most sections again: the reader stays on their version
-  // and the banner offers the new one.
+  // An agent writes again the sections that the reader looks at: the reader
+  // stays on what they read, and the banner offers the new text.
   const large = small.replaceAll(
     "holds the notes of the team.",
     "now lists every open decision, its owner, and the date that the team set for it.",
@@ -286,6 +640,82 @@ test("a small push applies in place, and a large push shows the banner", async (
   );
   await expect(banner).toHaveCount(0);
   await shot(reader, "07-after-show-latest");
+  await reader.context().close();
+});
+
+// The place of an element on the screen of the reader.
+const topOf = async (page: Page, selector: string) =>
+  Math.round((await renderedDocument(page).locator(selector).boundingBox())!.y);
+
+test("a push that changes nothing in the reader's view goes in with no banner, far below or above", async ({
+  page,
+  browser,
+  slashdocs,
+}) => {
+  const title = uniqueName("Coedit view");
+  const html = documentHTML(title, 40);
+  const document = await slashdocs.createDocument(title, html);
+  await slashdocs.shareWithAnyone(document.id, "viewer");
+  const path = `/app/d/${document.id}`;
+  await page.goto(path);
+  const reader = await reviewerOn(browser, path);
+  await expect(renderedDocument(reader).locator("#shared")).toBeVisible();
+  await mark(reader);
+  const banner = reader.getByRole("button", { name: "Show the latest" });
+
+  // The reader is at the top. An agent writes the last twenty sections
+  // again: a large change, but none of it is in the view.
+  let next = html;
+  for (let i = 21; i <= 40; i++)
+    next = next.replace(
+      `Section ${i} holds the notes of the team.`,
+      `Section ${i} now lists every open decision, its owner, and the date.`,
+    );
+  await slashdocs.pushVersion(document.id, next);
+  await expect(renderedDocument(reader).locator("#s40")).toHaveText(
+    "Section 40 now lists every open decision, its owner, and the date.",
+  );
+  await expect(banner).toHaveCount(0);
+  expect(await kept(reader)).toBe("yes");
+
+  // The reader reads section 30. An agent adds three paragraphs at the top.
+  // The page is longer above the reader, and their text stays where it is.
+  await renderedDocument(reader)
+    .locator("#s30")
+    .evaluate((el) => el.scrollIntoView({ block: "center" }));
+  const before = await topOf(reader, "#s30");
+  await shot(reader, "11-reader-at-section-30");
+  next = next.replace(
+    '<p id="shared">',
+    '<p id="n1">A new first paragraph.</p>\n    <p id="n2">A new second paragraph.</p>\n    <p id="n3">A new third paragraph.</p>\n    <p id="shared">',
+  );
+  await slashdocs.pushVersion(document.id, next);
+  await expect(renderedDocument(reader).locator("#n3")).toHaveText(
+    "A new third paragraph.",
+  );
+  await expect(banner).toHaveCount(0);
+  expect(Math.abs((await topOf(reader, "#s30")) - before)).toBeLessThanOrEqual(2);
+  expect(await kept(reader)).toBe("yes");
+  await shot(reader, "12-new-text-above-reader-stays-still");
+
+  // An agent adds four paragraphs in the middle of what the reader reads.
+  // They would move the rest of the view, so the change waits. The banner
+  // pushes the document down by its height.
+  next = next.replace(
+    '<p id="s30">',
+    [4, 5, 6, 7]
+      .map((n) => `<p id="n${n}">Paragraph ${n} that an agent adds right here.</p>`)
+      .join("\n    ") + '\n    <p id="s30">',
+  );
+  await slashdocs.pushVersion(document.id, next);
+  await expect(banner).toBeVisible();
+  await expect(renderedDocument(reader).locator("#n4")).toHaveCount(0);
+  const room = (await reader.getByRole("status").filter({ has: banner }).boundingBox())!
+    .height;
+  expect(Math.abs((await topOf(reader, "#s30")) - before - room)).toBeLessThanOrEqual(
+    2,
+  );
+  await shot(reader, "13-change-in-view-waits");
   await reader.context().close();
 });
 
@@ -403,7 +833,9 @@ test("an editor who types offline saves on return, and gets the text of the othe
   await page.context().setOffline(true);
   await placeCaret(page, "#shared", "starts here");
   await page.keyboard.type(" without a network", { delay: 30 });
-  await expect(notSaved(page)).toBeVisible({ timeout: 15_000 });
+  // After some seconds the bar says why the text does not save.
+  const offline = page.getByText("Offline", { exact: true });
+  await expect(offline).toBeVisible({ timeout: 15_000 });
   await placeCaret(reviewer, "#shared", "ends there");
   await reviewer.keyboard.type(" after the last review", { delay: 30 });
   await expect
@@ -420,7 +852,7 @@ test("an editor who types offline saves on return, and gets the text of the othe
   await expect
     .poll(() => latestSource(reviewer, document.id))
     .toContain(`<p id="shared">${merged}</p>`);
-  await expect(notSaved(page)).toBeHidden();
+  await expect(offline).toBeHidden();
   await reviewer.context().close();
 });
 
@@ -527,5 +959,97 @@ test("Undo takes back the editor's own typing after another person typed elsewhe
   await expect
     .poll(() => latestSource(page, document.id))
     .toBe(html.replace("Section 3 holds", "Section 3 holds all"));
+  await reviewer.context().close();
+});
+
+// An agent writes again the sections that a reader of documentHTML reads.
+const rewritten = (html: string) =>
+  html.replaceAll(
+    "holds the notes of the team.",
+    "now lists every open decision, its owner, and the date that the team set for it.",
+  );
+
+test("a reader sees the typing of another person live while a push waits behind the banner", async ({
+  page,
+  browser,
+  slashdocs,
+}) => {
+  const title = uniqueName("Coedit typing behind banner");
+  const html = documentHTML(title, 12);
+  const document = await slashdocs.createDocument(title, html);
+  await slashdocs.shareWithAnyone(document.id, "viewer");
+  const path = `/app/d/${document.id}`;
+  await page.goto(path);
+  const reader = await reviewerOn(browser, path);
+  const text = renderedDocument(reader);
+  await expect(text.locator("#shared")).toBeVisible();
+  await mark(reader);
+  const banner = reader.getByRole("button", { name: "Show the latest" });
+
+  await slashdocs.pushVersion(document.id, rewritten(html));
+  await expect(banner).toBeVisible();
+
+  // The admin types above the sections that wait. The reader sees the
+  // typing at once, and the push still waits.
+  await startEditing(page);
+  await expect(renderedDocument(page).locator("#s1")).toHaveText(/now lists/);
+  await placeCaret(page, "#shared", "starts here");
+  await page.keyboard.type(", today", { delay: 40 });
+  await expect(text.locator("#shared")).toHaveText(
+    "The plan starts here, today and ends there.",
+  );
+  await expect(banner).toBeVisible();
+  await expect(text.locator("#s1")).toHaveText(
+    "Section 1 holds the notes of the team.",
+  );
+  expect(await kept(reader)).toBe("yes");
+  await shot(reader, "14-typing-behind-banner");
+
+  // The reader asks for the latest: the push goes in around the typing.
+  await banner.click();
+  await expect(text.locator("#s1")).toHaveText(
+    "Section 1 now lists every open decision, its owner, and the date that the team set for it.",
+  );
+  await expect(text.locator("#shared")).toHaveText(
+    "The plan starts here, today and ends there.",
+  );
+  await expect(banner).toHaveCount(0);
+  expect(await kept(reader)).toBe("yes");
+  await reader.context().close();
+});
+
+test("a word that one person types and takes out again goes out of the frames of an editor and a reader, with no load", async ({
+  page,
+  browser,
+  slashdocs,
+}) => {
+  const { document, html, reviewer } = await together(
+    page,
+    browser,
+    slashdocs,
+    "editor",
+  );
+  // The admin reads in a second tab, and the reviewer edits.
+  const reader = await page.context().newPage();
+  await reader.goto(`/app/d/${document.id}`);
+  await startEditing(reviewer);
+  await startEditing(page);
+  for (const p of [reader, reviewer]) await mark(p);
+
+  await placeCaret(page, "#shared", "starts here");
+  await page.keyboard.type(" brave", { delay: 40 });
+  for (const p of [reader, reviewer])
+    await expect(renderedDocument(p).locator("#shared")).toHaveText(
+      "The plan starts here brave and ends there.",
+    );
+  for (let i = 0; i < " brave".length; i++) await page.keyboard.press("Backspace");
+
+  const loaded = "The plan starts here and ends there.";
+  await expect.poll(() => latestSource(page, document.id)).toBe(html);
+  for (const p of [page, reader, reviewer]) {
+    await expect(renderedDocument(p).locator("#shared")).toHaveText(loaded);
+    if (p !== page) expect(await kept(p)).toBe("yes");
+  }
+  await reader.close();
   await reviewer.context().close();
 });

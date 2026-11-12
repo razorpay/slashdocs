@@ -58,13 +58,12 @@ async function typeOver(page: Page, selector: string, target: string, text: stri
   await page.keyboard.type(text);
 }
 
-const SOURCE_EDITS = "**/v1/documents/*/source-edits";
+const OPS = "**/v1/documents/*/ops";
 
 function nextSave(page: Page) {
   return page.waitForResponse(
     (response) =>
-      response.request().method() === "POST" &&
-      response.url().endsWith("/source-edits"),
+      response.request().method() === "POST" && response.url().endsWith("/ops"),
   );
 }
 
@@ -94,7 +93,7 @@ test("a save that the server refuses keeps the text until the editor chooses", a
 }) => {
   const document = await slashdocs.createDocument(uniqueName("Refused save"), HTML);
   await openEditable(page, document.id);
-  await page.route(SOURCE_EDITS, (route) =>
+  await page.route(OPS, (route) =>
     route.fulfill({
       status: 403,
       json: { error: { code: "forbidden", message: "forbidden" } },
@@ -134,7 +133,7 @@ test("text that a refused save stopped is offered again after Back and a new vis
   await page.goto("/app/documents");
   await page.getByRole("link", { name: title }).first().click();
   await startEditing(page);
-  await page.route(SOURCE_EDITS, (route) =>
+  await page.route(OPS, (route) =>
     route.fulfill({
       status: 403,
       json: { error: { code: "forbidden", message: "forbidden" } },
@@ -146,6 +145,7 @@ test("text that a refused save stopped is offered again after Back and a new vis
   expect((await refused).status()).toBe(403);
   await expect(notSaved(page)).toBeVisible();
   await typeOver(page, "#tail", "giving up.", "giving up. KEEP MY LOCAL DRAFT");
+  // The frame sends its draft to the page a moment after the last key.
   await page.waitForTimeout(300);
 
   await page.goBack();
@@ -158,7 +158,7 @@ test("text that a refused save stopped is offered again after Back and a new vis
   await page.getByRole("button", { name: "Discard my change" }).click();
   await expect(earlier).toBeHidden();
 
-  await page.unroute(SOURCE_EDITS);
+  await page.unroute(OPS);
   await page.reload();
   await startEditing(page);
   await expect(renderedDocument(page).locator("#tail")).toHaveText(
@@ -168,27 +168,57 @@ test("text that a refused save stopped is offered again after Back and a new vis
   expect(await latestSource(page, document.id)).toBe(HTML);
 });
 
-test("a save that fails twice counts the attempts and offers a copy", async ({
+test("a save that fails for a short time says nothing, and goes again until it saves", async ({
   page,
   slashdocs,
 }) => {
   const document = await slashdocs.createDocument(uniqueName("Failed save"), HTML);
   await openEditable(page, document.id);
-  await page.route(SOURCE_EDITS, (route) =>
-    route.fulfill({ status: 500, json: { error: { code: "internal", message: "x" } } }),
-  );
+  let attempts = 0;
+  await page.route(OPS, (route) => {
+    attempts++;
+    return route.fulfill({
+      status: 500,
+      json: { error: { code: "internal", message: "x" } },
+    });
+  });
 
   await typeOver(page, "#tail", "giving up.", "giving up. Twice failed.");
-  await expect(
-    // The count goes on while the server fails.
-    page.getByText(/^Your edits are not saved yet\. Trying again \(attempt [2-9]\)…$/),
-  ).toBeVisible({ timeout: 15_000 });
-  await expect(notSaved(page)).toBeVisible();
-  await copied(page, "giving up. Twice failed.");
+  // The page sends the text again by itself.
+  await expect.poll(() => attempts, { timeout: 15_000 }).toBeGreaterThan(1);
+  expect(await latestSource(page, document.id)).toBe(HTML);
+  await page.unroute(OPS);
+  await expect
+    .poll(() => latestSource(page, document.id), { timeout: 10_000 })
+    .toBe(HTML.replace("giving up.", "giving up. Twice failed."));
+  // A failure that passes soon is nothing that the editor must act on.
+  await expect(notSaved(page)).toBeHidden();
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+});
 
-  await page.unroute(SOURCE_EDITS);
-  await expect(notSaved(page)).toBeHidden({ timeout: 10_000 });
-  expect(await latestSource(page, document.id)).toContain("giving up. Twice failed.");
+test("a reload right after the last key offers no unsaved text, because the document has it", async ({
+  page,
+  slashdocs,
+}) => {
+  const document = await slashdocs.createDocument(uniqueName("Reload"), HTML);
+  await openEditable(page, document.id);
+  await typeOver(page, "#tail", "twice", "four times");
+  // The reload comes as soon as the server has the last key.
+  await expect
+    .poll(() => latestSource(page, document.id), { intervals: [20] })
+    .toBe(HTML.replace("twice", "four times"));
+  await page.reload();
+  await startEditing(page);
+
+  await expect(renderedDocument(page).locator("#tail")).toHaveText(
+    "Clients retry four times before giving up.",
+  );
+  // The toast of a draft would come with Edit mode.
+  await page.waitForTimeout(1000);
+  await expect(
+    page.getByText("You have text in this document that was not saved."),
+  ).toBeHidden();
+  await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
 });
 
 test("script text that cannot be checked offers to try again", async ({

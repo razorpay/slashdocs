@@ -46,7 +46,7 @@ test("the offer of a large change made elsewhere waits for the reader", async ({
   const step = renderedDocument(page).locator("#step");
   await expect(step).toBeVisible();
 
-  const long = "Write the notes again, with each decision of the team. ".repeat(6);
+  const long = "Write the notes again, with each decision of the team. ".repeat(30);
   await slashdocs.pushVersion(document.id, documentHTML(title, long));
   // The offer waits at the top of the document, and does not go by itself.
   const offer = page.getByRole("button", { name: "Show the latest", exact: true });

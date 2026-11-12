@@ -116,6 +116,7 @@ export async function continueWithDex(page: Page, email = "admin@example.com") {
 type DocumentRecord = {
   id: string;
   current_version_id: string;
+  seq: number;
   title?: string;
   parent_folder_id?: string;
 };
@@ -195,17 +196,20 @@ export class SlashdocsAPI {
     );
   }
 
+  // pushVersion pushes html as an agent does. With no base, the agent read
+  // the live document just now, which can be an open version at a seq.
   async pushVersion(
     id: string,
     html: string,
     baseVersionID?: string,
   ): Promise<VersionRecord> {
-    const base = baseVersionID ?? (await this.getDocument(id)).current_version_id;
+    const live = baseVersionID ? undefined : await this.getDocument(id);
     return responseJSON<VersionRecord>(
       await this.request.post(`/v1/documents/${id}/versions`, {
         headers: this.writeHeaders(),
         multipart: {
-          base_version_id: base,
+          base_version_id: baseVersionID ?? live!.current_version_id,
+          ...(live && { base_seq: String(live.seq) }),
           file: {
             name: "browser-e2e-v2.html",
             mimeType: "text/html",

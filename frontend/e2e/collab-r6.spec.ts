@@ -1,5 +1,12 @@
 import { type FrameLocator, type Locator, type Page } from "@playwright/test";
-import { expect, reviewerOn, startEditing, test, uniqueName } from "./fixtures";
+import {
+  APP_ORIGIN,
+  expect,
+  reviewerOn,
+  startEditing,
+  test,
+  uniqueName,
+} from "./fixtures";
 
 // Two people edit one document: the admin and a reviewer (dev/dex-config.yaml).
 
@@ -56,7 +63,7 @@ async function coversText(a: Locator, b: Locator) {
   );
 }
 
-test("an editor sees who edits a block, beside it, until they leave the text", async ({
+test("an editor sees the caret, the name and the selection of another editor, until they leave the text", async ({
   page,
   browser,
   slashdocs,
@@ -75,16 +82,151 @@ test("an editor sees who edits a block, beside it, until they leave the text", a
   await reviewer.keyboard.press("End");
   await reviewer.keyboard.type(" Two");
 
-  const mark = bridge(page).getByText(/^reviewer.* is editing$/);
-  await expect(mark).toBeVisible();
+  // A thin caret is where the reviewer types, at the end of the text, with
+  // a flag that shows their name only.
+  const mark = bridge(page).locator(".slashdocs-edit[data-caret]");
+  const [caret, flag, wash] = ["u", "em", "b"].map((tag) => mark.locator(tag));
+  await expect(flag).toBeVisible();
+  await expect(flag).toHaveText("reviewer");
+  await expect(bridge(page).getByText(/is editing$/)).toBeHidden();
   const paragraph = renderedDocument(page).locator("#p12");
-  expect(await coversText(mark, paragraph)).toBe(false);
-  const [label, text] = [await mark.boundingBox(), await paragraph.boundingBox()];
-  expect(Math.abs(label!.y - text!.y)).toBeLessThan(40);
+  await expect(paragraph).toContainText("lazy dog. Two");
+  const textEnd = async () =>
+    (await paragraph.boundingBox())!.x +
+    (await paragraph.evaluate((el) => {
+      const range = el.ownerDocument.createRange();
+      range.selectNodeContents(el);
+      return range.getBoundingClientRect().right - el.getBoundingClientRect().left;
+    }));
+  await expect
+    .poll(async () => Math.abs((await caret.boundingBox())!.x - (await textEnd())))
+    .toBeLessThanOrEqual(3);
+  const [at, name, text] = [
+    (await caret.boundingBox())!,
+    (await flag.boundingBox())!,
+    (await paragraph.boundingBox())!,
+  ];
+  expect(at.width).toBeLessThanOrEqual(2);
+  expect(overlap(at, text)).toBe(true);
+  // The flag starts at the caret, on top of it, and covers no text.
+  expect(Math.abs(name.x - at.x)).toBeLessThanOrEqual(2);
+  expect(Math.abs(name.y + name.height - at.y)).toBeLessThanOrEqual(2);
+  expect(await coversText(flag, paragraph)).toBe(false);
+  expect(await coversText(flag, renderedDocument(page).locator("#p11"))).toBe(false);
+  await expect(wash).toHaveCount(0);
 
-  // The mark goes when the reviewer leaves the text.
+  // A light wash is on the word that the reviewer selects, from the end
+  // of the text back to the caret.
+  for (let i = 0; i < "Two".length; i++)
+    await reviewer.keyboard.press("Shift+ArrowLeft");
+  await expect(wash).toHaveCount(1);
+  const selected = (await wash.boundingBox())!;
+  expect(selected.width).toBeGreaterThan(10);
+  expect(Math.abs(selected.x + selected.width - (await textEnd()))).toBeLessThanOrEqual(
+    3,
+  );
+  expect(Math.abs(selected.y - at.y)).toBeLessThanOrEqual(3);
+  await expect
+    .poll(async () => Math.abs((await caret.boundingBox())!.x - selected.x))
+    .toBeLessThanOrEqual(3);
+
+  // The wash goes with the selection, and the mark goes when the reviewer
+  // leaves the text.
+  await reviewer.keyboard.press("ArrowRight");
+  await expect(wash).toHaveCount(0);
+  await expect(flag).toBeVisible();
   await reviewer.keyboard.press("Escape");
-  await expect(mark).toBeHidden();
+  await expect(mark).toHaveCount(0);
+  await expect(bridge(page).locator(".slashdocs-edit")).toHaveCount(0);
+  await reviewer.context().close();
+});
+
+test("Jump to a person keeps Edit mode, shows their caret in the middle of the view, and typing goes on", async ({
+  page,
+  browser,
+  slashdocs,
+}) => {
+  const title = uniqueName("Jump");
+  const document = await slashdocs.createDocument(title, documentHTML(title));
+  await slashdocs.shareWithAnyone(document.id, "editor");
+  const path = `/app/d/${document.id}`;
+  // The view is short, so the document is much longer than it.
+  await page.setViewportSize({ width: 1280, height: 400 });
+  await page.goto(path);
+  const reviewer = await reviewerOn(browser, path);
+  const avatar = page.getByRole("button", { name: /^reviewer/ });
+  await expect(avatar).toBeVisible();
+
+  // The admin edits at the top, and the reviewer far below.
+  await startEditing(page);
+  await renderedDocument(page).locator("#p1").click();
+  await page.keyboard.type(" One");
+  await startEditing(reviewer);
+  const theirs = renderedDocument(reviewer).locator("#p20");
+  await theirs.evaluate((el) => el.scrollIntoView());
+  await theirs.click();
+  await reviewer.keyboard.press("End");
+  await reviewer.keyboard.type(" Two");
+  const there = renderedDocument(page).locator("#p20");
+  await expect(there).toContainText("lazy dog. Two");
+  // It is below what the admin sees.
+  expect((await there.boundingBox())!.y).toBeGreaterThan(page.viewportSize()!.height);
+
+  await avatar.click();
+  await page.getByRole("menuitem", { name: "Jump to reviewer" }).click();
+  const caret = bridge(page).locator(".slashdocs-edit[data-caret] u");
+  const frame = (await page
+    .locator('iframe[title="Rendered document"]')
+    .boundingBox())!;
+  await expect
+    .poll(async () => {
+      const at = await caret.boundingBox();
+      return at ? Math.abs(at.y + at.height / 2 - (frame.y + frame.height / 2)) : null;
+    })
+    .toBeLessThan(frame.height / 8);
+
+  // The admin is still in Edit mode, and types beside the reviewer.
+  await expect(page.getByRole("button", { name: "Done", exact: true })).toBeVisible();
+  await expect(renderedDocument(page).locator("body")).toHaveAttribute(
+    "contenteditable",
+    "true",
+  );
+  await renderedDocument(page).locator("#p19").click();
+  await page.keyboard.press("End");
+  await page.keyboard.type(" Three");
+  for (const p of [page, reviewer]) {
+    await expect(renderedDocument(p).locator("#p19")).toContainText("lazy dog. Three");
+    await expect(renderedDocument(p).locator("#p1")).toContainText("lazy dog. One");
+  }
+  await reviewer.context().close();
+});
+
+test("a restore tells the other people who have the document open who did it", async ({
+  page,
+  browser,
+  slashdocs,
+}) => {
+  const title = uniqueName("Restore told");
+  const document = await slashdocs.createDocument(title, documentHTML(title));
+  await slashdocs.shareWithAnyone(document.id, "viewer");
+  await slashdocs.pushVersion(document.id, documentHTML(title, " again"));
+  const path = `/app/d/${document.id}`;
+  await page.goto(path);
+  const reviewer = await reviewerOn(browser, path);
+  const changed = renderedDocument(reviewer).locator("#p12");
+  await expect(changed).toContainText("Paragraph 12 again.");
+
+  const restored = await page.request.post(
+    `/v1/documents/${document.id}/versions/${document.current_version_id}/restore`,
+    { headers: { Origin: APP_ORIGIN } },
+  );
+  expect(restored.ok()).toBe(true);
+  await expect(
+    reviewer.getByText("admin restored an earlier state of this document."),
+  ).toBeVisible();
+  // The person who restored gets no such message.
+  await expect(page.getByText(/restored an earlier state/)).toHaveCount(0);
+  await expect(changed).toContainText("Paragraph 12.");
   await reviewer.context().close();
 });
 
