@@ -126,12 +126,12 @@ export type Grant = {
   principal?: Principal;
   role: string;
 };
-export type ApprovalStatus = "approved" | "changes_requested" | "pending";
-export type ApprovalDecision = "approved" | "changes_requested";
+export type ApprovalStatus = "approved" | "rejected" | "pending";
+export type ApprovalDecision = "approved" | "rejected";
 export type ApprovalSummary = {
   total: number;
   approved: number;
-  changes_requested: number;
+  rejected: number;
   pending: number;
 };
 export type ApprovalRequest = {
@@ -144,13 +144,12 @@ export type Approval = {
   id: string;
   document_id: string;
   version_id: string;
-  version_number?: number;
-  version_sha256?: string;
+  version_number: number;
+  version_sha256: string;
   approver: Principal;
   decision: ApprovalDecision;
   note?: string;
   decided_at?: string;
-  carried_from_version_id?: string;
 };
 export type ApprovalListItem = {
   id?: string;
@@ -158,13 +157,15 @@ export type ApprovalListItem = {
   decision: ApprovalDecision | null;
   note?: string;
   decided_at?: string;
-  carried_from_version_id?: string;
-  carried_from_version_number?: number;
-  // The approver created a version of the document, so they cannot decide.
-  created_version?: boolean;
+  // The version the approver decided on: older than the listed version when
+  // both have the same content.
+  version_id?: string;
+  version_number?: number;
   // Comment threads this approver started on the document.
   comments_open?: number;
   comments_total?: number;
+  // A pending approver's most recent decision, made on other content.
+  earlier?: { decision: ApprovalDecision; decided_at: string };
 };
 export type ApprovalsList = {
   version_id: string;
@@ -398,23 +399,37 @@ export const api = {
   },
   listVersions: (doc: string) =>
     request<{ items: Version[] }>(`/v1/documents/${doc}/versions`),
-  createVersion: (
-    doc: string,
-    base: string,
-    summary: string,
-    file: File,
-    keepApprovals = false,
-  ) => {
+  createVersion: (doc: string, base: string, summary: string, file: File) => {
     const fd = new FormData();
     fd.set("base_version_id", base);
     fd.set("change_summary", summary);
-    if (keepApprovals) fd.set("keep_approvals", "true");
     fd.set("file", file);
     return request<Version>(`/v1/documents/${doc}/versions`, {
       method: "POST",
       body: fd,
     });
   },
+  getVersionHTML: (doc: string, version: string) =>
+    request<string>(`/v1/documents/${doc}/versions/${version}/html`),
+  // Applies exact find-and-replace edits on the server. Without a base
+  // version they apply to whatever version is current.
+  editDocument: (
+    doc: string,
+    input: {
+      edits: { old_string: string; new_string: string }[];
+      base_version_id?: string;
+      change_summary?: string;
+    },
+  ) =>
+    request<Version & { base_version_id: string; edits_applied: number }>(
+      `/v1/documents/${doc}/edits`,
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+  // Saves the content of an earlier version as the newest one.
+  restoreVersion: (doc: string, version: string) =>
+    request<Version>(`/v1/documents/${doc}/versions/${version}/restore`, {
+      method: "POST",
+    }),
   renderToken: (doc: string, version: string) =>
     request<{ token: string; url: string }>(
       `/v1/documents/${doc}/versions/${version}/render-token`,

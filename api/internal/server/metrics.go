@@ -198,9 +198,6 @@ func incGrant(event, role, principalType, actor string) {
 func incApproval(event, decision, actor string) {
 	approvalEventsTotal.WithLabelValues(event, decision, actor).Inc()
 }
-func addApprovals(event, decision, actor string, n int) {
-	approvalEventsTotal.WithLabelValues(event, decision, actor).Add(float64(n))
-}
 func incServiceAccount(event, actor string) {
 	serviceAccountEventsTotal.WithLabelValues(event, actor).Inc()
 }

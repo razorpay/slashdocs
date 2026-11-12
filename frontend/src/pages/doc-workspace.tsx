@@ -32,6 +32,7 @@ import {
   type CommentViewport,
   type DocContextValue,
   type PendingSelection,
+  type SaveState,
 } from "./doc-context";
 import { RenderFrame } from "./doc-render-frame";
 import { Comments } from "./doc-comments";
@@ -77,6 +78,8 @@ const NO_STREAM = {
   subscribeCursors: () => () => {},
 };
 
+const noop = () => {};
+
 export type DocBarControls = {
   commentsOpen: boolean;
   onToggleComments: () => void;
@@ -97,6 +100,9 @@ export function DocWorkspace({
   stream = NO_STREAM,
   followedCursor,
   onDocumentClick,
+  editable = false,
+  stayOnVersion = noop,
+  showLatest = noop,
   bar,
   banner,
 }: {
@@ -115,6 +121,10 @@ export function DocWorkspace({
   };
   followedCursor?: DocContextValue["followedCursor"];
   onDocumentClick?: () => void;
+  // The reader may edit the version on screen.
+  editable?: boolean;
+  stayOnVersion?: (version?: string) => void;
+  showLatest?: () => void;
   bar: (controls: DocBarControls) => ReactNode;
   // Shown under the bar, or floating over the document in full screen.
   banner?: (floating: boolean) => ReactNode;
@@ -149,6 +159,10 @@ export function DocWorkspace({
   const printDocument = useCallback(() => {
     documentPrinterRef.current?.();
   }, []);
+  const [saveState, setSaveState] = useState<SaveState>("idle");
+  useEffect(() => {
+    setSaveState("idle");
+  }, [docId]);
   const documentScrollerRef = useRef<((top: number) => void) | null>(null);
   const registerDocumentScroller = useCallback(
     (scroller: ((top: number) => void) | null) => {
@@ -274,11 +288,6 @@ export function DocWorkspace({
     const id = window.requestAnimationFrame(restore);
     return () => window.cancelAnimationFrame(id);
   }, [mobilePanelOpen]);
-
-  useEffect(() => {
-    setCommentPositions(new Map());
-    setCommentViewport({ scrollTop: 0, scrollHeight: 1 });
-  }, [version]);
 
   const [drafts, updateDrafts] = useCommentDrafts(docId);
   // Drafts left empty on an earlier visit hold nothing worth keeping.
@@ -490,6 +499,11 @@ export function DocWorkspace({
       moveCursor: stream.moveCursor,
       subscribeCursors: stream.subscribeCursors,
       followedCursor,
+      editable,
+      saveState,
+      setSaveState,
+      stayOnVersion,
+      showLatest,
     }),
     [
       docId,
@@ -523,6 +537,10 @@ export function DocWorkspace({
       stream.moveCursor,
       stream.subscribeCursors,
       followedCursor,
+      editable,
+      saveState,
+      stayOnVersion,
+      showLatest,
     ],
   );
 

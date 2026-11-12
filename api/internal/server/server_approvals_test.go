@@ -32,13 +32,13 @@ func mustAssignApprover(t *testing.T, e *testEnv, docID, email string, as auth.P
 	return jsonField(t, rr.Body.Bytes(), "id")
 }
 
-// submitApproval posts a decision as the given principal. Requesting changes
-// requires a note, so a default one is supplied; use submitApprovalWithNote to
-// control it (including sending none).
+// submitApproval posts a decision as the given principal. A rejection needs a
+// note, so a default one is supplied; use submitApprovalWithNote to control it
+// (including sending none).
 func submitApproval(t *testing.T, e *testEnv, docID, versionID, decision string, as auth.Principal) *httptest.ResponseRecorder {
 	t.Helper()
 	note := ""
-	if decision == "changes_requested" {
+	if decision == "rejected" {
 		note = "please tighten the rollout section"
 	}
 	return submitApprovalWithNote(t, e, docID, versionID, decision, note, as)
@@ -54,20 +54,17 @@ func submitApprovalWithNote(t *testing.T, e *testEnv, docID, versionID, decision
 		})
 }
 
-// pushApprovalTestVersion uploads a new version and returns its id.
-func pushApprovalTestVersion(t *testing.T, e *testEnv, docID, baseVersionID string, keepApprovals bool, as auth.Principal) string {
+// pushApprovalTestVersion uploads a new version with changed content and
+// returns its id.
+func pushApprovalTestVersion(t *testing.T, e *testEnv, docID, baseVersionID string, as auth.Principal) string {
 	t.Helper()
-	return pushApprovalTestVersionHTML(t, e, docID, baseVersionID, "<html><body>updated</body></html>", keepApprovals, as)
+	return pushApprovalTestVersionHTML(t, e, docID, baseVersionID, "<html><body>updated</body></html>", as)
 }
 
 // pushApprovalTestVersionHTML uploads a new version with the given content.
-func pushApprovalTestVersionHTML(t *testing.T, e *testEnv, docID, baseVersionID, html string, keepApprovals bool, as auth.Principal) string {
+func pushApprovalTestVersionHTML(t *testing.T, e *testEnv, docID, baseVersionID, html string, as auth.Principal) string {
 	t.Helper()
-	fields := map[string]string{"base_version_id": baseVersionID, "change_summary": "update"}
-	if keepApprovals {
-		fields["keep_approvals"] = "true"
-	}
-	body, contentType := multipartBody(t, fields, "file", "doc.html", html)
+	body, contentType := multipartBody(t, map[string]string{"base_version_id": baseVersionID, "change_summary": "update"}, "file", "doc.html", html)
 	rr := doRaw(t, e.h, http.MethodPost, "/v1/documents/"+docID+"/versions", body, map[string]string{
 		"Content-Type":     contentType,
 		"X-Test-Principal": principalHeader(as),
@@ -84,14 +81,17 @@ type approvalItem struct {
 		Email string `json:"email"`
 		Name  string `json:"name"`
 	} `json:"approver"`
-	Decision                 *string `json:"decision"`
-	Note                     string  `json:"note"`
-	DecidedAt                string  `json:"decided_at"`
-	CarriedFromVersionID     string  `json:"carried_from_version_id"`
-	CarriedFromVersionNumber int     `json:"carried_from_version_number"`
-	CreatedVersion           bool    `json:"created_version"`
-	CommentsOpen             int     `json:"comments_open"`
-	CommentsTotal            int     `json:"comments_total"`
+	Decision      *string `json:"decision"`
+	Note          string  `json:"note"`
+	DecidedAt     string  `json:"decided_at"`
+	VersionID     string  `json:"version_id"`
+	VersionNumber int     `json:"version_number"`
+	CommentsOpen  int     `json:"comments_open"`
+	CommentsTotal int     `json:"comments_total"`
+	Earlier       *struct {
+		Decision  string `json:"decision"`
+		DecidedAt string `json:"decided_at"`
+	} `json:"earlier"`
 }
 
 type approvalsListResponse struct {
@@ -100,10 +100,10 @@ type approvalsListResponse struct {
 	VersionSHA256 string `json:"version_sha256"`
 	Status        string `json:"status"`
 	Summary       struct {
-		Total            int `json:"total"`
-		Approved         int `json:"approved"`
-		ChangesRequested int `json:"changes_requested"`
-		Pending          int `json:"pending"`
+		Total    int `json:"total"`
+		Approved int `json:"approved"`
+		Rejected int `json:"rejected"`
+		Pending  int `json:"pending"`
 	} `json:"summary"`
 	Items []approvalItem `json:"items"`
 }
@@ -128,10 +128,10 @@ func listApprovals(t *testing.T, e *testEnv, docID, version string, as auth.Prin
 type documentApprovalFields struct {
 	ApprovalStatus  string `json:"approval_status"`
 	ApprovalSummary *struct {
-		Total            int `json:"total"`
-		Approved         int `json:"approved"`
-		ChangesRequested int `json:"changes_requested"`
-		Pending          int `json:"pending"`
+		Total    int `json:"total"`
+		Approved int `json:"approved"`
+		Rejected int `json:"rejected"`
+		Pending  int `json:"pending"`
 	} `json:"approval_summary"`
 }
 
@@ -306,8 +306,8 @@ func TestApproveAsAssignedApprover(t *testing.T) {
 	if out.DecidedAt == "" {
 		t.Fatalf("expected decided_at to be set: %s", rr.Body.String())
 	}
-	if out.CarriedFromVersionID != "" {
-		t.Fatalf("fresh decision must not carry provenance: %s", rr.Body.String())
+	if out.VersionID != e.ver.ID || out.VersionNumber != e.ver.Number {
+		t.Fatalf("decision must name the version it was made on: %s", rr.Body.String())
 	}
 
 	after := scrapeMetric(t, "slashdocs_approval_events_total", map[string]string{"event": "decided", "decision": "approved"})
@@ -318,20 +318,18 @@ func TestApproveAsAssignedApprover(t *testing.T) {
 
 func TestServiceAccountApprover(t *testing.T) {
 	e := newTestEnv(t)
-	// Give the fixture service account access, then assign it as an approver.
-	rr := do(t, e.h, http.MethodPost, "/v1/documents/"+e.doc.ID+"/grants", fmt.Sprintf(`{
-	  "principal": { "type": "service_account", "id": %q },
-	  "role": "viewer"
-	}`, e.sa.ID), map[string]string{
-		"Content-Type":     "application/json",
-		"X-Test-Principal": principalHeader(fixtureOwner),
-	})
+	// The fixture service account belongs to the owner, who wrote version 1, so
+	// the approver is a bot of someone else.
+	sa, err := e.store.CreateServiceAccount(context.Background(), fixtureStranger, "reviewer-bot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	grantServiceAccountViewer(t, e, sa.ID)
+
+	rr := assignApprover(t, e, e.doc.ID, fmt.Sprintf(`{"principal": {"type": "service_account", "id": %q}}`, sa.ID), fixtureOwner)
 	assertStatus(t, rr, http.StatusCreated)
 
-	rr = assignApprover(t, e, e.doc.ID, fmt.Sprintf(`{"principal": {"type": "service_account", "id": %q}}`, e.sa.ID), fixtureOwner)
-	assertStatus(t, rr, http.StatusCreated)
-
-	saPrincipal := auth.Principal{Type: auth.PrincipalServiceAccount, ID: e.sa.ID}
+	saPrincipal := auth.Principal{Type: auth.PrincipalServiceAccount, ID: sa.ID}
 	rr = submitApproval(t, e, e.doc.ID, e.ver.ID, "approved", saPrincipal)
 	assertStatus(t, rr, http.StatusCreated)
 
@@ -341,16 +339,28 @@ func TestServiceAccountApprover(t *testing.T) {
 	}
 }
 
-func TestRequestChanges(t *testing.T) {
+func grantServiceAccountViewer(t *testing.T, e *testEnv, saID string) {
+	t.Helper()
+	rr := do(t, e.h, http.MethodPost, "/v1/documents/"+e.doc.ID+"/grants", fmt.Sprintf(`{
+	  "principal": { "type": "service_account", "id": %q },
+	  "role": "viewer"
+	}`, saID), map[string]string{
+		"Content-Type":     "application/json",
+		"X-Test-Principal": principalHeader(fixtureOwner),
+	})
+	assertStatus(t, rr, http.StatusCreated)
+}
+
+func TestReject(t *testing.T) {
 	e := newTestEnv(t)
 	mustAssignApprover(t, e, e.doc.ID, "viewer@example.com", fixtureOwner)
 
-	rr := submitApproval(t, e, e.doc.ID, e.ver.ID, "changes_requested", fixtureViewer)
+	rr := submitApproval(t, e, e.doc.ID, e.ver.ID, "rejected", fixtureViewer)
 	assertStatus(t, rr, http.StatusCreated)
 
 	doc := getDocumentApprovalFields(t, e, e.doc.ID, fixtureOwner)
-	if doc.ApprovalStatus != "changes_requested" {
-		t.Fatalf("approval_status = %q, want changes_requested", doc.ApprovalStatus)
+	if doc.ApprovalStatus != "rejected" {
+		t.Fatalf("approval_status = %q, want rejected", doc.ApprovalStatus)
 	}
 }
 
@@ -359,18 +369,18 @@ func TestChangeDecisionUpserts(t *testing.T) {
 	mustAssignApprover(t, e, e.doc.ID, "viewer@example.com", fixtureOwner)
 	assertStatus(t, submitApproval(t, e, e.doc.ID, e.ver.ID, "approved", fixtureViewer), http.StatusCreated)
 
-	rr := submitApproval(t, e, e.doc.ID, e.ver.ID, "changes_requested", fixtureViewer)
+	rr := submitApproval(t, e, e.doc.ID, e.ver.ID, "rejected", fixtureViewer)
 	assertStatus(t, rr, http.StatusOK)
 
 	list := listApprovals(t, e, e.doc.ID, "", fixtureViewer)
 	if len(list.Items) != 1 {
 		t.Fatalf("items = %+v, want exactly one", list.Items)
 	}
-	if list.Items[0].Decision == nil || *list.Items[0].Decision != "changes_requested" {
-		t.Fatalf("decision = %v, want changes_requested", list.Items[0].Decision)
+	if list.Items[0].Decision == nil || *list.Items[0].Decision != "rejected" {
+		t.Fatalf("decision = %v, want rejected", list.Items[0].Decision)
 	}
-	if list.Status != "changes_requested" {
-		t.Fatalf("status = %q, want changes_requested", list.Status)
+	if list.Status != "rejected" {
+		t.Fatalf("status = %q, want rejected", list.Status)
 	}
 }
 
@@ -389,7 +399,7 @@ func TestApproveInvalidDecision(t *testing.T) {
 	rr := submitApproval(t, e, e.doc.ID, e.ver.ID, "maybe", fixtureViewer)
 	assertStatus(t, rr, http.StatusBadRequest)
 	assertJSON(t, rr.Body.Bytes(), `{
-	  "error": { "code": "bad_request", "message": "decision must be \"approved\" or \"changes_requested\"" }
+	  "error": { "code": "bad_request", "message": "decision must be \"approved\" or \"rejected\"" }
 	}`)
 }
 
@@ -428,7 +438,7 @@ func TestListApprovalsMergesPendingApprovers(t *testing.T) {
 	if list.Status != "pending" {
 		t.Fatalf("status = %q, want pending", list.Status)
 	}
-	if list.Summary.Total != 2 || list.Summary.Approved != 1 || list.Summary.Pending != 1 || list.Summary.ChangesRequested != 0 {
+	if list.Summary.Total != 2 || list.Summary.Approved != 1 || list.Summary.Pending != 1 || list.Summary.Rejected != 0 {
 		t.Fatalf("summary = %+v", list.Summary)
 	}
 	if len(list.Items) != 2 {
@@ -449,17 +459,24 @@ func TestListApprovalsMergesPendingApprovers(t *testing.T) {
 func TestListApprovalsHistoricalVersion(t *testing.T) {
 	e := newTestEnv(t)
 	mustAssignApprover(t, e, e.doc.ID, "viewer@example.com", fixtureOwner)
-	assertStatus(t, submitApproval(t, e, e.doc.ID, e.ver.ID, "changes_requested", fixtureViewer), http.StatusCreated)
-	pushApprovalTestVersion(t, e, e.doc.ID, e.ver.ID, false, fixtureEditor)
+	assertStatus(t, submitApproval(t, e, e.doc.ID, e.ver.ID, "rejected", fixtureViewer), http.StatusCreated)
+	pushApprovalTestVersion(t, e, e.doc.ID, e.ver.ID, fixtureEditor)
 
 	historical := listApprovals(t, e, e.doc.ID, e.ver.ID, fixtureViewer)
-	if historical.VersionID != e.ver.ID || historical.Status != "changes_requested" {
-		t.Fatalf("historical = %+v, want changes_requested on %s", historical, e.ver.ID)
+	if historical.VersionID != e.ver.ID || historical.Status != "rejected" {
+		t.Fatalf("historical = %+v, want rejected on %s", historical, e.ver.ID)
 	}
 
 	current := listApprovals(t, e, e.doc.ID, "", fixtureViewer)
 	if current.Status != "pending" {
 		t.Fatalf("current status = %q, want pending", current.Status)
+	}
+	// The pending approver still shows what they decided before the change.
+	if got := current.Items[0]; got.Decision != nil || got.Earlier == nil || got.Earlier.Decision != "rejected" || got.Earlier.DecidedAt == "" {
+		t.Fatalf("current item = %+v, want pending with an earlier rejection", got)
+	}
+	if historical.Items[0].Earlier != nil {
+		t.Fatalf("historical item = %+v, want no earlier decision beside the decision", historical.Items[0])
 	}
 }
 
@@ -500,58 +517,15 @@ func TestGetDocumentOmitsApprovalFieldsWithoutApprovers(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Carry-forward on new versions
+// Decisions follow content
 // ---------------------------------------------------------------------------
 
-func TestNewVersionCarriesApprovals(t *testing.T) {
+func TestChangedContentResetsApprovals(t *testing.T) {
 	e := newTestEnv(t)
 	mustAssignApprover(t, e, e.doc.ID, "viewer@example.com", fixtureOwner)
 	assertStatus(t, submitApproval(t, e, e.doc.ID, e.ver.ID, "approved", fixtureViewer), http.StatusCreated)
 
-	newVersion := pushApprovalTestVersion(t, e, e.doc.ID, e.ver.ID, true, fixtureEditor)
-
-	list := listApprovals(t, e, e.doc.ID, "", fixtureViewer)
-	if list.VersionID != newVersion {
-		t.Fatalf("version_id = %q, want %q", list.VersionID, newVersion)
-	}
-	if list.Status != "approved" {
-		t.Fatalf("status = %q, want approved (carried)", list.Status)
-	}
-	if len(list.Items) != 1 || list.Items[0].Decision == nil || *list.Items[0].Decision != "approved" {
-		t.Fatalf("items = %+v, want carried approval", list.Items)
-	}
-	if list.Items[0].CarriedFromVersionID != e.ver.ID {
-		t.Fatalf("carried_from_version_id = %q, want %q", list.Items[0].CarriedFromVersionID, e.ver.ID)
-	}
-
-	doc := getDocumentApprovalFields(t, e, e.doc.ID, fixtureViewer)
-	if doc.ApprovalStatus != "approved" {
-		t.Fatalf("approval_status = %q, want approved", doc.ApprovalStatus)
-	}
-}
-
-func TestNewVersionDoesNotCarryChangesRequested(t *testing.T) {
-	e := newTestEnv(t)
-	mustAssignApprover(t, e, e.doc.ID, "viewer@example.com", fixtureOwner)
-	assertStatus(t, submitApproval(t, e, e.doc.ID, e.ver.ID, "changes_requested", fixtureViewer), http.StatusCreated)
-
-	pushApprovalTestVersion(t, e, e.doc.ID, e.ver.ID, true, fixtureEditor)
-
-	list := listApprovals(t, e, e.doc.ID, "", fixtureViewer)
-	if list.Status != "pending" {
-		t.Fatalf("status = %q, want pending", list.Status)
-	}
-	if len(list.Items) != 1 || list.Items[0].Decision != nil {
-		t.Fatalf("items = %+v, want single pending approver", list.Items)
-	}
-}
-
-func TestNewVersionResetsApprovalsByDefault(t *testing.T) {
-	e := newTestEnv(t)
-	mustAssignApprover(t, e, e.doc.ID, "viewer@example.com", fixtureOwner)
-	assertStatus(t, submitApproval(t, e, e.doc.ID, e.ver.ID, "approved", fixtureViewer), http.StatusCreated)
-
-	pushApprovalTestVersion(t, e, e.doc.ID, e.ver.ID, false, fixtureEditor)
+	pushApprovalTestVersion(t, e, e.doc.ID, e.ver.ID, fixtureEditor)
 
 	list := listApprovals(t, e, e.doc.ID, "", fixtureViewer)
 	if list.Status != "pending" {
@@ -562,34 +536,66 @@ func TestNewVersionResetsApprovalsByDefault(t *testing.T) {
 	}
 }
 
-func TestCarriedFromPropagatesOrigin(t *testing.T) {
+func TestIdenticalContentKeepsDecisions(t *testing.T) {
 	e := newTestEnv(t)
 	mustAssignApprover(t, e, e.doc.ID, "viewer@example.com", fixtureOwner)
-	assertStatus(t, submitApproval(t, e, e.doc.ID, e.ver.ID, "approved", fixtureViewer), http.StatusCreated)
+	mustAssignApprover(t, e, e.doc.ID, "commenter@example.com", fixtureOwner)
+	const html = "<html><body>final</body></html>"
+	second := pushApprovalTestVersionHTML(t, e, e.doc.ID, e.ver.ID, html, fixtureEditor)
+	assertStatus(t, submitApproval(t, e, e.doc.ID, second, "approved", fixtureViewer), http.StatusCreated)
+	assertStatus(t, submitApproval(t, e, e.doc.ID, second, "rejected", fixtureCommenter), http.StatusCreated)
 
-	second := pushApprovalTestVersion(t, e, e.doc.ID, e.ver.ID, true, fixtureEditor)
-	pushApprovalTestVersion(t, e, e.doc.ID, second, true, fixtureEditor)
+	// Nothing changed, so there is nothing new to decide.
+	third := pushApprovalTestVersionHTML(t, e, e.doc.ID, second, html, fixtureEditor)
 
 	list := listApprovals(t, e, e.doc.ID, "", fixtureViewer)
-	if len(list.Items) != 1 || list.Items[0].CarriedFromVersionID != e.ver.ID {
-		t.Fatalf("items = %+v, want carried_from %s (the original explicit approval)", list.Items, e.ver.ID)
+	if list.VersionID != third || list.Status != "rejected" || list.Summary.Approved != 1 || list.Summary.Rejected != 1 {
+		t.Fatalf("list = %+v, want one approval and one rejection on %s", list, third)
+	}
+	for _, item := range list.Items {
+		if item.VersionID != second || item.VersionNumber != 2 {
+			t.Fatalf("item = %+v, want the decision to name version 2 (%s)", item, second)
+		}
 	}
 }
 
-func TestExplicitReapprovalClearsProvenance(t *testing.T) {
+func TestRevertedContentRestoresApprovals(t *testing.T) {
 	e := newTestEnv(t)
 	mustAssignApprover(t, e, e.doc.ID, "viewer@example.com", fixtureOwner)
 	assertStatus(t, submitApproval(t, e, e.doc.ID, e.ver.ID, "approved", fixtureViewer), http.StatusCreated)
-	newVersion := pushApprovalTestVersion(t, e, e.doc.ID, e.ver.ID, true, fixtureEditor)
+	html, err := e.store.GetVersionHTML(context.Background(), e.ver.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	// Re-approving the carried decision makes it an explicit review of the
-	// current version.
-	rr := submitApproval(t, e, e.doc.ID, newVersion, "approved", fixtureViewer)
-	assertStatus(t, rr, http.StatusOK)
+	second := pushApprovalTestVersion(t, e, e.doc.ID, e.ver.ID, fixtureEditor)
+	third := pushApprovalTestVersionHTML(t, e, e.doc.ID, second, string(html), fixtureEditor)
 
 	list := listApprovals(t, e, e.doc.ID, "", fixtureViewer)
-	if len(list.Items) != 1 || list.Items[0].CarriedFromVersionID != "" {
-		t.Fatalf("items = %+v, want cleared provenance after explicit re-approval", list.Items)
+	if list.VersionID != third || list.Status != "approved" {
+		t.Fatalf("list = %+v, want the version 1 approval back on %s", list, third)
+	}
+	if item := list.Items[0]; item.VersionID != e.ver.ID || item.VersionNumber != 1 {
+		t.Fatalf("item = %+v, want the decision to name version 1", item)
+	}
+}
+
+func TestDecidingAgainOnTheSameContentReplacesTheDecision(t *testing.T) {
+	e := newTestEnv(t)
+	mustAssignApprover(t, e, e.doc.ID, "viewer@example.com", fixtureOwner)
+	html, err := e.store.GetVersionHTML(context.Background(), e.ver.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertStatus(t, submitApproval(t, e, e.doc.ID, e.ver.ID, "approved", fixtureViewer), http.StatusCreated)
+	second := pushApprovalTestVersionHTML(t, e, e.doc.ID, e.ver.ID, string(html), fixtureEditor)
+
+	// The approver reviews the same content again from version 2.
+	assertStatus(t, submitApprovalWithNote(t, e, e.doc.ID, second, "approved", "still good", fixtureViewer), http.StatusOK)
+
+	list := listApprovals(t, e, e.doc.ID, "", fixtureViewer)
+	if len(list.Items) != 1 || list.Items[0].VersionID != second || list.Items[0].Note != "still good" {
+		t.Fatalf("items = %+v, want one decision on %s", list.Items, second)
 	}
 }
 
@@ -654,15 +660,15 @@ func TestRevokeUnknownDecision(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // A reviewer with no comments of their own must still say what to change.
-func TestRequestChangesRequiresNote(t *testing.T) {
+func TestRejectionRequiresNote(t *testing.T) {
 	e := newTestEnv(t)
 	mustAssignApprover(t, e, e.doc.ID, "viewer@example.com", fixtureOwner)
 
-	rr := submitApprovalWithNote(t, e, e.doc.ID, e.ver.ID, "changes_requested", "", fixtureViewer)
+	rr := submitApprovalWithNote(t, e, e.doc.ID, e.ver.ID, "rejected", "", fixtureViewer)
 	assertStatus(t, rr, http.StatusBadRequest)
 
 	// Whitespace is not an explanation either.
-	rr = submitApprovalWithNote(t, e, e.doc.ID, e.ver.ID, "changes_requested", "   ", fixtureViewer)
+	rr = submitApprovalWithNote(t, e, e.doc.ID, e.ver.ID, "rejected", "   ", fixtureViewer)
 	assertStatus(t, rr, http.StatusBadRequest)
 
 	// The rejected decision must not have been recorded.
@@ -673,12 +679,12 @@ func TestRequestChangesRequiresNote(t *testing.T) {
 }
 
 // The commenter fixture already has one open comment thread on the document
-// (e.cmt), so a request for changes needs no summary from them.
-func TestRequestChangesNeedsNoSummaryWhenTheReviewerHasOpenComments(t *testing.T) {
+// (e.cmt), so a rejection needs no reason from them.
+func TestRejectionNeedsNoReasonWhenTheReviewerHasOpenComments(t *testing.T) {
 	e := newTestEnv(t)
 	mustAssignApprover(t, e, e.doc.ID, "commenter@example.com", fixtureOwner)
 
-	rr := submitApprovalWithNote(t, e, e.doc.ID, e.ver.ID, "changes_requested", "", fixtureCommenter)
+	rr := submitApprovalWithNote(t, e, e.doc.ID, e.ver.ID, "rejected", "", fixtureCommenter)
 	assertStatus(t, rr, http.StatusCreated)
 
 	list := listApprovals(t, e, e.doc.ID, "", fixtureOwner)
@@ -687,7 +693,7 @@ func TestRequestChangesNeedsNoSummaryWhenTheReviewerHasOpenComments(t *testing.T
 	}
 }
 
-func TestRequestChangesNeedsASummaryOnceTheReviewersCommentsAreResolved(t *testing.T) {
+func TestRejectionNeedsAReasonOnceTheReviewersCommentsAreResolved(t *testing.T) {
 	e := newTestEnv(t)
 	mustAssignApprover(t, e, e.doc.ID, "commenter@example.com", fixtureOwner)
 	rr := do(t, e.h, http.MethodPatch, "/v1/documents/"+e.doc.ID+"/comments/"+e.cmt.ID, `{"status":"resolved"}`, map[string]string{
@@ -696,13 +702,13 @@ func TestRequestChangesNeedsASummaryOnceTheReviewersCommentsAreResolved(t *testi
 	})
 	assertStatus(t, rr, http.StatusOK)
 
-	rr = submitApprovalWithNote(t, e, e.doc.ID, e.ver.ID, "changes_requested", "", fixtureCommenter)
+	rr = submitApprovalWithNote(t, e, e.doc.ID, e.ver.ID, "rejected", "", fixtureCommenter)
 	assertStatus(t, rr, http.StatusBadRequest)
-	if !strings.Contains(rr.Body.String(), "Add a comment on the document or a summary") {
-		t.Fatalf("body = %s, want the add-a-comment-or-summary message", rr.Body.String())
+	if !strings.Contains(rr.Body.String(), "Add a comment on the document or a reason") {
+		t.Fatalf("body = %s, want the add-a-comment-or-reason message", rr.Body.String())
 	}
-	// A summary is still enough on its own.
-	rr = submitApprovalWithNote(t, e, e.doc.ID, e.ver.ID, "changes_requested", "still needs a rollback plan", fixtureCommenter)
+	// A reason is still enough on its own.
+	rr = submitApprovalWithNote(t, e, e.doc.ID, e.ver.ID, "rejected", "still needs a rollback plan", fixtureCommenter)
 	assertStatus(t, rr, http.StatusCreated)
 
 	list := listApprovals(t, e, e.doc.ID, "", fixtureOwner)
@@ -716,15 +722,15 @@ func TestOnlyTheReviewersOwnCommentsCount(t *testing.T) {
 	// The only open comment on the document is the commenter's. A viewer who
 	// is an approver has none of their own, so they still need to say why.
 	mustAssignApprover(t, e, e.doc.ID, "viewer@example.com", fixtureOwner)
-	rr := submitApprovalWithNote(t, e, e.doc.ID, e.ver.ID, "changes_requested", "", fixtureViewer)
+	rr := submitApprovalWithNote(t, e, e.doc.ID, e.ver.ID, "rejected", "", fixtureViewer)
 	assertStatus(t, rr, http.StatusBadRequest)
 }
 
-func TestRequestChangesStoresNote(t *testing.T) {
+func TestRejectionStoresNote(t *testing.T) {
 	e := newTestEnv(t)
 	mustAssignApprover(t, e, e.doc.ID, "viewer@example.com", fixtureOwner)
 
-	rr := submitApprovalWithNote(t, e, e.doc.ID, e.ver.ID, "changes_requested", "  needs a rollback plan  ", fixtureViewer)
+	rr := submitApprovalWithNote(t, e, e.doc.ID, e.ver.ID, "rejected", "  needs a rollback plan  ", fixtureViewer)
 	assertStatus(t, rr, http.StatusCreated)
 	if got := jsonField(t, rr.Body.Bytes(), "note"); got != "needs a rollback plan" {
 		t.Fatalf("note = %q, want trimmed note", got)
@@ -756,7 +762,7 @@ func TestApprovalNoteTooLong(t *testing.T) {
 	mustAssignApprover(t, e, e.doc.ID, "viewer@example.com", fixtureOwner)
 
 	long := strings.Repeat("x", 2001)
-	assertStatus(t, submitApprovalWithNote(t, e, e.doc.ID, e.ver.ID, "changes_requested", long, fixtureViewer), http.StatusBadRequest)
+	assertStatus(t, submitApprovalWithNote(t, e, e.doc.ID, e.ver.ID, "rejected", long, fixtureViewer), http.StatusBadRequest)
 }
 
 // ---------------------------------------------------------------------------
@@ -787,26 +793,6 @@ func TestListApprovalsForeignVersionIsNotFound(t *testing.T) {
 		"X-Test-Principal": principalHeader(fixtureViewer),
 	})
 	assertStatus(t, rr, http.StatusNotFound)
-}
-
-func TestCarriedApprovalReportsSourceVersionNumber(t *testing.T) {
-	e := newTestEnv(t)
-	mustAssignApprover(t, e, e.doc.ID, "viewer@example.com", fixtureOwner)
-	assertStatus(t, submitApproval(t, e, e.doc.ID, e.ver.ID, "approved", fixtureViewer), http.StatusCreated)
-
-	pushApprovalTestVersion(t, e, e.doc.ID, e.ver.ID, true, fixtureEditor)
-
-	list := listApprovals(t, e, e.doc.ID, "", fixtureViewer)
-	if len(list.Items) != 1 {
-		t.Fatalf("items = %+v, want one", list.Items)
-	}
-	item := list.Items[0]
-	if item.CarriedFromVersionID != e.ver.ID {
-		t.Fatalf("carried_from_version_id = %q, want %q", item.CarriedFromVersionID, e.ver.ID)
-	}
-	if item.CarriedFromVersionNumber != 1 {
-		t.Fatalf("carried_from_version_number = %d, want 1", item.CarriedFromVersionNumber)
-	}
 }
 
 func TestSearchResultsIncludeApprovalSummary(t *testing.T) {
@@ -850,7 +836,7 @@ func TestCreatorOfTheFirstVersionCannotBeAssignedAsApprover(t *testing.T) {
 
 func TestEditorWhoPushedAVersionCannotBeAssignedAsApprover(t *testing.T) {
 	e := newTestEnv(t)
-	pushApprovalTestVersion(t, e, e.doc.ID, e.ver.ID, false, fixtureEditor)
+	pushApprovalTestVersion(t, e, e.doc.ID, e.ver.ID, fixtureEditor)
 
 	rr := assignApprover(t, e, e.doc.ID, `{"principal": {"type": "user", "email": "editor@example.com"}}`, fixtureOwner)
 	assertStatus(t, rr, http.StatusBadRequest)
@@ -859,79 +845,117 @@ func TestEditorWhoPushedAVersionCannotBeAssignedAsApprover(t *testing.T) {
 	}
 }
 
-func TestApproverWhoThenCreatesAVersionCannotDecide(t *testing.T) {
-	e := newTestEnv(t)
-	mustAssignApprover(t, e, e.doc.ID, "editor@example.com", fixtureOwner)
-	second := pushApprovalTestVersion(t, e, e.doc.ID, e.ver.ID, false, fixtureEditor)
-
-	for _, decision := range []string{"approved", "changes_requested"} {
-		rr := submitApproval(t, e, e.doc.ID, second, decision, fixtureEditor)
-		assertStatus(t, rr, http.StatusForbidden)
-	}
-	list := listApprovals(t, e, e.doc.ID, "", fixtureOwner)
-	if len(list.Items) != 1 || list.Items[0].Decision != nil || !list.Items[0].CreatedVersion {
-		t.Fatalf("items = %+v, want a pending approver flagged created_version", list.Items)
-	}
-}
-
-func TestDecisionIsNotCarriedOntoAVersionItsApproverCreated(t *testing.T) {
+// An approver who pushes a version wrote part of what is under review, so the
+// push removes them as an approver, with their decisions.
+func TestApproverWhoCreatesAVersionIsRemoved(t *testing.T) {
 	e := newTestEnv(t)
 	mustAssignApprover(t, e, e.doc.ID, "editor@example.com", fixtureOwner)
 	mustAssignApprover(t, e, e.doc.ID, "viewer@example.com", fixtureOwner)
+	html, err := e.store.GetVersionHTML(context.Background(), e.ver.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	// The editor has not created a version yet, so they may approve version 1.
 	assertStatus(t, submitApproval(t, e, e.doc.ID, e.ver.ID, "approved", fixtureEditor), http.StatusCreated)
+
+	// Even a push of the same content makes the editor a version creator.
+	second := pushApprovalTestVersionHTML(t, e, e.doc.ID, e.ver.ID, string(html), fixtureEditor)
+
+	list := listApprovals(t, e, e.doc.ID, "", fixtureOwner)
+	if len(list.Items) != 1 || list.Items[0].Approver.Email != "viewer@example.com" || list.Status != "pending" {
+		t.Fatalf("list = %+v, want only the viewer, pending", list)
+	}
+	for _, decision := range []string{"approved", "rejected"} {
+		rr := submitApproval(t, e, e.doc.ID, second, decision, fixtureEditor)
+		assertStatus(t, rr, http.StatusForbidden)
+		if !strings.Contains(rr.Body.String(), "You created a version") {
+			t.Fatalf("body = %s, want the created-a-version message", rr.Body.String())
+		}
+	}
+}
+
+// A service account works for its owner, so a version that a person's bot
+// pushes is that person's work too.
+func TestApproverWhoseBotCreatesAVersionIsRemoved(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	sa, err := e.store.CreateServiceAccount(ctx, fixtureEditor, "editor-bot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bot := auth.Principal{Type: auth.PrincipalServiceAccount, ID: sa.ID}
+	if _, err := e.store.CreateGrant(ctx, "document", e.doc.ID, bot, "editor", fixtureOwner); err != nil {
+		t.Fatal(err)
+	}
+	mustAssignApprover(t, e, e.doc.ID, "editor@example.com", fixtureOwner)
+
+	second := pushApprovalTestVersion(t, e, e.doc.ID, e.ver.ID, bot)
+
+	if list := listApprovals(t, e, e.doc.ID, "", fixtureOwner); len(list.Items) != 0 {
+		t.Fatalf("items = %+v, want the bot's owner removed", list.Items)
+	}
+	assertStatus(t, submitApproval(t, e, e.doc.ID, second, "approved", fixtureEditor), http.StatusForbidden)
+	rr := assignApprover(t, e, e.doc.ID, `{"principal": {"type": "user", "email": "editor@example.com"}}`, fixtureOwner)
+	assertStatus(t, rr, http.StatusBadRequest)
+}
+
+func TestBotOfTheCreatorCannotBeAssignedAsApprover(t *testing.T) {
+	e := newTestEnv(t)
+	// The fixture service account belongs to the owner, who uploaded version 1.
+	grantServiceAccountViewer(t, e, e.sa.ID)
+	rr := assignApprover(t, e, e.doc.ID, fmt.Sprintf(`{"principal": {"type": "service_account", "id": %q}}`, e.sa.ID), fixtureOwner)
+	assertStatus(t, rr, http.StatusBadRequest)
+	if !strings.Contains(rr.Body.String(), "created a version of this document") {
+		t.Fatalf("body = %s, want the created-a-version message", rr.Body.String())
+	}
+}
+
+// An approver who cannot read the document cannot decide, so revoking the
+// grant they read it through removes them, with their decisions. An approver
+// who still has access through another grant stays.
+func TestApproverWhoLosesAccessIsRemoved(t *testing.T) {
+	e := newTestEnv(t)
+	ctx := context.Background()
+	owner := principalHeader(fixtureOwner)
+	folderID := createFolder(t, e, `{"title":"Reviews"}`, owner)
+	if _, err := e.store.MoveDocumentToFolder(ctx, fixtureOwner, folderID, e.doc.ID); err != nil {
+		t.Fatal(err)
+	}
+	rr := do(t, e.h, http.MethodPost, "/v1/folders/"+folderID+"/grants",
+		`{"address":"`+fixtureStranger.Email+`","role":"viewer"}`,
+		map[string]string{"X-Test-Principal": owner, "Content-Type": "application/json"})
+	assertStatus(t, rr, http.StatusCreated)
+	folderGrantID := jsonField(t, rr.Body.Bytes(), "id")
+	for _, email := range []string{"viewer@example.com", "commenter@example.com", "stranger@example.com"} {
+		mustAssignApprover(t, e, e.doc.ID, email, fixtureOwner)
+	}
 	assertStatus(t, submitApproval(t, e, e.doc.ID, e.ver.ID, "approved", fixtureViewer), http.StatusCreated)
 
-	pushApprovalTestVersion(t, e, e.doc.ID, e.ver.ID, true, fixtureEditor)
-
-	decided := map[string]bool{}
-	for _, item := range listApprovals(t, e, e.doc.ID, "", fixtureOwner).Items {
-		decided[item.Approver.Email] = item.Decision != nil
+	grants, err := e.store.ListGrants(ctx, e.doc.ID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if decided["editor@example.com"] {
-		t.Fatalf("the editor's approval was carried onto the version they created: %+v", decided)
+	for _, grant := range grants {
+		if grant.Principal.ID == fixtureViewer.ID {
+			rr := do(t, e.h, http.MethodDelete, "/v1/documents/"+e.doc.ID+"/grants/"+grant.ID, "", map[string]string{"X-Test-Principal": owner})
+			assertStatus(t, rr, http.StatusNoContent)
+		}
 	}
-	if !decided["viewer@example.com"] {
-		t.Fatalf("the viewer's approval was not carried with keep_approvals: %+v", decided)
-	}
-}
+	rr = do(t, e.h, http.MethodDelete, "/v1/folders/"+folderID+"/grants/"+folderGrantID, "", map[string]string{"X-Test-Principal": owner})
+	assertStatus(t, rr, http.StatusNoContent)
 
-func TestIdenticalContentKeepsApprovals(t *testing.T) {
-	e := newTestEnv(t)
-	mustAssignApprover(t, e, e.doc.ID, "viewer@example.com", fixtureOwner)
-	const html = "<html><body>final</body></html>"
-	second := pushApprovalTestVersionHTML(t, e, e.doc.ID, e.ver.ID, html, false, fixtureEditor)
-	assertStatus(t, submitApproval(t, e, e.doc.ID, second, "approved", fixtureViewer), http.StatusCreated)
-
-	// Nothing changed, so there is nothing new to approve.
-	third := pushApprovalTestVersionHTML(t, e, e.doc.ID, second, html, false, fixtureEditor)
-
-	list := listApprovals(t, e, e.doc.ID, "", fixtureViewer)
-	if list.VersionID != third || list.Status != "approved" {
-		t.Fatalf("list = %+v, want approved on %s", list, third)
-	}
-	if list.Items[0].CarriedFromVersionID != second {
-		t.Fatalf("carried_from_version_id = %q, want %q", list.Items[0].CarriedFromVersionID, second)
+	list := listApprovals(t, e, e.doc.ID, "", fixtureOwner)
+	if len(list.Items) != 1 || list.Items[0].Approver.Email != "commenter@example.com" || list.Summary.Approved != 0 {
+		t.Fatalf("list = %+v, want only the commenter, pending", list)
 	}
 }
 
-func TestChangedContentResetsApprovalsUnlessKept(t *testing.T) {
+func TestDecisionOnReplacedContentIsRefused(t *testing.T) {
 	e := newTestEnv(t)
 	mustAssignApprover(t, e, e.doc.ID, "viewer@example.com", fixtureOwner)
-	assertStatus(t, submitApproval(t, e, e.doc.ID, e.ver.ID, "approved", fixtureViewer), http.StatusCreated)
+	second := pushApprovalTestVersion(t, e, e.doc.ID, e.ver.ID, fixtureEditor)
 
-	second := pushApprovalTestVersionHTML(t, e, e.doc.ID, e.ver.ID, "<html><body>two</body></html>", false, fixtureEditor)
-	if list := listApprovals(t, e, e.doc.ID, "", fixtureViewer); list.Status != "pending" {
-		t.Fatalf("status = %q on %s, want pending after a change", list.Status, second)
-	}
-}
-
-func TestDecisionOnASupersededVersionIsRefused(t *testing.T) {
-	e := newTestEnv(t)
-	mustAssignApprover(t, e, e.doc.ID, "viewer@example.com", fixtureOwner)
-	second := pushApprovalTestVersion(t, e, e.doc.ID, e.ver.ID, false, fixtureEditor)
-
-	// The approver was reading version 1 when version 2 was pushed.
+	// The approver was reading version 1 when version 2 changed the content.
 	rr := submitApproval(t, e, e.doc.ID, e.ver.ID, "approved", fixtureViewer)
 	assertStatus(t, rr, http.StatusConflict)
 	var body struct {
@@ -949,10 +973,27 @@ func TestDecisionOnASupersededVersionIsRefused(t *testing.T) {
 		t.Fatalf("error = %+v, want version_superseded pointing at %s", body.Error, second)
 	}
 	if old := listApprovals(t, e, e.doc.ID, e.ver.ID, fixtureViewer); old.Items[0].Decision != nil {
-		t.Fatalf("a decision was recorded on the superseded version: %+v", old.Items)
+		t.Fatalf("a decision was recorded on the replaced content: %+v", old.Items)
 	}
 	// The latest version still takes decisions.
 	assertStatus(t, submitApproval(t, e, e.doc.ID, second, "approved", fixtureViewer), http.StatusCreated)
+}
+
+// A version that is no longer the latest still takes a decision when the
+// latest version has the same content: the approver read what is current.
+func TestDecisionOnAnOlderVersionWithTheSameContentCounts(t *testing.T) {
+	e := newTestEnv(t)
+	mustAssignApprover(t, e, e.doc.ID, "viewer@example.com", fixtureOwner)
+	html, err := e.store.GetVersionHTML(context.Background(), e.ver.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pushApprovalTestVersionHTML(t, e, e.doc.ID, e.ver.ID, string(html), fixtureEditor)
+
+	assertStatus(t, submitApproval(t, e, e.doc.ID, e.ver.ID, "approved", fixtureViewer), http.StatusCreated)
+	if doc := getDocumentApprovalFields(t, e, e.doc.ID, fixtureViewer); doc.ApprovalStatus != "approved" {
+		t.Fatalf("approval_status = %q, want approved", doc.ApprovalStatus)
+	}
 }
 
 func TestApprovalsNameTheVersionTheyAreOn(t *testing.T) {

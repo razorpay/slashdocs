@@ -647,7 +647,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "Per-approver decisions for a version (current version by default), merged with pending approvers, plus the derived aggregate status.",
+                "description": "Per-approver decisions on the content of a version (current version by default), merged with pending approvers, plus the derived aggregate status. A decision made on an earlier version with the same content counts, and names that version.",
                 "tags": [
                     "approvals"
                 ],
@@ -685,7 +685,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "Records the caller's decision on the latest version. Submitting again replaces the previous decision for that version. A request for changes needs a note unless the caller has open comment threads on the document (the comments say what to change). Returns 403 when the caller created a version of the document (nobody approves their own work) and 409 when a newer version exists.",
+                "description": "Records the caller's decision on the content of a version. The decision vouches for that content, so every version with the same content shows it. Submitting again replaces the previous decision on that content. A rejection needs a note unless the caller has open comment threads on the document (the comments say what to change). Returns 403 when the caller created a version of the document (nobody approves their own work) and 409 when the document's content changed since that version.",
                 "tags": [
                     "approvals"
                 ],
@@ -725,7 +725,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "Removes the caller's decision on a version, returning them to pending. Assignment is unaffected.",
+                "description": "Removes the caller's decision, returning them to pending. Assignment is unaffected.",
                 "tags": [
                     "approvals"
                 ],
@@ -794,7 +794,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "Assigns a user or service account as an approver. The approver must already have at least viewer access on the document, and must not have created a version of it.",
+                "description": "Assigns a user or service account as an approver. The approver must already have at least viewer access on the document, and must not have created a version of it. A service account counts as its owner. An approver who loses viewer access when a grant is revoked stops being an approver.",
                 "tags": [
                     "approvals"
                 ],
@@ -1199,6 +1199,64 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/documents/{id}/edits": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Applies exact find-and-replace edits to the document HTML on the server and saves the result as a new version. Each old_string must occur exactly once; edits apply in order and either all apply or none do. The HTML is never parsed, so everything else stays byte-for-byte the same.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "versions"
+                ],
+                "summary": "Edit document text",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Edits",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/server.editDocumentRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/server.editDocumentResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/documents/{id}/grants": {
             "post": {
                 "security": [
@@ -1545,12 +1603,6 @@ const docTemplate = `{
                         "in": "formData"
                     },
                     {
-                        "type": "string",
-                        "description": "Set to true to carry approved decisions forward to the new version. By default a change of content resets every approval; re-uploading identical content always keeps them.",
-                        "name": "keep_approvals",
-                        "in": "formData"
-                    },
-                    {
                         "type": "file",
                         "description": "HTML file",
                         "name": "file",
@@ -1686,6 +1738,70 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/server.renderTokenResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/documents/{id}/versions/{version_id}/restore": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "Saves the content of an earlier version as the newest version, as an edit by the caller. History keeps every version, so a restore can itself be undone by restoring again.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "versions"
+                ],
+                "summary": "Restore version",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Version ID to restore",
+                        "name": "version_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Change summary",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/server.restoreVersionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/server.createVersionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
                         }
                     }
                 }
@@ -2262,10 +2378,10 @@ const docTemplate = `{
                 "approved": {
                     "type": "integer"
                 },
-                "changes_requested": {
+                "pending": {
                     "type": "integer"
                 },
-                "pending": {
+                "rejected": {
                     "type": "integer"
                 },
                 "total": {
@@ -2472,23 +2588,12 @@ const docTemplate = `{
                 "approver": {
                     "$ref": "#/definitions/server.principalResponse"
                 },
-                "carried_from_version_id": {
-                    "type": "string"
-                },
-                "carried_from_version_number": {
-                    "description": "CarriedFromVersionNumber is the display number of the version that\nreceived the explicit decision, so the UI can say \"Approved on v3\"\ninstead of an opaque ID. Zero when the decision is not carried.",
-                    "type": "integer"
-                },
                 "comments_open": {
-                    "description": "CommentsOpen and CommentsTotal count the comment threads this approver\nstarted on the document, so a request for changes can say \"2 open of 3\".",
+                    "description": "CommentsOpen and CommentsTotal count the comment threads this approver\nstarted on the document, so a rejection can say \"2 open of 3\".",
                     "type": "integer"
                 },
                 "comments_total": {
                     "type": "integer"
-                },
-                "created_version": {
-                    "description": "CreatedVersion is true when the approver created a version of this\ndocument. They cannot decide on it, so the document waits for the owner\nto replace them.",
-                    "type": "boolean"
                 },
                 "decided_at": {
                     "type": "string"
@@ -2496,11 +2601,26 @@ const docTemplate = `{
                 "decision": {
                     "type": "string"
                 },
+                "earlier": {
+                    "description": "Earlier is set while the approver is pending on this content: their most\nrecent decision, made on other content of the document. On the current\nversion it lets the UI say \"Approved before the latest edits\".",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/server.earlierDecision"
+                        }
+                    ]
+                },
                 "id": {
                     "type": "string"
                 },
                 "note": {
                     "type": "string"
+                },
+                "version_id": {
+                    "description": "VersionID and VersionNumber name the version the approver decided on.\nIt can be older than the listed version when the content is the same,\nso the UI can say \"Approved on v3\".",
+                    "type": "string"
+                },
+                "version_number": {
+                    "type": "integer"
                 }
             }
         },
@@ -2527,9 +2647,6 @@ const docTemplate = `{
                 "approver": {
                     "$ref": "#/definitions/server.principalResponse"
                 },
-                "carried_from_version_id": {
-                    "type": "string"
-                },
                 "decided_at": {
                     "type": "string"
                 },
@@ -2549,7 +2666,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "version_number": {
-                    "description": "VersionNumber and VersionSHA256 name the exact content the decision was\nmade on.",
                     "type": "integer"
                 },
                 "version_sha256": {
@@ -2998,6 +3114,59 @@ const docTemplate = `{
                 }
             }
         },
+        "server.earlierDecision": {
+            "type": "object",
+            "properties": {
+                "decided_at": {
+                    "type": "string"
+                },
+                "decision": {
+                    "type": "string"
+                }
+            }
+        },
+        "server.editDocumentRequest": {
+            "type": "object",
+            "properties": {
+                "base_version_id": {
+                    "description": "BaseVersionID, when set, must be the current version. When it is\nempty the edits apply to whatever version is current, which is safe\nbecause each edit must still find its text there.",
+                    "type": "string"
+                },
+                "change_summary": {
+                    "type": "string"
+                },
+                "edits": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/textedit.Edit"
+                    }
+                }
+            }
+        },
+        "server.editDocumentResponse": {
+            "type": "object",
+            "properties": {
+                "base_version_id": {
+                    "description": "BaseVersionID is the version the edits were applied to.",
+                    "type": "string"
+                },
+                "change_summary": {
+                    "type": "string"
+                },
+                "edits_applied": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "number": {
+                    "type": "integer"
+                },
+                "sha256": {
+                    "type": "string"
+                }
+            }
+        },
         "server.errorBody": {
             "type": "object",
             "properties": {
@@ -3382,6 +3551,14 @@ const docTemplate = `{
                 }
             }
         },
+        "server.restoreVersionRequest": {
+            "type": "object",
+            "properties": {
+                "change_summary": {
+                    "type": "string"
+                }
+            }
+        },
         "server.serviceAccountKey": {
             "type": "object",
             "properties": {
@@ -3418,6 +3595,20 @@ const docTemplate = `{
                 },
                 "picture_url": {
                     "type": "string"
+                }
+            }
+        },
+        "textedit.Edit": {
+            "type": "object",
+            "properties": {
+                "new_string": {
+                    "type": "string"
+                },
+                "old_string": {
+                    "type": "string"
+                },
+                "replace_all": {
+                    "type": "boolean"
                 }
             }
         }

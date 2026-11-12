@@ -94,9 +94,33 @@ const (
 // Approval decision values. A document's derived approval status reuses these
 // plus StatusPending.
 const (
-	DecisionApproved         = "approved"
-	DecisionChangesRequested = "changes_requested"
+	DecisionApproved = "approved"
+	DecisionRejected = "rejected"
 )
+
+// Approval event types, one per kind of change to a document's approvals. A
+// new version is an event because it changes which decisions count without
+// changing any decision.
+const (
+	ApprovalEventRequested      = "approval.requested"
+	ApprovalEventRemoved        = "approval.removed"
+	ApprovalEventApproved       = "approval.approved"
+	ApprovalEventRejected       = "approval.rejected"
+	ApprovalEventRevoked        = "approval.revoked"
+	ApprovalEventVersionCreated = "approval.version_created"
+)
+
+// ApprovalEvent is a queued webhook event: Payload is the JSON body, and ID is
+// its idempotency key.
+type ApprovalEvent struct {
+	ID       string
+	Payload  []byte
+	Attempts int
+}
+
+// ErrApproverIsAuthor reports that a principal created a version of the
+// document: they wrote what is under review, so they cannot approve it.
+var ErrApproverIsAuthor = errors.New("approver created a version")
 
 type Document struct {
 	ID               string            `json:"id"`
@@ -125,43 +149,44 @@ type ApprovalRequest struct {
 	RequestedBy auth.Principal `json:"requested_by"`
 }
 
-// Approval is one approver's decision on one version. Carried rows (copied
-// forward on version pushes) keep the original decision time and point at the
-// version that received the explicit decision.
+// Approval is one approver's decision on one content. It vouches for the
+// content (SHA256), so every version with that content shows it. VersionID and
+// VersionNumber name the version the approver decided on.
 type Approval struct {
-	ID         string         `json:"id"`
-	DocumentID string         `json:"document_id"`
-	VersionID  string         `json:"version_id"`
-	Approver   auth.Principal `json:"approver"`
-	Decision   string         `json:"decision"`
-	// Note is the reviewer's explanation. Required for changes_requested,
-	// optional for an approval.
-	Note                 string `json:"note,omitempty"`
-	DecidedAt            string `json:"decided_at,omitempty"`
-	CarriedFromVersionID string `json:"carried_from_version_id,omitempty"`
+	ID            string         `json:"id"`
+	DocumentID    string         `json:"document_id"`
+	VersionID     string         `json:"version_id"`
+	VersionNumber int            `json:"version_number"`
+	SHA256        string         `json:"sha256"`
+	Approver      auth.Principal `json:"approver"`
+	Decision      string         `json:"decision"`
+	// Note is the reviewer's explanation. Optional; a rejection without one
+	// needs open comments by the reviewer instead.
+	Note      string `json:"note,omitempty"`
+	DecidedAt string `json:"decided_at,omitempty"`
 }
 
 // ApprovalSummary aggregates decisions from currently assigned approvers on
-// one version. Status is derived, not stored: approved when everyone
-// approved, changes_requested when anyone did, pending otherwise.
+// one content. Status is derived, not stored: approved when everyone
+// approved, rejected when anyone rejected, pending otherwise.
 type ApprovalSummary struct {
-	Total            int    `json:"total"`
-	Approved         int    `json:"approved"`
-	ChangesRequested int    `json:"changes_requested"`
-	Pending          int    `json:"pending"`
-	Status           string `json:"-"`
+	Total    int    `json:"total"`
+	Approved int    `json:"approved"`
+	Rejected int    `json:"rejected"`
+	Pending  int    `json:"pending"`
+	Status   string `json:"-"`
 }
 
 // DeriveApprovalStatus computes the aggregate status for a version given its
 // decision counts. Returns "" when no approvers are assigned.
-func DeriveApprovalStatus(total, approved, changesRequested int) string {
+func DeriveApprovalStatus(total, approved, rejected int) string {
 	switch {
 	case total == 0:
 		return ""
 	case approved == total:
 		return DecisionApproved
-	case changesRequested > 0:
-		return DecisionChangesRequested
+	case rejected > 0:
+		return DecisionRejected
 	default:
 		return StatusPending
 	}
@@ -294,10 +319,7 @@ type Version struct {
 	CreatedBy     auth.Principal `json:"created_by"`
 	ChangeSummary string         `json:"change_summary"`
 	SHA256        string         `json:"sha256"`
-	// CarriedApprovals counts approval rows copied forward when this version
-	// was created; used for metrics only.
-	CarriedApprovals int    `json:"-"`
-	CreatedAt        string `json:"created_at"`
+	CreatedAt     string         `json:"created_at"`
 }
 
 // VersionPreview is what a link preview shows of a version besides its
@@ -517,13 +539,10 @@ type Repository interface {
 	ListGrants(ctx context.Context, documentID string) ([]Grant, error)
 	UpdateGrant(ctx context.Context, documentID, grantID string, role Role, updatedBy auth.Principal) (Grant, error)
 	DeleteGrant(ctx context.Context, documentID, grantID string, deletedBy auth.Principal) error
-	// CreateVersion writes a new immutable version. A change of content resets
-	// every approval: the approvers decide again on the new version. Only when
-	// keepApprovals is set, or the content is byte-identical to the base
-	// version, are active approved decisions on the base version copied forward
-	// to the new version (with provenance) in the same transaction. A decision
-	// is never carried onto a version its own approver created.
-	CreateVersion(ctx context.Context, documentID, baseVersionID, changeSummary string, html []byte, createdBy auth.Principal, keepApprovals bool) (Version, error)
+	// CreateVersion writes a new immutable version. Its creator wrote what is
+	// under review, so when they are an approver of the document, it removes
+	// them (and their decisions) in the same transaction.
+	CreateVersion(ctx context.Context, documentID, baseVersionID, changeSummary string, html []byte, createdBy auth.Principal) (Version, error)
 	ListVersions(ctx context.Context, documentID string) ([]Version, error)
 	GetVersion(ctx context.Context, id string) (Version, error)
 	GetVersionHTML(ctx context.Context, id string) ([]byte, error)
@@ -570,22 +589,30 @@ type Repository interface {
 	ListHiddenFeaturedItems(ctx context.Context, principal auth.Principal) ([]string, error)
 	HideFeaturedItem(ctx context.Context, principal auth.Principal, resourceID string) error
 	// CreateApprovalRequest assigns an approver; ErrConflict when already
-	// assigned. DeleteApprovalRequest removes the assignment and revokes all of
-	// that approver's decisions on the document.
+	// assigned, ErrApproverIsAuthor when they created a version.
+	// DeleteApprovalRequest removes the assignment and revokes all of that
+	// approver's decisions on the document.
 	CreateApprovalRequest(ctx context.Context, documentID string, approver, requestedBy auth.Principal) (ApprovalRequest, error)
 	ListApprovalRequests(ctx context.Context, documentID string) ([]ApprovalRequest, error)
-	DeleteApprovalRequest(ctx context.Context, documentID, requestID string) error
-	// CreateOrUpdateApproval upserts the approver's decision on a version. The
-	// bool reports whether a new decision row was created (false = replaced).
-	// ErrNotFound when the version is not part of the document; ErrForbidden
-	// when the principal is not an assigned approver.
+	DeleteApprovalRequest(ctx context.Context, documentID, requestID string, removedBy auth.Principal) error
+	// CreateOrUpdateApproval upserts the approver's decision on the content of
+	// a version. The bool reports whether a new decision row was created
+	// (false = replaced). ErrNotFound when the version is not part of the
+	// document; a *VersionConflictError when the document's content changed
+	// since that version; ErrApproverIsAuthor when the approver created a
+	// version; ErrForbidden when they are not an assigned approver.
 	CreateOrUpdateApproval(ctx context.Context, documentID, versionID, decision, note string, approver auth.Principal) (Approval, bool, error)
 	// DeleteApproval revokes the approver's own decision; ErrForbidden when the
 	// decision belongs to someone else.
 	DeleteApproval(ctx context.Context, documentID, approvalID string, approver auth.Principal) error
-	ListApprovals(ctx context.Context, documentID, versionID string) ([]Approval, error)
+	// ListApprovals returns the active decisions on the given content.
+	ListApprovals(ctx context.Context, documentID, sha256 string) ([]Approval, error)
+	// ListLatestApprovals returns each approver's most recent active decision
+	// on any content of the document. Only Approver, SHA256, Decision and
+	// DecidedAt are set.
+	ListLatestApprovals(ctx context.Context, documentID string) ([]Approval, error)
 	// DocumentApprovalSummaries batch-computes each document's approval summary
-	// for its current version. Documents without assigned approvers are absent
+	// for its current content. Documents without assigned approvers are absent
 	// from the result map.
 	DocumentApprovalSummaries(ctx context.Context, documentIDs []string) (map[string]ApprovalSummary, error)
 }

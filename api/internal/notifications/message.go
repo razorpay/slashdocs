@@ -54,6 +54,9 @@ func slackMessage(channel string, message Message) map[string]any {
 	if strings.HasPrefix(message.Reason, "access_") {
 		return slackAccessMessage(channel, title, message)
 	}
+	if strings.HasPrefix(message.Reason, "approval_") {
+		return slackApprovalMessage(channel, title, message)
+	}
 	highlight := notificationPreview(message.Highlight, 600)
 	body := notificationPreview(message.Body, 2200)
 	activity := commentActivity(message)
@@ -168,6 +171,49 @@ func slackAccessMessage(channel, title string, message Message) map[string]any {
 	}
 	return map[string]any{
 		"channel": channel, "text": strings.Join([]string{activity, "Document: " + title, detail, message.Link}, "\n\n"),
+		"blocks": blocks,
+		"mrkdwn": false, "parse": "none", "link_names": false,
+		"unfurl_links": false, "unfurl_media": false,
+	}
+}
+
+func slackApprovalMessage(channel, title string, message Message) map[string]any {
+	actor := notificationPreview(message.Actor, 150)
+	if actor == "" {
+		actor = "Someone"
+	}
+	activity, buttonLabel := "📝 "+actor+" asked you to approve a document", "Review document"
+	switch message.Reason {
+	case "approval_approved":
+		activity, buttonLabel = "✅ "+actor+" approved your document", "View approvals"
+	case "approval_rejected":
+		activity, buttonLabel = "❌ "+actor+" rejected your document", "View approvals"
+	}
+	text := func(value string) map[string]any {
+		return map[string]any{"type": "text", "text": value}
+	}
+	bold := func(value string) map[string]any {
+		return map[string]any{"type": "text", "text": value, "style": map[string]bool{"bold": true}}
+	}
+	document := []any{text("Document: "), map[string]any{"type": "link", "url": message.Link, "text": title, "style": map[string]bool{"bold": true}}}
+	fallback := []string{activity, "Document: " + title}
+	if note := notificationPreview(message.Body, 2200); note != "" {
+		document = append(document, text("\n\n"+note))
+		fallback = append(fallback, note)
+	}
+	blocks := []any{
+		map[string]any{"type": "rich_text", "elements": []any{
+			map[string]any{"type": "rich_text_section", "elements": []any{bold(activity)}},
+		}},
+		map[string]any{"type": "rich_text", "elements": []any{
+			map[string]any{"type": "rich_text_section", "elements": document},
+		}},
+		map[string]any{"type": "actions", "elements": []any{
+			map[string]any{"type": "button", "text": map[string]any{"type": "plain_text", "text": buttonLabel, "emoji": false}, "url": message.Link, "style": "primary"},
+		}},
+	}
+	return map[string]any{
+		"channel": channel, "text": strings.Join(append(fallback, message.Link), "\n\n"),
 		"blocks": blocks,
 		"mrkdwn": false, "parse": "none", "link_names": false,
 		"unfurl_links": false, "unfurl_media": false,

@@ -19,6 +19,13 @@ are deduplicated; an owner who is also mentioned receives one mention notificati
 Edits, reactions, resolving, and reopening do not notify. Service accounts can
 write comments and receive structured mentions, but have no chat inbox.
 
+Approvals notify too. When the owner asks someone to approve a document, that
+human approver gets a message with a **Review document** button. When an
+approver approves or rejects, the document's human owner gets a message with the
+reason, if any. Revoking a decision does not notify. Before it sends, the worker
+makes sure that the request or the decision is still current, so a removed
+approver or a revoked decision sends nothing.
+
 Choose a person from the `@` suggestions to create a mention. The composer shows
 accepted mentions below the text field. Pasting or typing around a tag preserves
 it; editing the tag itself removes its association. Plain `@text` is not a tag.
@@ -212,7 +219,6 @@ Local Compose accepts `SLASHDOCS_SLACK_BOT_TOKEN` from the launching process's
 environment; when absent, it does not send Slack messages. The RAW workspace
 integration check uses this same environment-variable contract and real Slack
 delivery.
-
 
 ### Links to selected text
 

@@ -18,6 +18,7 @@ type Store interface {
 	commentNotificationStore
 	documentAccessNotificationStore
 	documentAccessRequestNotificationStore
+	approvalNotificationStore
 }
 
 type commentNotificationStore interface {
@@ -34,6 +35,10 @@ type documentAccessNotificationStore interface {
 type documentAccessRequestNotificationStore interface {
 	ClaimDocumentAccessRequestNotification(context.Context) (*repo.DocumentAccessRequestNotification, error)
 	FinishDocumentAccessRequestNotification(context.Context, repo.DocumentAccessRequestNotification, time.Duration) error
+}
+type approvalNotificationStore interface {
+	ClaimApprovalNotification(context.Context) (*repo.ApprovalNotification, error)
+	FinishApprovalNotification(context.Context, repo.ApprovalNotification, time.Duration) error
 }
 type Sender interface {
 	Send(ctx context.Context, email string, message Message) error
@@ -73,6 +78,9 @@ func (w *Worker) Run(ctx context.Context) {
 		}
 		if err := w.DeliverNextDocumentAccessRequest(ctx); err != nil {
 			w.logProcessingFailure("document_access_request")
+		}
+		if err := w.DeliverNextApproval(ctx); err != nil {
+			w.logProcessingFailure("approval")
 		}
 	}
 }
@@ -299,6 +307,101 @@ func (w *Worker) deliverDocumentAccessRequest(ctx context.Context, n *repo.Docum
 		Reason: "access_requested", Link: DocumentURL(w.AppOrigin, n.DocumentID) + "?share=1",
 		DocumentTitle: doc.Title, Requester: n.RequesterLabel,
 	})
+}
+
+func (w *Worker) DeliverNextApproval(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	n, err := w.Store.ClaimApprovalNotification(ctx)
+	if err != nil || n == nil {
+		return err
+	}
+	retryAfter, err := w.deliverApproval(ctx, n)
+	if err != nil {
+		var deliveryCode string
+		retryAfter, deliveryCode = notificationRetry(n.Attempts, err)
+		slog.Warn("approval notification delivery failed", "delivery_code", deliveryCode, "will_retry", retryAfter > 0)
+	}
+	return w.Store.FinishApprovalNotification(ctx, *n, retryAfter)
+}
+
+func (w *Worker) deliverApproval(ctx context.Context, n *repo.ApprovalNotification) (time.Duration, error) {
+	recipient, err := w.Store.ResolveUser(ctx, n.RecipientID)
+	if errors.Is(err, repo.ErrNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if recipient.Email == "" {
+		return 0, nil
+	}
+	prefs, err := w.Store.NotificationPreferences(ctx, recipient, n.DocumentID)
+	if err != nil || !prefs.EffectiveEnabled {
+		return 0, err
+	}
+	if permitted, err := w.canRead(ctx, recipient, n.DocumentID); err != nil || !permitted {
+		return 0, err
+	}
+	doc, err := w.Store.GetDocument(ctx, n.DocumentID)
+	if errors.Is(err, repo.ErrNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	message, current, err := w.approvalMessage(ctx, *n, doc)
+	if err != nil || !current {
+		return 0, err
+	}
+	allowed, err := w.Store.ReserveNotificationDelivery(ctx, recipient.ID)
+	if err != nil {
+		return 0, err
+	}
+	if !allowed {
+		return 6 * time.Second, nil
+	}
+	return 0, w.send(ctx, &n.FinishedProviders, recipient.Email, message)
+}
+
+// approvalMessage describes the approver's current state. It reports false
+// when the event no longer holds: the approver was removed, or revoked or
+// replaced their decision by one on other content.
+func (w *Worker) approvalMessage(ctx context.Context, n repo.ApprovalNotification, doc repo.Document) (Message, bool, error) {
+	approver := auth.Principal{Type: auth.PrincipalType(n.ApproverType), ID: n.ApproverID}
+	message := Message{Link: ApprovalsURL(w.AppOrigin, doc.ID), DocumentTitle: doc.Title}
+	if n.Reason == repo.ApprovalNotificationRequested {
+		requests, err := w.Store.ListApprovalRequests(ctx, doc.ID)
+		if err != nil {
+			return Message{}, false, err
+		}
+		for _, r := range requests {
+			if samePrincipal(r.Approver, approver) {
+				message.Reason, message.Actor = n.Reason, commentActor(r.RequestedBy)
+				return message, true, nil
+			}
+		}
+		return Message{}, false, nil
+	}
+	version, err := w.Store.GetVersion(ctx, doc.CurrentVersionID)
+	if err != nil {
+		return Message{}, false, err
+	}
+	decisions, err := w.Store.ListApprovals(ctx, doc.ID, version.SHA256)
+	if err != nil {
+		return Message{}, false, err
+	}
+	for _, a := range decisions {
+		if samePrincipal(a.Approver, approver) {
+			message.Reason, message.Actor, message.Body = "approval_"+a.Decision, commentActor(a.Approver), a.Note
+			return message, true, nil
+		}
+	}
+	return Message{}, false, nil
+}
+
+func samePrincipal(a, b auth.Principal) bool {
+	return a.Type == b.Type && a.ID == b.ID
 }
 
 func (w *Worker) requesterStillDenied(ctx context.Context, n *repo.DocumentAccessRequestNotification) (bool, error) {

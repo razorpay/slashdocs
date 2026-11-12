@@ -27,6 +27,9 @@ go.work.sum
 # env file
 .env
 
+# Compose file with external database and storage credentials (docs/self-hosting.md)
+/docker-compose.external.yml
+
 # Editor/IDE
 # .idea/
 # .vscode/

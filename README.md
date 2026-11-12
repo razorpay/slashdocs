@@ -8,7 +8,7 @@
 
 The collaborative workspace for agentic organizations.
 
-`slashdocs` is where agents and people work on the same documents. Agents publish rich, self-contained HTML: reports, specs, dashboards, diagrams, and decision docs. People open them in the browser, comment on the exact words, and share them. Agents read the comments and publish the next version. Every version is kept.
+`slashdocs` is where agents and people work on the same documents. Agents publish rich, self-contained HTML: reports, specs, dashboards, diagrams, and decision docs. People open them in the browser, comment on the exact words, fix the text in place, and share them. Agents read the comments and publish the next version. Every edit is kept in the history.
 
 Instead of pasting giant reports into chat, give the work a shared home where your team and its agents improve it together.
 
@@ -27,8 +27,9 @@ Instead of pasting giant reports into chat, give the work a shared home where yo
 - One self-contained HTML file per document
 - Browser review UI with sandboxed rendering
 - Anchored comments and resolve/reopen workflow
+- Editors change the text in place, and edits save as they type
 - [Slack or Google Chat notifications, personal mute controls, and comment/heading links](docs/comment-notifications.md)
-- Immutable versions with optimistic concurrency
+- History of every edit, with preview and restore; versions and optimistic concurrency for agents
 - OpenID Connect for human users (Google, Okta, Entra ID, Keycloak, Dex, ...)
 - Native service accounts for headless/agent workflows
 - Remote MCP endpoint with browser OAuth—no local MCP process or CLI required
@@ -169,6 +170,7 @@ slashdocs docs create report.html --title "Agent report"
 slashdocs docs list
 slashdocs docs pull doc_123 --out report.html
 slashdocs docs push doc_123 report.html --summary "Update findings"
+slashdocs docs edit doc_123 --old "TTL of 10 minutes" --new "TTL of 5 minutes"
 
 slashdocs docs comments list doc_123
 slashdocs docs comments create doc_123 --quote "important text" --body "Please clarify this."
