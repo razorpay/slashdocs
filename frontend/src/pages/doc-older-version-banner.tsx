@@ -11,13 +11,14 @@ export function OlderVersionBanner({
   latest,
   versions,
   onViewLatest,
-  className,
+  floating,
 }: {
   current: string;
   latest: string;
   versions: Version[];
   onViewLatest: () => void;
-  className?: string;
+  // In full screen there is no doc bar, so the banner floats over the document.
+  floating?: boolean;
 }) {
   if (!current || !latest || current === latest) return null;
   const viewing = versions.find((v) => v.id === current);
@@ -28,7 +29,9 @@ export function OlderVersionBanner({
       role="status"
       className={cn(
         "flex items-center gap-3 border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100",
-        className,
+        floating
+          ? "absolute bottom-6 left-1/2 z-20 w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 rounded-md border shadow-xl"
+          : "border-b",
       )}
     >
       <History className="h-4 w-4 shrink-0" aria-hidden="true" />
