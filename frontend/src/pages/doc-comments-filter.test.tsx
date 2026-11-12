@@ -2,12 +2,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Comment, Principal } from "@/api";
 import { Comments } from "./doc-comments";
 import { DocProvider, type DocContextValue } from "./doc-context";
-
-afterEach(cleanup);
 
 const author: Principal & { type: "user" } = {
   type: "user",
@@ -82,51 +80,46 @@ function renderComments(ctx: DocContextValue) {
   );
 }
 
-// Switching tabs only changes which threads are listed. Activating the first
-// thread of the new filter revealed it through the rail, which scrolled the
-// document to the top because a resolved thread never has a known position
-// while the default Open filter hides its highlight.
-it("switching to resolved leaves the document and the active thread alone", async () => {
+// jsdom has no layout. Give each rail card a height, and put the cards below
+// the rail, so that a reveal of a card scrolls the document.
+beforeEach(() => {
+  vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(100);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    const top = this.tagName === "ARTICLE" ? 400 : 0;
+    return new DOMRect(0, top, 300, 300);
+  });
+});
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
+
+it("switching filters activates the first thread of the new filter", async () => {
   const setCommentFilter = vi.fn();
   const setActiveComment = vi.fn();
-  const scrollDocumentTo = vi.fn();
   renderComments(
     contextValue({
       comments: [thread("c1", "open"), thread("c2", "resolved")],
       setCommentFilter,
       setActiveComment,
-      scrollDocumentTo,
     }),
   );
 
   await userEvent.click(screen.getByRole("button", { name: "resolved" }));
 
   expect(setCommentFilter).toHaveBeenCalledWith("resolved");
-  expect(scrollDocumentTo).not.toHaveBeenCalled();
-  expect(setActiveComment).not.toHaveBeenCalled();
+  expect(setActiveComment).toHaveBeenCalledWith("c2");
 });
 
-it("switching to an empty filter does not scroll the document", async () => {
-  const scrollDocumentTo = vi.fn();
-  renderComments(
-    contextValue({
-      comments: [thread("c1", "open")],
-      scrollDocumentTo,
-    }),
-  );
-
-  await userEvent.click(screen.getByRole("button", { name: "resolved" }));
-
-  expect(scrollDocumentTo).not.toHaveBeenCalled();
-});
-
-it("drops the active thread when the new filter hides it", async () => {
+it("switching to an empty filter leaves the document in place", async () => {
   const setActiveComment = vi.fn();
   const scrollDocumentTo = vi.fn();
   renderComments(
     contextValue({
-      comments: [thread("c1", "open"), thread("c2", "resolved")],
-      activeComment: "c1",
+      comments: [thread("c1", "open")],
       setActiveComment,
       scrollDocumentTo,
     }),
@@ -138,20 +131,34 @@ it("drops the active thread when the new filter hides it", async () => {
   expect(scrollDocumentTo).not.toHaveBeenCalled();
 });
 
-it("keeps the active thread when the new filter still lists it", async () => {
-  const setActiveComment = vi.fn();
+// After a filter switch, the bridge has not yet painted the threads of the new
+// filter. The rail took such a thread for unanchored and scrolled the document
+// to the top of the rail to reveal it.
+it("the rail waits for the bridge to place the active thread", () => {
   const scrollDocumentTo = vi.fn();
   renderComments(
     contextValue({
-      comments: [thread("c1", "open"), thread("c2", "resolved")],
+      comments: [thread("c2", "resolved")],
+      commentFilter: "resolved",
       activeComment: "c2",
-      setActiveComment,
       scrollDocumentTo,
     }),
   );
 
-  await userEvent.click(screen.getByRole("button", { name: "all" }));
-
-  expect(setActiveComment).not.toHaveBeenCalled();
   expect(scrollDocumentTo).not.toHaveBeenCalled();
+});
+
+it("the rail reveals an active thread that the bridge could not anchor", () => {
+  const scrollDocumentTo = vi.fn();
+  renderComments(
+    contextValue({
+      comments: [thread("c2", "resolved")],
+      commentFilter: "resolved",
+      activeComment: "c2",
+      unanchoredComments: new Set(["c2"]),
+      scrollDocumentTo,
+    }),
+  );
+
+  expect(scrollDocumentTo).toHaveBeenCalled();
 });

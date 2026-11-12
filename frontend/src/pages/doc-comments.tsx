@@ -52,7 +52,6 @@ export function Comments({ mobile = false }: { mobile?: boolean }) {
     drafts,
     commentFilter: filter,
     setCommentFilter: setFilter,
-    activeComment,
     setActiveComment,
   } = useDoc();
   const headerRef = useRef<HTMLDivElement>(null);
@@ -76,20 +75,9 @@ export function Comments({ mobile = false }: { mobile?: boolean }) {
   const chooseFilter = (next: CommentFilter) => {
     if (next === filter) return;
     setFilter(next);
-    // Switching filters only changes which threads are listed; it must not
-    // move the reader. Activating the first thread of the new filter dragged
-    // the document to the top of the rail whenever that thread had no known
-    // position yet (every resolved thread, because the default Open filter
-    // does not paint their highlights). Keep the active thread only while the
-    // new filter still lists it.
-    if (
-      activeComment &&
-      !comments.some(
-        (c) => c.id === activeComment && matchesCommentFilter(c.status, next),
-      )
-    ) {
-      setActiveComment(undefined);
-    }
+    // Let the bridge reveal the first matching highlight after repainting.
+    // With no match there is nothing to reveal, so the reader stays in place.
+    setActiveComment(comments.find((c) => matchesCommentFilter(c.status, next))?.id);
   };
 
   return (
@@ -347,6 +335,7 @@ function CommentRail({
     drafts,
     activeComment,
     commentPositions,
+    unanchoredComments,
     commentViewport,
     scrollDocumentTo,
     registerCommentRailSync,
@@ -460,6 +449,9 @@ function CommentRail({
     const rail = railRef.current;
     const placement = placements.find((item) => item.id === activeComment);
     if (!rail || !placement || !heights.has(activeComment)) return;
+    // A thread has no position until the bridge paints it, as after a filter
+    // switch. Wait for the paint: only an unanchored thread stays at the start.
+    if (placement.atStart && !unanchoredComments.has(activeComment)) return;
     revealedComment.current = activeComment;
     if (!placement.atStart) return;
     // Reveal unanchored threads where they already are. Clicking a visible
@@ -492,6 +484,7 @@ function CommentRail({
     activeComment,
     placements,
     heights,
+    unanchoredComments,
     linkedComment,
     applyDocumentScroll,
     scrollDocumentTo,
