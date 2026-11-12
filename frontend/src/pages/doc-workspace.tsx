@@ -683,17 +683,6 @@ export function DocWorkspace({
       )}
       <CommentMap comments={shownComments} />
       <Keycast state={chord} available={chordKeys} label={chordLabel} />
-      {/* In Edit mode an accent edge runs along the top of the document, red
-          while a change cannot save. It grows from the left and shrinks
-          back, by its transform alone. */}
-      <div
-        aria-hidden="true"
-        className={cn(
-          "pointer-events-none absolute inset-x-0 top-0 z-10 h-0.5 origin-left bg-[var(--color-accent)] transition-[scale,background-color] duration-200 ease-out motion-reduce:transition-none",
-          !editing && "scale-x-0 duration-150",
-          saveState === "refused" && "bg-[var(--color-danger)]",
-        )}
-      />
     </>
   );
   return (
