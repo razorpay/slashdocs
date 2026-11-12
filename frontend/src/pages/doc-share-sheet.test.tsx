@@ -1,5 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Sheet } from "@/components/ui/sheet";
@@ -12,6 +19,7 @@ type FetchOptions = {
   groupItems?: Array<{ id: string; email: string; name: string }>;
   accessFails?: boolean;
   owner?: { id: string; email?: string; name?: string };
+  requesters?: Array<{ type: string; id: string; email?: string; name?: string }>;
 };
 
 function installFetch(options: FetchOptions = {}) {
@@ -52,6 +60,14 @@ function installFetch(options: FetchOptions = {}) {
         });
       }
       if (url.startsWith("/v1/users")) return jsonResponse({ items: [] });
+      if (url === "/v1/documents/doc_1/access-requests") {
+        return jsonResponse({
+          items: (options.requesters ?? []).map((requester) => ({
+            requester,
+            requested_at: "2026-11-01T00:00:00Z",
+          })),
+        });
+      }
       if (url === "/v1/documents/doc_1/access") {
         if (options.accessFails) {
           return jsonResponse(
@@ -114,6 +130,23 @@ function installFetch(options: FetchOptions = {}) {
                   resource_title: "Parent folder",
                   role: "viewer",
                   grant_id: "gr_inherited",
+                },
+              ],
+            },
+            {
+              principal: {
+                type: "user",
+                id: "folder_owner",
+                email: "folder-owner@example.com",
+                name: "Folder Owner",
+              },
+              effective_role: "editor",
+              sources: [
+                {
+                  resource_type: "folder",
+                  resource_id: "fld_parent",
+                  resource_title: "Parent folder",
+                  role: "editor",
                 },
               ],
             },
@@ -228,6 +261,27 @@ describe("Google Group sharing", () => {
     expect(await screen.findByText("Google Group · direct access")).toBeVisible();
     expect(screen.getByText("Inherited from Parent folder")).toBeVisible();
     expect(screen.getAllByText("Owner").length).toBeGreaterThan(0);
+    // No grant gives the folder owner editor, so no grant can change it.
+    const folderOwner = screen.getByText("Owner of Parent folder").closest("div.flex");
+    expect(within(folderOwner as HTMLElement).getByRole("combobox")).toBeDisabled();
+  });
+
+  it("lists requests for access and puts a requester in the share form", async () => {
+    installFetch({
+      requesters: [
+        { type: "user", id: "usr_reader", email: "reader@example.com", name: "Reader" },
+        { type: "service_account", id: "sa_bot", name: "report-bot@brave.otter.bot" },
+      ],
+    });
+    renderShare();
+    expect(await screen.findByText("Requests for access")).toBeVisible();
+    expect(screen.getByText("report-bot@brave.otter.bot (bot)")).toBeVisible();
+    for (const address of ["reader@example.com", "report-bot@brave.otter.bot"]) {
+      await userEvent.click(
+        screen.getByRole("button", { name: `Share with ${address}` }),
+      );
+      expect(screen.getByDisplayValue(address)).toBeVisible();
+    }
   });
 
   it("does not expose an internal id for an unhydrated owner", async () => {

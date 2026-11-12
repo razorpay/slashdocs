@@ -15,7 +15,10 @@ import (
 )
 
 // maxSearchTextBytes keeps a version's tsvector below the PostgreSQL limit of
-// 1 MB. It is about 40,000 words, more than almost any document has.
+// 1 MB. A text of short words that are all different, such as IDs, makes a
+// tsvector 2.4 times its size, and a write fails above the limit. It is about
+// 40,000 words, more than almost any document has. PostgreSQL also keeps word
+// positions up to 16,383 only, so a phrase matches in the first 16,383 words.
 const maxSearchTextBytes = 256 << 10
 
 // searchText returns the words that a reader sees in an HTML document. Tags
@@ -52,9 +55,20 @@ func searchText(doc []byte) string {
 			}
 		}
 	}
-	// PostgreSQL text must be UTF-8. A document can have bytes in another
-	// encoding, and the size limit can cut a character in two.
-	return strings.ToValidUTF8(text.String()[:min(text.Len(), maxSearchTextBytes)], "")
+	// The limit cuts after the last whole word, because a part of a word
+	// matches searches for other words. Text with no space in the limit, such
+	// as CJK prose, is cut at the limit.
+	s := text.String()
+	if len(s) > maxSearchTextBytes {
+		if i := strings.LastIndexByte(s[:maxSearchTextBytes+1], ' '); i > 0 {
+			s = s[:i]
+		} else {
+			s = s[:maxSearchTextBytes]
+		}
+	}
+	// PostgreSQL text must be UTF-8, and a document can have bytes in another
+	// encoding.
+	return strings.ToValidUTF8(s, "")
 }
 
 var hiddenElements = map[string]bool{"script": true, "style": true, "template": true, "noscript": true}
@@ -73,6 +87,19 @@ func tsquery(terms []string, op string) string {
 }
 
 var tsqueryEscaper = strings.NewReplacer(`\`, `\\`, `'`, `''`)
+
+// tsqueryWords returns tsquery text that matches the words of every term in
+// any order: a phrase "error budget" becomes 'error':* & 'budget':*. Every
+// document that tsquery(terms, " & ") matches, this matches too. Search
+// finds these documents in the index and checks the order of the words, which
+// reads a document's text vector, on the sorted candidates only.
+func tsqueryWords(terms []string) string {
+	var words []string
+	for _, term := range terms {
+		words = append(words, strings.Fields(term)...)
+	}
+	return tsquery(words, " & ")
+}
 
 // IndexVersions gives search text to current versions that were created
 // before content search. Each batch locks its versions, so all servers can

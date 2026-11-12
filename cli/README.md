@@ -22,6 +22,8 @@ There is no built-in default server. Installing via `curl https://<your-server>/
 
 Self-hosted login only needs the server URL. The server owns the OIDC configuration (generic `SLASHDOCS_OIDC_*` variables or the Google aliases); the CLI uses server-mediated loopback PKCE.
 
+On a remote shell, such as over SSH, run `slashdocs auth login <server> --no-browser` and open the printed URL in a browser on your computer. After you sign in, the browser fails to open `http://127.0.0.1:<port>/callback?...`. Paste that full URL into the waiting CLI and press Enter. The CLI accepts only the URL with the state of this login, and it exchanges the code with a PKCE verifier that never leaves the CLI.
+
 By default, login stores the secret token in the OS keychain when available and keeps only metadata plus a `token_ref` in `~/.config/slashdocs/config.json`. If the keychain is unavailable, it falls back to storing the token in the config file with `0600` permissions. Set `SLASHDOCS_NO_KEYCHAIN=1` to force file-only storage.
 
 For CI/bots:
@@ -143,6 +145,16 @@ The CLI updates itself from the server it uses. It installs only a newer release
 ## Output
 
 Use `--json` for machine-readable output. Without `--json`, commands print concise human-readable summaries.
+
+With `--json`, stdout holds exactly one JSON value:
+
+- The response of the server, when it has a JSON body.
+- `{"ok": true}`, when the server returns no body. A status line, such as the result of `context use`, is `{"ok": true, "message": "..."}`.
+- A JSON string, when the result is not JSON, such as the HTML of `docs pull` or `docs versions html`.
+- `{"items": [...]}` for `docs comments resolve` and `reopen`, with one item for each comment: the comment, or its error with its `id`. The command tries every comment.
+- `{"error": {"code", "message", "details"}}` when the command fails. An API error is the error response of the server, with its code and details, such as `current_version_id` on a `version_conflict`. Other errors have the code `usage`, `network`, `api_error`, or `cli_error`.
+
+The exit code does not change, and stderr still gets the error text. `--quiet` removes the stdout output.
 
 ## Exit codes
 
