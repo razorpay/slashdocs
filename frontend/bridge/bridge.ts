@@ -1008,11 +1008,12 @@ type Theme = "dark" | "light";
   // it back. Without this, unwrapping and re-wrapping the text nodes under
   // the selection makes the browser drop the native selection highlight
   // while the user is still selecting. With caret set, a collapsed selection
-  // (the editor's caret) is kept too.
+  // is kept too. In Edit mode, it is the caret of the editor, so a paint
+  // keeps it.
   function saveSelection(
     d: Document,
     body: HTMLElement,
-    caret = false,
+    caret = textEditing,
   ): SavedSelection | null {
     const sel = d.getSelection();
     if (!sel || (sel.isCollapsed && !caret) || sel.rangeCount < 1) return null;
