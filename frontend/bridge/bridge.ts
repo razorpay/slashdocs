@@ -1182,11 +1182,13 @@ type Theme = "dark" | "light";
   }
 
   let curTheme: Theme | null = null;
-  // The theme the current document already shows. Documents that reload
-  // themselves on a theme change (a common way to re-render a diagram) would
-  // reload forever if every apply re-announced the theme they already have,
-  // so only real changes are announced.
+  // The theme last announced to the current document. A document that reloads
+  // itself on a theme change (a common way to re-render a diagram) would
+  // reload forever if every load were announced. So the load right after an
+  // announcement counts as that reload and is skipped. Every other load is
+  // announced, because documents that only listen for the event need it.
   let announcedTheme: Theme | null = null;
+  let reloadExpected = false;
   function initialTheme(): Theme | null {
     try {
       const t = new URLSearchParams(location.search).get("slashdocs_theme");
@@ -1194,14 +1196,6 @@ type Theme = "dark" | "light";
     } catch (e) {
       return null;
     }
-  }
-
-  // documentTheme is the theme the loaded document is already painting. The
-  // prelude stamps it before the document's own scripts run, so a document
-  // that reloaded itself comes back already themed.
-  function documentTheme(d: Document): Theme | null {
-    const t = d.documentElement?.getAttribute("data-slashdocs-theme");
-    return t === "dark" || t === "light" ? t : null;
   }
 
   function applyTheme(t: unknown): void {
@@ -1215,8 +1209,9 @@ type Theme = "dark" | "light";
     for (const name of PUBLIC_NAMES) {
       d.documentElement.setAttribute(`data-${name}-theme`, t);
     }
-    if (announcedTheme === t) return;
+    if (d !== setupDoc || announcedTheme === t) return;
     announcedTheme = t;
+    reloadExpected = true;
     try {
       dispatchPublicEvent(d.defaultView!, "theme", { detail: { theme: t } });
     } catch (e) {}
@@ -1693,10 +1688,10 @@ type Theme = "dark" | "light";
     });
     prepareHeadings(d);
     prepareLinks();
-    // The prelude stamped the theme the document loads with, so the first
-    // apply changes nothing and announces nothing. Without this, a document
-    // that reloads itself on a theme change would reload on every load.
-    announcedTheme = documentTheme(d);
+    // The prelude already stamped the current theme on a reload, so only
+    // other loads get it announced.
+    announcedTheme = reloadExpected ? curTheme : null;
+    reloadExpected = false;
     applyTheme(curTheme);
     // Track the selection gesture so mutation repairs never run mid-drag
     // (they would make the browser stop rendering the native selection).

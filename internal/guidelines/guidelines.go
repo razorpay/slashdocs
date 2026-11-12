@@ -141,8 +141,8 @@ Theme: follow the reader's slashdocs theme.
     anything JS has to draw (charts, diagrams):
       const theme = document.documentElement.getAttribute('data-slashdocs-theme');
   - The value updates live when the reader toggles; CSS reacts automatically.
-  - For JS, listen for the event on your own window. It fires only when the
-    theme actually changes, and never for the theme the page loaded with:
+  - For JS, listen for the event on your own window. It fires once after the
+    page loads and again each time the reader toggles:
       window.addEventListener('slashdocs:theme', e => {
         // e.detail.theme is "light" or "dark"
       });
