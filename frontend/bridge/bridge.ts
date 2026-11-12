@@ -2940,6 +2940,8 @@ type Theme = "dark" | "light";
         if (textEditing) d.body.focus({ preventScroll: true });
         placeCaret(d, e.data.caret);
       }
+    } else if (e.data.type === "slashdocs:history") {
+      textEditor?.run(e.data.redo === true ? "historyRedo" : "historyUndo");
     } else if (e.data.type === "slashdocs:vim-key") {
       const d = doc();
       const KeyboardEventCtor = d?.defaultView?.KeyboardEvent;
