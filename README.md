@@ -8,7 +8,7 @@
 
 The collaborative workspace for agentic organizations.
 
-`slashdocs` is where agents and people work on the same documents. Agents publish rich, self-contained HTML: reports, specs, dashboards, diagrams, and decision docs. People open them in the browser, comment on the exact words, fix the text in place, and share them. Agents read the comments and publish the next version. Every edit is kept in the history.
+`slashdocs` is where agents and people work on the same documents. Agents publish rich, self-contained HTML: reports, specs, dashboards, diagrams, and decision docs. People open them in the browser, comment on the exact words, fix the text in place together, approve them, and share them. Agents read the comments and publish the next version. Every version is kept in the history.
 
 Instead of pasting giant reports into chat, give the work a shared home where your team and its agents improve it together.
 
@@ -26,10 +26,16 @@ Instead of pasting giant reports into chat, give the work a shared home where yo
 
 - One self-contained HTML file per document
 - Browser review UI with sandboxed rendering
-- Anchored comments and resolve/reopen workflow
-- Editors change the document in place (words, paragraphs, lists, bold, italic and links), and edits save as they type
+- Comments on exact text or pinned to a spot in a chart or diagram, with replies, reactions, resolve/reopen, and unread marks
+- Live co-editing: editors change the document in place (words, paragraphs, lists, bold, italic and links), several at once, and readers see each change as it happens
+- Agent pushes merge with the text that people type; a push that changes the same text gets a conflict and leaves their text as it is
+- History of versions, with preview and restore. One sitting of typing is one version
+- Approvals: owners ask people or bots to approve, and a changed document asks them again
+- An inbox in the header for approval requests and threads that wait on you
+- `slashdocs docs wait`, which returns the review feedback to an agent when the reviewer stops writing
+- Search with `title:`, `from:`, `in:`, `label:` and date modifiers, folders with sharing, and labels
 - [Slack or Google Chat notifications, personal mute controls, and comment/heading links](docs/comment-notifications.md)
-- History of every edit, with preview and restore; versions and optimistic concurrency for agents
+- [Slack link previews](docs/comment-notifications.md#slack-link-previews) and a signed [webhook for approval events](docs/self-hosting.md#approval-events)
 - OpenID Connect for human users (Google, Okta, Entra ID, Keycloak, Dex, ...)
 - Native service accounts for headless/agent workflows
 - Remote MCP endpoint with browser OAuth—no local MCP process or CLI required
@@ -146,8 +152,8 @@ receive a short-lived, audience-bound token using authorization code + PKCE.
 No slashdocs CLI or local MCP bridge is involved. Unattended agents can instead
 send a slashdocs service-account key as a bearer token.
 
-The MCP surface covers document, version, comment, sharing, and folder
-workflows, plus management of existing service accounts. Creating service
+The MCP surface covers document, version, comment, sharing, approval, and
+folder workflows, plus management of existing service accounts. Creating service
 accounts or bearer keys is intentionally not exposed over MCP; mint those
 credentials in the web application or CLI. Client-local operations such as
 installing or updating the CLI, switching local contexts, or opening a browser
@@ -176,6 +182,7 @@ slashdocs docs comments list doc_123
 slashdocs docs comments create doc_123 --quote "important text" --body "Please clarify this."
 slashdocs docs comments create doc_123 --target chart --x 0.5 --y 0.2 --body "Label this axis."
 slashdocs docs comments resolve doc_123 cmt_123
+slashdocs docs wait doc_123
 ```
 
 Use `--json` for structured output:
@@ -226,7 +233,7 @@ flowchart LR
         render["Sandboxed document render"]
     end
 
-    pg[("Postgres<br/>metadata, comments,<br/>grants, sessions")]
+    pg[("Postgres<br/>metadata, comments,<br/>grants, sessions, edit log")]
     s3[("S3-compatible blob store<br/>immutable HTML versions")]
 
     browser -- "app origin" --> api
@@ -264,7 +271,7 @@ Uploaded HTML should be treated as untrusted content. `slashdocs` renders docume
 
 ## Telemetry
 
-None. `slashdocs` collects no telemetry, analytics, or usage data, and phones home to no one. The only outbound calls the server makes are to your Postgres, your blob storage, and your configured OpenID Connect provider during login.
+None. `slashdocs` collects no telemetry, analytics, or usage data, and phones home to no one. The only outbound calls the server makes are to your Postgres, your blob storage, your configured OpenID Connect provider during login, and the integrations that you turn on: Slack, Google Chat, GitHub, Google Groups, and the approval webhook.
 
 ## License
 

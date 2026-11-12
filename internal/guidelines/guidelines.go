@@ -86,18 +86,22 @@ Write one change per line in --summary; the version history shows each line
 as a list item.
 
 A pull with --out records which state of the document the file holds, and the
-push sends it. The server then keeps the edits that other people made after
-your pull. A push of a file with no recorded state is refused, so pull with
---out before you edit, and push that file.
+push sends it. A push of a file with no recorded state is refused, so pull with
+--out before you edit, and push that file. When other people changed other
+text after your pull, the server merges your push with their edits, and the
+CLI writes the merged version into the file. When they changed the same text,
+the push is refused and their text stays: pull again, and make your change
+again.
 
 Publishing model:
   - Creating a document stores the uploaded HTML as version 1.
   - Pushing HTML, or editing its text, creates a new immutable version.
-  - People with the editor role edit the document in the slashdocs UI: words,
-    paragraphs, lists, bold, italic and links. Their edits save as they type,
-    and change only the HTML of the elements they edit. One sitting of edits
-    is one version. The UI shows versions as the document's history, where
-    people preview and restore them.
+  - People with the editor role edit the document live in the slashdocs UI,
+    several at once: words, paragraphs, lists, bold, italic and links. Each
+    edit reaches the document as they type, and changes only the HTML of the
+    element they edit. One sitting of edits is one version. The UI shows
+    versions as the document's history, where people preview and restore
+    them.
   - Runtime KV changes from uploaded HTML do not create versions; see:
       slashdocs guidelines interactivity kv
 
@@ -514,8 +518,10 @@ Model:
     review it again. A version with the same content as an approved one, such
     as a restore, shows that approval.
   - Approvers can revoke their decision at any time.
-  - With Slack notifications on, an approver hears when they are asked, and the
-    owner hears each approval or rejection.
+  - With chat notifications on (Slack or Google Chat), an approver hears when
+    they are asked, and the owner hears each approval or rejection.
+  - While other people type in the document, a decision is refused: decide
+    when they are done.
   - A rejection needs either open comments of yours on the document (they say
     what to change) or a reason; a note is optional when approving. Approving
     with open comments in the UI asks you to confirm.

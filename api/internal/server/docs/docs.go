@@ -2167,6 +2167,185 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/folders": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "With no parameters, lists the folders and documents at the root of the caller. With folder_id or path, lists the contents of that folder. With q or min_role, searches the folders that the caller can see by title, at most 25: min_role keeps only the folders on which the caller has at least that role, and min_role with no q lists every such folder, for a picker such as the move dialog.",
+                "tags": [
+                    "folders"
+                ],
+                "summary": "List or search folders",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Folder ID to list",
+                        "name": "folder_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Folder path to list, such as /A/B",
+                        "name": "path",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Words of a folder title",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "viewer",
+                            "commenter",
+                            "editor",
+                            "owner"
+                        ],
+                        "type": "string",
+                        "description": "Least role of the caller on each folder of a search",
+                        "name": "min_role",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server.folderListResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "409": {
+                        "description": "ambiguous_path: more than one folder has a name of the path",
+                        "schema": {
+                            "$ref": "#/definitions/server.ambiguousPathResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/folders/{id}/documents": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "The caller needs the editor role on the document and on the folder. The caller also needs the editor role on the folder that the document leaves, unless the caller owns the document. permission_warning is set when the folder gives access to more people than the document had.",
+                "tags": [
+                    "folders"
+                ],
+                "summary": "Move a document into a folder",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Folder ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "The document to move",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "document_id": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server.moveDocResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/folders/{id}/documents/{doc_id}": {
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "The caller needs the editor role on the document, and on the folder that it leaves unless the caller owns the document.",
+                "tags": [
+                    "folders"
+                ],
+                "summary": "Move a document out of a folder to the root",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Folder ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Document ID",
+                        "name": "doc_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/folders/{id}/grants": {
             "post": {
                 "security": [
@@ -2318,6 +2497,12 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/server.listResponse-repo_InboxItem"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
                         }
                     }
                 }
@@ -2932,6 +3117,29 @@ const docTemplate = `{
                 }
             }
         },
+        "repo.Folder": {
+            "type": "object",
+            "properties": {
+                "ancestors": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/repo.FolderBreadcrumb"
+                    }
+                },
+                "id": {
+                    "type": "string"
+                },
+                "owner": {
+                    "$ref": "#/definitions/auth.Principal"
+                },
+                "parent_folder_id": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                }
+            }
+        },
         "repo.FolderBreadcrumb": {
             "type": "object",
             "properties": {
@@ -2939,6 +3147,23 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "title": {
+                    "type": "string"
+                }
+            }
+        },
+        "repo.FolderEntry": {
+            "type": "object",
+            "properties": {
+                "document": {
+                    "$ref": "#/definitions/repo.Document"
+                },
+                "folder": {
+                    "$ref": "#/definitions/repo.Folder"
+                },
+                "last_active": {
+                    "type": "string"
+                },
+                "type": {
                     "type": "string"
                 }
             }
@@ -3140,6 +3365,20 @@ const docTemplate = `{
                 },
                 "sha256": {
                     "type": "string"
+                }
+            }
+        },
+        "server.ambiguousPathResponse": {
+            "type": "object",
+            "properties": {
+                "candidates": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/repo.Folder"
+                    }
+                },
+                "error": {
+                    "$ref": "#/definitions/server.errorBody"
                 }
             }
         },
@@ -3777,6 +4016,23 @@ const docTemplate = `{
                 }
             }
         },
+        "server.folderListResponse": {
+            "type": "object",
+            "properties": {
+                "folder": {
+                    "$ref": "#/definitions/repo.Folder"
+                },
+                "has_more": {
+                    "type": "boolean"
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/repo.FolderEntry"
+                    }
+                }
+            }
+        },
         "server.googleGroupSearchItem": {
             "type": "object",
             "properties": {
@@ -4071,6 +4327,23 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                }
+            }
+        },
+        "server.moveDocResponse": {
+            "type": "object",
+            "properties": {
+                "document_id": {
+                    "type": "string"
+                },
+                "folder_id": {
+                    "type": "string"
+                },
+                "moved": {
+                    "type": "boolean"
+                },
+                "permission_warning": {
+                    "$ref": "#/definitions/server.permissionWarning"
                 }
             }
         },

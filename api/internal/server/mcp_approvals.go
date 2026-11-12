@@ -44,7 +44,7 @@ func registerMCPApprovalTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 	})
 
 	server.AddTool(mcp.NewTool("request_document_approval", mutationOptions(false, false,
-		mcp.WithDescription("Ask a person or bot to approve a document. Owner only. The approver needs at least viewer access (use share_document first). When Slack notifications are configured, the approver gets a message."),
+		mcp.WithDescription("Ask a person or bot to approve a document. Owner only. The approver needs at least viewer access (use share_document first). When chat notifications (Slack or Google Chat) are configured, the approver gets a message."),
 		mcpDocumentID(),
 		mcp.WithString("address", mcp.Required(), mcp.Description("User email or bot address.")),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

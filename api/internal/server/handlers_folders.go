@@ -171,6 +171,21 @@ func (h handlers) createFolder(c *gin.Context) {
 	}
 	c.JSON(http.StatusCreated, f)
 }
+
+// listFolders godoc
+// @Summary List or search folders
+// @Description With no parameters, lists the folders and documents at the root of the caller. With folder_id or path, lists the contents of that folder. With q or min_role, searches the folders that the caller can see by title, at most 25: min_role keeps only the folders on which the caller has at least that role, and min_role with no q lists every such folder, for a picker such as the move dialog.
+// @Tags folders
+// @Security bearerAuth
+// @Security cookieAuth
+// @Param folder_id query string false "Folder ID to list"
+// @Param path query string false "Folder path to list, such as /A/B"
+// @Param q query string false "Words of a folder title"
+// @Param min_role query string false "Least role of the caller on each folder of a search" Enums(viewer, commenter, editor, owner)
+// @Success 200 {object} folderListResponse
+// @Failure 404 {object} errorEnvelope
+// @Failure 409 {object} ambiguousPathResponse "ambiguous_path: more than one folder has a name of the path"
+// @Router /v1/folders [get]
 func (h handlers) listFolders(c *gin.Context) {
 	if !requireResolvedGroupsForAggregate(c) {
 		return
@@ -395,6 +410,19 @@ func (h handlers) listFolderDocs(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, listResponse[repo.Document]{Items: docs})
 }
+
+// moveDocToFolder godoc
+// @Summary Move a document into a folder
+// @Description The caller needs the editor role on the document and on the folder. The caller also needs the editor role on the folder that the document leaves, unless the caller owns the document. permission_warning is set when the folder gives access to more people than the document had.
+// @Tags folders
+// @Security bearerAuth
+// @Security cookieAuth
+// @Param id path string true "Folder ID"
+// @Param body body object{document_id=string} true "The document to move"
+// @Success 200 {object} moveDocResponse
+// @Failure 403 {object} errorEnvelope
+// @Failure 404 {object} errorEnvelope
+// @Router /v1/folders/{id}/documents [post]
 func (h handlers) moveDocToFolder(c *gin.Context) {
 	folderID := c.Param("id")
 	if !h.needFolderRole(c, folderID, repo.RoleEditor) {
@@ -429,6 +457,19 @@ func (h handlers) moveDocToFolder(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, out)
 }
+
+// moveDocToRoot godoc
+// @Summary Move a document out of a folder to the root
+// @Description The caller needs the editor role on the document, and on the folder that it leaves unless the caller owns the document.
+// @Tags folders
+// @Security bearerAuth
+// @Security cookieAuth
+// @Param id path string true "Folder ID"
+// @Param doc_id path string true "Document ID"
+// @Success 204
+// @Failure 403 {object} errorEnvelope
+// @Failure 404 {object} errorEnvelope
+// @Router /v1/folders/{id}/documents/{doc_id} [delete]
 func (h handlers) moveDocToRoot(c *gin.Context) {
 	if !h.needDocMove(c, c.Param("doc_id"), "") {
 		return
