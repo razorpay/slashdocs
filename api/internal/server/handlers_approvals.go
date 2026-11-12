@@ -36,7 +36,7 @@ func approvalRequestJSON(r repo.ApprovalRequest) approvalRequestResponse {
 	}
 }
 
-// maxApprovalNote bounds the reviewer note so a decision stays a short
+// maxApprovalNote bounds the approver note so a decision stays a short
 // explanation rather than a document of its own.
 const maxApprovalNote = 2000
 
@@ -69,7 +69,7 @@ func approvalJSON(a repo.Approval) approvalResponse {
 }
 
 // approvalListItem merges an assigned approver with their decision on the
-// listed content; Decision is null while they are pending.
+// listed content. Decision is null while they are pending.
 type approvalListItem struct {
 	ID        string            `json:"id,omitempty"`
 	Approver  principalResponse `json:"approver"`
@@ -113,7 +113,7 @@ func validApprovalDecision(d string) bool {
 
 const (
 	errVersionSuperseded   = "This document changed. Review the current document before deciding."
-	errApproveWhileEditing = "People are editing this document. Approve it when they are done."
+	errDecideWhileEditing  = "People are editing this document. Decide when they are done."
 	errRejectionNeedsWords = "Add a comment on the document or a reason saying what needs to change."
 )
 
@@ -163,7 +163,7 @@ type approverRequest struct {
 }
 
 // resolveApprover reads the request body and resolves who is being assigned.
-// Approvers are users or service accounts only; Google Groups are never
+// Approvers are users or service accounts only. Google Groups are never
 // resolved here regardless of server configuration. It writes the error
 // response and returns false when it cannot.
 func (h handlers) resolveApprover(c *gin.Context) (auth.Principal, bool) {
@@ -347,8 +347,8 @@ func bindDecision(c *gin.Context) (decisionRequest, string, bool) {
 
 // rejectionSaysWhy checks that a rejection without a note still tells the
 // author what to change. A rejection that does not say what to change leaves
-// the author guessing; the reviewer's open comments on the document say it, so a
-// reason is needed only when they have none. It writes the error response and
+// the author guessing. The approver's open comments on the document say it,
+// so a reason is needed only when they have none. It writes the error response and
 // returns false when the rejection says nothing.
 func (h handlers) rejectionSaysWhy(c *gin.Context, p auth.Principal) bool {
 	counts, err := h.reviewerCommentCounts(c.Request.Context(), c.Param("id"))
@@ -402,7 +402,7 @@ func (h handlers) createApproval(c *gin.Context) {
 		versionSuperseded(c, conflict)
 		return
 	case errors.Is(err, repo.ErrEditing):
-		c.JSON(http.StatusConflict, errorResponse("version_superseded", errApproveWhileEditing, nil))
+		c.JSON(http.StatusConflict, errorResponse("version_superseded", errDecideWhileEditing, nil))
 		return
 	case errors.Is(err, repo.ErrForbidden):
 		forbidden(c, "not an assigned approver on this document")
