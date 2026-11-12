@@ -49,7 +49,7 @@ func TestUploadWithoutASummaryNamesItsFirstChange(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if want := "Uploaded a new version. Removed “Card B”"; out.ChangeSummary != want {
+	if want := "Removed the section “Card B”"; out.ChangeSummary != want {
 		t.Fatalf("change_summary = %q, want %q", out.ChangeSummary, want)
 	}
 }
@@ -66,12 +66,12 @@ func TestVersionConflict(t *testing.T) {
 		"X-Test-Principal": principalHeader(fixtureEditor),
 	})
 
-	assertStatus(t, rr, http.StatusConflict)
+	assertStatus(t, rr, http.StatusUnprocessableEntity)
 	assertJSON(t, rr.Body.Bytes(), fmt.Sprintf(`{
 	  "error": {
-	    "code": "version_conflict",
-	    "message": "base_version_id is stale",
-	    "details": { "current_version_id": %q }
+	    "code": "base_version_not_found",
+	    "message": "base_version_id is not a version of this document. Get the document again and make the change again.",
+	    "details": { "current_version_id": %q, "seq": 1 }
 	  }
 	}`, e.ver.ID))
 }

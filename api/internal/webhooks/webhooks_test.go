@@ -109,14 +109,14 @@ func TestApprovalEventsReachTheWebhook(t *testing.T) {
 	}
 	// Repeating the same decision changes nothing, so it sends no event.
 	for range 2 {
-		if _, _, err := store.CreateOrUpdateApproval(ctx, doc.ID, v1.ID, repo.DecisionRejected, "needs a rollback plan", reviewer); err != nil {
+		if _, _, err := store.CreateOrUpdateApproval(ctx, doc.ID, v1.ID, nil, repo.DecisionRejected, "needs a rollback plan", reviewer); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if queued() != 2 {
 		t.Fatalf("queued = %d, want one event for the request and one for the decision", queued())
 	}
-	if _, err := store.CreateVersion(ctx, doc.ID, v1.ID, "", "", []byte("<p>two</p>"), owner); err != nil {
+	if _, _, err := store.SaveVersion(ctx, doc.ID, v1.ID, nil, owner, repo.Upload([]byte("<p>two</p>"), "")); err != nil {
 		t.Fatal(err)
 	}
 

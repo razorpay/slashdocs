@@ -91,6 +91,7 @@ type dependencies struct {
 	githubOAuth          *oauth2.Config
 	githubHTTPClient     *http.Client
 	githubAccessChecks   *singleflight.Group
+	anchorFollows        *followers
 	googleGroupsEnabled  bool
 	googleGroupDirectory googlegroups.GoogleGroupDirectory
 	googleGroupResolver  *googlegroups.Resolver
@@ -180,6 +181,7 @@ func (denyAllAuthenticator) Authenticate(_ *http.Request) (*auth.Principal, erro
 func New(cfg Config, opts ...Option) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	deps := dependencies{
+		anchorFollows:        &followers{pending: map[string]bool{}},
 		authenticator:        denyAllAuthenticator{},
 		stateStore:           auth.NewStateStore(),
 		oidc:                 cfg.OIDC,
@@ -326,11 +328,15 @@ func (s *Server) routes(deps dependencies) {
 	reader := v1.Group("", requireAuth(deps.readerAuthenticator(), deps.appOrigin, deps.googleGroupResolver))
 	reader.GET("/documents/:id", h.getDocument)
 	reader.GET("/documents/:id/versions", h.listVersions)
-	// A browser that follows live edits asks for the changes after each save
-	// of another person, and a live editor saves about 100 times a minute.
-	reader.GET("/documents/:id/changes", activityRateLimit(600), h.documentChanges)
+	// A browser that follows live edits asks for the changes after each
+	// operation of another person, and an editor writes many operations a
+	// second.
+	// A read of the source at a seq costs as much as a read of the changes
+	// does, so the two share one budget.
+	followLimit := activityRateLimit(1200)
+	reader.GET("/documents/:id/changes", followLimit, h.documentChanges)
 	reader.GET("/documents/:id/versions/:version_id", h.getVersion)
-	reader.GET("/documents/:id/versions/:version_id/html", h.getVersionHTML)
+	reader.GET("/documents/:id/versions/:version_id/html", followLimit, h.getVersionHTML)
 	reader.POST("/documents/:id/versions/:version_id/render-token", h.createRenderToken)
 	reader.POST("/documents/:id/versions/:version_id/print-token", h.createPrintToken)
 	reader.GET("/documents/:id/comments", h.listComments)
@@ -344,6 +350,18 @@ func (s *Server) routes(deps dependencies) {
 	// other activity. A moving cursor reports about 12 times a second.
 	presenceLimit := activityRateLimit(60)
 	cursorLimit := activityRateLimit(1200)
+	// A decision can start the seal of the open version, which writes a
+	// blob. Decisions have their own budget, so that other activity and
+	// typing never block them.
+	decisionLimit := activityRateLimit(60)
+	// A text anchor makes the server read the live document. The page of a
+	// person who types moves the anchor of each comment in the text after
+	// each pause of a second, so comment updates have a budget large enough
+	// for typing.
+	commentLimit := activityRateLimit(300)
+	// A change of access wakes the open streams of each document that it
+	// affects, and a change of a folder wakes all open streams.
+	accessLimit := activityRateLimit(30)
 	authed.GET("/me", h.me)
 	authed.GET("/users", h.searchUsers)
 	authed.GET("/google-groups", h.searchGoogleGroups)
@@ -374,12 +392,12 @@ func (s *Server) routes(deps dependencies) {
 	authed.POST("/documents/:id/approvers", h.createApprover)
 	authed.GET("/documents/:id/approvers", h.listApprovers)
 	authed.DELETE("/documents/:id/approvers/:approver_id", h.deleteApprover)
-	authed.POST("/documents/:id/approvals", h.createApproval)
+	authed.POST("/documents/:id/approvals", decisionLimit, h.createApproval)
 	authed.GET("/documents/:id/approvals", h.listApprovals)
 	authed.DELETE("/documents/:id/approvals/:approval_id", h.deleteApproval)
 	authed.POST("/documents/:id/versions", h.createVersion)
 	authed.POST("/documents/:id/edits", h.editDocument)
-	authed.POST("/documents/:id/source-edits", activityRateLimit(600), h.editSource)
+	authed.POST("/documents/:id/ops", activityRateLimit(1200), h.appendOperation)
 	authed.POST("/documents/:id/versions/:version_id/restore", h.restoreVersion)
 	authed.GET("/documents/:id/labels", h.listDocumentLabels)
 	authed.PUT("/documents/:id/labels", h.replaceDocumentLabels)
@@ -395,7 +413,7 @@ func (s *Server) routes(deps dependencies) {
 	authed.POST("/documents/:id/cursor", cursorLimit, h.postDocumentCursor)
 	authed.PATCH("/documents/:id/kv", h.patchDocumentKV)
 	authed.POST("/documents/:id/comments/:comment_id/replies", h.createCommentReply)
-	authed.PATCH("/documents/:id/comments/:comment_id", h.patchComment)
+	authed.PATCH("/documents/:id/comments/:comment_id", commentLimit, h.patchComment)
 	authed.DELETE("/documents/:id/comments/:comment_id", h.deleteComment)
 	authed.PUT("/documents/:id/comments/:comment_id/reactions/:emoji", h.putCommentReaction)
 	authed.DELETE("/documents/:id/comments/:comment_id/reactions/:emoji", h.deleteCommentReaction)
@@ -403,15 +421,15 @@ func (s *Server) routes(deps dependencies) {
 	authed.POST("/folders", h.createFolder)
 	authed.GET("/folders", h.listFolders)
 	authed.GET("/folders/:id", h.getFolder)
-	authed.PATCH("/folders/:id", h.patchFolder)
-	authed.DELETE("/folders/:id", h.deleteFolder)
+	authed.PATCH("/folders/:id", accessLimit, h.patchFolder)
+	authed.DELETE("/folders/:id", accessLimit, h.deleteFolder)
 	authed.GET("/folders/:id/access", h.folderAccess)
-	authed.POST("/folders/:id/grants", h.createFolderGrant)
-	authed.PATCH("/folders/:id/grants/:grant_id", h.patchFolderGrant)
-	authed.DELETE("/folders/:id/grants/:grant_id", h.deleteFolderGrant)
+	authed.POST("/folders/:id/grants", accessLimit, h.createFolderGrant)
+	authed.PATCH("/folders/:id/grants/:grant_id", accessLimit, h.patchFolderGrant)
+	authed.DELETE("/folders/:id/grants/:grant_id", accessLimit, h.deleteFolderGrant)
 	authed.GET("/folders/:id/documents", h.listFolderDocs)
-	authed.POST("/folders/:id/documents", h.moveDocToFolder)
-	authed.DELETE("/folders/:id/documents/:doc_id", h.moveDocToRoot)
+	authed.POST("/folders/:id/documents", accessLimit, h.moveDocToFolder)
+	authed.DELETE("/folders/:id/documents/:doc_id", accessLimit, h.moveDocToRoot)
 	authed.GET("/pins", h.listPins)
 	authed.PUT("/pins/:resource_type/:resource_id", h.putPin)
 	authed.DELETE("/pins/:resource_type/:resource_id", h.deletePin)
@@ -587,7 +605,7 @@ func current(c *gin.Context) *auth.Principal {
 
 var errPayloadTooLarge = errors.New("payload too large")
 
-const maxHTMLBytes = 50 * 1024 * 1024
+const maxHTMLBytes = repo.MaxHTMLBytes
 
 func readMultipartFile(c *gin.Context, field string) ([]byte, error) {
 	f, err := c.FormFile(field)

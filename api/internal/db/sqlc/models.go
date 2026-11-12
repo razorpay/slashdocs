@@ -79,6 +79,7 @@ type Comment struct {
 	ParentCommentID    pgtype.Text
 	RootCommentID      string
 	Edited             bool
+	AnchorSeq          pgtype.Int8
 }
 
 // Structured principals mentioned in comment bodies. Mention metadata grants no access; future notification delivery must re-check effective document access and apply rate limits.
@@ -143,6 +144,7 @@ type Document struct {
 	OwnerType        string
 	ParentFolderID   pgtype.Text
 	SearchVector     interface{}
+	Seq              int64
 }
 
 type DocumentAccessNotificationOutbox struct {
@@ -215,6 +217,20 @@ type DocumentNotificationMute struct {
 	PrincipalType string
 	PrincipalID   string
 	DocumentID    string
+}
+
+type DocumentOp struct {
+	DocumentID   string
+	Seq          int64
+	VersionID    string
+	AuthorType   string
+	AuthorID     string
+	ClientOpID   pgtype.Text
+	Typed        bool
+	Summary      string
+	Replacements []byte
+	Sum          uint32
+	CreatedAt    pgtype.Timestamptz
 }
 
 type DocumentWorkspaceEntry struct {
@@ -378,4 +394,14 @@ type Version struct {
 	SearchText      pgtype.Text
 	SearchVector    interface{}
 	ClientChangeID  pgtype.Text
+	Seq             int64
+	SealedAt        pgtype.Timestamptz
+	SittingID       pgtype.Text
+}
+
+type VersionAuthor struct {
+	VersionID  string
+	AuthorType string
+	AuthorID   string
+	CreatedAt  pgtype.Timestamptz
 }

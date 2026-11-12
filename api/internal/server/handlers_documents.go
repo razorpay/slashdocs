@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 
@@ -58,6 +59,10 @@ func (h handlers) createDocument(c *gin.Context) {
 	}
 	if err != nil {
 		badRequest(c, "invalid document upload")
+		return
+	}
+	if !utf8.Valid(html) {
+		badRequest(c, errHTMLNotUTF8)
 		return
 	}
 	title := c.PostForm("title")

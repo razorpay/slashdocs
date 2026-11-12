@@ -123,6 +123,7 @@ func run() error {
 		indexSearch(workerCtx, "versions", store.IndexVersions)
 		indexSearch(workerCtx, "documents", store.IndexDocuments)
 	})
+	workers.Go(func() { tendVersions(workerCtx, store) })
 	defer func() { cancelWorkers(); workers.Wait() }()
 	return serve(ctx, srv.Handler(), ":"+envOrDefault("SLASHDOCS_PORT", "8080"), ":"+envOrDefault("SLASHDOCS_METRICS_PORT", "9090"))
 }
@@ -135,6 +136,31 @@ func indexSearch(ctx context.Context, items string, index func(context.Context) 
 		slog.ErrorContext(ctx, "search indexing stopped", slog.String("items", items), slog.Int("indexed", indexed), slog.Any("error", err))
 	} else if indexed > 0 {
 		slog.InfoContext(ctx, "indexed for search", slog.String("items", items), slog.Int("indexed", indexed))
+	}
+}
+
+// tendInterval is how often a server looks for open versions to seal and
+// for old operations to take out of the log.
+const tendInterval = 30 * time.Second
+
+// tendVersions seals, until ctx ends, the open versions in which the typing
+// stopped some time ago, and takes the old operations out of the log. Every
+// server runs it: the store locks each document that it seals.
+func tendVersions(ctx context.Context, store *pgrepo.Store) {
+	ticker := time.NewTicker(tendInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if sealed, err := store.SealIdleVersions(ctx); err != nil && ctx.Err() == nil {
+				slog.ErrorContext(ctx, "sealing versions failed", slog.Int("sealed", sealed), slog.Any("error", err))
+			}
+			if _, _, err := store.DeleteOldOperations(ctx); err != nil && ctx.Err() == nil {
+				slog.ErrorContext(ctx, "deleting old operations failed", slog.Any("error", err))
+			}
+		}
 	}
 }
 

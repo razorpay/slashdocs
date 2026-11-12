@@ -206,10 +206,11 @@ func (h handlers) githubRawContent(c *gin.Context) {
 }
 
 // authorsCanRead makes sure that every principal who created a version of
-// the document can read the repository. Document code runs with the viewer's
-// GitHub access, so without this rule an author could use a document to read
-// repositories that only the viewer can read. Code stays in a document after
-// its author stops editing, so the rule covers all version creators, not only
+// the document, or wrote an operation of it, can read the repository.
+// Document code runs with the viewer's GitHub access, so without this rule an
+// author could use a document to read repositories that only the viewer can
+// read. Code stays in a document after
+// its author stops editing, so the rule covers all of its authors, not only
 // the current editors. A service account counts as its owner, because the
 // owner controls its keys. The viewer is not examined: the fetch with the
 // viewer's own token proves their access.

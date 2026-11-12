@@ -129,7 +129,7 @@ SELECT $1::text, jsonb_strip_nulls(jsonb_build_object(
   'sequence', nextval('approval_event_sequence'),
   'created_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
   'document', jsonb_build_object('id', d.id, 'title', d.title, 'url', $3::text),
-  'version', jsonb_build_object('id', v.id, 'number', v.number, 'sha256', v.sha256),
+  'version', jsonb_build_object('id', v.id, 'number', v.number, 'sha256', NULLIF(v.sha256, '')),
   'approver', CASE WHEN $4::text <> '' THEN jsonb_build_object(
     'type', $5::text, 'id', $4::text, 'email', ap.email, 'name', COALESCE(ap.name, aps.name)) END,
   'actor', jsonb_build_object(
@@ -171,7 +171,7 @@ type InsertApprovalEventParams struct {
 // transaction of the change. It names who and what at the time of the change,
 // so a receiver can act on it without reading the API. The sequence orders
 // the events of one document: changes to a document take turns (see
-// LockDocumentForApproval), so each takes its number in commit order.
+// LockDocument), so each takes its number in commit order.
 // nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 // nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) InsertApprovalEvent(ctx context.Context, arg InsertApprovalEventParams) error {
@@ -473,7 +473,7 @@ type LockApproversWithoutAccessRow struct {
 // The approvers of the documents at or under a resource who can no longer
 // read their document, after a grant on that resource was revoked. Access is
 // ownership of the document or of a folder above it, or a grant on the
-// document or a folder above it, as in RoleForDocument. It locks each document as LockDocumentForApproval does, in
+// document or a folder above it, as in RoleForDocument. It locks each document as LockDocument does, in
 // id order, before the caller removes the approvers.
 func (q *Queries) LockApproversWithoutAccess(ctx context.Context, resourceID string) ([]LockApproversWithoutAccessRow, error) {
 	rows, err := q.db.Query(ctx, lockApproversWithoutAccess, resourceID)
@@ -493,24 +493,6 @@ func (q *Queries) LockApproversWithoutAccess(ctx context.Context, resourceID str
 		return nil, err
 	}
 	return items, nil
-}
-
-const lockDocumentForApproval = `-- name: LockDocumentForApproval :one
-SELECT current_version_id FROM documents WHERE id = $1 FOR NO KEY UPDATE
-`
-
-// Approval writes on one document take turns, and wait for a version push in
-// progress (which holds the row for update). So a decision or an assignment
-// never races a new version, and the status each change records counts every
-// change before it. NO KEY UPDATE does not wait on foreign-key checks from
-// concurrent comment writes. Read the version in a later statement: this
-// statement's snapshot cannot see a version that a push committed while it
-// waited.
-func (q *Queries) LockDocumentForApproval(ctx context.Context, documentID string) (pgtype.Text, error) {
-	row := q.db.QueryRow(ctx, lockDocumentForApproval, documentID)
-	var current_version_id pgtype.Text
-	err := row.Scan(&current_version_id)
-	return current_version_id, err
 }
 
 const revokeApproval = `-- name: RevokeApproval :exec

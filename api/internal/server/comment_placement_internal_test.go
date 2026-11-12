@@ -60,6 +60,12 @@ func TestCommentPlacementOnRepeatedText(t *testing.T) {
 		// Neither copy is at the stored position; the nearer one's context
 		// scores just below the floor and the farther one's clears it.
 		{"a farther copy whose context agrees", repo.Comment{VersionID: "ver_1", SelectedText: "TBD", Anchor: repo.Anchor{Quote: "TBD", Prefix: "Owner for the payments team: ", Suffix: " until finance replies here.", StartOffset: 27, EndOffset: 30}}, "<p>Owner for the payment group: TBD until the vendor replies.</p><p>Owner for payments: TBD until finance says so.</p>", placementAttached},
+		// The viewer reads the rendered text, so markup inside the quote and
+		// entities do not hide it, and text that only looks like it does not
+		// place it.
+		{"quote across tags", repo.Comment{VersionID: "ver_1", SelectedText: "stale connection error", Anchor: repo.Anchor{Quote: "stale connection error"}}, "<p>A <b>stale connection</b> error.</p>", placementAttached},
+		{"quote with an entity", repo.Comment{VersionID: "ver_1", SelectedText: "R&D budget", Anchor: repo.Anchor{Quote: "R&D budget"}}, "<p>The R&amp;D budget.</p>", placementAttached},
+		{"a similar word in place of a removed one", repo.Comment{VersionID: "ver_1", SelectedText: "LONG-OFFLINE", Anchor: repo.Anchor{Quote: "LONG-OFFLINE"}}, "<p>Typing here MORE-OFFLINE hotel.</p>", placementOrphaned},
 		{"repeated quote without stored context", repo.Comment{VersionID: "ver_1", SelectedText: "TBD", Anchor: repo.Anchor{Quote: "TBD"}}, "<p>Plan A: TBD</p><p>Plan B: shipped</p><p>Plan C: TBD</p>", placementAttached},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -198,3 +204,48 @@ func TestTextMatchScore(t *testing.T) {
 }
 
 func units(s string) []uint16 { return utf16.Encode([]rune(s)) }
+
+// A text anchor follows its text as Google Docs does: it shrinks and grows
+// with changes inside it, text put in at its ends stays out of it, it moves
+// with the text before it, and it stays as it is when all of its text goes.
+func TestFollowText(t *testing.T) {
+	const doc = "<p>Eleven kilo lima mike november.</p>"
+	phrase := anchorAt(renderedBodyText(doc), 7, 21)
+	const stop = "<p>Eleven kilo lima mike. november.</p>"
+	punctuated := anchorAt(renderedBodyText(stop), 7, 21)
+	for _, tc := range []struct {
+		name, html string
+		anchor     repo.Anchor
+		want       string
+		start      int
+	}{
+		{"typing inside", "<p>Eleven kilo liXXma mike november.</p>", phrase, "kilo liXXma mike", 7},
+		{"a deletion inside", "<p>Eleven kilo mike november.</p>", phrase, "kilo mike", 7},
+		{"a word at its start", "<p>Eleven Big kilo lima mike november.</p>", phrase, "kilo lima mike", 11},
+		{"a word at its end", "<p>Eleven kilo lima mike foxtrot november.</p>", phrase, "kilo lima mike", 7},
+		{"text at both ends", "<p>Eleven XXkilo lima mikeYY november.</p>", phrase, "kilo lima mike", 9},
+		{"a deletion over its start", "<p>Eleven lima mike november.</p>", phrase, "lima mike", 7},
+		{"a rewrite of a word", "<p>Eleven kilo LIMA mike november.</p>", phrase, "kilo LIMA mike", 7},
+		{"a new paragraph before it", "<p>Ten.</p><p>Eleven kilo lima mike november.</p>", phrase, "kilo lima mike", 11},
+		{"all of its text gone", "<p>Eleven november.</p>", phrase, "kilo lima mike", 7},
+		{"a change of the punctuation after it", "<p>Eleven kilo lima mike! november.</p>", punctuated, "kilo lima mike", 7},
+		{"a rewrite of all of the text", "<p>Bees navigate home by polarized sky light.</p>", phrase, "kilo lima mike", 7},
+		{"a rewrite of the words around one that stays", "<p>Eleven KILO lime mike november.</p>", phrase, "KILO lime mike", 7},
+		{"the copy of a repeated quote at its place", "<p>Plan A: TBD</p><p>Plan B: TXBD</p><p>Plan C: done</p>", planBComment.Anchor, "TXBD", 19},
+		{"a line break before it", "<p>Eleven<br>kilo lima mike november.</p>", phrase, "kilo lima mike", 6},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := map[repo.Anchor]string{planBComment.Anchor: plansV1, punctuated: stop}[tc.anchor]
+			if before == "" {
+				before = doc
+			}
+			got := followText(tc.anchor, renderedBodyText(before), renderedBodyText(tc.html))
+			if got.Quote != tc.want || got.StartOffset != tc.start || got.EndOffset != tc.start+utf16Len(tc.want) {
+				t.Fatalf("followText = %+v, want %q at %d", got, tc.want, tc.start)
+			}
+			if tc.want != tc.anchor.Quote && !placedOn(repo.Comment{Anchor: got}, newPlacementDoc([]byte(tc.html))) {
+				t.Fatalf("the new anchor %+v is not placed on %q", got, tc.html)
+			}
+		})
+	}
+}

@@ -200,6 +200,8 @@ type mcpAPIResponse struct {
 	status      int
 	contentType string
 	body        []byte
+	// seq is the seq of version HTML, from its response header.
+	seq string
 }
 
 func (a mcpAPIAdapter) call(
@@ -230,6 +232,7 @@ func (a mcpAPIAdapter) call(
 		status:      recorder.Code,
 		contentType: recorder.Header().Get("Content-Type"),
 		body:        recorder.Body.Bytes(),
+		seq:         recorder.Header().Get("X-Slashdocs-Seq"),
 	}, nil
 }
 
@@ -284,9 +287,16 @@ func (a mcpAPIAdapter) multipartResponse(ctx context.Context, target string, fie
 	return a.call(ctx, http.MethodPost, target, writer.FormDataContentType(), &body, params, handler)
 }
 
+// html returns version HTML as text. A second text names the version and
+// the seq of the HTML, which an update that is made from it must send: the
+// content of an open version changes while people type.
 func (a mcpAPIAdapter) html(ctx context.Context, target string, params gin.Params, handler gin.HandlerFunc) (*mcp.CallToolResult, error) {
 	response, err := a.call(ctx, http.MethodGet, target, "", nil, params, handler)
-	return a.result(response, err, true)
+	result, err := a.result(response, err, true)
+	if err == nil && !result.IsError && response.seq != "" {
+		result.Content = append(result.Content, mcp.NewTextContent(fmt.Sprintf("version_id: %s\nseq: %s\nTo publish a change of this HTML, pass them to update_document as base_version_id and base_seq.", params.ByName("version_id"), response.seq)))
+	}
+	return result, err
 }
 
 func (mcpAPIAdapter) result(response mcpAPIResponse, err error, plainText bool) (*mcp.CallToolResult, error) {

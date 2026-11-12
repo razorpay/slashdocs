@@ -106,7 +106,7 @@ func TestMCPUpdateDocumentApprovalsFollowContent(t *testing.T) {
 	}), fixtureOwner.Email)
 
 	// An agent cannot approve through MCP (by design), so the approver's decision is recorded directly.
-	if _, _, err := e.store.CreateOrUpdateApproval(context.Background(), docID, versionID, repo.DecisionApproved, "", fixtureOwner); err != nil {
+	if _, _, err := e.store.CreateOrUpdateApproval(context.Background(), docID, versionID, nil, repo.DecisionApproved, "", fixtureOwner); err != nil {
 		t.Fatalf("record the approval: %v", err)
 	}
 	if status, _ := approvalsListed(t, e, ownerToken, docID); status != repo.DecisionApproved {
@@ -114,7 +114,7 @@ func TestMCPUpdateDocumentApprovalsFollowContent(t *testing.T) {
 	}
 
 	changed := mustMCPObject(t, assertMCPToolOK(t, callMCPToolHTTP(t, e, ownerToken, "update_document", map[string]any{
-		"document_id": docID, "base_version_id": versionID, "html": "<html><body>two</body></html>", "change_summary": "change",
+		"document_id": docID, "base_version_id": versionID, "base_seq": 1, "html": "<html><body>two</body></html>", "change_summary": "change",
 	}), "change"))
 	if status, decisions := approvalsListed(t, e, ownerToken, docID); status != repo.StatusPending || decisions[fixtureOwner.Email] != repo.StatusPending {
 		t.Fatalf("after a change: status = %q, decisions = %v; want every approval reset", status, decisions)
@@ -122,7 +122,7 @@ func TestMCPUpdateDocumentApprovalsFollowContent(t *testing.T) {
 
 	// Reverting to the approved content brings the approval back.
 	assertMCPToolOK(t, callMCPToolHTTP(t, e, ownerToken, "update_document", map[string]any{
-		"document_id": docID, "base_version_id": requiredMCPString(t, changed, "id"), "html": approvedHTML, "change_summary": "revert",
+		"document_id": docID, "base_version_id": requiredMCPString(t, changed, "id"), "base_seq": changed["seq"], "html": approvedHTML, "change_summary": "revert",
 	}), "revert")
 	if status, decisions := approvalsListed(t, e, ownerToken, docID); status != repo.DecisionApproved || decisions[fixtureOwner.Email] != repo.DecisionApproved {
 		t.Fatalf("after a revert: status = %q, decisions = %v; want the approval back", status, decisions)

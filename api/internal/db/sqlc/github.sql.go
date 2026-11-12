@@ -53,23 +53,26 @@ func (q *Queries) GetGitHubConnection(ctx context.Context, userID string) (GetGi
 
 const listGitHubAuthorAccess = `-- name: ListGitHubAuthorAccess :many
 SELECT DISTINCT v.created_by_type, v.created_by_id, u.id AS user_id, g.access_token_ciphertext, a.can_read
-FROM versions v
+FROM (
+  SELECT created_by_type, created_by_id FROM versions WHERE versions.document_id = $1
+  UNION
+  SELECT w.author_type, w.author_id FROM version_authors w JOIN versions wv ON wv.id = w.version_id WHERE wv.document_id = $1
+) v
 LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
   ON v.created_by_type = 'service_account' AND sa.id = v.created_by_id
 LEFT JOIN users u
   ON u.id = CASE v.created_by_type WHEN 'user' THEN v.created_by_id WHEN 'service_account' THEN sa.owner_user_id END
 LEFT JOIN github_connections g ON g.user_id = u.id
 LEFT JOIN github_repo_access a
-  ON a.user_id = g.user_id AND a.owner = $1 AND a.repo = $2
-  AND a.checked_at > GREATEST(g.updated_at, $3::timestamptz)
-WHERE v.document_id = $4
+  ON a.user_id = g.user_id AND a.owner = $2 AND a.repo = $3
+  AND a.checked_at > GREATEST(g.updated_at, $4::timestamptz)
 `
 
 type ListGitHubAuthorAccessParams struct {
+	DocumentID string
 	Owner      string
 	Repo       string
 	FreshAfter pgtype.Timestamptz
-	DocumentID string
 }
 
 type ListGitHubAuthorAccessRow struct {
@@ -80,7 +83,8 @@ type ListGitHubAuthorAccessRow struct {
 	CanRead               pgtype.Bool
 }
 
-// One row for each principal who created a version of the document. user_id
+// One row for each principal who created a version of the document or wrote
+// an operation of it. user_id
 // is the user whose GitHub access counts for the author: the author, or the
 // owner of a service account, because the owner controls its keys. The row
 // also has that user's sealed GitHub token (NULL when not connected) and the
@@ -88,10 +92,10 @@ type ListGitHubAuthorAccessRow struct {
 // than the user's last GitHub connection).
 func (q *Queries) ListGitHubAuthorAccess(ctx context.Context, arg ListGitHubAuthorAccessParams) ([]ListGitHubAuthorAccessRow, error) {
 	rows, err := q.db.Query(ctx, listGitHubAuthorAccess,
+		arg.DocumentID,
 		arg.Owner,
 		arg.Repo,
 		arg.FreshAfter,
-		arg.DocumentID,
 	)
 	if err != nil {
 		return nil, err

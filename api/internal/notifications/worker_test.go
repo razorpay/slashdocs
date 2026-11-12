@@ -59,7 +59,7 @@ func TestOutboxDeliveryPreferencesAndAccess(t *testing.T) {
 	w := Worker{Store: store, Senders: map[string]Sender{"test": sender}, AppOrigin: "https://slashdocs.example.com"}
 	create := func(body string, mentions []repo.CommentMention) repo.Comment {
 		t.Helper()
-		c, err := store.CreateComment(ctx, doc.ID, v.ID, body, repo.Anchor{Quote: "Review"}, author, mentions)
+		c, err := store.CreateComment(ctx, doc.ID, v.ID, body, repo.Anchor{Quote: "Review"}, 0, author, mentions)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -319,7 +319,7 @@ func TestEachProviderDeliversOnce(t *testing.T) {
 	if _, err := store.CreateGrant(ctx, "document", doc.ID, author, repo.RoleCommenter, owner); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateComment(ctx, doc.ID, v.ID, "First", repo.Anchor{Quote: "Review"}, author, nil); err != nil {
+	if _, err := store.CreateComment(ctx, doc.ID, v.ID, "First", repo.Anchor{Quote: "Review"}, 0, author, nil); err != nil {
 		t.Fatal(err)
 	}
 	deliver(&DeliveryError{Code: "rate_limited"}, nil)
@@ -331,7 +331,7 @@ func TestEachProviderDeliversOnce(t *testing.T) {
 		t.Fatal("a retry must not repeat a delivered provider")
 	}
 
-	if _, err := store.CreateComment(ctx, doc.ID, v.ID, "Second", repo.Anchor{Quote: "Review"}, author, nil); err != nil {
+	if _, err := store.CreateComment(ctx, doc.ID, v.ID, "Second", repo.Anchor{Quote: "Review"}, 0, author, nil); err != nil {
 		t.Fatal(err)
 	}
 	deliver(&DeliveryError{Code: "users_not_found", Permanent: true}, &DeliveryError{Code: "http_503"})
@@ -345,7 +345,7 @@ func TestEachProviderDeliversOnce(t *testing.T) {
 
 	// A re-enqueue sends the new content to every provider, and an
 	// acknowledgement from an earlier claim cannot discard it.
-	c, err := store.CreateComment(ctx, doc.ID, v.ID, "@Owner", repo.Anchor{Quote: "Review"}, author, nil)
+	c, err := store.CreateComment(ctx, doc.ID, v.ID, "@Owner", repo.Anchor{Quote: "Review"}, 0, author, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

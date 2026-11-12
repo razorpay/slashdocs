@@ -1,6 +1,6 @@
 -- name: InsertComment :one
-INSERT INTO comments(id,document_id,created_on_version_id,author_type,author_id,author_email,author_name,body,selected_text,anchor_json,status,root_comment_id)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'open',$1)
+INSERT INTO comments(id,document_id,created_on_version_id,author_type,author_id,author_email,author_name,body,selected_text,anchor_json,status,root_comment_id,anchor_seq)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'open',$1,sqlc.narg(anchor_seq))
 RETURNING created_at;
 
 -- name: InsertCommentReply :one
@@ -65,6 +65,20 @@ UPDATE comments SET body=$1, edited=true WHERE id=$2;
 
 -- name: UpdateCommentStatus :exec
 UPDATE comments SET status=$1, resolved_at=CASE WHEN $1='resolved' THEN now() ELSE NULL END WHERE id=$2;
+
+-- name: ListAnchorsBehind :many
+-- The text comments of a document whose anchors are on a seq before the
+-- live document.
+SELECT c.id, c.anchor_json, c.anchor_seq::bigint AS anchor_seq
+FROM comments c JOIN documents d ON d.id = c.document_id
+WHERE c.document_id = @document_id AND c.anchor_seq < d.seq;
+
+-- name: MoveAnchors :exec
+-- Moves the anchors of text comments to seq, each one when it is still on
+-- its seq was.
+UPDATE comments c SET anchor_json = m.anchor_json, selected_text = m.anchor_json->>'quote', anchor_seq = @seq::bigint
+FROM (SELECT unnest(@ids::text[]) AS id, unnest(@was::bigint[]) AS was, unnest(@anchors::jsonb[]) AS anchor_json) m
+WHERE c.id = m.id AND c.anchor_seq = m.was;
 
 -- name: UpdateCommentAnchor :exec
 UPDATE comments SET anchor_json=$1, selected_text=$2 WHERE id=$3;

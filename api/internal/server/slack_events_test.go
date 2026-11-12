@@ -134,14 +134,14 @@ func orgDoc(t *testing.T, e *testEnv) (doc repo.Document, v1, v2 repo.Version) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	v2, err = e.store.CreateVersion(ctx, doc.ID, v1.ID, "", "", []byte(`<html><body><p>Second version summary.</p></body></html>`), fixtureOwner)
+	v2, _, err = e.store.SaveVersion(ctx, doc.ID, v1.ID, nil, fixtureOwner, repo.Upload([]byte(`<html><body><p>Second version summary.</p></body></html>`), ""))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.store.CreateGrant(ctx, "document", doc.ID, auth.Principal{Type: auth.PrincipalAnyone}, repo.RoleViewer, fixtureOwner); err != nil {
 		t.Fatal(err)
 	}
-	open, err := e.store.CreateComment(ctx, doc.ID, v2.ID, "open thread", repo.Anchor{Quote: "Second"}, fixtureCommenter, nil)
+	open, err := e.store.CreateComment(ctx, doc.ID, v2.ID, "open thread", repo.Anchor{Quote: "Second"}, 0, fixtureCommenter, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

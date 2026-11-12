@@ -101,7 +101,7 @@ func TestMarkCommentThreadReadAccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreign, err := e.store.CreateComment(context.Background(), other.ID, otherVer.ID, "elsewhere", repo.Anchor{Quote: "other"}, fixtureOwner, nil)
+	foreign, err := e.store.CreateComment(context.Background(), other.ID, otherVer.ID, "elsewhere", repo.Anchor{Quote: "other"}, 0, fixtureOwner, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

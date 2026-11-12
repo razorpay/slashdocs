@@ -420,9 +420,10 @@ func TestMCPDocumentAndFolderToolParity(t *testing.T) {
 		"document_id": docID, "version_id": versionID,
 	}), versionID)
 	assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "get_document_html", map[string]any{"document_id": docID}), "first version")
-
+	// The HTML comes with the version and the seq that an update needs.
+	assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "get_document_html", map[string]any{"document_id": docID}), "version_id: "+versionID+"\nseq: 1\n")
 	updated := mustMCPObject(t, assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "update_document", map[string]any{
-		"document_id": docID, "base_version_id": versionID,
+		"document_id": docID, "base_version_id": versionID, "base_seq": 1,
 		"html": "<html><body>second version</body></html>", "change_summary": "MCP parity update",
 	}), "MCP parity update"))
 	versionID = requiredMCPString(t, updated, "id")
@@ -608,8 +609,13 @@ func TestMCPToolPermissionsAndConcurrentVersionConflict(t *testing.T) {
 		"document_id": document.ID, "version_id": version.ID, "body": "viewer comment", "quote": "permission text",
 	}), "commenter role required")
 	assertMCPToolError(t, callMCPToolHTTP(t, e, tokenFor(fixtureCommenter), "update_document", map[string]any{
-		"document_id": document.ID, "base_version_id": version.ID, "html": "<html><body>not allowed</body></html>",
+		"document_id": document.ID, "base_version_id": version.ID, "base_seq": 1, "html": "<html><body>not allowed</body></html>",
 	}), "editor role required")
+	// An agent always sends the seq of its read, so the server keeps the text
+	// that people typed after it.
+	assertMCPToolError(t, callMCPToolHTTP(t, e, tokenFor(fixtureEditor), "update_document", map[string]any{
+		"document_id": document.ID, "base_version_id": version.ID, "html": "<html><body>no seq</body></html>",
+	}), "base_seq")
 	assertMCPToolError(t, callMCPToolHTTP(t, e, tokenFor(fixtureStranger), "get_document", map[string]any{"document_id": document.ID}), "viewer role required")
 	assertMCPToolOK(t, callMCPToolHTTP(t, e, tokenFor(fixtureCommenter), "create_comment", map[string]any{
 		"document_id": document.ID, "version_id": version.ID, "body": "commenter works", "quote": "permission text",
@@ -623,7 +629,7 @@ func TestMCPToolPermissionsAndConcurrentVersionConflict(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			results[i] = callMCPToolHTTP(t, e, tokenFor(fixtureEditor), "update_document", map[string]any{
-				"document_id": document.ID, "base_version_id": version.ID,
+				"document_id": document.ID, "base_version_id": version.ID, "base_seq": 1,
 				"html":           "<html><body>concurrent winner " + winnerLabels[i] + "</body></html>",
 				"change_summary": "concurrent MCP update",
 			})
@@ -631,6 +637,7 @@ func TestMCPToolPermissionsAndConcurrentVersionConflict(t *testing.T) {
 	}
 	wg.Wait()
 
+	// Both updates change the same text, so the later one is refused.
 	successes, conflicts := 0, 0
 	for _, result := range results {
 		if !result.IsError {
@@ -657,7 +664,7 @@ func TestMCPCommentAuthorNeedsCurrentDocumentAccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	comment, err := e.store.CreateComment(ctx, doc.ID, version.ID, "original", repo.Anchor{Quote: "test"}, fixtureUser, nil)
+	comment, err := e.store.CreateComment(ctx, doc.ID, version.ID, "original", repo.Anchor{Quote: "test"}, 0, fixtureUser, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

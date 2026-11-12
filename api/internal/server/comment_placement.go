@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"slices"
 	"strings"
 	"unicode/utf16"
@@ -152,58 +153,52 @@ func placedOn(cm repo.Comment, doc *placementDoc) bool {
 			return p.Target == ""
 		}
 	}
-	if !strings.Contains(doc.html, cm.SelectedText) {
-		return false
+	_, _, ok := textPlace(doc.renderedText(), cm.Anchor, cmp.Or(cm.Anchor.Quote, cm.SelectedText))
+	return ok
+}
+
+// textPlace returns where the viewer places a quote of the anchor a in
+// text, as start and end in its units. Like the viewer, only verbatim text
+// places a comment. The text is the rendered text of a version, so a quote
+// across tags or with entities is found too.
+func textPlace(text renderedText, a repo.Anchor, quote string) (start, end int, ok bool) {
+	units := utf16.Encode([]rune(quote))
+	if start, end, ok := storedPlace(text, a, units); ok {
+		return start, end, true
 	}
-	a := cm.Anchor
-	if a.Quote == "" {
-		return true
-	}
-	window := a.Prefix + a.Quote + a.Suffix
-	repeatedInContext := occursMoreThanOnce(window, a.Quote)
-	if !repeatedInContext && !occursMoreThanOnce(doc.html, a.Quote) {
-		// One copy in the whole version, and it is the only candidate.
-		return true
-	}
-	text := doc.renderedText()
-	quote := utf16.Encode([]rune(a.Quote))
-	if atStoredPosition(text, a, quote) {
-		return true
-	}
-	copies := indexAll(text.units, quote)
+	copies := indexAll(text.units, units)
+	repeatedInContext := occursMoreThanOnce(a.Prefix+quote+a.Suffix, quote)
 	switch {
 	case len(copies) == 0:
-		// The quote is only in markup that the viewer never matches, such as
-		// an attribute or a script.
-		return false
+		return 0, 0, false
 	case len(copies) == 1 && !repeatedInContext:
-		return true
+		return copies[0], copies[0] + len(units), true
 	}
 	prefix := utf16.Encode([]rune(a.Prefix))
 	suffix := utf16.Encode([]rune(a.Suffix))
 	for _, start := range copies {
-		if contextScore(text.units, start, start+len(quote), prefix, suffix) >= minContextScoreForAmbiguousQuote {
-			return true
+		if contextScore(text.units, start, start+len(units), prefix, suffix) >= minContextScoreForAmbiguousQuote {
+			return start, start + len(units), true
 		}
 	}
-	return false
+	return 0, 0, false
 }
 
-// atStoredPosition reports whether the quote is still at the anchor's stored
-// offsets, the viewer's first tier. The offsets count raw textContent, which
-// has no character for a <br>.
-func atStoredPosition(text renderedText, a repo.Anchor, quote []uint16) bool {
+// storedPlace returns the stored offsets of the anchor in text when the
+// quote is still there, the first tier of the viewer. The offsets count raw
+// textContent, which has no character for a <br>.
+func storedPlace(text renderedText, a repo.Anchor, quote []uint16) (start, end int, ok bool) {
 	if a.StartOffset < 0 || a.EndOffset <= a.StartOffset {
-		return false
+		return 0, 0, false
 	}
-	start := rawOffsetToRendered(text.brs, a.StartOffset)
-	end := rawOffsetToRendered(text.brs, a.EndOffset)
+	start = rawOffsetToRendered(text.brs, a.StartOffset)
+	end = rawOffsetToRendered(text.brs, a.EndOffset)
 	if end > len(text.units) {
-		return false
+		return 0, 0, false
 	}
 	at := text.units[start:end]
-	return slices.Equal(at, quote) ||
-		normalizeSpace(string(utf16.Decode(at))) == normalizeSpace(string(utf16.Decode(quote)))
+	ok = slices.Equal(at, quote) || normalizeSpace(string(utf16.Decode(at))) == normalizeSpace(string(utf16.Decode(quote)))
+	return start, end, ok
 }
 
 // rawOffsetToRendered mirrors rawOffsetToRendered in rendered-text.ts.

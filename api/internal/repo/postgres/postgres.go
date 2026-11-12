@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -8,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"time"
 
@@ -31,6 +33,7 @@ type Store struct {
 	db                   *pgxpool.Pool
 	q                    *dbsqlc.Queries
 	blobs                blob.Store
+	states               *stateCache
 }
 
 // rollback closes a transaction on every early-return path. pgx returns
@@ -46,7 +49,7 @@ func NewWithBlob(db *pgxpool.Pool, blobs blob.Store) *Store {
 		// version HTML is never duplicated in Postgres.
 		blobs = blob.NewMemory()
 	}
-	return &Store{db: db, q: dbsqlc.New(db), blobs: blobs}
+	return &Store{db: db, q: dbsqlc.New(db), blobs: blobs, states: newStateCache()}
 }
 func Connect(ctx context.Context, databaseURL string) (*Store, error) {
 	return ConnectWithBlob(ctx, databaseURL, nil)
@@ -341,7 +344,7 @@ func (s *Store) CreateDocument(ctx context.Context, owner auth.Principal, title,
 		}
 	}
 	docID, verID := newID("doc"), newID("ver")
-	blobKey := fmt.Sprintf("docs/%s/%s.html", docID, verID)
+	blobKey := versionBlobKey(docID, verID)
 	sum := sha(html)
 	if err := s.blobs.Put(ctx, blobKey, htmlContentType, html); err != nil {
 		return repo.Document{}, repo.Version{}, err
@@ -370,7 +373,8 @@ func (s *Store) CreateDocument(ctx context.Context, owner auth.Principal, title,
 		return repo.Document{}, repo.Version{}, err
 	}
 	committed = true
-	return repo.Document{ID: docID, Title: title, Owner: owner, CurrentVersionID: verID, ParentFolderID: folderID}, repo.Version{ID: verID, Number: 1, DocumentID: docID, CreatedBy: owner, SHA256: sum, CreatedAt: pgTimeRFC3339(createdAt)}, nil
+	s.states.put(docID, newLiveState(verID, 1, html))
+	return repo.Document{ID: docID, Title: title, Owner: owner, CurrentVersionID: verID, Seq: 1, ParentFolderID: folderID}, repo.Version{ID: verID, Number: 1, DocumentID: docID, CreatedBy: owner, SHA256: sum, CreatedAt: pgTimeRFC3339(createdAt), Authors: []auth.Principal{owner}, Seq: 1}, nil
 }
 func (s *Store) GetDocument(ctx context.Context, id string) (repo.Document, error) {
 	r, err := s.q.GetDocument(ctx, id)
@@ -509,58 +513,7 @@ func clearGrantedAccessRequests(ctx context.Context, tx pgx.Tx, resourceType, re
 	return err
 }
 
-func (s *Store) CreateVersion(ctx context.Context, documentID, baseVersionID, clientChangeID, changeSummary string, html []byte, createdBy auth.Principal) (repo.Version, error) {
-	tx, err := s.db.Begin(ctx)
-	if err != nil {
-		return repo.Version{}, err
-	}
-	defer rollback(ctx, tx)
-	q := s.q.WithTx(tx)
-	cur, err := q.GetDocumentVersionForUpdate(ctx, documentID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return repo.Version{}, repo.ErrNotFound
-	}
-	if err != nil {
-		return repo.Version{}, err
-	}
-	if cur.CurrentVersionID.String != baseVersionID {
-		return repo.Version{ID: cur.CurrentVersionID.String}, &repo.VersionConflictError{LatestVersionID: cur.CurrentVersionID.String}
-	}
-	id := newID("ver")
-	blobKey := fmt.Sprintf("docs/%s/%s.html", documentID, id)
-	sum := sha(html)
-	if err := s.blobs.Put(ctx, blobKey, htmlContentType, html); err != nil {
-		return repo.Version{}, err
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = s.blobs.Delete(context.WithoutCancel(ctx), blobKey)
-		}
-	}()
-	createdAt, err := q.InsertVersion(ctx, dbsqlc.InsertVersionParams{ID: id, DocumentID: documentID, Number: cur.NextNumber, HtmlBlobKey: blobKey, Sha256: sum, ParentVersionID: pgtype.Text{String: cur.CurrentVersionID.String, Valid: cur.CurrentVersionID.Valid}, CreatedByType: string(createdBy.Type), CreatedByID: createdBy.ID, ChangeSummary: changeSummary, ClientChangeID: pgtype.Text{String: clientChangeID, Valid: clientChangeID != ""}, SearchText: searchText(html)})
-	// The same change can reach this point twice when a retry read the
-	// version that the first attempt made as the latest one.
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "versions_client_change_uniq" {
-		return repo.Version{}, repo.ErrConflict
-	}
-	if err != nil {
-		return repo.Version{}, err
-	}
-	if err := q.UpdateDocumentCurrentVersion(ctx, dbsqlc.UpdateDocumentCurrentVersionParams{CurrentVersionID: pgtype.Text{String: id, Valid: true}, ID: documentID}); err != nil {
-		return repo.Version{}, err
-	}
-	if err := s.recordApprovalEvent(ctx, q, approvalEvent{documentID: documentID, kind: repo.ApprovalEventVersionCreated, actor: createdBy}); err != nil {
-		return repo.Version{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return repo.Version{}, err
-	}
-	committed = true
-	return repo.Version{ID: id, Number: int(cur.NextNumber), DocumentID: documentID, CreatedBy: createdBy, ChangeSummary: changeSummary, SHA256: sum, CreatedAt: pgTimeRFC3339(createdAt), Live: clientChangeID != ""}, nil
-}
-func (s *Store) CreateComment(ctx context.Context, documentID, versionID, body string, anchor repo.Anchor, author auth.Principal, mentions []repo.CommentMention) (repo.Comment, error) {
+func (s *Store) CreateComment(ctx context.Context, documentID, versionID, body string, anchor repo.Anchor, seq int64, author auth.Principal, mentions []repo.CommentMention) (repo.Comment, error) {
 	body = repo.NormalizeCommentBody(body)
 	if body == "" {
 		return repo.Comment{}, repo.ErrInvalidCommentBody
@@ -575,8 +528,10 @@ func (s *Store) CreateComment(ctx context.Context, documentID, versionID, body s
 	}
 	defer rollback(ctx, tx)
 	q := s.q.WithTx(tx)
-	v, err := q.GetVersion(ctx, versionID)
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && v.DocumentID != documentID) {
+	// A discard of the open version moves its comments to the version
+	// before. The lock makes it see this one.
+	versionDocumentID, err := q.KeyShareVersion(ctx, versionID)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && versionDocumentID != documentID) {
 		return repo.Comment{}, repo.ErrNotFound
 	}
 	if err != nil {
@@ -587,7 +542,7 @@ func (s *Store) CreateComment(ctx context.Context, documentID, versionID, body s
 		return repo.Comment{}, err
 	}
 	id := newID("cmt")
-	createdAt, err := q.InsertComment(ctx, dbsqlc.InsertCommentParams{ID: id, DocumentID: documentID, CreatedOnVersionID: versionID, AuthorType: string(author.Type), AuthorID: author.ID, AuthorEmail: author.Email, AuthorName: author.Name, Body: body, SelectedText: anchor.Quote, AnchorJson: b})
+	createdAt, err := q.InsertComment(ctx, dbsqlc.InsertCommentParams{ID: id, DocumentID: documentID, CreatedOnVersionID: versionID, AuthorType: string(author.Type), AuthorID: author.ID, AuthorEmail: author.Email, AuthorName: author.Name, Body: body, SelectedText: anchor.Quote, AnchorJson: b, AnchorSeq: pgtype.Int8{Int64: seq, Valid: anchor.Point == nil}})
 	if err != nil {
 		return repo.Comment{}, err
 	}
@@ -602,6 +557,30 @@ func (s *Store) CreateComment(ctx context.Context, documentID, versionID, body s
 	}
 	return repo.Comment{ID: id, DocumentID: documentID, VersionID: versionID, Author: author, Body: body, SelectedText: anchor.Quote, Anchor: anchor, Status: repo.StatusOpen, RootCommentID: id, Mentions: mentions, CreatedAt: pgTimeRFC3339(createdAt)}, nil
 }
+func (s *Store) AnchorsBehind(ctx context.Context, documentID string) ([]repo.FollowedAnchor, error) {
+	rows, err := s.q.ListAnchorsBehind(ctx, documentID)
+	out := make([]repo.FollowedAnchor, 0, len(rows))
+	for _, r := range rows {
+		f := repo.FollowedAnchor{CommentID: r.ID, Seq: r.AnchorSeq}
+		if json.Unmarshal(r.AnchorJson, &f.Anchor) == nil {
+			out = append(out, f)
+		}
+	}
+	return out, err
+}
+
+func (s *Store) MoveAnchors(ctx context.Context, moves []repo.FollowedAnchor, seq int64) error {
+	p := dbsqlc.MoveAnchorsParams{Seq: seq}
+	for _, m := range moves {
+		b, err := json.Marshal(m.Anchor)
+		if err != nil {
+			return err
+		}
+		p.Ids, p.Was, p.Anchors = append(p.Ids, m.CommentID), append(p.Was, m.Seq), append(p.Anchors, b)
+	}
+	return s.q.MoveAnchors(ctx, p)
+}
+
 func (s *Store) CreateCommentReply(ctx context.Context, documentID, parentCommentID, body string, author auth.Principal, mentions []repo.CommentMention) (repo.Comment, error) {
 	body = repo.NormalizeCommentBody(body)
 	if body == "" {
@@ -1236,23 +1215,45 @@ func (s *Store) ListVersions(ctx context.Context, documentID string) ([]repo.Ver
 	if err != nil {
 		return nil, err
 	}
-	out := make([]repo.Version, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, repo.Version{ID: r.ID, Number: int(r.Number), DocumentID: r.DocumentID, CreatedBy: auth.Principal{Type: auth.PrincipalType(r.CreatedByType), ID: r.CreatedByID, Email: r.CreatedByEmail, Name: r.CreatedByName, PictureURL: r.CreatedByPictureUrl}, ChangeSummary: r.ChangeSummary, SHA256: r.Sha256, CreatedAt: pgTimeRFC3339(r.CreatedAt), Live: r.Live})
-	}
-	return out, nil
-}
-func (s *Store) VersionAuthorsBetween(ctx context.Context, documentID, from, to string) ([]auth.Principal, bool, error) {
-	rows, err := s.q.ListVersionAuthorsBetween(ctx, dbsqlc.ListVersionAuthorsBetweenParams{DocumentID: documentID, FromVersionID: from, ToVersionID: to})
+	authors, err := s.q.ListVersionAuthors(ctx, dbsqlc.ListVersionAuthorsParams{DocumentID: documentID})
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	authors, live := make([]auth.Principal, 0, len(rows)), true
-	for _, r := range rows {
-		authors = append(authors, auth.Principal{Type: auth.PrincipalType(r.CreatedByType), ID: r.CreatedByID, Email: r.CreatedByEmail, Name: r.CreatedByName, PictureURL: r.CreatedByPictureUrl})
-		live = live && r.Live
+	// The open version is a sitting, which shows as what it changed up to
+	// now. A sitting that changed nothing is not in History.
+	var open, summary string
+	if n := len(rows); n > 0 && rows[n-1].Open {
+		if open, summary, err = s.LiveChangeSummary(ctx, documentID); err != nil {
+			return nil, err
+		}
 	}
-	return authors, live, nil
+	// One sitting is one row. Its newest version takes the place of the
+	// versions of the sitting before the pushes that cut it, with their
+	// authors.
+	out := make([]repo.Version, 0, len(rows))
+	sittings := map[string]int{}
+	for _, r := range slices.Backward(rows) {
+		v := versionFromRow(dbsqlc.GetVersionRow(r), authors)
+		if v.ID == open {
+			if summary == "" {
+				continue
+			}
+			v.ChangeSummary = summary
+		}
+		sitting := cmp.Or(r.SittingID, r.ID)
+		if newest, ok := sittings[sitting]; ok {
+			for _, a := range v.Authors {
+				if !slices.ContainsFunc(out[newest].Authors, func(b auth.Principal) bool { return a.Type == b.Type && a.ID == b.ID }) {
+					out[newest].Authors = append(out[newest].Authors, a)
+				}
+			}
+			continue
+		}
+		sittings[sitting] = len(out)
+		out = append(out, v)
+	}
+	slices.Reverse(out)
+	return out, nil
 }
 func (s *Store) GetVersion(ctx context.Context, id string) (repo.Version, error) {
 	r, err := s.q.GetVersion(ctx, id)
@@ -1262,32 +1263,70 @@ func (s *Store) GetVersion(ctx context.Context, id string) (repo.Version, error)
 	if err != nil {
 		return repo.Version{}, err
 	}
-	return repo.Version{ID: r.ID, Number: int(r.Number), DocumentID: r.DocumentID, CreatedBy: auth.Principal{Type: auth.PrincipalType(r.CreatedByType), ID: r.CreatedByID, Email: r.CreatedByEmail, Name: r.CreatedByName, PictureURL: r.CreatedByPictureUrl}, ChangeSummary: r.ChangeSummary, SHA256: r.Sha256, CreatedAt: pgTimeRFC3339(r.CreatedAt), Live: r.Live}, nil
-}
-func (s *Store) VersionByClientChange(ctx context.Context, documentID, clientChangeID string) (repo.Version, string, error) {
-	r, err := s.q.GetVersionByClientChange(ctx, dbsqlc.GetVersionByClientChangeParams{DocumentID: documentID, ClientChangeID: pgtype.Text{String: clientChangeID, Valid: true}})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return repo.Version{}, "", repo.ErrNotFound
-	}
+	authors, err := s.q.ListVersionAuthors(ctx, dbsqlc.ListVersionAuthorsParams{DocumentID: r.DocumentID, VersionID: pgtype.Text{String: id, Valid: true}})
 	if err != nil {
-		return repo.Version{}, "", err
+		return repo.Version{}, err
 	}
-	v, err := s.GetVersion(ctx, r.ID)
-	return v, r.ParentVersionID, err
+	return versionFromRow(r, authors), nil
+}
+
+// versionFromRow makes a version from its row and the authors of the
+// versions of its document. Its authors are its creator, and then the other
+// people whose operations it holds.
+func versionFromRow(r dbsqlc.GetVersionRow, writers []dbsqlc.ListVersionAuthorsRow) repo.Version {
+	v := repo.Version{ID: r.ID, Number: int(r.Number), DocumentID: r.DocumentID, CreatedBy: auth.Principal{Type: auth.PrincipalType(r.CreatedByType), ID: r.CreatedByID, Email: r.CreatedByEmail, Name: r.CreatedByName, PictureURL: r.CreatedByPictureUrl}, ChangeSummary: r.ChangeSummary, SHA256: r.Sha256, CreatedAt: pgTimeRFC3339(r.CreatedAt), EditedAt: pgTimeRFC3339(r.EditedAt), Open: r.Open, Seq: r.Seq}
+	v.Authors = []auth.Principal{v.CreatedBy}
+	for _, w := range writers {
+		if w.VersionID == v.ID && (w.AuthorType != r.CreatedByType || w.AuthorID != r.CreatedByID) {
+			v.Authors = append(v.Authors, auth.Principal{Type: auth.PrincipalType(w.AuthorType), ID: w.AuthorID, Email: w.AuthorEmail, Name: w.AuthorName, PictureURL: w.AuthorPictureUrl})
+		}
+	}
+	return v
 }
 func (s *Store) GetVersionHTML(ctx context.Context, id string) ([]byte, error) {
-	key, err := s.q.GetVersionBlobKey(ctx, id)
+	html, _, err := s.GetVersionHTMLAt(ctx, id, repo.LiveSeq)
+	return html, err
+}
+func (s *Store) GetVersionHTMLAt(ctx context.Context, id string, seq int64) ([]byte, int64, error) {
+	v, err := s.q.GetLiveVersion(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, repo.ErrNotFound
+		return nil, 0, repo.ErrNotFound
 	}
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	b, _, err := s.blobs.Get(ctx, key)
-	if errors.Is(err, blob.ErrNotFound) {
-		return nil, repo.ErrNotFound
+	// A version before the current one has only its content.
+	if !v.Current {
+		if seq != repo.LiveSeq && seq != v.Seq {
+			return nil, 0, repo.ErrStale
+		}
+		html, _, err := s.blobs.Get(ctx, v.HtmlBlobKey)
+		if errors.Is(err, blob.ErrNotFound) {
+			err = repo.ErrNotFound
+		}
+		return html, v.Seq, err
 	}
-	return b, err
+	// The current version follows the live document, and serves the seqs
+	// that the log still reaches.
+	doc, state, err := s.view(ctx, v.DocumentID)
+	if err != nil {
+		return nil, 0, err
+	}
+	// A write made another version the current one after the first read.
+	if doc.version.ID != id {
+		return s.GetVersionHTMLAt(ctx, id, seq)
+	}
+	if seq == repo.LiveSeq || seq == doc.seq {
+		return state.source, doc.seq, nil
+	}
+	html, _, err := stateAt(ctx, s.q, doc, state, seq)
+	if errors.Is(err, repo.ErrNoSuchSeq) {
+		err = repo.ErrStale
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	return html.Bytes(), seq, nil
 }
 func (s *Store) VersionPreview(ctx context.Context, id string) (repo.VersionPreview, error) {
 	r, err := s.q.GetVersionPreview(ctx, id)
@@ -1704,19 +1743,25 @@ func (s *Store) AppendDocumentEvent(ctx context.Context, documentID, kind string
 	} else if err != nil {
 		return err
 	}
-	rev, err := q.GetDocumentKVRevision(ctx, documentID)
-	if err != nil {
-		return err
-	}
 	if kind == repo.DocumentEventPresence {
 		if err := q.DeleteStaleDocumentPresenceEvents(ctx, dbsqlc.DeleteStaleDocumentPresenceEventsParams{DocumentID: documentID, MaxAgeSeconds: int32(presenceRetention / time.Second)}); err != nil {
 			return err
 		}
 	}
-	if err := insertAndNotifyDocumentKVEvent(ctx, q, dbsqlc.InsertDocumentKVEventParams{DocumentID: documentID, Revision: rev + 1, Kind: kind, Changes: []byte("[]"), Data: data, UpdatedByType: string(actor.Type), UpdatedByID: actor.ID, UpdatedByEmail: actor.Email, UpdatedByName: actor.Name}); err != nil {
+	if err := appendDocumentEvent(ctx, q, documentID, kind, data, actor); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// appendDocumentEvent gives a live event the next revision of the document,
+// whose row the transaction holds locked.
+func appendDocumentEvent(ctx context.Context, q *dbsqlc.Queries, documentID, kind string, data json.RawMessage, actor auth.Principal) error {
+	rev, err := q.GetDocumentKVRevision(ctx, documentID)
+	if err != nil {
+		return err
+	}
+	return insertAndNotifyDocumentKVEvent(ctx, q, dbsqlc.InsertDocumentKVEventParams{DocumentID: documentID, Revision: rev + 1, Kind: kind, Changes: []byte("[]"), Data: data, UpdatedByType: string(actor.Type), UpdatedByID: actor.ID, UpdatedByEmail: actor.Email, UpdatedByName: actor.Name})
 }
 
 func insertAndNotifyDocumentKVEvent(ctx context.Context, q *dbsqlc.Queries, event dbsqlc.InsertDocumentKVEventParams) error {
@@ -1789,7 +1834,7 @@ func (s *Store) DeclineOwnershipTransfer(ctx context.Context, id string, user au
 }
 
 func docFromGet(r dbsqlc.GetDocumentRow) repo.Document {
-	return repo.Document{ID: r.ID, Title: r.Title, CurrentVersionID: r.CurrentVersionID.String, Owner: auth.Principal{Type: auth.PrincipalType(r.OwnerType), ID: r.OwnerID, Email: r.OwnerEmail, Name: r.OwnerName}, ParentFolderID: r.ParentFolderID}
+	return repo.Document{ID: r.ID, Title: r.Title, CurrentVersionID: r.CurrentVersionID.String, Seq: r.Seq, Owner: auth.Principal{Type: auth.PrincipalType(r.OwnerType), ID: r.OwnerID, Email: r.OwnerEmail, Name: r.OwnerName}, ParentFolderID: r.ParentFolderID}
 }
 func docFromList(r dbsqlc.ListDocumentsRow) repo.Document {
 	d := repo.Document{ID: r.ID, Title: r.Title, CurrentVersionID: r.CurrentVersionID.String, Owner: auth.Principal{Type: auth.PrincipalType(r.OwnerType), ID: r.OwnerID, Email: r.OwnerEmail, Name: r.OwnerName}}

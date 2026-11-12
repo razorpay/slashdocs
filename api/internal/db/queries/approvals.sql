@@ -1,13 +1,3 @@
--- name: LockDocumentForApproval :one
--- Approval writes on one document take turns, and wait for a version push in
--- progress (which holds the row for update). So a decision or an assignment
--- never races a new version, and the status each change records counts every
--- change before it. NO KEY UPDATE does not wait on foreign-key checks from
--- concurrent comment writes. Read the version in a later statement: this
--- statement's snapshot cannot see a version that a push committed while it
--- waited.
-SELECT current_version_id FROM documents WHERE id = @document_id FOR NO KEY UPDATE;
-
 -- name: InsertApprovalRequest :exec
 INSERT INTO approval_requests(id, document_id, approver_type, approver_id, requested_by_type, requested_by_id)
 VALUES(@id, @document_id, @approver_type, @approver_id, @requested_by_type, @requested_by_id);
@@ -59,7 +49,7 @@ RETURNING approver_type, approver_id;
 -- The approvers of the documents at or under a resource who can no longer
 -- read their document, after a grant on that resource was revoked. Access is
 -- ownership of the document or of a folder above it, or a grant on the
--- document or a folder above it, as in RoleForDocument. It locks each document as LockDocumentForApproval does, in
+-- document or a folder above it, as in RoleForDocument. It locks each document as LockDocument does, in
 -- id order, before the caller removes the approvers.
 WITH RECURSIVE subtree(id) AS (
   SELECT @resource_id::text
@@ -205,7 +195,7 @@ GROUP BY r.document_id;
 -- transaction of the change. It names who and what at the time of the change,
 -- so a receiver can act on it without reading the API. The sequence orders
 -- the events of one document: changes to a document take turns (see
--- LockDocumentForApproval), so each takes its number in commit order.
+-- LockDocument), so each takes its number in commit order.
 INSERT INTO approval_event_outbox(id, payload)
 SELECT @id::text, jsonb_strip_nulls(jsonb_build_object(
   'id', @id::text,
@@ -213,7 +203,7 @@ SELECT @id::text, jsonb_strip_nulls(jsonb_build_object(
   'sequence', nextval('approval_event_sequence'),
   'created_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
   'document', jsonb_build_object('id', d.id, 'title', d.title, 'url', @document_url::text),
-  'version', jsonb_build_object('id', v.id, 'number', v.number, 'sha256', v.sha256),
+  'version', jsonb_build_object('id', v.id, 'number', v.number, 'sha256', NULLIF(v.sha256, '')),
   'approver', CASE WHEN @approver_id::text <> '' THEN jsonb_build_object(
     'type', @approver_type::text, 'id', @approver_id::text, 'email', ap.email, 'name', COALESCE(ap.name, aps.name)) END,
   'actor', jsonb_build_object(

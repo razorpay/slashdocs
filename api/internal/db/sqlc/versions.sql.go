@@ -11,6 +11,304 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const continueSitting = `-- name: ContinueSitting :exec
+UPDATE versions v SET sitting_id = COALESCE(a.sitting_id, a.id)
+FROM versions p JOIN versions a ON a.id = p.parent_version_id
+WHERE v.id = $1 AND p.id = v.parent_version_id
+  AND NOT EXISTS (SELECT 1 FROM document_ops o WHERE o.version_id = p.id AND o.typed)
+  AND EXISTS (
+    SELECT 1 FROM document_ops o
+    WHERE o.version_id = a.id AND o.typed AND o.created_at > now() - make_interval(secs => $2::float8)
+  )
+  AND NOT EXISTS (SELECT 1 FROM approvals ap WHERE ap.version_id = a.id)
+`
+
+type ContinueSittingParams struct {
+	ID          string
+	IdleSeconds float64
+}
+
+// The version id, which people opened by typing, goes on with their sitting
+// when a write that is not typing cut that sitting: the version before it
+// holds no typing, and the version before that holds typing of the last
+// idle_seconds and no approval decision, which History keeps in its row.
+func (q *Queries) ContinueSitting(ctx context.Context, arg ContinueSittingParams) error {
+	_, err := q.db.Exec(ctx, continueSitting, arg.ID, arg.IdleSeconds)
+	return err
+}
+
+const deleteOldOperations = `-- name: DeleteOldOperations :execrows
+DELETE FROM document_ops WHERE (document_id, seq) IN (
+  SELECT o.document_id, o.seq FROM document_ops o
+  WHERE o.replacements IS NULL AND o.created_at < now() - make_interval(secs => $1)
+  LIMIT $2
+)
+`
+
+type DeleteOldOperationsParams struct {
+	MaxAgeSeconds float64
+	RowLimit      int32
+}
+
+// Deletes up to row_limit operations that have no replacements and are
+// older than max_age_seconds. No tab sends an operation again after that
+// long.
+func (q *Queries) DeleteOldOperations(ctx context.Context, arg DeleteOldOperationsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteOldOperations, arg.MaxAgeSeconds, arg.RowLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const discardOpenVersion = `-- name: DiscardOpenVersion :exec
+WITH ops AS (
+  UPDATE document_ops SET version_id = $2::text WHERE version_id = $1::text
+), made AS (
+  UPDATE comments SET created_on_version_id = $2::text WHERE created_on_version_id = $1::text
+), placed AS (
+  UPDATE comment_placements c SET version_id = $2::text
+  WHERE c.version_id = $1::text AND NOT EXISTS (
+    SELECT 1 FROM comment_placements o WHERE o.comment_id = c.comment_id AND o.version_id = $2::text)
+), moved AS (
+  UPDATE documents SET current_version_id = $2::text WHERE current_version_id = $1::text
+)
+DELETE FROM versions WHERE id = $1::text
+`
+
+type DiscardOpenVersionParams struct {
+	ID              string
+	ParentVersionID string
+}
+
+// Removes an open version whose content is that of the version before, and
+// makes that version the current one again. Its operations stay in the log
+// as operations of the version before, for the pages that are behind. The
+// comments made on it stay too. Its authors go with it.
+func (q *Queries) DiscardOpenVersion(ctx context.Context, arg DiscardOpenVersionParams) error {
+	_, err := q.db.Exec(ctx, discardOpenVersion, arg.ID, arg.ParentVersionID)
+	return err
+}
+
+const emptyOldOperations = `-- name: EmptyOldOperations :execrows
+UPDATE document_ops SET replacements = NULL WHERE (document_id, seq) IN (
+  SELECT o.document_id, o.seq FROM document_ops o
+  JOIN versions v ON v.id = o.version_id
+  WHERE o.replacements IS NOT NULL
+    AND v.sealed_at < now() - make_interval(secs => $1)
+    AND o.created_at < now() - make_interval(secs => $1)
+  LIMIT $2
+)
+`
+
+type EmptyOldOperationsParams struct {
+	MaxAgeSeconds float64
+	RowLimit      int32
+}
+
+// Takes the replacements out of up to row_limit operations of the versions
+// that were sealed more than max_age_seconds ago, and that are older than
+// that themselves. The versions hold their content, and no page follows
+// from that far. The rows stay, so that a repeat of an operation is known.
+func (q *Queries) EmptyOldOperations(ctx context.Context, arg EmptyOldOperationsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, emptyOldOperations, arg.MaxAgeSeconds, arg.RowLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const getIdleVersion = `-- name: GetIdleVersion :one
+SELECT d.id AS document_id, v.id AS version_id, (d.current_version_id IS NOT DISTINCT FROM v.id)::bool AS current
+FROM versions v
+JOIN documents d ON d.id = v.document_id
+WHERE v.sealed_at IS NULL AND d.id <> ALL(COALESCE($1::text[], '{}'))
+  AND (d.current_version_id IS DISTINCT FROM v.id OR NOT EXISTS (
+    SELECT 1 FROM document_ops o
+    WHERE o.document_id = d.id AND o.seq = d.seq AND o.created_at >= now() - make_interval(secs => $2)))
+ORDER BY d.id, v.id
+LIMIT 1
+`
+
+type GetIdleVersionParams struct {
+	Skipped     []string
+	IdleSeconds float64
+}
+
+type GetIdleVersionRow struct {
+	DocumentID string
+	VersionID  string
+	Current    bool
+}
+
+// A version that is ready to be sealed, with its document: the current
+// version of a document whose last operation is older than idle_seconds, or
+// an open version that is not the current one, which a server of the
+// release before can leave. It takes no lock: the caller locks the document
+// and makes sure that the version is still ready. skipped holds the
+// documents that the caller looked at already. The order makes one such
+// document not hide the others.
+func (q *Queries) GetIdleVersion(ctx context.Context, arg GetIdleVersionParams) (GetIdleVersionRow, error) {
+	row := q.db.QueryRow(ctx, getIdleVersion, arg.Skipped, arg.IdleSeconds)
+	var i GetIdleVersionRow
+	err := row.Scan(&i.DocumentID, &i.VersionID, &i.Current)
+	return i, err
+}
+
+const getLiveDocument = `-- name: GetLiveDocument :one
+SELECT v.id, v.document_id, v.number, (v.sealed_at IS NULL)::bool AS open, v.seq, v.html_blob_key,
+       COALESCE(v.parent_version_id, '')::text AS parent_version_id,
+       COALESCE(v.sitting_id, '')::text AS sitting_id,
+       COALESCE(p.html_blob_key, '')::text AS parent_blob_key,
+       COALESCE(p.sha256, '')::text AS parent_sha256,
+       COALESCE(p.seq, 0)::bigint AS parent_seq,
+       v.created_by_type, v.created_by_id, v.created_at,
+       d.seq AS document_seq, true::bool AS current
+FROM documents d
+JOIN versions v ON v.id = d.current_version_id
+LEFT JOIN versions p ON p.id = v.parent_version_id
+WHERE d.id = $1
+`
+
+type GetLiveDocumentRow struct {
+	ID              string
+	DocumentID      string
+	Number          int32
+	Open            bool
+	Seq             int64
+	HtmlBlobKey     string
+	ParentVersionID string
+	SittingID       string
+	ParentBlobKey   string
+	ParentSha256    string
+	ParentSeq       int64
+	CreatedByType   string
+	CreatedByID     string
+	CreatedAt       pgtype.Timestamptz
+	DocumentSeq     int64
+	Current         bool
+}
+
+// The current version of a document, as GetLiveVersion gives it, with no
+// lock. One statement reads the document and the version, so that they are
+// of one moment.
+func (q *Queries) GetLiveDocument(ctx context.Context, id string) (GetLiveDocumentRow, error) {
+	row := q.db.QueryRow(ctx, getLiveDocument, id)
+	var i GetLiveDocumentRow
+	err := row.Scan(
+		&i.ID,
+		&i.DocumentID,
+		&i.Number,
+		&i.Open,
+		&i.Seq,
+		&i.HtmlBlobKey,
+		&i.ParentVersionID,
+		&i.SittingID,
+		&i.ParentBlobKey,
+		&i.ParentSha256,
+		&i.ParentSeq,
+		&i.CreatedByType,
+		&i.CreatedByID,
+		&i.CreatedAt,
+		&i.DocumentSeq,
+		&i.Current,
+	)
+	return i, err
+}
+
+const getLiveVersion = `-- name: GetLiveVersion :one
+SELECT v.id, v.document_id, v.number, (v.sealed_at IS NULL)::bool AS open, v.seq, v.html_blob_key,
+       COALESCE(v.parent_version_id, '')::text AS parent_version_id,
+       COALESCE(v.sitting_id, '')::text AS sitting_id,
+       COALESCE(p.html_blob_key, '')::text AS parent_blob_key,
+       COALESCE(p.sha256, '')::text AS parent_sha256,
+       COALESCE(p.seq, 0)::bigint AS parent_seq,
+       v.created_by_type, v.created_by_id, v.created_at,
+       d.seq AS document_seq, (d.current_version_id IS NOT DISTINCT FROM v.id)::bool AS current
+FROM versions v
+JOIN documents d ON d.id = v.document_id
+LEFT JOIN versions p ON p.id = v.parent_version_id
+WHERE v.id = $1
+`
+
+type GetLiveVersionRow struct {
+	ID              string
+	DocumentID      string
+	Number          int32
+	Open            bool
+	Seq             int64
+	HtmlBlobKey     string
+	ParentVersionID string
+	SittingID       string
+	ParentBlobKey   string
+	ParentSha256    string
+	ParentSeq       int64
+	CreatedByType   string
+	CreatedByID     string
+	CreatedAt       pgtype.Timestamptz
+	DocumentSeq     int64
+	Current         bool
+}
+
+// A version with where its content is, and the seq of the live document.
+// The blob of an open version is a snapshot at seq. The content of the
+// version before it is in parent_blob_key, and parent_seq is the seq of that
+// content: the version has no state before it. current says that it is the
+// current version of its document.
+func (q *Queries) GetLiveVersion(ctx context.Context, id string) (GetLiveVersionRow, error) {
+	row := q.db.QueryRow(ctx, getLiveVersion, id)
+	var i GetLiveVersionRow
+	err := row.Scan(
+		&i.ID,
+		&i.DocumentID,
+		&i.Number,
+		&i.Open,
+		&i.Seq,
+		&i.HtmlBlobKey,
+		&i.ParentVersionID,
+		&i.SittingID,
+		&i.ParentBlobKey,
+		&i.ParentSha256,
+		&i.ParentSeq,
+		&i.CreatedByType,
+		&i.CreatedByID,
+		&i.CreatedAt,
+		&i.DocumentSeq,
+		&i.Current,
+	)
+	return i, err
+}
+
+const getOperationByClientID = `-- name: GetOperationByClientID :one
+SELECT seq, version_id, sum, (replacements IS NOT NULL)::bool AS held
+FROM document_ops WHERE document_id = $1 AND client_op_id = $2
+`
+
+type GetOperationByClientIDParams struct {
+	DocumentID string
+	ClientOpID pgtype.Text
+}
+
+type GetOperationByClientIDRow struct {
+	Seq       int64
+	VersionID string
+	Sum       uint32
+	Held      bool
+}
+
+// held says that the log still holds the replacements of the operation.
+func (q *Queries) GetOperationByClientID(ctx context.Context, arg GetOperationByClientIDParams) (GetOperationByClientIDRow, error) {
+	row := q.db.QueryRow(ctx, getOperationByClientID, arg.DocumentID, arg.ClientOpID)
+	var i GetOperationByClientIDRow
+	err := row.Scan(
+		&i.Seq,
+		&i.VersionID,
+		&i.Sum,
+		&i.Held,
+	)
+	return i, err
+}
+
 const getVersion = `-- name: GetVersion :one
 SELECT
   v.id,
@@ -24,8 +322,16 @@ SELECT
   v.change_summary,
   v.sha256,
   v.created_at,
-  (v.client_change_id IS NOT NULL)::bool AS live
+  (v.sealed_at IS NULL)::bool AS open,
+  (CASE WHEN d.current_version_id = v.id THEN d.seq ELSE v.seq END)::bigint AS seq,
+  COALESCE(v.sitting_id, '')::text AS sitting_id,
+  COALESCE((
+    SELECT o.created_at FROM document_ops o
+    WHERE o.version_id = v.id AND (v.sealed_at IS NULL OR o.seq <= v.seq)
+    ORDER BY o.seq DESC LIMIT 1
+  ), v.created_at)::timestamptz AS edited_at
 FROM versions v
+JOIN documents d ON d.id = v.document_id
 LEFT JOIN users u
   ON v.created_by_type = 'user' AND v.created_by_id = u.id
 LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
@@ -46,7 +352,10 @@ type GetVersionRow struct {
 	ChangeSummary       string
 	Sha256              string
 	CreatedAt           pgtype.Timestamptz
-	Live                bool
+	Open                bool
+	Seq                 int64
+	SittingID           string
+	EditedAt            pgtype.Timestamptz
 }
 
 // nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
@@ -65,42 +374,11 @@ func (q *Queries) GetVersion(ctx context.Context, id string) (GetVersionRow, err
 		&i.ChangeSummary,
 		&i.Sha256,
 		&i.CreatedAt,
-		&i.Live,
+		&i.Open,
+		&i.Seq,
+		&i.SittingID,
+		&i.EditedAt,
 	)
-	return i, err
-}
-
-const getVersionBlobKey = `-- name: GetVersionBlobKey :one
-SELECT html_blob_key FROM versions WHERE id=$1
-`
-
-func (q *Queries) GetVersionBlobKey(ctx context.Context, id string) (string, error) {
-	row := q.db.QueryRow(ctx, getVersionBlobKey, id)
-	var html_blob_key string
-	err := row.Scan(&html_blob_key)
-	return html_blob_key, err
-}
-
-const getVersionByClientChange = `-- name: GetVersionByClientChange :one
-SELECT id, COALESCE(parent_version_id, '')::text AS parent_version_id
-FROM versions WHERE document_id=$1 AND client_change_id=$2
-`
-
-type GetVersionByClientChangeParams struct {
-	DocumentID     string
-	ClientChangeID pgtype.Text
-}
-
-type GetVersionByClientChangeRow struct {
-	ID              string
-	ParentVersionID string
-}
-
-// The version that a client change made, and the version it was made on.
-func (q *Queries) GetVersionByClientChange(ctx context.Context, arg GetVersionByClientChangeParams) (GetVersionByClientChangeRow, error) {
-	row := q.db.QueryRow(ctx, getVersionByClientChange, arg.DocumentID, arg.ClientChangeID)
-	var i GetVersionByClientChangeRow
-	err := row.Scan(&i.ID, &i.ParentVersionID)
 	return i, err
 }
 
@@ -123,9 +401,38 @@ func (q *Queries) GetVersionPreview(ctx context.Context, id string) (GetVersionP
 	return i, err
 }
 
+const hasRecentOperationOfAnother = `-- name: HasRecentOperationOfAnother :one
+SELECT EXISTS (
+  SELECT 1 FROM document_ops
+  WHERE document_id = $1 AND created_at > now() - make_interval(secs => $2)
+    AND (author_type <> $3 OR author_id <> $4)
+)::bool
+`
+
+type HasRecentOperationOfAnotherParams struct {
+	DocumentID string
+	Seconds    float64
+	AuthorType string
+	AuthorID   string
+}
+
+// Whether a person other than the author wrote an operation of the document
+// in the last seconds. idx_document_ops_recent gives only those operations.
+func (q *Queries) HasRecentOperationOfAnother(ctx context.Context, arg HasRecentOperationOfAnotherParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hasRecentOperationOfAnother,
+		arg.DocumentID,
+		arg.Seconds,
+		arg.AuthorType,
+		arg.AuthorID,
+	)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const insertInitialVersion = `-- name: InsertInitialVersion :one
-INSERT INTO versions(id,document_id,number,html_blob_key,sha256,parent_version_id,created_by_type,created_by_id,change_summary,search_text)
-VALUES($1,$2,1,$3,$4,NULL,$5,$6,'',$7::text)
+INSERT INTO versions(id,document_id,number,html_blob_key,sha256,parent_version_id,created_by_type,created_by_id,change_summary,search_text,seq)
+VALUES($1,$2,1,$3,$4,NULL,$5,$6,'',$7::text,1)
 RETURNING created_at
 `
 
@@ -139,6 +446,7 @@ type InsertInitialVersionParams struct {
 	SearchText    string
 }
 
+// The first version of a document is sealed at seq 1.
 func (q *Queries) InsertInitialVersion(ctx context.Context, arg InsertInitialVersionParams) (pgtype.Timestamptz, error) {
 	row := q.db.QueryRow(ctx, insertInitialVersion,
 		arg.ID,
@@ -154,50 +462,237 @@ func (q *Queries) InsertInitialVersion(ctx context.Context, arg InsertInitialVer
 	return created_at, err
 }
 
-const insertVersion = `-- name: InsertVersion :one
-INSERT INTO versions(id,document_id,number,html_blob_key,sha256,parent_version_id,created_by_type,created_by_id,change_summary,client_change_id,search_text)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::text)
-RETURNING created_at
+const insertOpenVersion = `-- name: InsertOpenVersion :exec
+INSERT INTO versions(id,document_id,number,html_blob_key,sha256,parent_version_id,created_by_type,created_by_id,search_text,seq,sealed_at)
+SELECT $1, p.document_id, p.number + 1, p.html_blob_key, '', p.id, $2, $3, p.search_text, $4, NULL
+FROM versions p WHERE p.id = $5
 `
 
-type InsertVersionParams struct {
+type InsertOpenVersionParams struct {
 	ID              string
-	DocumentID      string
-	Number          int32
-	HtmlBlobKey     string
-	Sha256          string
-	ParentVersionID pgtype.Text
 	CreatedByType   string
 	CreatedByID     string
-	ChangeSummary   string
-	ClientChangeID  pgtype.Text
-	SearchText      string
+	Seq             int64
+	ParentVersionID string
 }
 
-func (q *Queries) InsertVersion(ctx context.Context, arg InsertVersionParams) (pgtype.Timestamptz, error) {
-	row := q.db.QueryRow(ctx, insertVersion,
+// The blob of an open version is a snapshot of the live document at its
+// seq, and the operations after that seq complete it. The version keeps the
+// search text of the version before until it is sealed, so that search finds
+// the document all the time.
+func (q *Queries) InsertOpenVersion(ctx context.Context, arg InsertOpenVersionParams) error {
+	_, err := q.db.Exec(ctx, insertOpenVersion,
 		arg.ID,
-		arg.DocumentID,
-		arg.Number,
-		arg.HtmlBlobKey,
-		arg.Sha256,
-		arg.ParentVersionID,
 		arg.CreatedByType,
 		arg.CreatedByID,
-		arg.ChangeSummary,
-		arg.ClientChangeID,
-		arg.SearchText,
+		arg.Seq,
+		arg.ParentVersionID,
 	)
-	var created_at pgtype.Timestamptz
-	err := row.Scan(&created_at)
-	return created_at, err
+	return err
+}
+
+const insertOperation = `-- name: InsertOperation :exec
+INSERT INTO document_ops(document_id,seq,version_id,author_type,author_id,client_op_id,typed,summary,replacements,sum)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+`
+
+type InsertOperationParams struct {
+	DocumentID   string
+	Seq          int64
+	VersionID    string
+	AuthorType   string
+	AuthorID     string
+	ClientOpID   pgtype.Text
+	Typed        bool
+	Summary      string
+	Replacements []byte
+	Sum          uint32
+}
+
+func (q *Queries) InsertOperation(ctx context.Context, arg InsertOperationParams) error {
+	_, err := q.db.Exec(ctx, insertOperation,
+		arg.DocumentID,
+		arg.Seq,
+		arg.VersionID,
+		arg.AuthorType,
+		arg.AuthorID,
+		arg.ClientOpID,
+		arg.Typed,
+		arg.Summary,
+		arg.Replacements,
+		arg.Sum,
+	)
+	return err
+}
+
+const insertVersionAuthor = `-- name: InsertVersionAuthor :exec
+INSERT INTO version_authors(version_id, author_type, author_id)
+VALUES($1, $2, $3) ON CONFLICT DO NOTHING
+`
+
+type InsertVersionAuthorParams struct {
+	VersionID  string
+	AuthorType string
+	AuthorID   string
+}
+
+func (q *Queries) InsertVersionAuthor(ctx context.Context, arg InsertVersionAuthorParams) error {
+	_, err := q.db.Exec(ctx, insertVersionAuthor, arg.VersionID, arg.AuthorType, arg.AuthorID)
+	return err
+}
+
+const isDocumentIdle = `-- name: IsDocumentIdle :one
+SELECT (NOT EXISTS (
+  SELECT 1 FROM document_ops
+  WHERE document_id = $1 AND seq = $2 AND created_at >= now() - make_interval(secs => $3)
+))::bool
+`
+
+type IsDocumentIdleParams struct {
+	DocumentID  string
+	Seq         int64
+	IdleSeconds float64
+}
+
+// Whether the operation at seq, the last one of the document, is older than
+// idle_seconds.
+func (q *Queries) IsDocumentIdle(ctx context.Context, arg IsDocumentIdleParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isDocumentIdle, arg.DocumentID, arg.Seq, arg.IdleSeconds)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const keyShareVersion = `-- name: KeyShareVersion :one
+SELECT document_id FROM versions WHERE id = $1 FOR KEY SHARE
+`
+
+// Returns the document of a version, and locks the version for a write that
+// refers to it, such as a new comment. DiscardOpenVersion, which locks the
+// version with LockVersion, then moves that write, or the write sees that
+// the version is gone.
+func (q *Queries) KeyShareVersion(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, keyShareVersion, id)
+	var document_id string
+	err := row.Scan(&document_id)
+	return document_id, err
+}
+
+const listOperationAuthorsAfter = `-- name: ListOperationAuthorsAfter :many
+SELECT
+  o.author_type,
+  o.author_id,
+  COALESCE(u.email, '') AS author_email,
+  COALESCE(u.name, sa.name, '') AS author_name,
+  COALESCE(u.picture_url, '') AS author_picture_url,
+  bool_and(o.typed)::bool AS typed
+FROM document_ops o
+LEFT JOIN users u
+  ON o.author_type = 'user' AND o.author_id = u.id
+LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
+  ON o.author_type = 'service_account' AND o.author_id = sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+WHERE o.document_id = $1 AND o.seq > $2 AND o.seq <= $3
+GROUP BY o.author_type, o.author_id, u.email, u.name, sa.name, u.picture_url
+ORDER BY max(o.seq) DESC
+`
+
+type ListOperationAuthorsAfterParams struct {
+	DocumentID string
+	AfterSeq   int64
+	ToSeq      int64
+}
+
+type ListOperationAuthorsAfterRow struct {
+	AuthorType       string
+	AuthorID         string
+	AuthorEmail      string
+	AuthorName       string
+	AuthorPictureUrl string
+	Typed            bool
+}
+
+// The authors of the operations of a document after one seq, up to another.
+// The author of the newest operation comes first. typed says that the
+// browser editor made each of the author's operations.
+// nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+func (q *Queries) ListOperationAuthorsAfter(ctx context.Context, arg ListOperationAuthorsAfterParams) ([]ListOperationAuthorsAfterRow, error) {
+	rows, err := q.db.Query(ctx, listOperationAuthorsAfter, arg.DocumentID, arg.AfterSeq, arg.ToSeq)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOperationAuthorsAfterRow
+	for rows.Next() {
+		var i ListOperationAuthorsAfterRow
+		if err := rows.Scan(
+			&i.AuthorType,
+			&i.AuthorID,
+			&i.AuthorEmail,
+			&i.AuthorName,
+			&i.AuthorPictureUrl,
+			&i.Typed,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOperations = `-- name: ListOperations :many
+SELECT seq, version_id, replacements, sum FROM document_ops
+WHERE document_id = $1 AND seq > $2 AND seq <= $3
+ORDER BY seq
+`
+
+type ListOperationsParams struct {
+	DocumentID string
+	AfterSeq   int64
+	ToSeq      int64
+}
+
+type ListOperationsRow struct {
+	Seq          int64
+	VersionID    string
+	Replacements []byte
+	Sum          uint32
+}
+
+// The operations of a document after one seq, up to another, in order.
+func (q *Queries) ListOperations(ctx context.Context, arg ListOperationsParams) ([]ListOperationsRow, error) {
+	rows, err := q.db.Query(ctx, listOperations, arg.DocumentID, arg.AfterSeq, arg.ToSeq)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOperationsRow
+	for rows.Next() {
+		var i ListOperationsRow
+		if err := rows.Scan(
+			&i.Seq,
+			&i.VersionID,
+			&i.Replacements,
+			&i.Sum,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listUnindexedVersions = `-- name: ListUnindexedVersions :many
 SELECT v.id, v.html_blob_key
 FROM versions v
 JOIN documents d ON d.current_version_id = v.id
-WHERE v.search_text IS NULL AND v.id <> ALL(COALESCE($1::text[], '{}'))
+WHERE v.search_text IS NULL AND v.sealed_at IS NOT NULL AND v.id <> ALL(COALESCE($1::text[], '{}'))
 ORDER BY v.id
 LIMIT $2
 FOR NO KEY UPDATE OF d SKIP LOCKED
@@ -218,7 +713,7 @@ type ListUnindexedVersionsRow struct {
 // other's versions. Only current versions are searched. The documents are
 // locked too, because the search text changes their search_vector. Without
 // that lock, a delete that holds the document and waits for its version
-// causes a deadlock.
+// causes a deadlock. An open version gets its text when it is sealed.
 func (q *Queries) ListUnindexedVersions(ctx context.Context, arg ListUnindexedVersionsParams) ([]ListUnindexedVersionsRow, error) {
 	rows, err := q.db.Query(ctx, listUnindexedVersions, arg.Skipped, arg.RowLimit)
 	if err != nil {
@@ -239,66 +734,97 @@ func (q *Queries) ListUnindexedVersions(ctx context.Context, arg ListUnindexedVe
 	return items, nil
 }
 
-const listVersionAuthorsBetween = `-- name: ListVersionAuthorsBetween :many
+const listVersionAuthors = `-- name: ListVersionAuthors :many
 SELECT
-  v.created_by_type,
-  v.created_by_id,
-  COALESCE(u.email, '') AS created_by_email,
-  COALESCE(u.name, sa.name, '') AS created_by_name,
-  COALESCE(u.picture_url, '') AS created_by_picture_url,
-  bool_and(v.client_change_id IS NOT NULL)::bool AS live
-FROM versions v
+  w.version_id,
+  w.author_type,
+  w.author_id,
+  COALESCE(u.email, '') AS author_email,
+  COALESCE(u.name, sa.name, '') AS author_name,
+  COALESCE(u.picture_url, '') AS author_picture_url
+FROM version_authors w
+JOIN versions v ON v.id = w.version_id
 LEFT JOIN users u
-  ON v.created_by_type = 'user' AND v.created_by_id = u.id
+  ON w.author_type = 'user' AND w.author_id = u.id
 LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
   -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
-  ON v.created_by_type = 'service_account' AND v.created_by_id = sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
+  ON w.author_type = 'service_account' AND w.author_id = sa.id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE v.document_id = $1
-  AND v.number > (SELECT f.number FROM versions f WHERE f.id = $2)
-  AND v.number <= (SELECT t.number FROM versions t WHERE t.id = $3)
-GROUP BY v.created_by_type, v.created_by_id, u.email, u.name, sa.name, u.picture_url
-ORDER BY max(v.number) DESC
+  AND ($2::text IS NULL OR w.version_id = $2)
+ORDER BY w.created_at, w.author_id
 `
 
-type ListVersionAuthorsBetweenParams struct {
-	DocumentID    string
-	FromVersionID string
-	ToVersionID   string
+type ListVersionAuthorsParams struct {
+	DocumentID string
+	VersionID  pgtype.Text
 }
 
-type ListVersionAuthorsBetweenRow struct {
-	CreatedByType       string
-	CreatedByID         string
-	CreatedByEmail      string
-	CreatedByName       string
-	CreatedByPictureUrl string
-	Live                bool
+type ListVersionAuthorsRow struct {
+	VersionID        string
+	AuthorType       string
+	AuthorID         string
+	AuthorEmail      string
+	AuthorName       string
+	AuthorPictureUrl string
 }
 
-// The authors of the versions of a document after one version, up to and
-// including a later one. The author of the newest version comes first. live
-// says that the browser editor made each of the author's versions.
+// The people whose operations each version of a document holds, or one
+// version when version_id is set. The first to write comes first.
 // nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
-func (q *Queries) ListVersionAuthorsBetween(ctx context.Context, arg ListVersionAuthorsBetweenParams) ([]ListVersionAuthorsBetweenRow, error) {
-	rows, err := q.db.Query(ctx, listVersionAuthorsBetween, arg.DocumentID, arg.FromVersionID, arg.ToVersionID)
+func (q *Queries) ListVersionAuthors(ctx context.Context, arg ListVersionAuthorsParams) ([]ListVersionAuthorsRow, error) {
+	rows, err := q.db.Query(ctx, listVersionAuthors, arg.DocumentID, arg.VersionID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListVersionAuthorsBetweenRow
+	var items []ListVersionAuthorsRow
 	for rows.Next() {
-		var i ListVersionAuthorsBetweenRow
+		var i ListVersionAuthorsRow
 		if err := rows.Scan(
-			&i.CreatedByType,
-			&i.CreatedByID,
-			&i.CreatedByEmail,
-			&i.CreatedByName,
-			&i.CreatedByPictureUrl,
-			&i.Live,
+			&i.VersionID,
+			&i.AuthorType,
+			&i.AuthorID,
+			&i.AuthorEmail,
+			&i.AuthorName,
+			&i.AuthorPictureUrl,
 		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listVersionOperationSummaries = `-- name: ListVersionOperationSummaries :many
+SELECT summary FROM document_ops
+WHERE version_id = $1 AND summary <> ''
+GROUP BY summary ORDER BY min(seq)
+LIMIT $2
+`
+
+type ListVersionOperationSummariesParams struct {
+	VersionID string
+	RowLimit  int32
+}
+
+// The summaries that the operations of a version carry, without repeats, in
+// the order of their first use, and not more than row_limit of them.
+func (q *Queries) ListVersionOperationSummaries(ctx context.Context, arg ListVersionOperationSummariesParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listVersionOperationSummaries, arg.VersionID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var summary string
+		if err := rows.Scan(&summary); err != nil {
+			return nil, err
+		}
+		items = append(items, summary)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -319,8 +845,16 @@ SELECT
   v.change_summary,
   v.sha256,
   v.created_at,
-  (v.client_change_id IS NOT NULL)::bool AS live
+  (v.sealed_at IS NULL)::bool AS open,
+  (CASE WHEN d.current_version_id = v.id THEN d.seq ELSE v.seq END)::bigint AS seq,
+  COALESCE(v.sitting_id, '')::text AS sitting_id,
+  COALESCE((
+    SELECT o.created_at FROM document_ops o
+    WHERE o.version_id = v.id AND (v.sealed_at IS NULL OR o.seq <= v.seq)
+    ORDER BY o.seq DESC LIMIT 1
+  ), v.created_at)::timestamptz AS edited_at
 FROM versions v
+JOIN documents d ON d.id = v.document_id
 LEFT JOIN users u
   ON v.created_by_type = 'user' AND v.created_by_id = u.id
 LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
@@ -342,9 +876,17 @@ type ListVersionsRow struct {
 	ChangeSummary       string
 	Sha256              string
 	CreatedAt           pgtype.Timestamptz
-	Live                bool
+	Open                bool
+	Seq                 int64
+	SittingID           string
+	EditedAt            pgtype.Timestamptz
 }
 
+// seq is the seq of the content of a version. For the current version it is
+// the seq of the live document. edited_at is the time of the last operation
+// of the version, or created_at when the log holds none. The operations
+// after the seq of a sealed version are of a sitting that changed nothing,
+// and are not edits of the version.
 // nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 func (q *Queries) ListVersions(ctx context.Context, documentID string) ([]ListVersionsRow, error) {
 	rows, err := q.db.Query(ctx, listVersions, documentID)
@@ -367,7 +909,10 @@ func (q *Queries) ListVersions(ctx context.Context, documentID string) ([]ListVe
 			&i.ChangeSummary,
 			&i.Sha256,
 			&i.CreatedAt,
-			&i.Live,
+			&i.Open,
+			&i.Seq,
+			&i.SittingID,
+			&i.EditedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -377,6 +922,90 @@ func (q *Queries) ListVersions(ctx context.Context, documentID string) ([]ListVe
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockDocument = `-- name: LockDocument :one
+SELECT COALESCE(current_version_id, '')::text AS current_version_id FROM documents WHERE id = $1 FOR NO KEY UPDATE
+`
+
+// The writes to the live document and the approval writes on a document
+// take turns. So a decision or an assignment never races a new version, and
+// the status that each approval change records counts every change before
+// it. NO KEY UPDATE does not wait on foreign-key checks from concurrent
+// comment writes. Read the version in a later statement: the snapshot of
+// this statement cannot see a version that another write committed while it
+// waited for the lock.
+func (q *Queries) LockDocument(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, lockDocument, id)
+	var current_version_id string
+	err := row.Scan(&current_version_id)
+	return current_version_id, err
+}
+
+const lockVersion = `-- name: LockVersion :exec
+SELECT 1 FROM versions WHERE id = $1 FOR UPDATE
+`
+
+// Locks a version before DiscardOpenVersion deletes it. The lock waits for
+// the writes that refer to the version, such as a new comment on it, and
+// makes the later ones wait. So DiscardOpenVersion, which is a later
+// statement, sees each comment that refers to the version.
+func (q *Queries) LockVersion(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, lockVersion, id)
+	return err
+}
+
+const sealStrayVersion = `-- name: SealStrayVersion :exec
+UPDATE versions SET sealed_at = now() WHERE id = $1 AND sealed_at IS NULL
+`
+
+// Seals an open version that is not the current one of its document. Its
+// blob, the last snapshot, is its content.
+func (q *Queries) SealStrayVersion(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, sealStrayVersion, id)
+	return err
+}
+
+const sealVersion = `-- name: SealVersion :exec
+UPDATE versions
+SET html_blob_key = $1, sha256 = $2, search_text = $3::text,
+    change_summary = $4, seq = $5, sealed_at = now()
+WHERE id = $6
+`
+
+type SealVersionParams struct {
+	HtmlBlobKey   string
+	Sha256        string
+	SearchText    string
+	ChangeSummary string
+	Seq           int64
+	ID            string
+}
+
+func (q *Queries) SealVersion(ctx context.Context, arg SealVersionParams) error {
+	_, err := q.db.Exec(ctx, sealVersion,
+		arg.HtmlBlobKey,
+		arg.Sha256,
+		arg.SearchText,
+		arg.ChangeSummary,
+		arg.Seq,
+		arg.ID,
+	)
+	return err
+}
+
+const setDocumentSeq = `-- name: SetDocumentSeq :exec
+UPDATE documents SET seq = $1, updated_at = now() WHERE id = $2
+`
+
+type SetDocumentSeqParams struct {
+	Seq int64
+	ID  string
+}
+
+func (q *Queries) SetDocumentSeq(ctx context.Context, arg SetDocumentSeqParams) error {
+	_, err := q.db.Exec(ctx, setDocumentSeq, arg.Seq, arg.ID)
+	return err
 }
 
 const setVersionSearchText = `-- name: SetVersionSearchText :exec
@@ -391,4 +1020,26 @@ type SetVersionSearchTextParams struct {
 func (q *Queries) SetVersionSearchText(ctx context.Context, arg SetVersionSearchTextParams) error {
 	_, err := q.db.Exec(ctx, setVersionSearchText, arg.SearchText, arg.ID)
 	return err
+}
+
+const snapshotVersion = `-- name: SnapshotVersion :one
+UPDATE versions v SET html_blob_key = $1, seq = $2
+WHERE v.id = $3 AND v.sealed_at IS NULL AND v.seq < $2
+RETURNING (SELECT o.html_blob_key FROM versions o WHERE o.id = $3)::text AS replaced
+`
+
+type SnapshotVersionParams struct {
+	HtmlBlobKey string
+	Seq         int64
+	ID          string
+}
+
+// Moves the snapshot of an open version to a later seq, and returns the
+// blob key of the snapshot before. No row means that the version is sealed
+// or has a later snapshot.
+func (q *Queries) SnapshotVersion(ctx context.Context, arg SnapshotVersionParams) (string, error) {
+	row := q.db.QueryRow(ctx, snapshotVersion, arg.HtmlBlobKey, arg.Seq, arg.ID)
+	var replaced string
+	err := row.Scan(&replaced)
+	return replaced, err
 }

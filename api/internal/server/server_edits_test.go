@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/razorpay/slashdocs/api/internal/auth"
@@ -197,22 +198,23 @@ func TestEditDocumentFailsCleanly(t *testing.T) {
 	}
 }
 
-func TestEditDocumentRejectsAStaleBase(t *testing.T) {
+// Edits apply to the live document: the text that people typed after the
+// last version is there, and the edits seal it as a version of its own.
+func TestEditDocumentAppliesToTheLiveDocument(t *testing.T) {
 	e := newTestEnv(t)
+	typeOp(t, e, e.doc.ID, fixtureEditor, 1, "op_typed", map[string]any{"start": 12, "end": 12, "old_html": "", "new_html": "typed "})
 	status, body := postEdits(t, e, e.doc.ID, fixtureEditor, map[string]any{
-		"base_version_id": "ver_old",
-		"edits":           []map[string]string{{"old_string": "fixture", "new_string": "changed"}},
+		"edits": []map[string]string{{"old_string": "<body>typed fixture</body>", "new_string": "<body>typed fixture, edited</body>"}},
 	})
-	if status != http.StatusConflict {
+	if status != http.StatusCreated {
 		t.Fatalf("status = %d; body=%s", status, body)
 	}
-	assertJSON(t, body, fmt.Sprintf(`{
-	  "error": {
-	    "code": "version_conflict",
-	    "message": "base_version_id is stale",
-	    "details": { "current_version_id": %q }
-	  }
-	}`, e.ver.ID))
+	if got, want := versionHTML(t, e, e.doc.ID, jsonField(t, body, "id")), "<html><body>typed fixture, edited</body></html>"; got != want {
+		t.Fatalf("html = %q, want %q", got, want)
+	}
+	if versions := listedVersions(t, e, e.doc.ID); len(versions) != 3 || versions[1].Open || versions[2].Open {
+		t.Fatalf("versions = %+v, want the typed version and the edit, both sealed", versions)
+	}
 }
 
 func TestEditDocumentValidatesTheRequest(t *testing.T) {
@@ -271,6 +273,7 @@ func TestRestoreVersionSavesItsContentAsTheNewest(t *testing.T) {
 	if status != http.StatusCreated {
 		t.Fatalf("edit status = %d; body=%s", status, body)
 	}
+	edited := jsonField(t, body, "id")
 
 	status, body = postRestore(t, e, docID, firstID, fixtureEditor, "")
 	if status != http.StatusCreated {
@@ -292,8 +295,13 @@ func TestRestoreVersionSavesItsContentAsTheNewest(t *testing.T) {
 		t.Fatalf("current version = %s, want %s", d.CurrentVersionID, restored)
 	}
 
+	// A restore of the content that the document has makes no version.
+	status, body = postRestore(t, e, docID, firstID, fixtureOwner, "")
+	if status != http.StatusOK || jsonField(t, body, "id") != restored || !strings.Contains(string(body), `"unchanged":true`) {
+		t.Fatalf("restore of the content of the document = %d; body=%s", status, body)
+	}
 	// A caller can name the restore, and restoring the current version is refused.
-	status, body = postRestore(t, e, docID, firstID, fixtureOwner, `{"change_summary":"Back to the draft"}`)
+	status, body = postRestore(t, e, docID, edited, fixtureOwner, `{"change_summary":"Back to the draft"}`)
 	if status != http.StatusCreated || jsonField(t, body, "change_summary") != "Back to the draft" {
 		t.Fatalf("named restore = %d; body=%s", status, body)
 	}

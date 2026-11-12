@@ -83,6 +83,12 @@ const docTemplate = `{
                         "name": "token",
                         "in": "query",
                         "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Seq of the source to render. Without it, or when the server no longer has that seq, the content of the version.",
+                        "name": "seq",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -759,7 +765,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "Records the caller's decision on the content of a version. The decision vouches for that content, so every version with the same content shows it. Submitting again replaces the previous decision on that content. A rejection needs a note unless the caller has open comment threads on the document (the comments say what to change). Returns 409 when the document's content changed since that version.",
+                "description": "Records the caller's decision on the content of a version. The open version is sealed first. The decision vouches for that content, so every version with the same content shows it. Submitting again replaces the previous decision on that content. A rejection needs a note unless the caller has open comment threads on the document (the comments say what to change). Returns 409 version_superseded when the document's content changed since that version, or when seq, the seq that the page of the caller shows, is not the seq of the live document, or when another person typed in the document in the last 10 seconds: the message then says to approve when they are done. With no seq, as from the CLI, the decision is on the live document, and version_id in the answer names the sealed version. A decision on an open version that holds the text of the version before it is for that version.",
                 "tags": [
                     "approvals"
                 ],
@@ -784,6 +790,12 @@ const docTemplate = `{
                         "description": "Created",
                         "schema": {
                             "$ref": "#/definitions/server.approvalResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
                         }
                     }
                 }
@@ -868,7 +880,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "Assigns a user or service account as an approver. The approver must already have at least viewer access on the document. An approver who loses viewer access when a grant is revoked stops being an approver.",
+                "description": "Assigns a user or service account as an approver. The approver must already have at least viewer access on the document. An approver who loses viewer access when a grant is revoked stops being an approver. The request is for no version: the approver decides on the version that they read.",
                 "tags": [
                     "approvals"
                 ],
@@ -940,11 +952,11 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "For the browser, which follows the document while other people edit it. Gives the replacements that turn the HTML of the version from into the HTML of the current version. start and end count UTF-8 bytes of the version from, and end is exclusive. live is true when the browser editor made every version after from. authors made those versions, and the author of the newest comes first. When from is the current version, replacements and authors are empty.",
+                "description": "For the browser, which follows the document while other people edit it. ops are the operations after the seq after, in order. Each one is a list of replacements on the source before it: start and end count UTF-8 bytes, and end is exclusive. The caller applies them in order to the source at after, and then has the source at seq, the live document. sum is the CRC-32 (IEEE) of the UTF-8 bytes of that source. typed is true when the browser editor made every one of the operations. authors made them, and the author of the newest comes first. The response is 409 stale when the log no longer holds every operation after the seq: load the document again.",
                 "tags": [
                     "versions"
                 ],
-                "summary": "Get the changes since a version",
+                "summary": "Get the operations after a seq",
                 "parameters": [
                     {
                         "type": "string",
@@ -954,9 +966,9 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "type": "string",
-                        "description": "Version ID that the caller has",
-                        "name": "from",
+                        "type": "integer",
+                        "description": "Seq of the source that the caller has",
+                        "name": "after",
                         "in": "query",
                         "required": true
                     }
@@ -965,11 +977,23 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/server.documentChangesResponse"
+                            "$ref": "#/definitions/repo.DocumentChanges"
                         }
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
@@ -1118,7 +1142,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "Any request containing the mentions key, including an empty array, must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed. An anchor with a point moves a point comment to a new spot. Text comments cannot move.",
+                "description": "Any request containing the mentions key, including an empty array, must use Content-Type application/vnd.slashdocs.comment-mentions+json so mixed-version deployments fail closed. An anchor with a point moves a point comment to a new spot. Text comments follow their text.",
                 "consumes": [
                     "application/json",
                     "application/vnd.slashdocs.comment-mentions+json"
@@ -1161,6 +1185,12 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "comment_changed: the body is no longer base_body",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
@@ -1386,7 +1416,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "Applies exact find-and-replace edits to the document HTML on the server and saves the result as a new version. Each old_string must occur exactly once; edits apply in order and either all apply or none do. The HTML is never parsed, so everything else stays byte-for-byte the same.",
+                "description": "Applies exact find-and-replace edits to the live document on the server and saves the result as a new version. Each old_string must occur exactly once; edits apply in order and either all apply or none do. The HTML is never parsed, so everything else stays byte-for-byte the same. When the edits together leave the document as it is, the response is 200 with unchanged set and the current version.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1710,7 +1740,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/v1/documents/{id}/source-edits": {
+        "/v1/documents/{id}/ops": {
             "post": {
                 "security": [
                     {
@@ -1720,14 +1750,14 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "For the browser editor. Applies replacements by position in the HTML of base_version_id to the current version, and saves the result as a new version. start and end count UTF-8 bytes, end is exclusive, and old_html must be the HTML from start to end of the base version. Replacements are in order and do not overlap. When a newer version exists, the replacements merge with its changes and the response has rebased set: text that both insert at one point stays twice, and text that either deletes goes. A retry with the same client_change_id returns the version that the first attempt made.",
+                "description": "For the browser editor. Applies replacements by position in the source at base_seq to the live document. start and end count UTF-8 bytes, end is exclusive, and old_html must be the source from start to end at base_seq. Replacements are in order and do not overlap. A replacement whose old_html is its new_html changes nothing: the server drops it, and others never holds one. The operation makes no version: the first operation after a sealed version opens the next version, and the server seals it after 10 minutes with no operation, or before a write that is not typing. When the document had operations after base_seq, the replacements move over them, and others holds those operations in order, as they apply to the source that the caller made (the source at base_seq with its replacements). Text that both put in at one point stays twice, text that either takes out goes, and two replacements of the same words both stay whole, the later one first. sum is the CRC-32 (IEEE) of the UTF-8 bytes of the source at seq: a caller whose source has another sum loads the document again. A retry with the same client_op_id applies nothing and gets the answer of the first attempt. When the server no longer has that answer, the response is 409 stale with details.applied set: the document has the operation, so the caller gets the live document and does not send that text again. summary holds at most 200 characters. The response is 409 stale when the log no longer holds the operations after base_seq, or when base_seq is more than 2000 operations behind: get the live document, and send the text that is not sent yet again on its seq.",
                 "consumes": [
                     "application/json"
                 ],
                 "tags": [
                     "versions"
                 ],
-                "summary": "Edit document source by position",
+                "summary": "Write an operation of the browser editor",
                 "parameters": [
                     {
                         "type": "string",
@@ -1737,20 +1767,20 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Replacements",
+                        "description": "Operation",
                         "name": "body",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/server.editSourceRequest"
+                            "$ref": "#/definitions/server.operationRequest"
                         }
                     }
                 ],
                 "responses": {
-                    "201": {
-                        "description": "Created",
+                    "200": {
+                        "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/server.editSourceResponse"
+                            "$ref": "#/definitions/repo.OperationResult"
                         }
                     },
                     "400": {
@@ -1782,6 +1812,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
                     }
                 }
             }
@@ -1796,6 +1832,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
+                "description": "A version is a checkpoint: a burst of editing in the browser, a push, an edit or a restore. The newest version is open while people type in it: its change_summary then says what changed up to now, and it is not in the list while its content is that of the version before. edited_at is the time of the last operation of a version, or created_at when the server holds none. authors are its creator and the people whose operations it holds.",
                 "tags": [
                     "versions"
                 ],
@@ -1827,7 +1864,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "Saves the uploaded HTML as a new version. When base_version_id is an earlier version of the document, the changes from that version to the upload move onto the current version, and the response has rebased set. When the current version changed the same HTML, the response is version_conflict.",
+                "description": "Saves the uploaded HTML, which must be valid UTF-8, as a new version. When people changed the document after the base, the changes from the base to the upload move onto the live document, and the response has rebased set: the new version is then not the uploaded file. When the upload changes text that people changed after the base, the response is 409 version_conflict and their text stays: get the document and make the change again. details.text, when set, is the sentence that holds that text, in plain words, so that a person can find the place. When the upload is the document as it is, the response is 200 with unchanged set and the current version: no version is made. The base is the content of the base version, when the request has no base_seq or the seq of that version. With a base_seq before the seq of the base version, the base is the document at base_seq: the file was made from the version while it was open. The response is 409 stale when the base is an open version with no base_seq, or when the server no longer has the document at base_seq. It is 422 base_version_not_found when base_version_id is not a version of the document.",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -1857,6 +1894,12 @@ const docTemplate = `{
                         "in": "formData"
                     },
                     {
+                        "type": "integer",
+                        "description": "Seq of the base version that the file was made from, from the X-Slashdocs-Seq header of its HTML. Necessary when that version was open.",
+                        "name": "base_seq",
+                        "in": "formData"
+                    },
+                    {
                         "type": "file",
                         "description": "HTML file",
                         "name": "file",
@@ -1865,10 +1908,22 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server.createVersionResponse"
+                        }
+                    },
                     "201": {
                         "description": "Created",
                         "schema": {
                             "$ref": "#/definitions/server.createVersionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
                         }
                     },
                     "409": {
@@ -1879,6 +1934,12 @@ const docTemplate = `{
                     },
                     "413": {
                         "description": "Request Entity Too Large",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
                         "schema": {
                             "$ref": "#/definitions/server.errorEnvelope"
                         }
@@ -1896,6 +1957,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
+                "description": "The change_summary of the open version says what changed up to now.",
                 "tags": [
                     "versions"
                 ],
@@ -1936,6 +1998,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
+                "description": "Gives the content of the version. For the open version that is the live document, and no read seals a version. The header X-Slashdocs-Seq has the seq of the HTML: send it as base_seq with a push that was made from this HTML. With seq, gives the source at that seq. The response is 409 stale for a seq that the version can no longer give.",
                 "produces": [
                     "text/html"
                 ],
@@ -1957,6 +2020,12 @@ const docTemplate = `{
                         "name": "version_id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Seq of the source",
+                        "name": "seq",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -1964,6 +2033,30 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "type": "string"
+                        },
+                        "headers": {
+                            "X-Slashdocs-Seq": {
+                                "type": "integer",
+                                "description": "Seq of the HTML"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
                         }
                     }
                 }
@@ -1979,6 +2072,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
+                "description": "Gives a URL that renders the version, and the seq of the source that the URL renders. For an open version that is the seq of the live document now.",
                 "tags": [
                     "versions"
                 ],
@@ -2019,7 +2113,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "Saves the content of an earlier version as the newest version, as an edit by the caller. History keeps every version, so a restore can itself be undone by restoring again.",
+                "description": "Saves the content of an earlier version as the newest version, as an edit by the caller. History keeps every version, so a restore can itself be undone by restoring again. When the document has that content now, the response is 200 with unchanged set and the current version.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2110,6 +2204,12 @@ const docTemplate = `{
                         "description": "Created",
                         "schema": {
                             "$ref": "#/definitions/repo.Grant"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/server.errorEnvelope"
                         }
                     }
                 }
@@ -2734,6 +2834,10 @@ const docTemplate = `{
                 "parent_folder_id": {
                     "type": "string"
                 },
+                "seq": {
+                    "description": "Seq is the sequence number of the live document. Lists do not set it.",
+                    "type": "integer"
+                },
                 "snippet": {
                     "description": "Snippet is set in search results when the text matches. U+0002 and\nU+0003 surround each match.",
                     "type": "string"
@@ -2760,6 +2864,42 @@ const docTemplate = `{
                 },
                 "requester": {
                     "$ref": "#/definitions/auth.Principal"
+                }
+            }
+        },
+        "repo.DocumentChanges": {
+            "type": "object",
+            "properties": {
+                "authors": {
+                    "description": "Authors made those operations. The author of the newest comes first.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/auth.Principal"
+                    }
+                },
+                "ops": {
+                    "description": "Ops are the operations after the earlier seq, in order. Each one is a\nlist of replacements on the source before it.",
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object"
+                        }
+                    }
+                },
+                "seq": {
+                    "type": "integer"
+                },
+                "sum": {
+                    "description": "Sum is the CRC-32 (IEEE) of the UTF-8 bytes of the source at Seq.",
+                    "type": "integer"
+                },
+                "typed": {
+                    "description": "Typed is set when the browser editor made every one of them.",
+                    "type": "boolean"
+                },
+                "version_id": {
+                    "type": "string"
                 }
             }
         },
@@ -2808,6 +2948,31 @@ const docTemplate = `{
                 },
                 "enabled": {
                     "type": "boolean"
+                }
+            }
+        },
+        "repo.OperationResult": {
+            "type": "object",
+            "properties": {
+                "others": {
+                    "description": "Others are the operations that the document had after the base seq,\nas they apply to the source that the sender made: the state at the base seq with its replacements. The\nsender applies them in order, and then has the source at Seq.",
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/textedit.Replacement"
+                        }
+                    }
+                },
+                "seq": {
+                    "type": "integer"
+                },
+                "sum": {
+                    "description": "Sum is the CRC-32 (IEEE) of the UTF-8 bytes of the source at Seq.",
+                    "type": "integer"
+                },
+                "version_id": {
+                    "type": "string"
                 }
             }
         },
@@ -2879,6 +3044,13 @@ const docTemplate = `{
         "repo.Version": {
             "type": "object",
             "properties": {
+                "authors": {
+                    "description": "Authors are the creator of the version and the people whose\noperations it holds.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/auth.Principal"
+                    }
+                },
                 "change_summary": {
                     "type": "string"
                 },
@@ -2891,15 +3063,19 @@ const docTemplate = `{
                 "document_id": {
                     "type": "string"
                 },
+                "edited_at": {
+                    "description": "EditedAt is the time of the last operation of the version, or\nCreatedAt when the log holds none.",
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
                 },
-                "live": {
-                    "description": "Live is set when the browser editor made the version.",
-                    "type": "boolean"
-                },
                 "number": {
                     "type": "integer"
+                },
+                "open": {
+                    "description": "Open is set while people type in the version. Its content is then the\nlive document, and it has no SHA256 until it is sealed.",
+                    "type": "boolean"
                 },
                 "sha256": {
                     "type": "string"
@@ -3288,6 +3464,10 @@ const docTemplate = `{
                         "$ref": "#/definitions/server.commentMentionRequest"
                     }
                 },
+                "seq": {
+                    "description": "Seq is the seq of the document that a text anchor is on: the page\nshows the document at that seq. The anchor then follows the changes\nafter it. With no seq, the anchor is on the live document.",
+                    "type": "integer"
+                },
                 "version_id": {
                     "type": "string"
                 }
@@ -3364,7 +3544,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "base_version_id": {
-                    "description": "BaseVersionID is the version that the new version saved on.",
+                    "description": "BaseVersionID is the version before the new version.",
                     "type": "string"
                 },
                 "change_summary": {
@@ -3377,11 +3557,19 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "rebased": {
-                    "description": "Rebased is set when that version is newer than the base version of the\nupload, so the new version also holds the changes of other writers.",
+                    "description": "Rebased is set when the document changed after the base of the upload,\nso the new version also holds the changes of other writers, and is\nnot the uploaded file.",
                     "type": "boolean"
+                },
+                "seq": {
+                    "description": "Seq is the seq of the new version.",
+                    "type": "integer"
                 },
                 "sha256": {
                     "type": "string"
+                },
+                "unchanged": {
+                    "description": "Unchanged is set when the content is the document as it is. No\nversion was made, and the response names the current version.",
+                    "type": "boolean"
                 }
             }
         },
@@ -3432,36 +3620,6 @@ const docTemplate = `{
                 }
             }
         },
-        "server.documentChangesResponse": {
-            "type": "object",
-            "properties": {
-                "authors": {
-                    "description": "Authors made the versions after from. The author of the newest version\ncomes first.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/auth.Principal"
-                    }
-                },
-                "from_version_id": {
-                    "type": "string"
-                },
-                "live": {
-                    "description": "Live is set when the browser editor made every version after from.",
-                    "type": "boolean"
-                },
-                "replacements": {
-                    "description": "Replacements turn the HTML of the version from into the HTML of the\ncurrent version. They are in order, at byte offsets of the version from.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/textedit.Replacement"
-                    }
-                },
-                "version_id": {
-                    "description": "VersionID is the current version.",
-                    "type": "string"
-                }
-            }
-        },
         "server.documentLinkResponse": {
             "type": "object",
             "properties": {
@@ -3499,10 +3657,6 @@ const docTemplate = `{
         "server.editDocumentRequest": {
             "type": "object",
             "properties": {
-                "base_version_id": {
-                    "description": "BaseVersionID, when set, must be the current version. When it is\nempty the edits apply to whatever version is current, which is safe\nbecause each edit must still find its text there.",
-                    "type": "string"
-                },
                 "change_summary": {
                     "type": "string"
                 },
@@ -3518,7 +3672,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "base_version_id": {
-                    "description": "BaseVersionID is the version the edits were applied to.",
+                    "description": "BaseVersionID is the version before the new version.",
                     "type": "string"
                 },
                 "change_summary": {
@@ -3535,61 +3689,10 @@ const docTemplate = `{
                 },
                 "sha256": {
                     "type": "string"
-                }
-            }
-        },
-        "server.editSourceRequest": {
-            "type": "object",
-            "properties": {
-                "base_version_id": {
-                    "description": "BaseVersionID is the version that the replacements were made on.",
-                    "type": "string"
                 },
-                "change_summary": {
-                    "description": "ChangeSummary, when set, is what History shows for the change. When it\nis empty, the server names what a reader sees change.",
-                    "type": "string"
-                },
-                "client_change_id": {
-                    "description": "ClientChangeID names the change, so that a retry returns the version\nthat the change made instead of a second one.",
-                    "type": "string"
-                },
-                "replacements": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/textedit.Replacement"
-                    }
-                }
-            }
-        },
-        "server.editSourceResponse": {
-            "type": "object",
-            "properties": {
-                "base_version_id": {
-                    "description": "BaseVersionID is the version the replacements were applied to.",
-                    "type": "string"
-                },
-                "change_summary": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "number": {
-                    "type": "integer"
-                },
-                "others": {
-                    "description": "Others, set when rebased, turn the HTML that the caller holds, the\nbase version with its replacements, into the HTML of the new version:\nthe changes of the other writers. They are in order, at byte offsets\nof the HTML that the caller holds.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/textedit.Replacement"
-                    }
-                },
-                "rebased": {
-                    "description": "Rebased is set when that version is newer than the version that the\nreplacements were made on.",
+                "unchanged": {
+                    "description": "Unchanged is set when the edits left the document as it is. No version\nwas made, and the response names the current version.",
                     "type": "boolean"
-                },
-                "sha256": {
-                    "type": "string"
                 }
             }
         },
@@ -3907,6 +4010,29 @@ const docTemplate = `{
                 }
             }
         },
+        "server.operationRequest": {
+            "type": "object",
+            "properties": {
+                "base_seq": {
+                    "description": "BaseSeq is the seq of the source that the replacements were made on.",
+                    "type": "integer"
+                },
+                "client_op_id": {
+                    "description": "ClientOpID names the operation, so that a retry applies nothing and\ngets the answer of the first attempt.",
+                    "type": "string"
+                },
+                "replacements": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/textedit.Replacement"
+                    }
+                },
+                "summary": {
+                    "description": "Summary, when set, is a line of what History shows for the version.\nWhen no operation of a version has one, the server names what a reader\nsees change.",
+                    "type": "string"
+                }
+            }
+        },
         "server.patchCommentRequest": {
             "type": "object",
             "properties": {
@@ -3981,6 +4107,10 @@ const docTemplate = `{
         "server.renderTokenResponse": {
             "type": "object",
             "properties": {
+                "seq": {
+                    "description": "Seq is the seq of the source that the URL renders.",
+                    "type": "integer"
+                },
                 "token": {
                     "type": "string"
                 },

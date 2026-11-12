@@ -25,7 +25,7 @@ func TestPostgresCommentReads(t *testing.T) {
 		t.Fatal(err)
 	}
 	bot := auth.Principal{Type: auth.PrincipalServiceAccount, ID: sa.ID}
-	thread, err := store.CreateComment(ctx, doc.ID, ver.ID, "first", repo.Anchor{Quote: "reads"}, owner, nil)
+	thread, err := store.CreateComment(ctx, doc.ID, ver.ID, "first", repo.Anchor{Quote: "reads"}, 0, owner, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

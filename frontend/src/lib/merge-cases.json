@@ -70,6 +70,20 @@
     "merged": "a(12)b"
   },
   {
+    "name": "both delete ranges that overlap, after a sentence that stays",
+    "base": "<p>Keep this. Remove these words please. Keep end.</p>",
+    "ours": "<p>Keep this. Keep end.</p>",
+    "theirs": "<p>Keep this. Remove .</p>",
+    "merged": "<p>Keep this. .</p>"
+  },
+  {
+    "name": "both delete ranges that overlap, after a sentence that stays, in the other order",
+    "base": "<p>Keep this. Remove these words please. Keep end.</p>",
+    "ours": "<p>Keep this. Remove .</p>",
+    "theirs": "<p>Keep this. Keep end.</p>",
+    "merged": "<p>Keep this. .</p>"
+  },
+  {
     "name": "ours inserts in a range that theirs deleted",
     "base": "a(12345678)b",
     "ours": "a(1234X5678)b",
@@ -84,11 +98,11 @@
     "merged": "a(1ZZX8)b"
   },
   {
-    "name": "both replace the same word",
+    "name": "both replace the same word: both words stay whole, ours first",
     "base": "a(cat)b",
     "ours": "a(dog)b",
     "theirs": "a(cow)b",
-    "merged": "a(dogow)b"
+    "merged": "a(dogcow)b"
   },
   {
     "name": "ours deletes next to an insertion of theirs",
@@ -145,5 +159,278 @@
     "ours": "<p>alpha</p>\n<p>old</p>\n<p>the omega</p>",
     "theirs": "<p>alpha</p>\n<p>omega</p>",
     "merged": "<p>alpha</p>\n<p>the omega</p>"
+  },
+  {
+    "name": "theirs types at the end of a word that ours replaces",
+    "base": "a(cat)b",
+    "ours": "a(dog)b",
+    "theirs": "a(cats)b",
+    "merged": "a(dogs)b"
+  },
+  {
+    "name": "ours types at the end of a word that theirs replaces",
+    "base": "a(cat)b",
+    "ours": "a(cats)b",
+    "theirs": "a(dog)b",
+    "merged": "a(dogs)b"
+  },
+  {
+    "name": "both replace a sentence, and ours wins where they overlap",
+    "base": "<p>The cat sat on the mat.</p>",
+    "ours": "<p>The cat lay on the rug.</p>",
+    "theirs": "<p>The dog sat on the mat.</p>",
+    "merged": "<p>The dog lay on the rug.</p>"
+  },
+  {
+    "name": "both replace a word with words that start with its first letter",
+    "base": "a(cat)b",
+    "ours": "a(cow)b",
+    "theirs": "a(cup)b",
+    "merged": "a(cowcup)b"
+  },
+  {
+    "name": "both replace a word, and theirs keeps its last letter",
+    "base": "a(cat)b",
+    "ours": "a(dog)b",
+    "theirs": "a(bit)b",
+    "merged": "a(dogbit)b"
+  },
+  {
+    "name": "both type a sentence at one point, each with a space before it",
+    "base": "<p>One. Two.</p>",
+    "ours": "<p>One. Alpha. Two.</p>",
+    "theirs": "<p>One. Beta. Two.</p>",
+    "merged": "<p>One. Alpha. Beta. Two.</p>"
+  },
+  {
+    "name": "both type a word at one point, each with a space after it",
+    "base": "<p>One two</p>",
+    "ours": "<p>One red two</p>",
+    "theirs": "<p>One big two</p>",
+    "merged": "<p>One red big two</p>"
+  },
+  {
+    "name": "both replace the first letter of a word: both words stay whole",
+    "base": "a(cat)b",
+    "ours": "a(bat)b",
+    "theirs": "a(rat)b",
+    "merged": "a(batrat)b"
+  },
+  {
+    "name": "two replacements in a long run of letters and digits: 64 characters on each side stay whole",
+    "base": "<img src=\"data:image/png;base64,012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\">",
+    "ours": "<img src=\"data:image/png;base64,012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789Q2345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\">",
+    "theirs": "<img src=\"data:image/png;base64,0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890R345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\">",
+    "merged": "<img src=\"data:image/png;base64,012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789Q2345678901234567890123456789012345678901234567890123456789012345667890123456789012345678901234567890123456789012345678901234567890R345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\">"
+  },
+  {
+    "name": "ours joins the paragraph that theirs types in to the next one",
+    "base": "<p id=\"b\">Before.</p>\n<p id=\"c\">Third  paragraph.</p>\n<p id=\"d\">After.</p>",
+    "ours": "<p id=\"b\">Before.</p>\n<p id=\"c\">After.</p>",
+    "theirs": "<p id=\"b\">Before.</p>\n<p id=\"c\">Third m paragraph.</p>\n<p id=\"d\">After.</p>",
+    "merged": "<p id=\"b\">Before.</p>\n<p id=\"c\">mAfter.</p>"
+  },
+  {
+    "name": "ours removes the paragraph that theirs types in, and keeps its tags around the text",
+    "base": "<p id=\"b\">Before.</p>\n<p id=\"c\">Third  paragraph.</p>\n<p id=\"d\">After.</p>",
+    "ours": "<p id=\"b\">Before.</p>\n<p id=\"d\">After.</p>",
+    "theirs": "<p id=\"b\">Before.</p>\n<p id=\"c\">Third m paragraph.</p>\n<p id=\"d\">After.</p>",
+    "merged": "<p id=\"b\">Before.</p>\n<p id=\"c\">m</p><p id=\"d\">After.</p>"
+  },
+  {
+    "name": "ours replaces all the text, while theirs types in it",
+    "base": "<section>\n<h1>Title</h1>\n<p id=\"c\">Third paragraph here .</p>\n<p id=\"d\">After.</p>\n</section>",
+    "ours": "<section>\n<h1>f</h1>\n</section>",
+    "theirs": "<section>\n<h1>Title</h1>\n<p id=\"c\">Third paragraph here m.</p>\n<p id=\"d\">After.</p>\n</section>",
+    "merged": "<section>\n<h1>f</h1><p id=\"c\">m</p>\n</section>"
+  },
+  {
+    "name": "ours changes a tag name, and theirs deletes the element",
+    "base": "<p>a</p><p>b</p><p>c</p>",
+    "ours": "<p>a</p><h2>b</h2><p>c</p>",
+    "theirs": "<p>a</p><p>c</p>",
+    "merged": "<p>a</p><p>c</p>"
+  },
+  {
+    "name": "theirs changes a tag name, and ours deletes the element",
+    "base": "<p>a</p><p>b</p><p>c</p>",
+    "ours": "<p>a</p><p>c</p>",
+    "theirs": "<p>a</p><h2>b</h2><p>c</p>",
+    "merged": "<p>a</p><p>c</p>"
+  },
+  {
+    "name": "ours changes an attribute, and theirs deletes the element",
+    "base": "<p>a</p><p>b</p><p>c</p>",
+    "ours": "<p>a</p><p class=\"x\">b</p><p>c</p>",
+    "theirs": "<p>a</p><p>c</p>",
+    "merged": "<p>a</p><p>c</p>"
+  },
+  {
+    "name": "theirs changes an attribute, and ours deletes the element",
+    "base": "<p>a</p><p>b</p><p>c</p>",
+    "ours": "<p>a</p><p>c</p>",
+    "theirs": "<p>a</p><p class=\"x\">b</p><p>c</p>",
+    "merged": "<p>a</p><p>c</p>"
+  },
+  {
+    "name": "ours changes a link, and theirs removes the link",
+    "base": "<p>Hello <a href=\"https://a.com\">link</a> end</p>",
+    "ours": "<p>Hello <a href=\"https://b.com\">link</a> end</p>",
+    "theirs": "<p>Hello link end</p>",
+    "merged": "<p>Hello link end</p>"
+  },
+  {
+    "name": "theirs changes a link, and ours removes the link",
+    "base": "<p>Hello <a href=\"https://a.com\">link</a> end</p>",
+    "ours": "<p>Hello link end</p>",
+    "theirs": "<p>Hello <a href=\"https://b.com\">link</a> end</p>",
+    "merged": "<p>Hello link end</p>"
+  },
+  {
+    "name": "ours changes an attribute of the next paragraph, and theirs joins the paragraphs",
+    "base": "<p>foo</p><p>bar</p>",
+    "ours": "<p>foo</p><p class=\"x\">bar</p>",
+    "theirs": "<p>foar</p>",
+    "merged": "<p>foar</p>"
+  },
+  {
+    "name": "theirs changes an attribute of the next paragraph, and ours joins the paragraphs",
+    "base": "<p>foo</p><p>bar</p>",
+    "ours": "<p>foar</p>",
+    "theirs": "<p>foo</p><p class=\"x\">bar</p>",
+    "merged": "<p>foar</p>"
+  },
+  {
+    "name": "two deletions that overlapped in their selections and touch after their move back",
+    "base": "<p> . é</p>",
+    "ours": "<p> é</p>",
+    "theirs": "<p> .é</p>",
+    "merged": "<p> é</p>"
+  },
+  {
+    "name": "two deletions in a run of equal text take out their union, not their sum",
+    "base": "<p>é. ababaab. aa</p>",
+    "ours": "<p>é. abaab. aa</p>",
+    "theirs": "<p>é. abab. aa</p>",
+    "merged": "<p>é. abab. aa</p>"
+  },
+  {
+    "name": "ours changes an attribute that theirs removes",
+    "base": "<p class=\"x\">a</p>",
+    "ours": "<p class=\"y z\">a</p>",
+    "theirs": "<p>a</p>",
+    "merged": "<p>a</p>"
+  },
+  {
+    "name": "ours removes an attribute that theirs changes",
+    "base": "<p class=\"x\">a</p>",
+    "ours": "<p>a</p>",
+    "theirs": "<p class=\"y z\">a</p>",
+    "merged": "<p>a</p>"
+  },
+  {
+    "name": "ours changes a title that theirs removes",
+    "base": "<p><a href=\"https://a.com\" title=\"old\">a</a></p>",
+    "ours": "<p><a href=\"https://a.com\" title=\"new title\">a</a></p>",
+    "theirs": "<p><a href=\"https://a.com\">a</a></p>",
+    "merged": "<p><a href=\"https://a.com\">a</a></p>"
+  },
+  {
+    "name": "ours rewrites a start tag and its text, and theirs takes out the bold",
+    "base": "<p>x <b>bold</b> y</p>",
+    "ours": "<p>x <b class=\"k\">bolder</b> y</p>",
+    "theirs": "<p>x bold y</p>",
+    "merged": "<p>x bolder y</p>"
+  },
+  {
+    "name": "ours changes a link and its text, and theirs takes out the link",
+    "base": "<p>x <a href=\"u\">link</a> y</p>",
+    "ours": "<p>x <a href=\"v\">new link</a> y</p>",
+    "theirs": "<p>x link y</p>",
+    "merged": "<p>x new link y</p>"
+  },
+  {
+    "name": "ours makes bold text italic and changes it, and theirs takes out the bold",
+    "base": "<p>x <b>bold</b> y</p>",
+    "ours": "<p>x <i>BOLD</i> y</p>",
+    "theirs": "<p>x bold y</p>",
+    "merged": "<p>x BOLD y</p>"
+  },
+  {
+    "name": "ours takes out a sentence after the full stop that theirs changes",
+    "base": "<p>this. Remove it. </p>",
+    "ours": "<p>this. </p>",
+    "theirs": "<p>this! Remove it. </p>",
+    "merged": "<p>this! </p>"
+  },
+  {
+    "name": "ours changes the full stop before a sentence that theirs takes out",
+    "base": "<p>this. Remove it. </p>",
+    "ours": "<p>this! Remove it. </p>",
+    "theirs": "<p>this. </p>",
+    "merged": "<p>this! </p>"
+  },
+  {
+    "name": "ours types a sentence after the full stop that theirs changes",
+    "base": "<p>this. </p>",
+    "ours": "<p>this. it. </p>",
+    "theirs": "<p>this! </p>",
+    "merged": "<p>this! it. </p>"
+  },
+  {
+    "name": "ours types a sentence after the word that theirs takes out",
+    "base": "<p>t! this. </p>",
+    "ours": "<p>t! this. it. </p>",
+    "theirs": "<p>t!  </p>",
+    "merged": "<p>t!  it. </p>"
+  },
+  {
+    "name": "ours types at the start of a word that theirs takes out with the space after it",
+    "base": "<p>a b. c</p>",
+    "ours": "<p>a xb. c</p>",
+    "theirs": "<p>a c</p>",
+    "merged": "<p>a xc</p>"
+  },
+  {
+    "name": "ours takes out the last space, and theirs the sentence that ends with it",
+    "base": "<p>it. it. </p>",
+    "ours": "<p>it. it.</p>",
+    "theirs": "<p>it. </p>",
+    "merged": "<p>it. </p>"
+  },
+  {
+    "name": "ours deletes all after a select-all, as the frame sends it, while theirs types: the text stays in its paragraph",
+    "base": "<h1>Title</h1><p id=\"c\">Third paragraph here.</p><p id=\"d\">After.</p>",
+    "ours": "<h1></h1>",
+    "theirs": "<h1>Title</h1><p id=\"c\">Third paragraph here typing on.</p><p id=\"d\">After.</p>",
+    "merged": "<h1></h1><p id=\"c\"> typing on</p>"
+  },
+  {
+    "name": "ours types while theirs deletes all after a select-all: the text stays in its paragraph",
+    "base": "<h1>Title</h1><p id=\"c\">Third paragraph here.</p><p id=\"d\">After.</p>",
+    "ours": "<h1>Title</h1><p id=\"c\">Third paragraph here typing on.</p><p id=\"d\">After.</p>",
+    "theirs": "<h1></h1>",
+    "merged": "<h1></h1><p id=\"c\"> typing on</p>"
+  },
+  {
+    "name": "ours deletes a list that theirs types in: the text keeps its item and its list",
+    "base": "<p>Intro.</p>\n<ul>\n<li>One</li>\n<li>Two</li>\n</ul>\n<p>End.</p>",
+    "ours": "<p>Intro.</p>\n<p>End.</p>",
+    "theirs": "<p>Intro.</p>\n<ul>\n<li>One</li>\n<li>Two more</li>\n</ul>\n<p>End.</p>",
+    "merged": "<p>Intro.</p>\n<ul><li> more</li></ul><p>End.</p>"
+  },
+  {
+    "name": "ours deletes all while theirs types in two places of one paragraph",
+    "base": "<h1>T</h1><p>one two three</p>",
+    "ours": "<h1></h1>",
+    "theirs": "<h1>T</h1><p>A one two B three</p>",
+    "merged": "<h1></h1><p>A  B</p>"
+  },
+  {
+    "name": "ours deletes all while theirs replaces a word: the new word stays in its paragraph",
+    "base": "<h1>T</h1><p>one two three</p>",
+    "ours": "<h1></h1>",
+    "theirs": "<h1>T</h1><p>one TWO three</p>",
+    "merged": "<h1></h1><p>TWO</p>"
   }
 ]

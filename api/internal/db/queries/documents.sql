@@ -2,14 +2,15 @@
 SELECT owner_type, owner_id FROM documents WHERE id=$1;
 
 -- name: InsertDocument :exec
-INSERT INTO documents(id,title,owner_type,owner_id,parent_folder_id)
-VALUES(@id,@title,@owner_type,@owner_id,NULLIF(@parent_folder_id::text,''));
+-- The first version of a document is its seq 1.
+INSERT INTO documents(id,title,owner_type,owner_id,parent_folder_id,seq)
+VALUES(@id,@title,@owner_type,@owner_id,NULLIF(@parent_folder_id::text,''),1);
 
 -- name: UpdateDocumentCurrentVersion :exec
 UPDATE documents SET current_version_id=$1, updated_at=now() WHERE id=$2;
 
 -- name: GetDocument :one
-SELECT d.id,d.title,d.current_version_id,d.owner_type,d.owner_id,
+SELECT d.id,d.title,d.current_version_id,d.seq,d.owner_type,d.owner_id,
        COALESCE(u.email,'') AS owner_email,
        COALESCE(u.name,sa.name,'') AS owner_name,
        COALESCE(d.parent_folder_id,'') AS parent_folder_id
@@ -20,10 +21,6 @@ LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account 
   -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type, not a Google credential.
   ON d.owner_type='service_account' AND sa.id=d.owner_id -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
 WHERE d.id=$1;
-
--- name: GetDocumentVersionForUpdate :one
-SELECT current_version_id, COALESCE((SELECT max(number)+1 FROM versions WHERE document_id=$1),1)::int AS next_number
-FROM documents WHERE id=$1 FOR UPDATE;
 
 -- name: RecordWorkspaceEntry :exec
 -- Records that a principal has opened a document, so a broadly-shared ("anyone")

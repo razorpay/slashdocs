@@ -24,7 +24,7 @@ func (q *Queries) DeleteDocument(ctx context.Context, id string) (int64, error) 
 }
 
 const getDocument = `-- name: GetDocument :one
-SELECT d.id,d.title,d.current_version_id,d.owner_type,d.owner_id,
+SELECT d.id,d.title,d.current_version_id,d.seq,d.owner_type,d.owner_id,
        COALESCE(u.email,'') AS owner_email,
        COALESCE(u.name,sa.name,'') AS owner_name,
        COALESCE(d.parent_folder_id,'') AS parent_folder_id
@@ -40,6 +40,7 @@ type GetDocumentRow struct {
 	ID               string
 	Title            string
 	CurrentVersionID pgtype.Text
+	Seq              int64
 	OwnerType        string
 	OwnerID          string
 	OwnerEmail       string
@@ -55,6 +56,7 @@ func (q *Queries) GetDocument(ctx context.Context, id string) (GetDocumentRow, e
 		&i.ID,
 		&i.Title,
 		&i.CurrentVersionID,
+		&i.Seq,
 		&i.OwnerType,
 		&i.OwnerID,
 		&i.OwnerEmail,
@@ -80,23 +82,6 @@ func (q *Queries) GetDocumentOwner(ctx context.Context, id string) (GetDocumentO
 	return i, err
 }
 
-const getDocumentVersionForUpdate = `-- name: GetDocumentVersionForUpdate :one
-SELECT current_version_id, COALESCE((SELECT max(number)+1 FROM versions WHERE document_id=$1),1)::int AS next_number
-FROM documents WHERE id=$1 FOR UPDATE
-`
-
-type GetDocumentVersionForUpdateRow struct {
-	CurrentVersionID pgtype.Text
-	NextNumber       int32
-}
-
-func (q *Queries) GetDocumentVersionForUpdate(ctx context.Context, documentID string) (GetDocumentVersionForUpdateRow, error) {
-	row := q.db.QueryRow(ctx, getDocumentVersionForUpdate, documentID)
-	var i GetDocumentVersionForUpdateRow
-	err := row.Scan(&i.CurrentVersionID, &i.NextNumber)
-	return i, err
-}
-
 const indexDocuments = `-- name: IndexDocuments :execrows
 UPDATE documents SET title = title
 WHERE id IN (
@@ -117,8 +102,8 @@ func (q *Queries) IndexDocuments(ctx context.Context, rowLimit int32) (int64, er
 }
 
 const insertDocument = `-- name: InsertDocument :exec
-INSERT INTO documents(id,title,owner_type,owner_id,parent_folder_id)
-VALUES($1,$2,$3,$4,NULLIF($5::text,''))
+INSERT INTO documents(id,title,owner_type,owner_id,parent_folder_id,seq)
+VALUES($1,$2,$3,$4,NULLIF($5::text,''),1)
 `
 
 type InsertDocumentParams struct {
@@ -129,6 +114,7 @@ type InsertDocumentParams struct {
 	ParentFolderID string
 }
 
+// The first version of a document is its seq 1.
 func (q *Queries) InsertDocument(ctx context.Context, arg InsertDocumentParams) error {
 	_, err := q.db.Exec(ctx, insertDocument,
 		arg.ID,

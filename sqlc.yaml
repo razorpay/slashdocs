@@ -10,3 +10,7 @@ sql:
         package: "dbsqlc"
         out: "api/internal/db/sqlc"
         sql_package: "pgx/v5"
+        overrides:
+          # sum is a CRC-32. pgx scans it into a uint32 with a range check.
+          - column: "document_ops.sum"
+            go_type: "uint32"

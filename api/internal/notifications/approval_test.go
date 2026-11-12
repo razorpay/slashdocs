@@ -64,7 +64,7 @@ func TestApprovalNotifications(t *testing.T) {
 		t.Fatalf("request notification: emails=%v messages=%+v", sender.emails, sender.messages)
 	}
 
-	if _, _, err := store.CreateOrUpdateApproval(ctx, doc.ID, v.ID, repo.DecisionRejected, "needs a rollback plan", approver); err != nil {
+	if _, _, err := store.CreateOrUpdateApproval(ctx, doc.ID, v.ID, nil, repo.DecisionRejected, "needs a rollback plan", approver); err != nil {
 		t.Fatal(err)
 	}
 	deliver()
@@ -74,7 +74,7 @@ func TestApprovalNotifications(t *testing.T) {
 	}
 
 	// The same decision again tells the owner nothing new.
-	if _, _, err := store.CreateOrUpdateApproval(ctx, doc.ID, v.ID, repo.DecisionRejected, "needs a rollback plan", approver); err != nil {
+	if _, _, err := store.CreateOrUpdateApproval(ctx, doc.ID, v.ID, nil, repo.DecisionRejected, "needs a rollback plan", approver); err != nil {
 		t.Fatal(err)
 	}
 	if queued() != 0 {
@@ -83,7 +83,7 @@ func TestApprovalNotifications(t *testing.T) {
 
 	// A decision revoked before delivery, or an approver removed before their
 	// request is delivered, sends nothing.
-	approval, _, err := store.CreateOrUpdateApproval(ctx, doc.ID, v.ID, repo.DecisionApproved, "", approver)
+	approval, _, err := store.CreateOrUpdateApproval(ctx, doc.ID, v.ID, nil, repo.DecisionApproved, "", approver)
 	if err != nil {
 		t.Fatal(err)
 	}

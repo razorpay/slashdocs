@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -260,6 +261,7 @@ func (h handlers) patchGrant(c *gin.Context) {
 		return
 	}
 	incGrant("updated", string(g.Role), string(g.Principal.Type), actorType(c))
+	h.accessChanged(c, c.Param("id"))
 	c.JSON(http.StatusOK, g)
 }
 
@@ -285,5 +287,25 @@ func (h handlers) deleteGrant(c *gin.Context) {
 		return
 	}
 	incGrant("deleted", labelUnknown, labelUnknown, actorType(c))
+	h.accessChanged(c, c.Param("id"))
 	c.Status(http.StatusNoContent)
 }
+
+// accessChanged tells the open streams of a document that its access
+// changed: a grant changed or went, or the document moved to another folder.
+// A viewer who lost access then stops getting the text that people type at
+// once, and not at the next keep-alive. The change is saved, so a failure
+// here is only logged.
+func (h handlers) accessChanged(c *gin.Context, documentID string) {
+	ctx := c.Request.Context()
+	event := repo.DocumentKVEvent{DocumentID: documentID, Kind: repo.DocumentEventAccess, UpdatedBy: current(c)}
+	if err := h.deps.documentKVEvents.Relay(ctx, event); err != nil {
+		slog.WarnContext(ctx, "document access relay failed", slog.String("document_id", documentID), slog.Any("error", err))
+	}
+}
+
+// folderAccessChanged tells all open streams that access changed, with one
+// event of no document: a change of a folder changes the access of each
+// document under it. Each stream examines the access of its viewer, as at a
+// keep-alive, once for the folder changes of folderAccessDelay.
+func (h handlers) folderAccessChanged(c *gin.Context) { h.accessChanged(c, "") }

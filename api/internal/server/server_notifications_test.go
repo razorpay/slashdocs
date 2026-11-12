@@ -187,7 +187,7 @@ func TestDocumentLinksEnforceAccessAndDocumentMembership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmt, err := e.store.CreateComment(context.Background(), other.ID, ver.ID, "Other comment", repo.Anchor{Quote: "Other"}, fixtureOwner, nil)
+	cmt, err := e.store.CreateComment(context.Background(), other.ID, ver.ID, "Other comment", repo.Anchor{Quote: "Other"}, 0, fixtureOwner, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
