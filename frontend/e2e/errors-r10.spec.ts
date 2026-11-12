@@ -175,9 +175,9 @@ for (const [name, failure] of FAILURES) {
     await expect(page.getByText("Could not load the featured documents.")).toBeVisible(
       soon,
     );
-    await expect(
-      page.getByRole("button", { name: /requests for access did not load/i }),
-    ).toBeVisible(soon);
+    await expect(page.getByRole("button", { name: "Inbox did not load" })).toBeVisible(
+      soon,
+    );
 
     await page.unrouteAll();
     for (const text of [

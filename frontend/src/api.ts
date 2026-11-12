@@ -378,6 +378,18 @@ export type DocumentAccessRequest = AccessRequest & {
   document_id: string;
   document_title: string;
 };
+// InboxItem is a thing that waits on the reader: a document to approve, or an
+// open thread with a message that they did not read.
+export type InboxItem = {
+  kind: "approval" | "thread";
+  document_id: string;
+  document_title: string;
+  comment_id?: string;
+  // Who asked for the approval, or wrote the newest unread message, body.
+  from: Principal;
+  body?: string;
+  at: string;
+};
 export type ServiceAccount = {
   id: string;
   name: string;
@@ -911,6 +923,7 @@ export const api = {
   // The requests on every document on which the reader manages access.
   managedAccessRequests: () =>
     request<{ items: DocumentAccessRequest[] }>("/v1/access-requests"),
+  inbox: () => request<{ items: InboxItem[] }>("/v1/me/inbox"),
   declineAccessRequest: (doc: string, requester: Principal) =>
     request<void>(
       `/v1/documents/${doc}/access-requests/${requester.type}/${encodeURIComponent(requester.id)}`,

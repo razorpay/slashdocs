@@ -334,6 +334,23 @@ type DocumentAccessRequest struct {
 	DocumentTitle string `json:"document_title"`
 }
 
+// InboxPage is how many items one read of an inbox gives at most.
+const InboxPage = 50
+
+// InboxItem is a thing that waits on a principal.
+type InboxItem struct {
+	// Kind is "approval" for a document to approve, or "thread" for a thread
+	// with a message to read.
+	Kind          string `json:"kind"`
+	DocumentID    string `json:"document_id"`
+	DocumentTitle string `json:"document_title"`
+	CommentID     string `json:"comment_id,omitempty"`
+	// From asked for the approval, or wrote the newest unread message, Body.
+	From auth.Principal `json:"from"`
+	Body string         `json:"body,omitempty"`
+	At   string         `json:"at"`
+}
+
 type ServiceAccount struct {
 	ID       string         `json:"id"`
 	Name     string         `json:"name"`
@@ -680,6 +697,12 @@ type Repository interface {
 	// ListManagedAccessRequests returns the requests for every document on
 	// which the principal manages access, the newest first.
 	ListManagedAccessRequests(ctx context.Context, principal auth.Principal) ([]DocumentAccessRequest, error)
+	// Inbox returns a page of what waits on the principal, the newest first,
+	// after offset items: the documents that they approve and did not decide
+	// on, and the open threads on their documents, that they wrote in, or that
+	// mention them, with a message by someone else after their last read or
+	// message. It does not check access to the documents.
+	Inbox(ctx context.Context, principal auth.Principal, offset int) ([]InboxItem, error)
 	ResolveBearerToken(ctx context.Context, tokenHash string) (auth.Principal, error)
 	ResolveUser(ctx context.Context, id string) (auth.Principal, error)
 	// UpsertGoogleUser returns *EmailIdentityConflictError when the email

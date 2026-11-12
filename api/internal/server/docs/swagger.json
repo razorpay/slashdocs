@@ -2291,6 +2291,31 @@
                 }
             }
         },
+        "/v1/me/inbox": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    },
+                    {
+                        "cookieAuth": []
+                    }
+                ],
+                "description": "The newest first, at most 50: each document that the caller approves and did not decide on (kind approval), and each open thread on a document of the caller, that they wrote in, or that mentions them, with a message by someone else after their last read or message (kind thread). It holds only documents that the caller can read now.",
+                "tags": [
+                    "documents"
+                ],
+                "summary": "List what waits on the caller",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server.listResponse-repo_InboxItem"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/me/notifications": {
             "get": {
                 "security": [
@@ -2806,6 +2831,10 @@
                 "approval_summary": {
                     "$ref": "#/definitions/repo.ApprovalSummary"
                 },
+                "can_move": {
+                    "description": "CanMove is set by GET /v1/documents/{id}: the caller may move it.",
+                    "type": "boolean"
+                },
                 "current_version_id": {
                     "type": "string"
                 },
@@ -2930,6 +2959,38 @@
                 },
                 "role": {
                     "$ref": "#/definitions/repo.Role"
+                }
+            }
+        },
+        "repo.InboxItem": {
+            "type": "object",
+            "properties": {
+                "at": {
+                    "type": "string"
+                },
+                "body": {
+                    "type": "string"
+                },
+                "comment_id": {
+                    "type": "string"
+                },
+                "document_id": {
+                    "type": "string"
+                },
+                "document_title": {
+                    "type": "string"
+                },
+                "from": {
+                    "description": "From asked for the approval, or wrote the newest unread message, Body.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/auth.Principal"
+                        }
+                    ]
+                },
+                "kind": {
+                    "description": "Kind is \"approval\" for a document to approve, or \"thread\" for a thread\nwith a message to read.",
+                    "type": "string"
                 }
             }
         },
@@ -3869,6 +3930,17 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/repo.DocumentAccessRequest"
+                    }
+                }
+            }
+        },
+        "server.listResponse-repo_InboxItem": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/repo.InboxItem"
                     }
                 }
             }
