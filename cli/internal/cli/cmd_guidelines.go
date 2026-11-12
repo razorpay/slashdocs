@@ -21,11 +21,7 @@ func guidelinesCmd(g *globals, out io.Writer) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if g.json {
-				return renderValue(out, g, okValue("content", text))
-			}
-			_, err = fmt.Fprint(out, text)
-			return err
+			return render(out, g, []byte(text))
 		},
 	}
 }

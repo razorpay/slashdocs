@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"mime/multipart"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"time"
 )
@@ -123,44 +125,40 @@ func client(g *globals) (*Client, error) {
 	return &Client{Base: normalizeServer(srv), Token: tok, HTTP: apiHTTPClient, saved: saved}, nil
 }
 
-// APIError represents a non-2xx response from the API. Details carries the
-// server's structured "details" object verbatim; it is what a caller acts on
-// (current_version_id on a 409 version_conflict), so it is never dropped.
+// APIError represents a non-2xx response from the API. Details are the
+// "details" of the error response, such as current_version_id on a
+// version_conflict.
 type APIError struct {
 	Status  int
 	Code    string
 	Message string
-	Details any
+	Details map[string]any
 	Body    string
 }
 
 func (e *APIError) Error() string {
-	msg := e.Message
-	if hint := e.hint(); hint != "" {
-		msg += " (" + hint + ")"
-	}
+	text := fmt.Sprintf("api %d", e.Status)
 	if e.Code != "" {
-		return fmt.Sprintf("api %d %s: %s", e.Status, e.Code, msg)
+		text += " " + e.Code
 	}
-	return fmt.Sprintf("api %d: %s", e.Status, msg)
+	text += ": " + e.Message
+	if details := scalarDetails(e.Details); details != "" {
+		text += " (" + details + ")"
+	}
+	return text
 }
 
-// hint turns the server's details into an actionable sentence, so a caller who
-// is not using --json still learns how to recover from the human text alone.
-func (e *APIError) hint() string {
-	if e.Code == "version_conflict" {
-		if id := detailString(e.Details, "current_version_id"); id != "" {
-			return "the current version is " + id + "; rebase on it and retry with --base-version " + id
+// scalarDetails writes the scalar values of details as key=value pairs, in key
+// order, so the human error text names what a caller needs to recover.
+func scalarDetails(details map[string]any) string {
+	var parts []string
+	for _, k := range slices.Sorted(maps.Keys(details)) {
+		switch v := details[k].(type) {
+		case string, float64, bool:
+			parts = append(parts, fmt.Sprintf("%s=%v", k, v))
 		}
 	}
-	return ""
-}
-
-// detailString reads a string off the server's details object.
-func detailString(details any, key string) string {
-	m, _ := details.(map[string]any)
-	s, _ := m[key].(string)
-	return s
+	return strings.Join(parts, " ")
 }
 
 func (c *Client) do(method, path string, body io.Reader, ct string) ([]byte, error) {
@@ -192,9 +190,9 @@ func (c *Client) do(method, path string, body io.Reader, ct string) ([]byte, err
 		ae := &APIError{Status: res.StatusCode, Message: strings.TrimSpace(string(b)), Body: string(b)}
 		var payload struct {
 			Error struct {
-				Code    string `json:"code"`
-				Message string `json:"message"`
-				Details any    `json:"details"`
+				Code    string         `json:"code"`
+				Message string         `json:"message"`
+				Details map[string]any `json:"details"`
 			} `json:"error"`
 		}
 		if json.Unmarshal(b, &payload) == nil && payload.Error.Message != "" {

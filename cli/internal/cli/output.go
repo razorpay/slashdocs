@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -19,7 +20,9 @@ var displayFields = []string{
 }
 
 // render writes b to out, honoring --quiet and --json. It is the single output
-// path for API response bodies.
+// path for API response bodies. With --json it writes exactly one JSON value:
+// {"ok": true} for an empty body, and a JSON string for a body that is not
+// JSON, such as document HTML.
 func render(out io.Writer, g *globals, b []byte) error {
 	return renderHint(out, g, b, "")
 }
@@ -28,28 +31,28 @@ func renderHint(out io.Writer, g *globals, b []byte, hint string) error {
 	if g.quiet {
 		return nil
 	}
+	if g.json && len(bytes.TrimSpace(b)) == 0 {
+		b = []byte(`{"ok":true}`)
+	}
 	var x any
-	if json.Unmarshal(b, &x) == nil {
-		if g.json {
-			enc := json.NewEncoder(out)
-			enc.SetIndent("", "  ")
-			return enc.Encode(x)
+	if json.Unmarshal(b, &x) != nil {
+		if !g.json {
+			_, err := out.Write(append(bytes.TrimSpace(b), '\n'))
+			return err
 		}
-		_, err := fmt.Fprintln(out, humanize(hint, x))
-		return err
+		x = string(b)
 	}
 	if g.json {
-		// --json promises exactly one JSON value, so a body that is not JSON
-		// becomes one: an empty 204 turns into the ok marker, and any other
-		// payload (document HTML) rides along as content.
-		return renderValue(out, g, okValue("content", string(b)))
+		enc := json.NewEncoder(out)
+		enc.SetIndent("", "  ")
+		enc.SetEscapeHTML(false)
+		return enc.Encode(x)
 	}
-	_, err := out.Write(append(bytes.TrimSpace(b), '\n'))
+	_, err := fmt.Fprintln(out, humanize(hint, x))
 	return err
 }
 
-// renderValue writes v as the command's single JSON value, through the same
-// output path as an API payload so --quiet and formatting stay consistent.
+// renderValue renders v, a value that the CLI built, through render.
 func renderValue(out io.Writer, g *globals, v any) error {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -58,82 +61,58 @@ func renderValue(out io.Writer, g *globals, v any) error {
 	return render(out, g, b)
 }
 
-// renderContent writes a raw response body (document HTML) to out. Under
-// --json the contract needs a single JSON value, so the bytes are carried
-// inside one; otherwise they are written through byte for byte.
-func renderContent(out io.Writer, g *globals, b []byte) error {
-	if g.json {
-		if g.quiet {
-			return nil
+// errorEnvelope is the --json form of a failed command, in the shape of the
+// error responses of the server. An API error keeps the response of the
+// server, with its code and details. Other errors get a code from their kind.
+func errorEnvelope(err error) map[string]any {
+	var ae *APIError
+	if errors.As(err, &ae) {
+		var v map[string]any
+		if json.Unmarshal([]byte(ae.Body), &v) == nil && v["error"] != nil {
+			return v
 		}
-		return renderValue(out, g, okValue("content", string(b)))
 	}
-	_, err := out.Write(b)
-	return err
+	code := "cli_error"
+	switch {
+	case ae != nil:
+		code = "api_error"
+	case ExitCode(err) == 2:
+		code = "usage"
+	case ExitCode(err) == 6:
+		code = "network"
+	}
+	return map[string]any{"error": map[string]any{"code": code, "message": err.Error()}}
 }
 
-// okValue is the JSON value for a result that is not an API payload: an empty
-// response, a status line, or raw bytes. The bare {"ok": true} form matches
-// what the server's MCP adapter returns for an empty result; key names the
-// extra text ("message" for a status line, "content" for a body).
-func okValue(key, text string) map[string]any {
-	v := map[string]any{"ok": true}
-	if text != "" {
-		v[key] = text
-	}
-	return v
-}
+// reportedError is a failure that the command already put in its --json
+// output, so Run does not write a second JSON value.
+type reportedError struct{ err error }
 
-// decodedJSON turns a response body into a value that can be embedded in a
-// larger JSON document, falling back to the raw text when it is not JSON.
-func decodedJSON(b []byte) any {
-	var v any
-	if json.Unmarshal(b, &v) != nil {
-		return string(b)
-	}
-	return v
-}
+func (e reportedError) Error() string { return e.err.Error() }
+func (e reportedError) Unwrap() error { return e.err }
 
 // message writes a plain human-facing status line, honoring --quiet. It is the
-// single path for non-payload status text (e.g. "Logged in").
+// single path for non-payload status text (e.g. "Logged in"). With --json the
+// line is the "message" of an {"ok": true} value.
 func message(out io.Writer, g *globals, text string) error {
+	if g.json {
+		return renderValue(out, g, map[string]any{"ok": true, "message": text})
+	}
 	if g.quiet {
 		return nil
-	}
-	if g.json {
-		return renderValue(out, g, okValue("message", text))
 	}
 	_, err := fmt.Fprintln(out, text)
 	return err
 }
 
-// notice writes an informational line that is not the command's result, such
-// as the login URL printed while the browser flow runs. Under --json it goes
-// to errOut so stdout keeps exactly one JSON value.
-func notice(out, errOut io.Writer, g *globals, text string) error {
-	if g.quiet {
-		return nil
-	}
-	if g.json {
-		_, err := fmt.Fprintln(errOut, text)
-		return err
-	}
-	return message(out, g, text)
-}
-
 // confirm writes a conversational, action-indicative status line (prefixed with
 // a check mark) so the caller can see what just happened rather than an
-// API-shaped payload. Honors --quiet; under --json it is the single JSON value
-// the command emits instead.
+// API-shaped payload. Honors --quiet and --json, as message does.
 func confirm(out io.Writer, g *globals, text string) error {
-	if g.quiet {
-		return nil
+	if !g.json {
+		text = "\u2713 " + text
 	}
-	if g.json {
-		return renderValue(out, g, okValue("message", text))
-	}
-	_, err := fmt.Fprintln(out, "\u2713 "+text)
-	return err
+	return message(out, g, text)
 }
 
 // action performs a mutating call and reports it conversationally. With --json

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"fmt"
 	"io"
 
 	"github.com/spf13/cobra"
@@ -11,17 +10,16 @@ func versionCmd(g *globals, out io.Writer) *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Print CLI version",
-		Args:  exactArgs(0),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if g.json {
-				return renderValue(out, g, map[string]any{"version": Version, "commit": Commit})
+				return renderValue(out, g, map[string]string{"version": Version, "commit": Commit})
 			}
+			text := "slashdocs " + Version
 			if Commit != "" {
-				_, _ = fmt.Fprintf(out, "slashdocs %s (%s)\n", Version, Commit)
-				return nil
+				text += " (" + Commit + ")"
 			}
-			_, _ = fmt.Fprintf(out, "slashdocs %s\n", Version)
-			return nil
+			return message(out, g, text)
 		},
 	}
 }

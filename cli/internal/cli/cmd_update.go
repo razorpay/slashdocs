@@ -2,8 +2,8 @@ package cli
 
 import (
 	"context"
-	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -14,7 +14,7 @@ func updateCmd(g *globals, out io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Update the slashdocs CLI",
-		Args:  exactArgs(0),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client(g)
 			if err != nil {
@@ -27,28 +27,21 @@ func updateCmd(g *globals, out io.Writer) *cobra.Command {
 				return err
 			}
 			if g.json {
-				return renderValue(out, g, map[string]any{"ok": true, "updated": binaryChanged, "skill_refreshed": skillRefreshed, "version": v.Version})
+				return renderValue(out, g, map[string]any{"version": v.Version, "updated": binaryChanged, "skill_refreshed": skillRefreshed})
 			}
-			if binaryChanged {
-				_, _ = fmt.Fprintf(out, "Updated slashdocs to %s.\n", v.Version)
-				if skillRefreshed {
-					_, _ = fmt.Fprintln(out, "Refreshed slashdocs skill.")
-				}
-				return nil
+			var lines []string
+			switch {
+			case binaryChanged:
+				lines = append(lines, "Updated slashdocs to "+v.Version+".")
+			case v.Version != "":
+				lines = append(lines, "slashdocs is already up to date ("+v.Version+").")
+			case !skillRefreshed:
+				lines = append(lines, "No update information available.")
 			}
 			if skillRefreshed {
-				_, _ = fmt.Fprintln(out, "Refreshed slashdocs skill.")
-				if v.Version != "" {
-					_, _ = fmt.Fprintf(out, "slashdocs is already up to date (%s).\n", v.Version)
-				}
-				return nil
+				lines = append(lines, "Refreshed slashdocs skill.")
 			}
-			if v.Version == "" {
-				_, _ = fmt.Fprintln(out, "No update information available.")
-				return nil
-			}
-			_, _ = fmt.Fprintf(out, "slashdocs is already up to date (%s).\n", v.Version)
-			return nil
+			return message(out, g, strings.Join(lines, "\n"))
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "reinstall even when the local version matches the server")
