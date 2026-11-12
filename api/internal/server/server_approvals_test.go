@@ -779,7 +779,7 @@ func TestListApprovalsForeignVersionIsNotFound(t *testing.T) {
 
 	// A real version that belongs to a different document must not be
 	// reported as an all-pending state on this one.
-	_, otherVersion, err := e.store.CreateDocument(context.Background(), fixtureOwner, "other doc", []byte("<html><body>other</body></html>"))
+	_, otherVersion, err := e.store.CreateDocument(context.Background(), fixtureOwner, "other doc", "", []byte("<html><body>other</body></html>"))
 	if err != nil {
 		t.Fatalf("create second document: %v", err)
 	}

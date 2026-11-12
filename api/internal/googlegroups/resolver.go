@@ -62,6 +62,18 @@ func NewResolver(cfg ResolverConfig) *Resolver {
 }
 
 func (r *Resolver) Resolve(ctx context.Context, principal *auth.Principal) *auth.Principal {
+	return r.resolve(ctx, principal, true)
+}
+
+// ResolveCached resolves memberships from a fresh cached snapshot only, and
+// reports them unavailable otherwise. It never calls the directory, so a
+// caller that gives up early cannot record a failure that starts the retry
+// cooldown for the user's other requests.
+func (r *Resolver) ResolveCached(ctx context.Context, principal *auth.Principal) *auth.Principal {
+	return r.resolve(ctx, principal, false)
+}
+
+func (r *Resolver) resolve(ctx context.Context, principal *auth.Principal, refresh bool) *auth.Principal {
 	if principal == nil {
 		return nil
 	}
@@ -87,7 +99,7 @@ func (r *Resolver) Resolve(ctx context.Context, principal *auth.Principal) *auth
 	} else {
 		r.record("cache", "stale")
 	}
-	if err != nil || cooldownActive(snapshot, now, r.retryCooldown) {
+	if err != nil || !refresh || cooldownActive(snapshot, now, r.retryCooldown) {
 		resolved.GoogleGroupMembershipState = auth.GoogleGroupMembershipUnavailable
 		return &resolved
 	}

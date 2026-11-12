@@ -22,7 +22,7 @@ func approversCmd(g *globals, out io.Writer) *cobra.Command {
 			"Examples:\n" +
 			"  slashdocs docs approvers add doc_… --to reviewer@org.example\n" +
 			"  slashdocs docs approvers add doc_… --to qa-bot@brave.otter.bot",
-		Args: exactArgs(1),
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			body := map[string]any{}
 			var target string
@@ -61,7 +61,7 @@ func approvalsCmd(g *globals, out io.Writer) *cobra.Command {
 	list := &cobra.Command{
 		Use:   "list <doc_id>",
 		Short: "Show decisions and the aggregate approval status",
-		Args:  exactArgs(1),
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path := apiPath("/v1/documents/%s/approvals", args[0])
 			if ver != "" {
@@ -111,7 +111,7 @@ func decisionCmd(g *globals, out io.Writer, use, short, decision, did string) *c
 	cmd := &cobra.Command{
 		Use:   use + " <doc_id>",
 		Short: short,
-		Args:  exactArgs(1),
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// The server decides whether the request says enough: a note, or
 			// open comments of yours on the document.
@@ -151,7 +151,7 @@ func revokeApprovalCmd(g *globals, out io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "revoke-approval <doc_id>",
 		Short: "Revoke your decision on a version (back to pending)",
-		Args:  exactArgs(1),
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cl, err := client(g)
 			if err != nil {

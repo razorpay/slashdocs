@@ -16,7 +16,7 @@ func TestPostgresRepositoryDocumentGrantVersionCommentFlow(t *testing.T) {
 	store := newStore(t)
 
 	owner := auth.Principal{Type: auth.PrincipalUser, ID: "usr_pg_owner", Email: "pg-owner@example.com", Name: "Owner"}
-	doc, ver, err := store.CreateDocument(context.Background(), owner, "Postgres doc", []byte("<html>v1</html>"))
+	doc, ver, err := store.CreateDocument(context.Background(), owner, "Postgres doc", "", []byte("<html>v1</html>"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestPostgresCreateGrantDoesNotUpdateProfiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc, _, err := store.CreateDocument(ctx, owner, "Document", []byte("<p>Test</p>"))
+	doc, _, err := store.CreateDocument(ctx, owner, "Document", "", []byte("<p>Test</p>"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestPostgresAnyoneGrantListsAfterOpen(t *testing.T) {
 	ctx := context.Background()
 
 	owner := auth.Principal{Type: auth.PrincipalUser, ID: "usr_pg_anyone_owner", Email: "anyone-owner@example.com", Name: "Owner"}
-	doc, _, err := store.CreateDocument(ctx, owner, "Public sample", []byte("<html>public</html>"))
+	doc, _, err := store.CreateDocument(ctx, owner, "Public sample", "", []byte("<html>public</html>"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestPostgresAnyoneGrantListsAfterOpen(t *testing.T) {
 
 func listed(t *testing.T, store *pgrepo.Store, p auth.Principal, docID string) bool {
 	t.Helper()
-	docs, err := store.ListDocuments(context.Background(), p)
+	docs, _, err := store.ListDocuments(context.Background(), p, repo.Page{Limit: 100}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestPostgresCreateDocumentDeletesBlobWhenDBFailsAfterPut(t *testing.T) {
 	defer store.Close()
 
 	owner := auth.Principal{Type: auth.PrincipalUser, ID: "usr_blob_cleanup_doc", Email: "blob-cleanup-doc@example.com", Name: "Owner"}
-	_, _, err = store.CreateDocument(ctx, owner, "cleanup doc", []byte("<html>cleanup</html>"))
+	_, _, err = store.CreateDocument(ctx, owner, "cleanup doc", "", []byte("<html>cleanup</html>"))
 	if err == nil {
 		t.Fatal("CreateDocument succeeded; want context cancellation after blob put")
 	}
@@ -208,7 +208,7 @@ func TestPostgresCreateVersionDeletesBlobWhenDBFailsAfterPut(t *testing.T) {
 	defer store.Close()
 
 	owner := auth.Principal{Type: auth.PrincipalUser, ID: "usr_blob_cleanup_ver", Email: "blob-cleanup-ver@example.com", Name: "Owner"}
-	doc, ver, err := store.CreateDocument(context.Background(), owner, "cleanup version", []byte("<html>v1</html>"))
+	doc, ver, err := store.CreateDocument(context.Background(), owner, "cleanup version", "", []byte("<html>v1</html>"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func TestPostgresSearchDocumentsViaFolderGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc, _, err := store.CreateDocument(ctx, owner, "SearchableInFolder", []byte("<html>hello</html>"))
+	doc, _, err := store.CreateDocument(ctx, owner, "SearchableInFolder", "", []byte("<html>hello</html>"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +282,7 @@ func TestPostgresSearchDocumentsViaFolderGrant(t *testing.T) {
 	}
 
 	// Before granting folder access, viewer cannot find the doc
-	results, err := store.SearchDocuments(ctx, viewer, repo.DocumentSearch{Terms: []string{"searchableinfolder"}}, false, 25)
+	results, _, err := store.SearchDocuments(ctx, viewer, repo.DocumentSearch{Terms: []string{"searchableinfolder"}}, false, repo.Page{Limit: 25})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +298,7 @@ func TestPostgresSearchDocumentsViaFolderGrant(t *testing.T) {
 	}
 
 	// Now the viewer can find the doc via folder inheritance
-	results, err = store.SearchDocuments(ctx, viewer, repo.DocumentSearch{
+	results, _, err = store.SearchDocuments(ctx, viewer, repo.DocumentSearch{
 		Terms:         []string{"searchablein"},
 		ExcludedTerms: []string{"draft"},
 		Owners:        []string{"missing@test.com", "search-folder-owner"},
@@ -307,7 +307,7 @@ func TestPostgresSearchDocumentsViaFolderGrant(t *testing.T) {
 		UpdatedSince:  time.Now().Add(-time.Hour),
 		UpdatedBefore: time.Now().Add(time.Hour),
 		IncludeLabels: true,
-	}, false, 25)
+	}, false, repo.Page{Limit: 25})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +325,7 @@ func TestPostgresSearchDocumentsViaFolderGrant(t *testing.T) {
 		t.Fatalf("combined search results = %+v, want one result with labels", results)
 	}
 
-	results, err = store.SearchDocuments(ctx, viewer, repo.DocumentSearch{Labels: []string{"payments", "missing"}}, false, 25)
+	results, _, err = store.SearchDocuments(ctx, viewer, repo.DocumentSearch{Labels: []string{"payments", "missing"}}, false, repo.Page{Limit: 25})
 	if err != nil {
 		t.Fatal(err)
 	}

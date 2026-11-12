@@ -18,7 +18,7 @@ func skillsUpdateCmd(g *globals, out io.Writer) *cobra.Command {
 	return &cobra.Command{
 		Use:   "update",
 		Short: "Reinstall the agent skill bundled with this CLI",
-		Args:  exactArgs(0),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			paths, err := installBundledSkill()
 			if err != nil {

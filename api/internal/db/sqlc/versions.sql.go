@@ -78,6 +78,25 @@ func (q *Queries) GetVersionBlobKey(ctx context.Context, id string) (string, err
 	return html_blob_key, err
 }
 
+const getVersionPreview = `-- name: GetVersionPreview :one
+SELECT left(COALESCE(search_text, ''), 2000)::text AS text, created_at
+FROM versions WHERE id=$1
+`
+
+type GetVersionPreviewRow struct {
+	Text      string
+	CreatedAt pgtype.Timestamptz
+}
+
+// The start of a version's text and when the version was created, for link
+// previews. The text is empty until the version is indexed.
+func (q *Queries) GetVersionPreview(ctx context.Context, id string) (GetVersionPreviewRow, error) {
+	row := q.db.QueryRow(ctx, getVersionPreview, id)
+	var i GetVersionPreviewRow
+	err := row.Scan(&i.Text, &i.CreatedAt)
+	return i, err
+}
+
 const insertInitialVersion = `-- name: InsertInitialVersion :one
 INSERT INTO versions(id,document_id,number,html_blob_key,sha256,parent_version_id,created_by_type,created_by_id,change_summary,search_text)
 VALUES($1,$2,1,$3,$4,NULL,$5,$6,'',$7::text)

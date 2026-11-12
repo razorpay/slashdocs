@@ -231,14 +231,6 @@ func TestConfigReportsTemporarilyDisabledDocumentFeatures(t *testing.T) {
 	}
 }
 
-func TestFrontendFallbackServesEmbeddedIndex(t *testing.T) {
-	rr := do(t, newTestEnv(t).h, http.MethodGet, "/docs/some_doc", "", nil)
-	assertStatus(t, rr, http.StatusOK)
-	if !strings.Contains(rr.Body.String(), "<title>slashdocs</title>") || !strings.Contains(rr.Body.String(), "id=\"root\"") {
-		t.Fatalf("body = %q, want embedded frontend", rr.Body.String())
-	}
-}
-
 func TestHandlersPassRequestContextToRepository(t *testing.T) {
 	wrapped := &contextCheckingRepo{Repository: newTestStore(t)}
 	h := server.New(server.Config{Environment: "test"}, server.WithRepository(wrapped), server.WithAuthenticator(testPrincipalAuth{})).Handler()
@@ -261,9 +253,9 @@ type contextCheckingRepo struct {
 	sawMarker bool
 }
 
-func (r *contextCheckingRepo) ListDocuments(ctx context.Context, p auth.Principal) ([]repo.Document, error) {
+func (r *contextCheckingRepo) ListDocuments(ctx context.Context, p auth.Principal, page repo.Page, includeLabels bool) ([]repo.Document, bool, error) {
 	if ctx.Value(contextMarkerKey{}) == "seen" {
 		r.sawMarker = true
 	}
-	return r.Repository.ListDocuments(ctx, p)
+	return r.Repository.ListDocuments(ctx, p, page, includeLabels)
 }

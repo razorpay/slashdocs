@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 const (
@@ -46,7 +47,8 @@ func newTestLocal(t *testing.T) testLocal {
 	}
 	t.Cleanup(func() { _ = root.Close() })
 	me := localPrincipal{Type: "user", ID: "ada", Name: "Ada"}
-	return testLocal{dir, localHandler(root, localInfo{URL: localURL(7070), Port: 7070, Dir: "/docs"}, me)}
+	app := fstest.MapFS{"local.html": {Data: []byte(`<div id="root"></div>`)}}
+	return testLocal{dir, localHandler(root, app, localInfo{URL: localURL(7070), Port: 7070, Dir: "/docs"}, me)}
 }
 
 // do sends a request from the app page.
@@ -182,6 +184,7 @@ func TestLocalComments(t *testing.T) {
 		{http.MethodPost, base, `{"body":"no anchor"}`, http.StatusBadRequest},
 		{http.MethodDelete, base + "/missing", "", http.StatusNotFound},
 		{http.MethodGet, "/v1/documents/chart.png/comments", "", http.StatusNotFound},
+		{http.MethodGet, base + "?status=stale", "", http.StatusBadRequest},
 	} {
 		if w := l.do(tt.method, testApp, tt.target, tt.body); w.Code != tt.status {
 			t.Errorf("%s %s = %d %s, want %d", tt.method, tt.target, w.Code, w.Body, tt.status)
@@ -204,6 +207,9 @@ func TestLocalComments(t *testing.T) {
 	open := decodeTest[struct{ Items []localComment }](t, l.do(http.MethodGet, testApp, base+"?status=open", "")).Items
 	if len(open) != 0 {
 		t.Errorf("open comments = %+v, want none", open)
+	}
+	if all := decodeTest[struct{ Items []localComment }](t, l.do(http.MethodGet, testApp, base+"?status=all", "")).Items; len(all) != 1 {
+		t.Errorf("all comments = %+v, want the resolved thread", all)
 	}
 	got := list()
 	if len(got) != 1 || got[0].Status != "resolved" || got[0].ResolvedAt.IsZero() || len(got[0].Replies) != 1 {

@@ -20,6 +20,7 @@ import { Center, Skeleton } from "@/components/ui/misc";
 import { Button } from "@/components/ui/button";
 import { DocBar } from "./doc-bar";
 import { DocWorkspace } from "./doc-workspace";
+import { OlderVersionBanner } from "./doc-older-version-banner";
 import { cursorsShownStore } from "@/lib/live-cursors";
 import { useDocumentStream, type Viewer } from "./use-document-stream";
 
@@ -60,7 +61,7 @@ function AccessDeniedState({ documentID }: { documentID: string }) {
       title="You don't have access to this document"
       description={
         sent
-          ? "The owner has been notified."
+          ? "People who can share this document will see your request."
           : "Send the owner a request to grant you access."
       }
     >
@@ -128,7 +129,7 @@ export function DocumentPage() {
   // or edit.
   const goToSignIn = useCallback(() => nav(signInPath), [nav, signInPath]);
   const signIn = me.unauth ? goToSignIn : undefined;
-  useTitle(doc.data ? docTitle(doc.data) : undefined);
+  useTitle(doc.data ? docTitle(doc.data) : undefined, { loading: doc.isPending });
 
   const versionItems = versions.data?.items || [];
   const latest =
@@ -249,6 +250,15 @@ export function DocumentPage() {
           onShareOpenChange={setShareOpen}
           approvalStatus={doc.data.approval_status}
           approvalSummary={doc.data.approval_summary}
+        />
+      )}
+      banner={(floating) => (
+        <OlderVersionBanner
+          current={current}
+          latest={latest}
+          versions={versionItems}
+          onViewLatest={() => setSelectedVersion(latest)}
+          floating={floating}
         />
       )}
     />
