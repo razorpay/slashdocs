@@ -40,6 +40,7 @@ func docsCmd(g *globals, out io.Writer) *cobra.Command {
 		docsEditCmd(g, out),
 		versionsCmd(g, out),
 		commentsCmd(g, out),
+		waitCmd(g, out),
 		documentLabelsCmd(g, out),
 		grantsCmd(g, out),
 		approversCmd(g, out),
@@ -765,7 +766,7 @@ func commentsCmd(g *globals, out io.Writer) *cobra.Command {
 			return usageError{errors.New("--quote is required, or --target with --x and --y for a point comment")}
 		}
 		return action(g, out, func(c *Client) ([]byte, error) {
-			return c.commentJSON("POST", apiPath("/v1/documents/%s/comments", args[0]), map[string]any{"body": createBody, "version_id": createVersion, "anchor": anchor}, createMentions, false)
+			return mine(g, args[0])(c.commentJSON("POST", apiPath("/v1/documents/%s/comments", args[0]), map[string]any{"body": createBody, "version_id": createVersion, "anchor": anchor}, createMentions, false))
 		}, func(m map[string]any) string {
 			return "Added comment " + fmt.Sprint(value(m, "id")) + " on " + args[0] + "."
 		})
@@ -795,7 +796,7 @@ func commentsCmd(g *globals, out io.Writer) *cobra.Command {
 			return usageError{errors.New("--body (or --body-file) is required")}
 		}
 		return action(g, out, func(c *Client) ([]byte, error) {
-			return c.commentJSON("POST", apiPath("/v1/documents/%s/comments/%s/replies", args[0], args[1]), map[string]any{"body": replyBody}, replyMentions, false)
+			return mine(g, args[0])(c.commentJSON("POST", apiPath("/v1/documents/%s/comments/%s/replies", args[0], args[1]), map[string]any{"body": replyBody}, replyMentions, false))
 		}, func(m map[string]any) string {
 			return "Created reply " + fmt.Sprint(value(m, "id")) + " on comment " + args[1] + "."
 		})

@@ -478,6 +478,15 @@ Write documents for review, not just display.
     changes to the document template or source content.
   - For formal sign-off, use the native approval workflow:
       slashdocs guidelines review approvals
+
+Right after you publish for review, wait for the feedback:
+  slashdocs docs wait <doc_id>
+
+It returns the threads with new messages when the reviewer stops writing for 2
+minutes, and an approval or a rejection at once. Change the document or answer
+in each thread, reply in each thread with what you did, push, and wait again.
+Each wait gives only feedback that is new to you. Stop when the document is
+approved, or when the person tells you to stop.
 `,
 	},
 	{

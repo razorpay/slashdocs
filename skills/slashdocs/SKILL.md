@@ -93,6 +93,16 @@ point comment with `pin=`. A point whose element is gone in a later version
 has the placement status `moved`, and viewers show it at its old spot in the
 page.
 
+### Waiting for a review
+
+Right after you publish for review, run `slashdocs docs wait <doc_id>`, in the
+background if your tool has a time limit. It returns the open threads with new
+messages when the reviewer stops writing for 2 minutes, and an approval or a
+rejection at once. Change the document or answer in each thread, reply in each
+thread with what you did, push, and run `wait` again. Each wait gives only
+feedback that is new to you, and never your own replies. Stop when the
+document is approved, or when the person tells you to stop.
+
 ### Searching and labels
 
 Use the same Slack-style search language as the web application:

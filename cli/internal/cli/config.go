@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/zalando/go-keyring"
 )
@@ -24,9 +25,18 @@ type Config struct {
 }
 
 type Context struct {
-	Server     string            `json:"server"`
-	Credential map[string]any    `json:"credential,omitempty"`
-	Pulled     map[string]string `json:"pulled"`
+	Server     string             `json:"server"`
+	Credential map[string]any     `json:"credential,omitempty"`
+	Pulled     map[string]string  `json:"pulled"`
+	Reviews    map[string]*Review `json:"reviews,omitempty"`
+}
+
+// Review is what the CLI knows of the review of a document: the messages
+// that it wrote, which are not feedback, and the time up to which wait gave
+// the feedback.
+type Review struct {
+	Mine  []string  `json:"mine,omitempty"`
+	Since time.Time `json:"since,omitzero"`
 }
 
 func configBase() string {
