@@ -105,7 +105,7 @@ func (h handlers) createComment(c *gin.Context) {
 	}
 	incComment("created", cm.Status, actorType(c))
 	h.announce(c, repo.DocumentEventComments)
-	c.JSON(http.StatusCreated, commentJSON(cm, cm.VersionID, "", *p))
+	c.JSON(http.StatusCreated, commentJSON(cm, cm.VersionID, nil, *p))
 }
 
 // ListComments godoc
@@ -224,7 +224,7 @@ func (h handlers) createCommentReply(c *gin.Context) {
 	}
 	incComment("created", cm.Status, actorType(c))
 	h.announce(c, repo.DocumentEventComments)
-	c.JSON(http.StatusCreated, commentJSON(cm, "", "", *current(c)))
+	c.JSON(http.StatusCreated, commentJSON(cm, "", nil, *current(c)))
 }
 
 // PatchComment godoc
@@ -277,7 +277,7 @@ func (h handlers) patchComment(c *gin.Context) {
 	}
 	incComment(event, cm.Status, actorType(c))
 	h.announce(c, repo.DocumentEventComments)
-	c.JSON(http.StatusOK, commentJSON(cm, cm.VersionID, "", *current(c)))
+	c.JSON(http.StatusOK, commentJSON(cm, cm.VersionID, nil, *current(c)))
 }
 
 func normalizePatchCommentRequest(in *patchCommentRequest) string {

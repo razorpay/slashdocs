@@ -50,10 +50,12 @@ const labelUnknown = "unknown"
 
 // User IDs are minted from the OIDC subject. Google subjects keep the
 // historical usr_google_ prefix so accounts created before generic OIDC
-// support resolve to the same user.
+// support resolve to the same user. oidcIdentityPrefix marks the generic OIDC
+// identity keys stored in users.google_sub.
 const (
 	googleUserIDPrefix = "usr_google_"
 	oidcUserIDPrefix   = "usr_oidc_"
+	oidcIdentityPrefix = "oidc_sha256_"
 )
 
 // Environment values for Config.Environment.
