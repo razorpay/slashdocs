@@ -17,16 +17,32 @@ import (
 )
 
 func TestHTTPDirectorySearchEscapesFiltersAndPaginates(t *testing.T) {
-	var requests int
+	pages := map[string]int{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
 		query := r.URL.Query().Get("query")
-		for _, want := range []string{"parent == 'customers/C123'", discussionLabel, securityLabel, `group_key.contains('plat\'form')`} {
+		for _, want := range []string{"parent == 'customers/C123'", `group_key.contains('plat\'form')`} {
 			if !strings.Contains(query, want) {
 				t.Fatalf("query %q missing %q", query, want)
 			}
 		}
-		if requests == 1 {
+		// Cloud Identity rejects an OR between labels: one label per query.
+		if strings.Contains(query, discussionLabel) == strings.Contains(query, securityLabel) {
+			t.Fatalf("query %q must name exactly one label", query)
+		}
+		if got := r.URL.Query().Get("view"); got != "FULL" {
+			t.Fatalf("view = %q", got)
+		}
+		if strings.Contains(query, securityLabel) {
+			pages["security"]++
+			// A group carrying both labels comes back from both queries.
+			_ = json.NewEncoder(w).Encode(map[string]any{"groups": []any{
+				groupJSON("groups/1", "customers/C123", "z@example.com", "Zulu"),
+				securityGroupJSON("groups/3", "m@example.com", "Mike"),
+			}})
+			return
+		}
+		pages["discussion"]++
+		if pages["discussion"] == 1 {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"groups": []any{
 					groupJSON("groups/1", "customers/C123", "z@example.com", "Zulu"),
@@ -50,8 +66,9 @@ func TestHTTPDirectorySearchEscapesFiltersAndPaginates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if requests != 2 || len(groups) != 2 || groups[0].ID != "groups/2" || groups[1].ID != "groups/1" {
-		t.Fatalf("requests=%d groups=%+v", requests, groups)
+	if pages["discussion"] != 2 || pages["security"] != 1 || len(groups) != 3 ||
+		groups[0].ID != "groups/2" || groups[1].ID != "groups/3" || groups[2].ID != "groups/1" {
+		t.Fatalf("pages=%v groups=%+v", pages, groups)
 	}
 }
 
@@ -117,21 +134,40 @@ func TestHTTPDirectoryRejectsExternalMalformedAndDeletedGroups(t *testing.T) {
 }
 
 func TestHTTPDirectoryMapsDirectAndNestedTransitiveGroups(t *testing.T) {
+	labels := map[string]bool{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query().Get("query")
-		if !strings.Contains(query, "member_key_id == 'member@example.com'") || !strings.Contains(query, "parent == 'customers/C123'") || !strings.Contains(query, securityLabel) {
+		if !strings.Contains(query, "member_key_id == 'member@example.com'") || !strings.Contains(query, "parent == 'customers/C123'") {
 			t.Fatalf("query = %q", query)
 		}
+		// Cloud Identity rejects an OR between labels: one label per query.
+		if strings.Contains(query, discussionLabel) == strings.Contains(query, securityLabel) {
+			t.Fatalf("query %q must name exactly one label", query)
+		}
+		if strings.Contains(query, securityLabel) {
+			labels["security"] = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"memberships": []any{
+				map[string]any{"group": "groups/nested", "groupKey": map[string]any{"id": "nested@example.com"}, "displayName": "Nested", "relationType": "INDIRECT", "labels": map[string]string{securityLabel: ""}},
+				map[string]any{"group": "groups/direct", "groupKey": map[string]any{"id": "direct@example.com"}, "displayName": "Direct", "relationType": "DIRECT", "labels": map[string]string{discussionLabel: "", securityLabel: ""}},
+			}})
+			return
+		}
+		labels["discussion"] = true
 		_ = json.NewEncoder(w).Encode(map[string]any{"memberships": []any{
-			map[string]any{"group": "groups/direct", "groupKey": map[string]any{"id": "direct@example.com"}, "displayName": "Direct", "relationType": "DIRECT", "labels": map[string]string{discussionLabel: ""}},
-			map[string]any{"group": "groups/nested", "groupKey": map[string]any{"id": "nested@example.com"}, "displayName": "Nested", "relationType": "INDIRECT", "labels": map[string]string{securityLabel: ""}},
+			map[string]any{"group": "groups/direct", "groupKey": map[string]any{"id": "direct@example.com"}, "displayName": "Direct", "relationType": "DIRECT", "labels": map[string]string{discussionLabel: "", securityLabel: ""}},
 		}})
 	}))
 	defer server.Close()
 	groups, err := newTestDirectory(t, server).TransitiveGroupsForMember(context.Background(), "Member@Example.com")
-	if err != nil || len(groups) != 2 {
-		t.Fatalf("groups=%+v err=%v", groups, err)
+	if err != nil || len(groups) != 2 || !labels["discussion"] || !labels["security"] {
+		t.Fatalf("groups=%+v labels=%v err=%v", groups, labels, err)
 	}
+}
+
+// securityGroupJSON is a security-only group as groups:search returns it: no
+// parent, labels only in the FULL view.
+func securityGroupJSON(id, email, name string) map[string]any {
+	return map[string]any{"name": id, "groupKey": map[string]any{"id": email}, "displayName": name, "labels": map[string]string{securityLabel: ""}}
 }
 
 func groupJSON(id, parent, email, name string) map[string]any {
