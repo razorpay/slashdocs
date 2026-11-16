@@ -120,6 +120,10 @@ test("a signed-out reader sees cursor chat but cannot send it", async ({
   await slashdocs.shareWithAnyone(document.id, "commenter");
   const path = `/app/d/${document.id}`;
   const reader = await signedOutPage(browser);
+  const reports: string[] = [];
+  reader.on("websocket", (socket) =>
+    socket.on("framesent", ({ payload }) => void reports.push(String(payload))),
+  );
   await reader.goto(path);
   await expect(renderedDocument(reader).locator("h1")).toBeVisible();
   await page.goto(path);
@@ -134,18 +138,13 @@ test("a signed-out reader sees cursor chat but cannot send it", async ({
   ).toBeVisible();
 
   // The reader's "/" opens no field, and their cursor goes to no one.
-  const posts: string[] = [];
-  reader.on("request", (request) => {
-    if (request.method() === "POST" && request.url().endsWith("/cursor"))
-      posts.push(request.url());
-  });
   await pointAt(reader, "#s0 h2");
   await reader.keyboard.press("/");
   await expect(
     bridge(reader).getByRole("textbox", { name: "Cursor chat message" }),
   ).toBeHidden();
   await reader.waitForTimeout(500);
-  expect(posts).toEqual([]);
+  expect(reports).toEqual([]);
   await reader.context().close();
 });
 

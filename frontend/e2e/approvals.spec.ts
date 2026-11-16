@@ -138,7 +138,7 @@ test("an approver cannot approve while another person types, or a page that is b
   const { document, path, reviewer } = await withReviewer(page, browser, slashdocs);
   // The page of the reviewer does not hear of the next edit: its stream does
   // not open, and its request for the changes waits.
-  await reviewer.route("**/kv/events**", () => {});
+  await reviewer.routeWebSocket(/\/live\b/, () => {});
   const held: Route[] = [];
   await reviewer.route("**/changes?**", (route) => void held.push(route));
   await reviewer.goto(path);

@@ -680,16 +680,6 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(patch),
     }),
-  postDocumentPresence: (doc: string, presence: DocumentPresence) =>
-    request<void>(`/v1/documents/${doc}/presence`, {
-      method: "POST",
-      body: JSON.stringify(presence),
-    }),
-  postDocumentCursor: (doc: string, cursor: DocumentCursor) =>
-    request<void>(`/v1/documents/${doc}/cursor`, {
-      method: "POST",
-      body: JSON.stringify(cursor),
-    }),
   // emoji stays a string: the only caller forwards a slug the server sent, and
   // narrowing it here would need a cast that asserts what the wire does not
   // guarantee. Values authored in this client come from REACTION_EMOJI, which

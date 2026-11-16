@@ -43,6 +43,9 @@ import { useFollowViewer } from "./use-follow-viewer";
 import { useRefreshLists } from "./use-refresh-lists";
 import { useTypists } from "./use-typists";
 
+// An answer for the document or its versions is fresh for this long.
+const FRESH_MS = 5_000;
+
 // The frame follows a change in place in less time than this. A page that
 // stays behind the document for longer offers its latest state to the
 // reader.
@@ -167,11 +170,17 @@ export function DocumentPage() {
   const [searchParams] = useSearchParams();
   const queryVersion = searchParams.get("version") || undefined;
   // Each query of the document has its own request, and newestSeq is the
-  // rule for the answers of all of them. The page sets the rule once, before
-  // its first query: each document has its own page.
-  useState(() =>
-    q.setQueryDefaults(queryKeys.document(id), { structuralSharing: newestSeq }),
-  );
+  // rule for the answers of all of them. The live connection keeps the
+  // document and its versions current, so a part of the page that shows
+  // later uses the answer that the page has. The page sets the rules once,
+  // before its first query: each document has its own page.
+  useState(() => {
+    q.setQueryDefaults(queryKeys.document(id), {
+      structuralSharing: newestSeq,
+      staleTime: FRESH_MS,
+    });
+    q.setQueryDefaults(queryKeys.versions(id), { staleTime: FRESH_MS });
+  });
   const doc = useQuery({
     queryKey: queryKeys.document(id),
     queryFn: () => api.getDocument(id),
@@ -293,7 +302,8 @@ export function DocumentPage() {
   const stream = useDocumentStream({
     docId: id,
     // A document that does not open has no viewers to report to or hear from.
-    enabled: !!doc.data,
+    // When it opens again, as when access comes back, so does the connection.
+    enabled: !!doc.data && !doc.error,
     version: current,
     following: !previewing && !offered,
     principal: me.data?.principal,
