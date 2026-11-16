@@ -170,7 +170,8 @@ test("an approver cannot approve while another person types, or a page that is b
 
   // The page gets the changes and shows them. Then the approval is taken.
   await reviewer.unroute("**/changes?**");
-  for (const route of held) await route.continue();
+  // The page gives up on a request after 10 seconds, and asks again.
+  for (const route of held) await route.continue().catch(() => {});
   await expect(tail(reviewer)).toHaveText("The light is green. Or red.");
   await approve(reviewer).click();
   await expect(reviewer.getByRole("dialog").getByText("1 of 1 approved")).toBeVisible();
