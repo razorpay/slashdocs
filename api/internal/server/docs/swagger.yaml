@@ -2236,6 +2236,63 @@ paths:
       summary: Get a shareable link to a document, comment, or heading
       tags:
       - documents
+  /v1/documents/{id}/live:
+    get:
+      description: 'For the browser, which shows the live document, its viewers and
+        their cursors. The request upgrades to a WebSocket. The server sends each
+        event of the document as {"id": revision, "event": event}, with the events
+        and the data of GET /v1/documents/{id}/kv/events. id is absent on an event
+        that is not stored. A connection that names after_revision gets the stored
+        events after it first. Each connection then gets the current viewers, and
+        a document event with the seq of the live document and its current version.
+        A viewer with a session sends {"type": "presence", "version", "anchor"} when
+        their place changes, {"type": "cursor", "version", "points"} as their pointer
+        moves, and {"type": "left"} when they go. These have the validation, the size
+        limits and the rate limits of POST /v1/documents/{id}/presence and POST /v1/documents/{id}/cursor,
+        and the server drops a report that fails them. The server lists the viewer
+        while the connection is open, and marks them gone when it closes. A browser
+        connects only from the origin of the server. The server pings each 25 seconds.
+        It closes with code 4403 when the viewer can no longer read the document,
+        and with 1001 when it stops.'
+      parameters:
+      - description: Document ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Revision to resume after. Omit it to start at the live edge
+        in: query
+        name: after_revision
+        type: integer
+      - description: 'Viewer session: 8 to 64 characters of A-Z, a-z, 0-9, _ and -'
+        in: query
+        name: session
+        type: string
+      responses:
+        "101":
+          description: Switching Protocols
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/server.errorEnvelope'
+      security:
+      - bearerAuth: []
+      - cookieAuth: []
+      summary: Connect to the live events of a document over a WebSocket
+      tags:
+      - documents
   /v1/documents/{id}/notifications:
     get:
       parameters:

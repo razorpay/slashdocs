@@ -31,17 +31,44 @@ const (
 
 type documentKVStream struct {
 	ctx          context.Context
-	writer       http.ResponseWriter
-	flusher      http.Flusher
+	sink         eventSink
 	repository   documentKVStreamRepository
 	authenticate func(context.Context) (*auth.Principal, error)
 	principal    auth.Principal
 	documentID   string
-	lastSent     int64
-	keepAlive    <-chan time.Time
-	started      bool
+	// session names the viewer, whom the server lists until the stream ends.
+	session   string
+	lastSent  int64
+	keepAlive <-chan time.Time
+	started   bool
 	// The check of access after a change of a folder, while one waits.
 	folderChanged <-chan time.Time
+	// close ends the subscription and the context of the stream.
+	close func()
+}
+
+// eventSink carries the events of a stream to its viewer: SSE or a
+// WebSocket. An event with an id is one that the viewer can resume after.
+type eventSink interface {
+	send(event repo.DocumentKVEvent, withID bool) error
+	flush()
+	keepAlive() error
+}
+
+type sseSink struct {
+	writer  http.ResponseWriter
+	flusher http.Flusher
+}
+
+func (s sseSink) send(event repo.DocumentKVEvent, withID bool) error {
+	return writeDocumentEventSSE(s.writer, event, withID)
+}
+
+func (s sseSink) flush() { s.flusher.Flush() }
+
+func (s sseSink) keepAlive() error {
+	_, err := fmt.Fprint(s.writer, ": keepalive\n\n")
+	return err
 }
 
 type documentKVStreamRepository interface {
@@ -62,13 +89,13 @@ func (s *documentKVStream) sendBacklog() error {
 			}
 			s.started = true
 			if !stalePresence(event) {
-				if err := writeDocumentEventSSE(s.writer, event, true); err != nil {
+				if err := s.sink.send(event, true); err != nil {
 					return err
 				}
 			}
 			s.lastSent = event.Revision
 		}
-		s.flusher.Flush()
+		s.sink.flush()
 		if len(events) < documentKVReplayLimit {
 			return nil
 		}
@@ -78,10 +105,10 @@ func (s *documentKVStream) sendBacklog() error {
 func (s *documentKVStream) sendLive(event repo.DocumentKVEvent) error {
 	// A relayed event is not stored, so it has no revision to resume from.
 	if event.Revision == 0 {
-		if err := writeDocumentEventSSE(s.writer, event, false); err != nil {
+		if err := s.sink.send(event, false); err != nil {
 			return err
 		}
-		s.flusher.Flush()
+		s.sink.flush()
 		return nil
 	}
 	if event.Revision <= s.lastSent {
@@ -96,11 +123,11 @@ func (s *documentKVStream) sendLive(event repo.DocumentKVEvent) error {
 		}
 	}
 	s.started = true
-	if err := writeDocumentEventSSE(s.writer, event, true); err != nil {
+	if err := s.sink.send(event, true); err != nil {
 		return err
 	}
 	s.lastSent = event.Revision
-	s.flusher.Flush()
+	s.sink.flush()
 	return nil
 }
 
@@ -117,7 +144,7 @@ func (s *documentKVStream) sendPosition() error {
 	if err != nil {
 		return err
 	}
-	return writeDocumentEventSSE(s.writer, repo.DocumentKVEvent{DocumentID: s.documentID, Kind: repo.DocumentEventDocument, Data: data}, false)
+	return s.sink.send(repo.DocumentKVEvent{DocumentID: s.documentID, Kind: repo.DocumentEventDocument, Data: data}, false)
 }
 
 func (s *documentKVStream) reauthorize() bool {
@@ -148,28 +175,45 @@ func (s *documentKVStream) reauthorize() bool {
 	return atLeast(role, repo.RoleViewer)
 }
 
-// hear sends a live event to the viewer, and reports whether the stream
-// goes on. A grant changed: a viewer who lost access gets no more events. An
-// event of no document is a change of a folder, which the stream examines
-// after folderAccessDelay, once for all of the changes in that time.
-func (s *documentKVStream) hear(event repo.DocumentKVEvent) bool {
+// errAccessEnded ends the stream of a viewer who can no longer read the
+// document, or whose credential no longer holds.
+var errAccessEnded = errors.New("access to the document ended")
+
+// recheck examines the access of the viewer again.
+func (s *documentKVStream) recheck() error {
+	if !s.reauthorize() {
+		return errAccessEnded
+	}
+	return nil
+}
+
+// hear sends a live event to the viewer. A grant changed: a viewer who lost
+// access gets no more events. An event of no document is a change of a
+// folder, which the stream examines after folderAccessDelay, once for all of
+// the changes in that time.
+func (s *documentKVStream) hear(event repo.DocumentKVEvent) error {
 	if event.Kind != repo.DocumentEventAccess {
-		return s.sendLive(event) == nil
+		return s.sendLive(event)
 	}
 	if event.DocumentID != "" {
-		return s.reauthorize()
+		return s.recheck()
 	}
 	if s.folderChanged == nil {
 		s.folderChanged = time.After(folderAccessDelay)
 	}
-	return true
+	return nil
 }
 
-func (s *documentKVStream) run(liveEvents <-chan repo.DocumentKVEvent) {
+// errSubscriptionEnded ends the stream of a viewer whose buffer of events
+// filled, or of a document that went. The viewer connects again.
+var errSubscriptionEnded = errors.New("the subscription to the document ended")
+
+// run sends the live events until the stream ends, and tells why it ended.
+// It returns nil when the context of the stream ended.
+func (s *documentKVStream) run(liveEvents <-chan repo.DocumentKVEvent) error {
 	keepAlive := s.keepAlive
-	var ticker *time.Ticker
 	if keepAlive == nil {
-		ticker = time.NewTicker(documentKVKeepAlive)
+		ticker := time.NewTicker(documentKVKeepAlive)
 		defer ticker.Stop()
 		keepAlive = ticker.C
 	}
@@ -177,39 +221,42 @@ func (s *documentKVStream) run(liveEvents <-chan repo.DocumentKVEvent) {
 	for {
 		select {
 		case <-s.ctx.Done():
-			return
+			return nil
 		case event, ok := <-liveEvents:
-			if !ok || !s.hear(event) {
-				return
+			if !ok {
+				return errSubscriptionEnded
+			}
+			if err := s.hear(event); err != nil {
+				return err
 			}
 		case <-s.folderChanged:
 			s.folderChanged = nil
-			if !s.reauthorize() {
-				return
+			if err := s.recheck(); err != nil {
+				return err
 			}
 		case <-keepAlive:
-			if !s.reauthorize() {
-				return
+			if err := s.recheck(); err != nil {
+				return err
 			}
-			if _, err := fmt.Fprint(s.writer, ": keepalive\n\n"); err != nil {
-				return
+			if err := s.sink.keepAlive(); err != nil {
+				return err
 			}
 			if err := s.sendPosition(); err != nil {
-				return
+				return err
 			}
-			s.flusher.Flush()
+			s.sink.flush()
 		}
 	}
 }
 
-// streamDocumentKVEvents streams the document's live event log: KV changes,
-// document and comment change notices, and viewer presence. A connection with
-// neither after_revision nor Last-Event-ID starts at the live edge. A session
-// parameter marks the viewer as gone when the stream ends.
-func (h handlers) streamDocumentKVEvents(c *gin.Context) { //nolint:gocyclo // SSE handshake: resume, snapshot, and presence branches read best as one sequence.
+// openDocumentStream checks that the viewer may read the document, and
+// subscribes to its events. A connection with neither after_revision nor
+// Last-Event-ID starts at the live edge. It answers the request itself when
+// it fails. The stream also ends when the server stops.
+func (h handlers) openDocumentStream(c *gin.Context) (*documentKVStream, <-chan repo.DocumentKVEvent, bool) {
 	docID := c.Param("id")
 	if !h.needDocRole(c, docID, repo.RoleViewer) {
-		return
+		return nil, nil, false
 	}
 	session := c.Query("session")
 	if current(c).Type == auth.PrincipalAnonymous {
@@ -218,108 +265,137 @@ func (h handlers) streamDocumentKVEvents(c *gin.Context) { //nolint:gocyclo // S
 	}
 	if session != "" && !presenceSessionPattern.MatchString(session) {
 		badRequest(c, "invalid presence session")
-		return
+		return nil, nil, false
 	}
 	fromLiveEdge := c.Query("after_revision") == "" && c.GetHeader("Last-Event-ID") == ""
 	afterRevision, err := parseKVEventRevision(c.Query("after_revision"))
 	if err != nil {
 		badRequest(c, "invalid event revision")
-		return
+		return nil, nil, false
 	}
 	lastEventRevision, err := parseKVEventRevision(c.GetHeader("Last-Event-ID"))
 	if err != nil {
 		badRequest(c, "invalid event revision")
-		return
+		return nil, nil, false
 	}
 	afterRevision = max(afterRevision, lastEventRevision)
-	flusher, ok := c.Writer.(http.Flusher)
-	if !ok {
-		internalErr(c, errors.New("streaming unsupported"))
-		return
+	ctx, cancel := context.WithCancel(c.Request.Context())
+	stopWithServer := context.AfterFunc(h.deps.streams, cancel)
+	liveEvents, unsubscribe, err := h.deps.documentKVEvents.Subscribe(ctx, docID)
+	closeStream := func() {
+		unsubscribe()
+		stopWithServer()
+		cancel()
 	}
-	liveEvents, unsubscribe, err := h.deps.documentKVEvents.Subscribe(c.Request.Context(), docID)
 	if err != nil {
+		closeStream()
 		if errors.Is(err, repo.ErrNotFound) {
 			notFound(c)
-			return
+		} else {
+			internalErr(c, err)
 		}
-		internalErr(c, err)
-		return
+		return nil, nil, false
 	}
-	defer unsubscribe()
 	// Read the live edge only after subscribing, so no event falls between.
 	if fromLiveEdge {
-		afterRevision, err = h.deps.repository.CurrentDocumentKVRevision(c.Request.Context(), docID)
+		afterRevision, err = h.deps.repository.CurrentDocumentKVRevision(ctx, docID)
 		if err != nil {
+			closeStream()
 			internalErr(c, err)
-			return
+			return nil, nil, false
 		}
 	}
-
-	// This stream outlives the server-wide read timeout; clear the connection
-	// deadlines so an expiring deadline doesn't sever the SSE response. The
-	// errors are ignored: recorders and exotic writers that don't support
-	// deadlines never had them to begin with.
-	rc := http.NewResponseController(c.Writer)
-	_ = rc.SetReadDeadline(time.Time{})
-	_ = rc.SetWriteDeadline(time.Time{})
-
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
-	c.Header("Connection", "keep-alive")
-	c.Header("X-Accel-Buffering", "no")
-
-	authRequest := c.Request.Clone(c.Request.Context())
-	stream := &documentKVStream{
-		ctx:        c.Request.Context(),
-		writer:     c.Writer,
-		flusher:    flusher,
+	authRequest := c.Request.Clone(ctx)
+	return &documentKVStream{
+		ctx:        ctx,
 		repository: h.deps.repository,
 		authenticate: func(ctx context.Context) (*auth.Principal, error) {
 			return h.deps.readerAuthenticator().Authenticate(authRequest.Clone(ctx))
 		},
 		principal:  *current(c),
 		documentID: docID,
+		session:    session,
 		lastSent:   afterRevision,
-	}
+		close:      closeStream,
+	}, liveEvents, true
+}
+
+// start sends the events that the viewer missed, and then lists the current
+// viewers.
+func (h handlers) start(stream *documentKVStream) error {
 	if err := stream.sendBacklog(); err != nil {
-		if stream.started {
-			slog.ErrorContext(c.Request.Context(), "document KV stream backlog failed",
-				slog.String("document_id", docID),
-				slog.Any("error", err))
-			return
-		}
-		if errors.Is(err, repo.ErrNotFound) {
-			notFound(c)
-			return
-		}
-		internalErr(c, err)
-		return
+		return err
 	}
 	stream.started = true
-	h.writePresenceSnapshot(c, docID)
+	h.sendPresenceSnapshot(stream)
+	return nil
+}
+
+// streamDocumentKVEvents streams the document's live event log over SSE: KV
+// changes, document and comment change notices, and viewer presence. A
+// session parameter marks the viewer as gone when the stream ends.
+func (h handlers) streamDocumentKVEvents(c *gin.Context) {
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		internalErr(c, errors.New("streaming unsupported"))
+		return
+	}
+	stream, liveEvents, ok := h.openDocumentStream(c)
+	if !ok {
+		return
+	}
+	defer stream.close()
+	clearDeadlines(c)
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	stream.sink = sseSink{writer: c.Writer, flusher: flusher}
+	if err := h.start(stream); err != nil {
+		switch {
+		case stream.started:
+			slog.ErrorContext(c.Request.Context(), "document KV stream backlog failed",
+				slog.String("document_id", stream.documentID),
+				slog.Any("error", err))
+		case errors.Is(err, repo.ErrNotFound):
+			notFound(c)
+		default:
+			internalErr(c, err)
+		}
+		return
+	}
 	if _, err := fmt.Fprint(c.Writer, ": connected\n\n"); err != nil {
 		return
 	}
 	flusher.Flush()
-	stream.run(liveEvents)
-	if session != "" {
-		h.leavePresence(c, docID, session)
+	_ = stream.run(liveEvents)
+	if stream.session != "" {
+		h.leavePresence(c, stream.documentID, stream.session)
 	}
 }
 
-// writePresenceSnapshot lists the current viewers. The events carry no id, so
-// the client's Last-Event-ID never moves backwards.
-func (h handlers) writePresenceSnapshot(c *gin.Context, docID string) {
-	events, err := h.deps.repository.ListDocumentPresence(c.Request.Context(), docID, presenceTTL)
+// clearDeadlines lets a stream outlive the server-wide read timeout: an
+// expiring deadline would sever it. The errors are ignored: recorders and
+// exotic writers that don't support deadlines never had them to begin with.
+func clearDeadlines(c *gin.Context) {
+	rc := http.NewResponseController(c.Writer)
+	_ = rc.SetReadDeadline(time.Time{})
+	_ = rc.SetWriteDeadline(time.Time{})
+}
+
+// sendPresenceSnapshot lists the current viewers. The events carry no id,
+// so the viewer's last revision never moves backwards.
+func (h handlers) sendPresenceSnapshot(stream *documentKVStream) {
+	events, err := h.deps.repository.ListDocumentPresence(stream.ctx, stream.documentID, presenceTTL)
 	if err != nil {
-		slog.WarnContext(c.Request.Context(), "document presence snapshot failed",
-			slog.String("document_id", docID),
+		slog.WarnContext(stream.ctx, "document presence snapshot failed",
+			slog.String("document_id", stream.documentID),
 			slog.Any("error", err))
 		return
 	}
 	for _, event := range events {
-		if err := writeDocumentEventSSE(c.Writer, event, false); err != nil {
+		if err := stream.sink.send(event, false); err != nil {
 			return
 		}
 	}

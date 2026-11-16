@@ -666,6 +666,16 @@ batch of pointer positions goes to every replica as a notification. In `poll`
 mode, a viewer sees only the cursors of viewers that the same replica serves.
 Thus, use `notify` when you run more than one replica.
 
+The document page holds one WebSocket for each open document, at
+`GET /v1/documents/{id}/live`. It carries the events of the stream to the
+page, and the presence and the cursor of the viewer to the server. The server
+lists a viewer while their connection is open. The SSE stream at
+`GET /v1/documents/{id}/kv/events` and the presence and cursor POST routes stay
+for older pages and other clients. A proxy in front of slashdocs must pass
+WebSocket upgrades. Traefik and ingress-nginx do this by default. The server
+pings each connection every 25 seconds, so an idle timeout of 60 seconds or
+more keeps the connection open.
+
 `notify` fails startup if LISTEN cannot be verified. It prefers the listener URL
 and otherwise uses `DATABASE_URL`, which is an explicit assertion by the
 operator that the connection preserves session state. `poll` never opens a

@@ -125,7 +125,7 @@ func run() error {
 	})
 	workers.Go(func() { tendVersions(workerCtx, store) })
 	defer func() { cancelWorkers(); workers.Wait() }()
-	return serve(ctx, srv.Handler(), ":"+envOrDefault("SLASHDOCS_PORT", "8080"), ":"+envOrDefault("SLASHDOCS_METRICS_PORT", "9090"))
+	return serve(ctx, srv.Handler(), srv.CloseStreams, ":"+envOrDefault("SLASHDOCS_PORT", "8080"), ":"+envOrDefault("SLASHDOCS_METRICS_PORT", "9090"))
 }
 
 // indexSearch gives search data to the versions or documents that were
@@ -379,7 +379,10 @@ func newApplicationServer(ctx context.Context, store *pgrepo.Store, blobs blob.S
 	}, options...), nil
 }
 
-func serve(ctx context.Context, handler http.Handler, addr, metricsAddr string) error {
+// serve runs the app until ctx ends. closeStreams ends the open event
+// streams when the app shuts down: Shutdown does not wait for a WebSocket,
+// and an SSE stream would hold the drain until shutdownTimeout.
+func serve(ctx context.Context, handler http.Handler, closeStreams func(), addr, metricsAddr string) error {
 	appServer := &http.Server{
 		Addr:              addr,
 		Handler:           handler,
@@ -387,6 +390,7 @@ func serve(ctx context.Context, handler http.Handler, addr, metricsAddr string) 
 		ReadTimeout:       readTimeout,
 		IdleTimeout:       idleTimeout,
 	}
+	appServer.RegisterOnShutdown(closeStreams)
 	// Prometheus metrics get a separate listener so /metrics stays off the
 	// public app port (expose only addr publicly; scrape metricsAddr over
 	// private networking).
@@ -422,8 +426,8 @@ func serve(ctx context.Context, handler http.Handler, addr, metricsAddr string) 
 	case <-ctx.Done():
 	}
 
-	// Graceful shutdown: stop accepting connections, then drain in-flight
-	// requests (SSE streams included) for up to shutdownTimeout.
+	// Graceful shutdown: stop accepting connections, end the event streams,
+	// then drain in-flight requests for up to shutdownTimeout.
 	slog.Info("shutting down", slog.Duration("timeout", shutdownTimeout))
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()

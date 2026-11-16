@@ -113,8 +113,7 @@ func TestDocumentKVStreamReauthorizesOnKeepalive(t *testing.T) {
 			writer := newStreamResponseWriter()
 			stream := &documentKVStream{
 				ctx:        ctx,
-				writer:     writer,
-				flusher:    writer,
+				sink:       sseSink{writer: writer, flusher: writer},
 				repository: repository,
 				authenticate: func(context.Context) (*auth.Principal, error) {
 					authenticateCalls <- struct{}{}
@@ -130,7 +129,7 @@ func TestDocumentKVStreamReauthorizesOnKeepalive(t *testing.T) {
 			}
 			done := make(chan struct{})
 			go func() {
-				stream.run(make(chan repo.DocumentKVEvent))
+				_ = stream.run(make(chan repo.DocumentKVEvent))
 				close(done)
 			}()
 
@@ -196,9 +195,8 @@ func TestDocumentKVStreamSendsThePositionOnKeepalive(t *testing.T) {
 	keepAlive := make(chan time.Time, 1)
 	writer := newStreamResponseWriter()
 	stream := &documentKVStream{
-		ctx:     ctx,
-		writer:  writer,
-		flusher: writer,
+		ctx:  ctx,
+		sink: sseSink{writer: writer, flusher: writer},
 		repository: &streamAuthorizationRepository{
 			role:  repo.RoleViewer,
 			calls: make(chan streamAuthorizationCheck, 1),
@@ -209,7 +207,7 @@ func TestDocumentKVStreamSendsThePositionOnKeepalive(t *testing.T) {
 		documentID:   "doc_stream",
 		keepAlive:    keepAlive,
 	}
-	go stream.run(make(chan repo.DocumentKVEvent))
+	go func() { _ = stream.run(make(chan repo.DocumentKVEvent)) }()
 
 	keepAlive <- time.Now()
 	for _, want := range []string{": keepalive\n\n", "event: document\ndata: {\"document_id\":\"doc_stream\",\"revision\":0,\"kind\":\"document\",\"changes\":null,\"data\":{\"seq\":44,\"version_id\":\"ver_open\"}}\n\n"} {
@@ -235,8 +233,7 @@ func TestDocumentKVStreamExaminesFolderChangesOnceForEachDelay(t *testing.T) {
 	writer := newStreamResponseWriter()
 	stream := &documentKVStream{
 		ctx:          ctx,
-		writer:       writer,
-		flusher:      writer,
+		sink:         sseSink{writer: writer, flusher: writer},
 		repository:   &streamAuthorizationRepository{role: repo.RoleViewer, calls: checks},
 		authenticate: func(context.Context) (*auth.Principal, error) { return &viewer, nil },
 		principal:    viewer,
@@ -244,7 +241,7 @@ func TestDocumentKVStreamExaminesFolderChangesOnceForEachDelay(t *testing.T) {
 		keepAlive:    make(chan time.Time),
 	}
 	events := make(chan repo.DocumentKVEvent)
-	go stream.run(events)
+	go func() { _ = stream.run(events) }()
 	checked := func(within time.Duration) bool {
 		select {
 		case <-checks:
