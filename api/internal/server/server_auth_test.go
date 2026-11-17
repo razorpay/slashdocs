@@ -222,6 +222,70 @@ func TestOAuthStartPreservesCallerStateForPKCEBoundCLIFlow(t *testing.T) {
 	}
 }
 
+func cliLoginStart(t *testing.T, query string) (*httptest.ResponseRecorder, auth.LoginState) {
+	t.Helper()
+	states := auth.NewStateStore()
+	h := server.New(server.Config{
+		Environment:   "test",
+		AppOrigin:     "https://app.example",
+		SessionSecret: oauthTestSigningMaterial,
+		OIDC: auth.OIDC{
+			Issuer: "https://accounts.example",
+			Config: &oauth2.Config{
+				ClientID: "client-id",
+				//nolint:gosec // G101: example URLs, not credentials.
+				Endpoint: oauth2.Endpoint{AuthURL: "https://accounts.example/auth", TokenURL: "https://accounts.example/token"},
+			},
+		},
+	}, server.WithRepository(newTestStore(t)), server.WithStateStore(states)).Handler()
+	rr := do(t, h, http.MethodGet, "/v1/auth/oidc/start?mode=cli&state=cli-state&code_challenge=challenge"+query, "", nil)
+	st, _, err := states.TakeState(context.Background(), "cli-state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rr, st
+}
+
+func TestOAuthStartBuildsLoopbackCallbackFromCLIPort(t *testing.T) {
+	for _, port := range []string{"1", "8080", "43111", "65535"} {
+		rr, st := cliLoginStart(t, "&cli_port="+port)
+		assertStatus(t, rr, http.StatusFound)
+		if want := "http://127.0.0.1:" + port + "/callback"; st.CLIRedirect != want {
+			t.Fatalf("cli_port=%s stored callback %q, want %q", port, st.CLIRedirect, want)
+		}
+	}
+}
+
+func TestOAuthStartRejectsBadCLIPort(t *testing.T) {
+	for _, port := range []string{"", "0", "00080", "65536", "99999", "80a", "-1", "+80", "8 0", "0x50", "123456", strings.Repeat("1", 4096)} {
+		rr, st := cliLoginStart(t, "&cli_port="+url.QueryEscape(port))
+		assertStatus(t, rr, http.StatusBadRequest)
+		if st.CLIRedirect != "" {
+			t.Fatalf("cli_port=%q stored a callback %q", port, st.CLIRedirect)
+		}
+	}
+}
+
+func TestOAuthStartKeepsCLIRedirectForOlderCLIs(t *testing.T) {
+	rr, st := cliLoginStart(t, "&cli_redirect=http://127.0.0.1:32123/callback")
+	assertStatus(t, rr, http.StatusFound)
+	if st.CLIRedirect != "http://127.0.0.1:32123/callback" {
+		t.Fatalf("stored callback = %q", st.CLIRedirect)
+	}
+	rr, _ = cliLoginStart(t, "&cli_redirect=https://evil.example/callback")
+	assertStatus(t, rr, http.StatusBadRequest)
+}
+
+func TestOAuthStartWebModeIgnoresCLIParameters(t *testing.T) {
+	rr := do(t, newOAuthTestServer(t), http.MethodGet, "/v1/auth/oidc/start?mode=web&cli_port=junk", "", nil)
+	assertStatus(t, rr, http.StatusFound)
+}
+
+func TestOAuthStartRejectsCLIPortWithCLIRedirect(t *testing.T) {
+	rr, _ := cliLoginStart(t, "&cli_port=8080&cli_redirect=http://127.0.0.1:32123/callback")
+	assertStatus(t, rr, http.StatusBadRequest)
+}
+
 func TestOAuthCallbackRejectsUnknownModeBeforeTokenExchange(t *testing.T) {
 	var tokenCalls atomic.Int32
 	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
