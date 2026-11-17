@@ -542,6 +542,13 @@ func requireAuth(a auth.Authenticator, appOrigin string, groups *googlegroups.Re
 		p, err := a.Authenticate(c.Request)
 		if err != nil {
 			incAuth("request", "failure")
+			// A credential that could not be examined, as when the database
+			// is down, is not a refusal: a 401 would sign the person out.
+			if !errors.Is(err, auth.ErrUnauthorized) {
+				c.Abort()
+				internalErr(c, err)
+				return
+			}
 			unauthorized(c)
 			return
 		}
