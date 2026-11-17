@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -93,6 +95,100 @@ type Client struct {
 	// saved is true when Base comes from the saved config, which the client
 	// updates when the server moves.
 	saved bool
+
+	featuresMu   sync.Mutex
+	featuresBase string
+	features     *serverFeatures
+}
+
+// serverFeatures is the part of the discovery document the CLI acts on.
+type serverFeatures struct {
+	RequestEncodings []string `json:"request_encodings"`
+	CompressRequests bool     `json:"compress_requests"`
+}
+
+// serverFeatures fetches the discovery document once per base URL, so a
+// client that follows a server move asks the new server. A server that does
+// not serve it, or serves something else, counts as having no features, so
+// such servers get requests exactly as older CLIs sent them.
+func (c *Client) serverFeatures() serverFeatures {
+	c.featuresMu.Lock()
+	defer c.featuresMu.Unlock()
+	if c.features == nil || c.featuresBase != c.Base {
+		c.features = &serverFeatures{}
+		c.featuresBase = c.Base
+		c.fetchFeatures(c.features)
+	}
+	return *c.features
+}
+
+func (c *Client) fetchFeatures(into *serverFeatures) {
+	req, err := http.NewRequest(http.MethodGet, c.Base+"/.well-known/slashdocs.json", nil)
+	if err != nil {
+		return
+	}
+	res, err := c.HTTP.Do(req)
+	if err != nil {
+		return
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode != http.StatusOK {
+		return
+	}
+	var f serverFeatures
+	if json.NewDecoder(io.LimitReader(res.Body, 64<<10)).Decode(&f) == nil {
+		*into = f
+	}
+}
+
+// compressesBodies reports whether the server asks for gzip request bodies.
+// The CLI runs one command per process, so a change of the server setting
+// applies to the next command.
+func (c *Client) compressesBodies() bool {
+	f := c.serverFeatures()
+	return f.CompressRequests && slices.Contains(f.RequestEncodings, "gzip")
+}
+
+// stopCompressing follows a server that refused a gzip body: its setting
+// changed after this process read discovery.
+func (c *Client) stopCompressing() {
+	c.featuresMu.Lock()
+	defer c.featuresMu.Unlock()
+	if c.features != nil {
+		c.features.CompressRequests = false
+	}
+}
+
+// refusedEncoding reports a server that does not accept the body's
+// Content-Encoding. Handlers also answer 415 for a wrong Content-Type, which
+// sending the body plain would not fix.
+func refusedEncoding(err error) bool {
+	var ae *APIError
+	return errors.As(err, &ae) && ae.Status == http.StatusUnsupportedMediaType && ae.Code == "unsupported_encoding"
+}
+
+// newGzipWriter uses the best level: lower levels write more short bodies as
+// stored blocks, which leave the text readable on the wire. Even the best level
+// stores a short body with little repetition.
+func newGzipWriter(w io.Writer) (*gzip.Writer, error) {
+	return gzip.NewWriterLevel(w, gzip.BestCompression)
+}
+
+// gzipBody compresses body into memory. Compressed documents are small, and an
+// in-memory body lets the HTTP client resend it after a redirect.
+func gzipBody(body io.Reader) (*bytes.Buffer, error) {
+	var buf bytes.Buffer
+	zw, err := newGzipWriter(&buf)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := io.Copy(zw, body); err != nil {
+		return nil, err
+	}
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	return &buf, nil
 }
 
 // client builds a Client from flags, environment, and the active config context.
@@ -168,9 +264,33 @@ func (c *Client) do(method, path string, body io.Reader, ct string) ([]byte, err
 
 // doResponse is do for a caller that also reads the response headers.
 func (c *Client) doResponse(method, path string, body io.Reader, ct string) ([]byte, http.Header, error) {
+	if body == nil || !c.compressesBodies() {
+		return c.send(method, path, body, ct, false)
+	}
+	raw, err := io.ReadAll(body)
+	if err != nil {
+		return nil, nil, err
+	}
+	zipped, err := gzipBody(bytes.NewReader(raw))
+	if err != nil {
+		return nil, nil, err
+	}
+	b, h, err := c.send(method, path, zipped, ct, true)
+	if refusedEncoding(err) {
+		c.stopCompressing()
+		return c.send(method, path, bytes.NewReader(raw), ct, false)
+	}
+	return b, h, err
+}
+
+// send issues one request; encoded says body already holds gzip bytes.
+func (c *Client) send(method, path string, body io.Reader, ct string, encoded bool) ([]byte, http.Header, error) {
 	req, err := http.NewRequest(method, c.Base+path, body)
 	if err != nil {
 		return nil, nil, err
+	}
+	if encoded {
+		req.Header.Set("Content-Encoding", "gzip")
 	}
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
@@ -240,24 +360,58 @@ func (c *Client) doJSON(method, path string, in any) ([]byte, error) {
 }
 
 func (c *Client) multipart(path string, fields map[string]string, fileField, fileName string, data []byte) ([]byte, error) {
+	gzipped := c.compressesBodies()
+	body, ct, err := multipartBody(fields, fileField, fileName, data, gzipped)
+	if err != nil {
+		return nil, err
+	}
+	b, _, err := c.send("POST", path, body, ct, gzipped)
+	if gzipped && refusedEncoding(err) {
+		c.stopCompressing()
+		if body, ct, err = multipartBody(fields, fileField, fileName, data, false); err != nil {
+			return nil, err
+		}
+		b, _, err = c.send("POST", path, body, ct, false)
+	}
+	return b, err
+}
+
+// multipartBody builds an upload body and its Content-Type. With gzipped, the
+// parts go straight into the compressor so the raw upload is never buffered
+// twice.
+func multipartBody(fields map[string]string, fileField, fileName string, data []byte, gzipped bool) (*bytes.Buffer, string, error) {
 	var buf bytes.Buffer
-	mw := multipart.NewWriter(&buf)
+	var out io.Writer = &buf
+	var zw *gzip.Writer
+	if gzipped {
+		var err error
+		if zw, err = newGzipWriter(&buf); err != nil {
+			return nil, "", err
+		}
+		out = zw
+	}
+	mw := multipart.NewWriter(out)
 	for k, v := range fields {
 		if err := mw.WriteField(k, v); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 	}
 	fw, err := mw.CreateFormFile(fileField, fileName)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if _, err := fw.Write(data); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if err := mw.Close(); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return c.do("POST", path, &buf, mw.FormDataContentType())
+	if gzipped {
+		if err := zw.Close(); err != nil {
+			return nil, "", err
+		}
+	}
+	return &buf, mw.FormDataContentType(), nil
 }
 
 // apiPath builds a request path, URL-escaping every caller-supplied ID segment

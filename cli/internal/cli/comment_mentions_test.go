@@ -14,6 +14,9 @@ func TestCLIMentionsResolveEmailsAndCalculateUTF16Offsets(t *testing.T) {
 		Mentions []commentMention `json:"mentions"`
 	}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if declineDiscovery(w, r) {
+			return
+		}
 		if r.URL.Path == "/v1/users" {
 			writeTestJSON(t, w, map[string]any{"items": []mentionUser{{Type: "user", ID: "usr_alice", Email: "alice@example.com"}}})
 			return

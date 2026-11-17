@@ -380,6 +380,9 @@ func TestJSONIncludesDocumentURLAndNudge(t *testing.T) {
 // never POSTs grants itself during create (the default case enforces it).
 func TestCreateGrantsOrgWideViewerByDefault(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if declineDiscovery(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/documents":
 			requireMultipart(t, r)
@@ -422,6 +425,9 @@ func TestCreateGrantsOrgWideViewerByDefault(t *testing.T) {
 func TestCreateQuietSendsDefaultPermission(t *testing.T) {
 	permission := ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if declineDiscovery(w, r) {
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/documents" {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
@@ -456,6 +462,9 @@ func TestCreateQuietSendsDefaultPermission(t *testing.T) {
 func TestCreatePrivateByDefaultOptsOut(t *testing.T) {
 	permission := ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if declineDiscovery(w, r) {
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/documents" {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
@@ -504,6 +513,9 @@ func TestCreatePrivateByDefaultOptsOut(t *testing.T) {
 // explicit private preference means the CLI suggests sharing.
 func TestCreateWithoutDefaultGrantNudges(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if declineDiscovery(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/documents":
 			requireMultipart(t, r)
@@ -560,6 +572,9 @@ func TestCreateWithoutDefaultGrantNudges(t *testing.T) {
 // error before any request leaves the machine.
 func TestCreateInvalidDefaultPermissionEnv(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if declineDiscovery(w, r) {
+			return
+		}
 		t.Errorf("invalid override must not reach the server: %s %s", r.Method, r.URL.Path)
 	}))
 	defer srv.Close()
@@ -579,6 +594,9 @@ func TestCreateInvalidDefaultPermissionEnv(t *testing.T) {
 
 func TestCreateWithoutIDDoesNotPrintBrokenURL(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if declineDiscovery(w, r) {
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/documents" {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
@@ -610,6 +628,9 @@ func TestCreateWithoutIDDoesNotPrintBrokenURL(t *testing.T) {
 // human users rather than collapsing to a bare type=service_account row.
 func TestWhoamiServiceAccountParity(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if declineDiscovery(w, r) {
+			return
+		}
 		if r.URL.Path != "/v1/me" {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
@@ -638,6 +659,9 @@ func TestWhoamiServiceAccountParity(t *testing.T) {
 func TestLogoutRevokeCallsServer(t *testing.T) {
 	called := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if declineDiscovery(w, r) {
+			return
+		}
 		if r.Method == http.MethodDelete && r.URL.Path == "/v1/auth/cli/credentials/cred_1" {
 			called = true
 			w.WriteHeader(http.StatusNoContent)

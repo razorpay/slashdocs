@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -51,4 +52,14 @@ func readTestFile(t *testing.T, path string) []byte {
 		t.Fatalf("read test file %s: %v", path, err)
 	}
 	return contents
+}
+
+// declineDiscovery answers the CLI's discovery probe with 404, the way a server
+// that predates the discovery fields does, so the fixture sees only the call under test.
+func declineDiscovery(w http.ResponseWriter, r *http.Request) bool {
+	if r.URL.Path != "/.well-known/slashdocs.json" {
+		return false
+	}
+	http.NotFound(w, r)
+	return true
 }
