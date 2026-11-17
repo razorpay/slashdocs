@@ -27,7 +27,7 @@ func TestServeShutsDownSiblingWhenListenerFails(t *testing.T) {
 	// Both servers race to bind the same address. One succeeds and the other
 	// reports EADDRINUSE; serve must close the successful sibling before it
 	// returns the original listener error.
-	err = serve(context.Background(), http.NewServeMux(), addr, addr)
+	err = serve(context.Background(), http.NewServeMux(), func() {}, addr, addr)
 	if !errors.Is(err, syscall.EADDRINUSE) {
 		t.Fatalf("serve error = %v, want EADDRINUSE", err)
 	}

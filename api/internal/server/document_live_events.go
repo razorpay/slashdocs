@@ -144,6 +144,10 @@ func (p cursorPoint) valid() bool {
 // caret can have.
 func caretOffset(at *int) bool { return at == nil || *at >= 0 && *at <= maxCursorCaret }
 
+// errInvalidReport tells that a viewer's report of presence or of a cursor
+// did not pass validation.
+var errInvalidReport = errors.New("invalid report")
+
 // postDocumentCursor relays pointer positions to the other viewers. The
 // positions are never stored: a viewer who is not connected misses them.
 func (h handlers) postDocumentCursor(c *gin.Context) {
@@ -153,21 +157,29 @@ func (h handlers) postDocumentCursor(c *gin.Context) {
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxCursorBytes)
 	var in cursor
-	if err := c.ShouldBindJSON(&in); err != nil || !in.valid() {
+	if err := c.ShouldBindJSON(&in); err != nil {
 		badRequest(c, "invalid cursor")
 		return
 	}
+	switch err := h.relayCursor(c.Request.Context(), docID, in, *current(c)); {
+	case errors.Is(err, errInvalidReport):
+		badRequest(c, "invalid cursor")
+	case err != nil:
+		internalErr(c, err)
+	default:
+		c.Status(http.StatusNoContent)
+	}
+}
+
+func (h handlers) relayCursor(ctx context.Context, docID string, in cursor, actor auth.Principal) error {
+	if !in.valid() {
+		return errInvalidReport
+	}
 	data, err := json.Marshal(in)
 	if err != nil {
-		internalErr(c, err)
-		return
+		return err
 	}
-	event := repo.DocumentKVEvent{DocumentID: docID, Kind: repo.DocumentEventCursor, Data: data, UpdatedBy: current(c)}
-	if err := h.deps.documentKVEvents.Relay(c.Request.Context(), event); err != nil {
-		internalErr(c, err)
-		return
-	}
-	c.Status(http.StatusNoContent)
+	return h.deps.documentKVEvents.Relay(ctx, repo.DocumentKVEvent{DocumentID: docID, Kind: repo.DocumentEventCursor, Data: data, UpdatedBy: &actor})
 }
 
 func (h handlers) postDocumentPresence(c *gin.Context) {
@@ -177,26 +189,35 @@ func (h handlers) postDocumentPresence(c *gin.Context) {
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxPresenceBytes)
 	var in presence
-	if err := c.ShouldBindJSON(&in); err != nil || !in.valid() {
+	if err := c.ShouldBindJSON(&in); err != nil {
 		badRequest(c, "invalid presence")
 		return
 	}
-	p := current(c)
+	switch err := h.reportPresence(c.Request.Context(), docID, in, *current(c)); {
+	case errors.Is(err, errInvalidReport):
+		badRequest(c, "invalid presence")
+	case errors.Is(err, repo.ErrNotFound):
+		notFound(c)
+	case err != nil:
+		internalErr(c, err)
+	default:
+		c.Status(http.StatusNoContent)
+	}
+}
+
+// reportPresence stores where a viewer is. The server sets their picture,
+// and the place of the anchor in the page of the viewer is not stored.
+func (h handlers) reportPresence(ctx context.Context, docID string, in presence, actor auth.Principal) error {
+	if !in.valid() {
+		return errInvalidReport
+	}
 	in.Left = false
-	in.PictureURL = p.PictureURL
+	in.PictureURL = actor.PictureURL
 	if in.Anchor != nil {
 		in.Anchor.DOMPath = ""
 		in.Anchor.Point = nil
 	}
-	if err := h.appendPresence(c.Request.Context(), docID, in, *p); err != nil {
-		if errors.Is(err, repo.ErrNotFound) {
-			notFound(c)
-			return
-		}
-		internalErr(c, err)
-		return
-	}
-	c.Status(http.StatusNoContent)
+	return h.appendPresence(ctx, docID, in, actor)
 }
 
 func (h handlers) appendPresence(ctx context.Context, docID string, state presence, actor auth.Principal) error {

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  api,
   type Anchor,
+  type CursorPoint,
   type CursorSpot,
   type DocumentCursor,
   type DocumentEvent,
@@ -23,11 +23,18 @@ import { useInvalidateApprovals } from "./use-invalidate-approvals";
 // cursors must not hide then.
 export const LIVE = "live";
 
-// The server lists a viewer for 45 seconds after their last report.
+// The server lists a viewer for 45 seconds after their last report. While
+// the live connection is open, the server reports again for them.
 const PRESENCE_TTL = 45_000;
-const HEARTBEAT_INTERVAL = 20_000;
 const REPORT_INTERVAL = 2_000;
-const RECONNECT_DELAY = 10_000;
+// A live connection that drops connects again after about this long, and
+// twice as long after each failure that follows, up to RECONNECT_MAX.
+const RECONNECT_MIN = 1_000;
+const RECONNECT_MAX = 30_000;
+// The server closes a connection that it refuses with 4000 plus the HTTP
+// status: 4401 when the viewer must sign in, 4403 when they cannot read the
+// document, or no longer can.
+const REFUSED = 4000;
 
 export type Viewer = {
   session: string;
@@ -40,22 +47,24 @@ export type Viewer = {
 export type DocumentKVListener = (event: DocumentKVEvent) => void;
 export type CursorListener = (cursor: RemoteCursor) => void;
 
-const EVENT_KINDS = [
-  "kv",
-  "document",
-  "comments",
-  "approvals",
-  "presence",
-  "cursor",
-] as const;
-
 type DocumentEventHandlers = Partial<
-  Record<(typeof EVENT_KINDS)[number], DocumentKVListener>
+  Record<NonNullable<DocumentKVEvent["kind"]>, DocumentKVListener>
 > & { open?: () => void; closed?: () => void };
 
-// useDocumentEvents holds one connection to the document event stream and
-// passes each event to the handler for its kind. A session marks the
-// connection as a viewer, whom the server lists until the stream ends.
+// A report of this viewer to the others: their place in the document, their
+// pointer, or that they go.
+export type LiveReport =
+  | { type: "presence"; version: string; anchor?: Partial<Anchor> }
+  | { type: "cursor"; version: string; points: CursorPoint[] }
+  | { type: "left" };
+
+// useDocumentEvents holds one live connection to a document, and passes
+// each event to the handler for its kind. A session marks the connection as
+// a viewer, whom the server lists until the connection ends. A connection
+// that drops connects again, at a random time in a wait that grows, and
+// continues after the last event that it took. A connection that the server
+// refuses calls closed, and stops. It returns the function that sends a
+// report while the connection is open.
 export function useDocumentEvents(
   docId: string,
   handlers: DocumentEventHandlers,
@@ -64,49 +73,63 @@ export function useDocumentEvents(
 ) {
   const handlersRef = useRef(handlers);
   handlersRef.current = handlers;
-  const [attempt, setAttempt] = useState(0);
-  const lastRevision = useRef(0);
+  const socket = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     if (!enabled) return;
-    const params = new URLSearchParams(session ? { session } : {});
-    // The browser resumes dropped streams itself. Only a stream it gave up on
-    // is opened again here, and it continues from the last event it saw.
-    if (lastRevision.current)
-      params.set("after_revision", String(lastRevision.current));
-    const source = new EventSource(
-      `/v1/documents/${encodeURIComponent(docId)}/kv/events?${params}`,
-      { withCredentials: true },
-    );
-    source.onopen = () => handlersRef.current.open?.();
-    // KV changes are unnamed messages; other kinds are named events.
-    for (const kind of EVENT_KINDS) {
-      source.addEventListener(kind === "kv" ? "message" : kind, (message) => {
-        lastRevision.current = Math.max(
-          lastRevision.current,
-          Number(message.lastEventId) || 0,
-        );
-        let event: DocumentKVEvent;
+    let lastRevision = 0;
+    let failures = 0;
+    let reconnect: number | undefined;
+    const connect = () => {
+      const params = new URLSearchParams(session ? { session } : {});
+      if (lastRevision) params.set("after_revision", String(lastRevision));
+      const url = new URL(
+        `/v1/documents/${encodeURIComponent(docId)}/live?${params}`,
+        window.location.href,
+      );
+      url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+      const ws = new WebSocket(url);
+      socket.current = ws;
+      ws.onopen = () => {
+        failures = 0;
+        handlersRef.current.open?.();
+      };
+      ws.onmessage = ({ data }: MessageEvent<string>) => {
+        let message: { id?: number; event?: DocumentKVEvent };
         try {
-          event = JSON.parse(message.data) as DocumentKVEvent;
+          message = JSON.parse(data);
         } catch {
           return;
         }
-        handlersRef.current[kind]?.(event);
-      });
-    }
-    let reconnect: number | undefined;
-    source.onerror = () => {
-      if (source.readyState !== EventSource.CLOSED) return;
-      // The server refused the stream, as when access to the document went.
-      handlersRef.current.closed?.();
-      reconnect = window.setTimeout(() => setAttempt((n) => n + 1), RECONNECT_DELAY);
+        const { id, event } = message;
+        if (!event) return;
+        lastRevision = Math.max(lastRevision, id ?? 0);
+        handlersRef.current[event.kind || "kv"]?.(event);
+      };
+      ws.onclose = ({ code }) => {
+        socket.current = null;
+        if (code >= REFUSED && code < REFUSED + 1000)
+          return handlersRef.current.closed?.();
+        const wait = Math.min(RECONNECT_MAX, RECONNECT_MIN * 2 ** failures++);
+        reconnect = window.setTimeout(connect, wait * (0.5 + Math.random() / 2));
+      };
     };
+    connect();
     return () => {
-      source.close();
       window.clearTimeout(reconnect);
+      const ws = socket.current;
+      socket.current = null;
+      if (!ws) return;
+      ws.onclose = null;
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "left" }));
+      ws.close();
     };
-  }, [docId, session, attempt, enabled]);
+  }, [docId, session, enabled]);
+
+  return useCallback((report: LiveReport) => {
+    if (socket.current?.readyState === WebSocket.OPEN)
+      socket.current.send(JSON.stringify(report));
+  }, []);
 }
 
 // useDocumentStream is the document page's view of the event stream. It
@@ -129,8 +152,10 @@ export function useDocumentStream({
   following: boolean;
   principal?: Principal;
   // Called on each change to the document, with what the event tells of
-  // it, if it names a seq. It is also called when the stream opens, because
-  // the changes before that sent no event here.
+  // it, if it names a seq. The server also tells where the document is when
+  // the connection opens, because the changes before that sent no event
+  // here. It is called with no event when the event cannot tell the change,
+  // as for a new title, and when the server refuses the connection.
   onDocumentChange: (event?: DocumentEvent) => void;
 }) {
   const q = useQueryClient();
@@ -159,13 +184,14 @@ export function useDocumentStream({
     cursorListeners.current.forEach((listener) => listener(cursor));
   }, []);
 
-  useDocumentEvents(
+  const send = useDocumentEvents(
     docId,
     {
+      // The server lists the viewers again, and this viewer is one of them.
       open: () => {
         knownSessions.current.clear();
         setSessions(new Map());
-        onDocumentChange();
+        report();
       },
       // The page asks for the document again, and shows why it cannot.
       closed: () => onDocumentChange(),
@@ -247,9 +273,9 @@ export function useDocumentStream({
     return () => window.clearInterval(timer);
   }, []);
 
-  // Report this viewer's place: at once on a version change, at most every
-  // REPORT_INTERVAL while scrolling, and as a heartbeat otherwise. Only a
-  // signed-in viewer of an open document reports.
+  // Report this viewer's place: at once when the connection opens or the
+  // version changes, and at most every REPORT_INTERVAL while scrolling. Only
+  // a signed-in viewer of an open document reports.
   const lastReport = useRef(0);
   const pendingReport = useRef<number | undefined>(undefined);
   const reporting = enabled && !!principal;
@@ -257,9 +283,8 @@ export function useDocumentStream({
     window.clearTimeout(pendingReport.current);
     pendingReport.current = undefined;
     lastReport.current = Date.now();
-    if (!reporting) return;
-    api.postDocumentPresence(docId, { session, ...place.current }).catch(() => {});
-  }, [docId, session, reporting]);
+    if (reporting) send({ type: "presence", ...place.current });
+  }, [send, reporting]);
   const scheduleReport = useCallback(() => {
     if (pendingReport.current !== undefined) return;
     const wait = Math.max(0, lastReport.current + REPORT_INTERVAL - Date.now());
@@ -276,25 +301,20 @@ export function useDocumentStream({
     place.current = { version };
     scheduleReport();
   }, [version, scheduleReport]);
-  useEffect(() => {
-    const timer = window.setInterval(report, HEARTBEAT_INTERVAL);
-    return () => {
-      window.clearInterval(timer);
+  useEffect(
+    () => () => {
       window.clearTimeout(pendingReport.current);
       pendingReport.current = undefined;
-    };
-  }, [report]);
+    },
+    [report],
+  );
 
   const cursorBatch = useMemo(
     () =>
-      createCursorBatch((points) =>
-        api.postDocumentCursor(docId, {
-          session,
-          version: cursorOn.current,
-          points,
-        }),
+      createCursorBatch(async (points) =>
+        send({ type: "cursor", version: cursorOn.current, points }),
       ),
-    [docId, session],
+    [send],
   );
   useEffect(() => () => cursorBatch.stop(), [cursorBatch]);
   useEffect(() => {

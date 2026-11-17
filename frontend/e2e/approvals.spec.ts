@@ -138,7 +138,7 @@ test("an approver cannot approve while another person types, or a page that is b
   const { document, path, reviewer } = await withReviewer(page, browser, slashdocs);
   // The page of the reviewer does not hear of the next edit: its stream does
   // not open, and its request for the changes waits.
-  await reviewer.route("**/kv/events**", () => {});
+  await reviewer.routeWebSocket(/\/live\b/, () => {});
   const held: Route[] = [];
   await reviewer.route("**/changes?**", (route) => void held.push(route));
   await reviewer.goto(path);
@@ -170,7 +170,8 @@ test("an approver cannot approve while another person types, or a page that is b
 
   // The page gets the changes and shows them. Then the approval is taken.
   await reviewer.unroute("**/changes?**");
-  for (const route of held) await route.continue();
+  // The page gives up on a request after 10 seconds, and asks again.
+  for (const route of held) await route.continue().catch(() => {});
   await expect(tail(reviewer)).toHaveText("The light is green. Or red.");
   await approve(reviewer).click();
   await expect(reviewer.getByRole("dialog").getByText("1 of 1 approved")).toBeVisible();

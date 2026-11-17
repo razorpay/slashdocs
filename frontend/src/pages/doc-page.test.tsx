@@ -67,9 +67,17 @@ function installFetch(documentStatuses: number[], ownRequests: unknown[] = []) {
       return jsonResponse({ items: [] });
     }),
   );
-  const eventSource = vi.fn();
-  vi.stubGlobal("EventSource", eventSource);
-  return { calls, eventSource };
+  const sockets = vi.fn();
+  vi.stubGlobal(
+    "WebSocket",
+    class {
+      constructor(url: URL) {
+        sockets(url);
+      }
+      close() {}
+    },
+  );
+  return { calls, sockets };
 }
 
 function renderPage() {
@@ -96,13 +104,13 @@ afterEach(() => {
 
 describe("DocumentPage", () => {
   it("shows a request that waits as sent, and does not join the document", async () => {
-    const { calls, eventSource } = installFetch(
+    const { calls, sockets } = installFetch(
       [403],
       [{ requester: { type: "user", id: "usr_reader" }, requested_at: "2026-11-01" }],
     );
     renderPage();
     expect(await screen.findByRole("button", { name: /Request sent/ })).toBeDisabled();
-    expect(eventSource).not.toHaveBeenCalled();
+    expect(sockets).not.toHaveBeenCalled();
     expect(calls.some((call) => call.url.includes("/presence"))).toBe(false);
   });
 
@@ -167,22 +175,21 @@ describe("DocumentPage", () => {
 });
 
 describe("a document that changes", () => {
-  // The stream of the page, which a test sends events on.
+  // The live connection of the page, which a test sends document events on.
   class Stream {
     static last: Stream;
-    listeners = new Map<string, (message: MessageEvent) => void>();
     onopen?: () => void;
+    onmessage?: (message: { data: string }) => void;
+    onclose?: ((close: { code: number }) => void) | null;
     constructor() {
       Stream.last = this;
     }
-    addEventListener(kind: string, listener: (message: MessageEvent) => void) {
-      this.listeners.set(kind, listener);
+    deliver(event: object) {
+      this.onmessage?.({
+        data: JSON.stringify({ event: { kind: "document", ...event } }),
+      });
     }
-    send(event: object) {
-      this.listeners.get("document")?.(
-        new MessageEvent("document", { data: JSON.stringify(event) }),
-      );
-    }
+    send() {}
     close() {}
   }
 
@@ -209,7 +216,7 @@ describe("a document that changes", () => {
         jsonResponse((await answers[String(input)]) ?? { items: [] }),
       ),
     );
-    vi.stubGlobal("EventSource", Stream);
+    vi.stubGlobal("WebSocket", Stream);
     renderPage();
     await screen.findByText("on ver_1, seq 1");
     const shows = (seq: number, version = "ver_1") =>
@@ -217,7 +224,7 @@ describe("a document that changes", () => {
     shows(1);
     const change = (seq: number, version = "ver_1") => {
       Object.assign(server, { seq, current_version_id: version });
-      act(() => Stream.last.send({ data: { seq, version_id: version } }));
+      act(() => Stream.last.deliver({ data: { seq, version_id: version } }));
     };
     const asked = (url: string) =>
       vi.mocked(fetch).mock.calls.filter(([input]) => input === url).length;
@@ -255,7 +262,7 @@ describe("a document that changes", () => {
     expect(workspace.shownSeq).toBe(1);
 
     const data = { seq: 2, version_id: "ver_1", prev_seq: 1, replacements: [], sum: 9 };
-    act(() => Stream.last.send({ data }));
+    act(() => Stream.last.deliver({ data }));
     await screen.findByText("on ver_1, seq 2");
     expect(workspace.event).toMatchObject({ seq: 2, prev_seq: 1 });
 
@@ -285,7 +292,7 @@ describe("a document that changes", () => {
     expect(await screen.findByText("on ver_2, seq 3")).toBeVisible();
 
     // A late event for an earlier seq changes nothing.
-    act(() => Stream.last.send({ data: { seq: 2, version_id: "ver_1" } }));
+    act(() => Stream.last.deliver({ data: { seq: 2, version_id: "ver_1" } }));
     await act(() => new Promise((done) => setTimeout(done, 20)));
     expect(screen.getByText("on ver_2, seq 3")).toBeVisible();
     expect(banner()).toBeNull();
@@ -348,7 +355,7 @@ describe("a document that changes", () => {
 
     // The seal changes no seq and no version id.
     act(() =>
-      Stream.last.send({ data: { seq: 1, version_id: "ver_1", sealed: true } }),
+      Stream.last.deliver({ data: { seq: 1, version_id: "ver_1", sealed: true } }),
     );
 
     await waitFor(() => expect(count()).toEqual(before.map((n) => n + 1)));
@@ -370,7 +377,7 @@ describe("a document that changes", () => {
     // an approved document.
     let answer!: (doc: unknown) => void;
     answers["/v1/documents/doc_1"] = new Promise((resolve) => (answer = resolve));
-    act(() => Stream.last.send({}));
+    act(() => Stream.last.deliver({}));
 
     // Operations come before its answer does.
     change(2);
@@ -411,7 +418,7 @@ describe("a document that changes", () => {
     await open();
     const restore = (updated_by: object) =>
       act(() =>
-        Stream.last.send({
+        Stream.last.deliver({
           updated_by,
           data: { seq: 2, version_id: "ver_2", restored: true },
         }),
@@ -427,8 +434,8 @@ describe("a document that changes", () => {
   });
 
   it.each([
-    ["the stream opens", () => Stream.last.onopen?.()],
-    ["an event names no seq", () => Stream.last.send({})],
+    ["an event names no seq", () => Stream.last.deliver({})],
+    ["the server refuses the connection", () => Stream.last.onclose?.({ code: 4403 })],
   ])("asks for the document again when %s", async (_name, event) => {
     const { asked } = await open();
     const before = asked("/v1/documents/doc_1");
@@ -436,5 +443,17 @@ describe("a document that changes", () => {
     act(event);
 
     await waitFor(() => expect(asked("/v1/documents/doc_1")).toBeGreaterThan(before));
+  });
+
+  // The server tells where the document is when the connection opens.
+  it("asks for nothing when the connection opens", async () => {
+    const { asked } = await open();
+    const before = asked("/v1/documents/doc_1");
+
+    act(() => Stream.last.onopen?.());
+    act(() => Stream.last.deliver({ data: { seq: 1, version_id: "ver_1" } }));
+    await act(() => new Promise((done) => setTimeout(done, 20)));
+
+    expect(asked("/v1/documents/doc_1")).toBe(before);
   });
 });

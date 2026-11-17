@@ -143,8 +143,12 @@ test("pins close together merge, and the cluster lists its threads", async ({
   await cluster.click();
   const threads = page.getByRole("dialog", { name: "Comment threads" });
   await threads.getByRole("button").filter({ hasText: "Second pin" }).click();
+  // Exact: the list of threads, "Comment threads", is still in the page
+  // while it fades out.
   await expect(
-    page.getByRole("dialog", { name: "Comment thread" }).getByText("Second pin"),
+    page
+      .getByRole("dialog", { name: "Comment thread", exact: true })
+      .getByText("Second pin"),
   ).toBeVisible();
 });
 

@@ -280,7 +280,7 @@ test("moves a document into a folder and returns it to root when deleting the fo
   expect(movedDocument.parent_folder_id).toBeFalsy();
 });
 
-test("delivers a KV patch to a second open page through the browser SSE stream", async ({
+test("delivers a KV patch to a second open page through the live connection", async ({
   page,
   context,
   slashdocs,
@@ -307,13 +307,14 @@ test("delivers a KV patch to a second open page through the browser SSE stream",
 </html>`;
   const document = await slashdocs.createDocument(title, html);
   const secondPage = await context.newPage();
-  const secondPageStream = secondPage.waitForResponse((response) => {
-    const url = new URL(response.url());
-    return (
-      response.status() === 200 &&
-      url.pathname === `/v1/documents/${document.id}/kv/events`
-    );
-  });
+  // The server sends the first message after it subscribes to the events.
+  const secondPageStream = secondPage
+    .waitForEvent(
+      "websocket",
+      (socket) =>
+        new URL(socket.url()).pathname === `/v1/documents/${document.id}/live`,
+    )
+    .then((socket) => socket.waitForEvent("framereceived"));
 
   await page.goto(`/app/d/${document.id}`);
   await secondPage.goto(`/app/d/${document.id}`);

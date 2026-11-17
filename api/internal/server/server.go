@@ -60,6 +60,7 @@ type Config struct {
 // Server wraps the gin engine.
 type Server struct {
 	engine             *gin.Engine
+	closeStreams       context.CancelFunc
 	notificationWorker *notifications.Worker
 	webhookWorker      *webhooks.Worker
 }
@@ -88,6 +89,9 @@ type dependencies struct {
 	featured             []FeaturedSection
 	readinessChecks      []readinessCheck
 	documentKVEvents     kvevents.Subscriber
+	// streams ends when the server stops, and the event streams of
+	// documents with it.
+	streams              context.Context
 	githubOAuth          *oauth2.Config
 	githubHTTPClient     *http.Client
 	githubAccessChecks   *singleflight.Group
@@ -242,6 +246,7 @@ func New(cfg Config, opts ...Option) *Server {
 		r.Use(movedOriginMiddleware(cfg.AppOrigin, cfg.PreviousOrigins))
 	}
 	s := &Server{engine: r}
+	deps.streams, s.closeStreams = context.WithCancel(context.Background())
 	s.addWorkers(deps)
 	s.routes(deps)
 	return s
@@ -279,6 +284,12 @@ func (unavailableDocumentKVEvents) Relay(context.Context, repo.DocumentKVEvent) 
 }
 
 func (s *Server) Handler() http.Handler { return s.engine }
+
+// CloseStreams ends the open event streams of documents, so that a server
+// that stops does not wait for them. An HTTP server does not wait for a
+// WebSocket at all: register this with http.Server.RegisterOnShutdown. The
+// viewers connect again, to a server that runs.
+func (s *Server) CloseStreams() { s.closeStreams() }
 
 func (s *Server) routes(deps dependencies) {
 	h := handlers{deps: deps}
@@ -325,7 +336,8 @@ func (s *Server) routes(deps dependencies) {
 
 	// These routes read a document. A public deployment also serves them to
 	// anonymous readers of a document that is shared with anyone.
-	reader := v1.Group("", requireAuth(deps.readerAuthenticator(), deps.appOrigin, deps.googleGroupResolver))
+	readerAuth := requireAuth(deps.readerAuthenticator(), deps.appOrigin, deps.googleGroupResolver)
+	reader := v1.Group("", readerAuth)
 	reader.GET("/documents/:id", h.getDocument)
 	reader.GET("/documents/:id/versions", h.listVersions)
 	// A browser that follows live edits asks for the changes when the event
@@ -341,14 +353,16 @@ func (s *Server) routes(deps dependencies) {
 	reader.GET("/documents/:id/comments", h.listComments)
 	reader.GET("/documents/:id/kv", h.listDocumentKV)
 	reader.GET("/documents/:id/kv/events", h.streamDocumentKVEvents)
+	// Separate budgets: presence reports and cursor moves must not starve
+	// other activity. A moving cursor reports about 12 times a second. The
+	// live connection reports them too, from the same budgets.
+	presenceLimit := newActivityLimit(60)
+	cursorLimit := newActivityLimit(1200)
+	v1.GET("/documents/:id/live", refuseOverWebSocket, readerAuth, h.documentLive(presenceLimit, cursorLimit))
 
 	// Every route below requires authentication.
 	authed := v1.Group("", requireAuth(deps.authenticator, deps.appOrigin, deps.googleGroupResolver))
 	activityLimit := activityRateLimit(60)
-	// Separate budgets: presence heartbeats and cursor moves must not starve
-	// other activity. A moving cursor reports about 12 times a second.
-	presenceLimit := activityRateLimit(60)
-	cursorLimit := activityRateLimit(1200)
 	// A decision can start the seal of the open version, which writes a
 	// blob. Decisions have their own budget, so that other activity and
 	// typing never block them.
@@ -414,8 +428,8 @@ func (s *Server) routes(deps dependencies) {
 	authed.GET("/documents/:id/headings", activityLimit, h.documentHeadings)
 	authed.GET("/documents/:id/link", activityLimit, h.documentLink)
 	authed.PUT("/documents/:id/notifications", activityLimit, h.setDocumentNotificationPreferences)
-	authed.POST("/documents/:id/presence", presenceLimit, h.postDocumentPresence)
-	authed.POST("/documents/:id/cursor", cursorLimit, h.postDocumentCursor)
+	authed.POST("/documents/:id/presence", presenceLimit.handle, h.postDocumentPresence)
+	authed.POST("/documents/:id/cursor", cursorLimit.handle, h.postDocumentCursor)
 	authed.PATCH("/documents/:id/kv", h.patchDocumentKV)
 	authed.POST("/documents/:id/comments/:comment_id/replies", h.createCommentReply)
 	authed.PATCH("/documents/:id/comments/:comment_id", commentLimit, h.patchComment)
@@ -528,6 +542,13 @@ func requireAuth(a auth.Authenticator, appOrigin string, groups *googlegroups.Re
 		p, err := a.Authenticate(c.Request)
 		if err != nil {
 			incAuth("request", "failure")
+			// A credential that could not be examined, as when the database
+			// is down, is not a refusal: a 401 would sign the person out.
+			if !errors.Is(err, auth.ErrUnauthorized) {
+				c.Abort()
+				internalErr(c, err)
+				return
+			}
 			unauthorized(c)
 			return
 		}

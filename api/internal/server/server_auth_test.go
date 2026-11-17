@@ -26,6 +26,20 @@ func TestMeRequiresAuth(t *testing.T) {
 	}`)
 }
 
+// failingAuth cannot examine a credential, as when the database is down.
+type failingAuth struct{}
+
+func (failingAuth) Authenticate(*http.Request) (*auth.Principal, error) {
+	return nil, fmt.Errorf("resolve session: %w", context.DeadlineExceeded)
+}
+
+// A credential that the server cannot examine is a fault of the server, not
+// a refusal: a 401 would sign the person out of every open tab.
+func TestAuthFailureIsNotARefusal(t *testing.T) {
+	h := server.New(server.Config{Environment: "test"}, server.WithRepository(newTestEnv(t).store), server.WithAuthenticator(failingAuth{})).Handler()
+	assertStatus(t, do(t, h, http.MethodGet, "/v1/me", "", nil), http.StatusInternalServerError)
+}
+
 func TestLogoutDeletesSessionCookie(t *testing.T) {
 	rr := do(t, newTestEnv(t).h, http.MethodPost, "/v1/auth/logout", "", map[string]string{
 		"Cookie": "slashdocs_session=test-session",

@@ -73,6 +73,7 @@ func principalHeader(p auth.Principal) string {
 // grants on the document.
 type testEnv struct {
 	t     *testing.T
+	srv   *server.Server
 	h     http.Handler
 	store *pgrepo.Store
 
@@ -132,7 +133,8 @@ func newConfiguredTestEnv(t *testing.T, cfg server.Config, extraOptions ...serve
 		server.WithDocumentKVEvents(eventBroker),
 	}
 	options = append(options, extraOptions...)
-	e.h = server.New(cfg, options...).Handler()
+	e.srv = server.New(cfg, options...)
+	e.h = e.srv.Handler()
 	return e
 }
 
