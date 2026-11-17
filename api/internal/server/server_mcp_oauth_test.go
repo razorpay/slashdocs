@@ -85,7 +85,9 @@ func TestMCPDiscoveryAndOAuthMetadata(t *testing.T) {
 	assertJSON(t, discovery.Body.Bytes(), `{
 	  "name": "slashdocs",
 	  "api_version": "v1",
-	  "auth": { "modes": ["web", "cli", "mcp"] }
+	  "auth": { "modes": ["web", "cli", "mcp"] },
+	  "request_encodings": [],
+	  "compress_requests": false
 	}`)
 
 	for _, path := range []string{

@@ -86,6 +86,12 @@ deployment:
 features:
   labels: false
 
+# Accept gzip request bodies and ask the web app and the CLI to send them, for
+# deployments whose web application firewall flags document HTML as an attack.
+# Turn on only after every replica runs a release that has this setting. See
+# "Request compression" in docs/self-hosting.md.
+requestGzip: false
+
 # Kubernetes Deployment rollout strategy. Keep RollingUpdate normally. The
 # structured-mentions upgrade documented in docs/self-hosting.md requires one
 # Recreate rollout so old and new comment writers never overlap.

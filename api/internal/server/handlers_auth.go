@@ -40,6 +40,13 @@ type discoveryResponse struct {
 	Name       string        `json:"name"`
 	APIVersion string        `json:"api_version"`
 	Auth       discoveryAuth `json:"auth"`
+	// RequestEncodings lists the Content-Encoding values accepted on request
+	// bodies besides identity. Clients check it so that a future encoding can
+	// be added without older clients sending it.
+	RequestEncodings []string `json:"request_encodings"`
+	// CompressRequests asks clients to send request bodies in one of
+	// RequestEncodings.
+	CompressRequests bool `json:"compress_requests"`
 }
 
 type discoveryAuth struct {
@@ -491,7 +498,22 @@ func (h handlers) writeSessionCookie(c *gin.Context, value string, maxAge int) {
 // @Success 200 {object} discoveryResponse
 // @Router /.well-known/slashdocs.json [get]
 func (h handlers) discovery(c *gin.Context) {
-	c.JSON(http.StatusOK, discoveryResponse{Name: "slashdocs", APIVersion: "v1", Auth: discoveryAuth{Modes: []string{authModeWeb, authModeCLI, "mcp"}}})
+	c.JSON(http.StatusOK, discoveryResponse{
+		Name:             "slashdocs",
+		APIVersion:       "v1",
+		Auth:             discoveryAuth{Modes: []string{authModeWeb, authModeCLI, "mcp"}},
+		RequestEncodings: h.requestEncodings(),
+		CompressRequests: h.deps.requestGzip,
+	})
+}
+
+// requestEncodings is empty when the deployment has not opted in, because the
+// server then refuses gzip bodies.
+func (h handlers) requestEncodings() []string {
+	if !h.deps.requestGzip {
+		return []string{}
+	}
+	return []string{requestEncodingGzip}
 }
 
 // everyoneLabel is the human label for the "anyone" grant on this deployment.

@@ -319,6 +319,10 @@ func newApplicationServer(ctx context.Context, store *pgrepo.Store, blobs blob.S
 	if err != nil {
 		return nil, err
 	}
+	requestGzip, err := boolEnv("SLASHDOCS_REQUEST_GZIP", false)
+	if err != nil {
+		return nil, err
+	}
 	oidcProvider, providerName, err := loadOIDC(ctx, origins.appOrigin)
 	if err != nil {
 		return nil, err
@@ -376,6 +380,7 @@ func newApplicationServer(ctx context.Context, store *pgrepo.Store, blobs blob.S
 		GoogleGroupsEnabled:       googleGroups.enabled,
 		GoogleGroupsMembershipTTL: googleGroups.membershipTTL,
 		DisableLabels:             !labelsEnabled,
+		RequestGzip:               requestGzip,
 	}, options...), nil
 }
 

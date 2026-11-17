@@ -55,6 +55,9 @@ type Config struct {
 	// programmatic users of server.New retain the existing feature set unless
 	// the application entrypoint explicitly disables labels.
 	DisableLabels bool
+	// RequestGzip makes the server decode gzip request bodies and makes
+	// discovery ask clients to send them. Off, a gzip body gets 415.
+	RequestGzip bool
 }
 
 // Server wraps the gin engine.
@@ -105,6 +108,7 @@ type dependencies struct {
 	slackUnfurler        notifications.Unfurler
 	previousOrigins      []string
 	frontend             fs.FS
+	requestGzip          bool
 	// frontendBuild names the build of frontend. The pages of another build
 	// load again.
 	frontendBuild string
@@ -210,6 +214,7 @@ func New(cfg Config, opts ...Option) *Server {
 		labelsEnabled:        !cfg.DisableLabels,
 		previousOrigins:      cfg.PreviousOrigins,
 		frontend:             embeddedFrontend(),
+		requestGzip:          cfg.RequestGzip,
 	}
 	if cfg.GitHubClientID != "" && cfg.GitHubClientSecret != "" && cfg.AppOrigin != "" {
 		deps.githubOAuth = &oauth2.Config{
@@ -246,8 +251,10 @@ func New(cfg Config, opts ...Option) *Server {
 		r.Use(accessLogMiddleware())
 	}
 	r.Use(recoveryMiddleware())
-	r.Use(requestBodyMiddleware())
+	// Metrics run first so the size histogram sees the bytes on the wire,
+	// before the body middleware decodes them and drops the length.
 	r.Use(prometheusMiddleware())
+	r.Use(requestBodyMiddleware(cfg.RequestGzip))
 	if len(cfg.PreviousOrigins) > 0 && cfg.AppOrigin != "" {
 		r.Use(movedOriginMiddleware(cfg.AppOrigin, cfg.PreviousOrigins))
 	}
