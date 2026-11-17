@@ -147,44 +147,46 @@ func (s *documentKVStream) sendPosition() error {
 	return s.sink.send(repo.DocumentKVEvent{DocumentID: s.documentID, Kind: repo.DocumentEventDocument, Data: data}, false)
 }
 
-func (s *documentKVStream) reauthorize() bool {
-	if s.authenticate == nil {
-		return false
-	}
-	principal, err := s.authenticate(s.ctx)
-	if err != nil {
-		if s.ctx.Err() == nil && !errors.Is(err, auth.ErrUnauthorized) {
-			slog.ErrorContext(s.ctx, "document KV stream credential check failed",
-				slog.String("document_id", s.documentID),
-				slog.Any("error", err))
-		}
-		return false
-	}
-	if principal == nil || principal.Type != s.principal.Type || principal.ID != s.principal.ID {
-		return false
-	}
-	role, err := s.repository.RoleForDocument(s.ctx, s.principal, s.documentID)
-	if err != nil {
-		if s.ctx.Err() == nil {
-			slog.ErrorContext(s.ctx, "document KV stream authorization check failed",
-				slog.String("document_id", s.documentID),
-				slog.Any("error", err))
-		}
-		return false
-	}
-	return atLeast(role, repo.RoleViewer)
-}
-
 // errAccessEnded ends the stream of a viewer who can no longer read the
 // document, or whose credential no longer holds.
 var errAccessEnded = errors.New("access to the document ended")
 
-// recheck examines the access of the viewer again.
+// recheck examines the access of the viewer again. It returns errAccessEnded
+// when the viewer can no longer read the document. When the examination
+// itself fails, as when the database cannot be reached, it returns that error:
+// the stream ends, and the viewer connects again.
 func (s *documentKVStream) recheck() error {
-	if !s.reauthorize() {
+	if s.authenticate == nil {
+		return errAccessEnded
+	}
+	principal, err := s.authenticate(s.ctx)
+	if errors.Is(err, auth.ErrUnauthorized) {
+		return errAccessEnded
+	}
+	if err != nil {
+		return s.recheckFailed("credential", err)
+	}
+	if principal == nil || principal.Type != s.principal.Type || principal.ID != s.principal.ID {
+		return errAccessEnded
+	}
+	role, err := s.repository.RoleForDocument(s.ctx, s.principal, s.documentID)
+	if err != nil {
+		return s.recheckFailed("authorization", err)
+	}
+	if !atLeast(role, repo.RoleViewer) {
 		return errAccessEnded
 	}
 	return nil
+}
+
+// recheckFailed logs a check of access that failed, and returns its error.
+func (s *documentKVStream) recheckFailed(check string, err error) error {
+	if s.ctx.Err() == nil {
+		slog.ErrorContext(s.ctx, "document KV stream "+check+" check failed",
+			slog.String("document_id", s.documentID),
+			slog.Any("error", err))
+	}
+	return fmt.Errorf("%s check: %w", check, err)
 }
 
 // hear sends a live event to the viewer. A grant changed: a viewer who lost

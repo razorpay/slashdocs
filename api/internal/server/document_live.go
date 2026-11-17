@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -23,8 +24,11 @@ import (
 // them gone when it closes.
 
 const (
-	// liveReadLimit is the size of the largest report of a viewer.
-	liveReadLimit = max(maxPresenceBytes, maxCursorBytes)
+	// liveReadLimit is the size of the largest report of a viewer. The server
+	// drops a larger report, as its POST route refuses it, and the connection
+	// stays. Only a message over liveMessageLimit ends the connection.
+	liveReadLimit    = max(maxPresenceBytes, maxCursorBytes)
+	liveMessageLimit = 64 << 10
 	// liveRefused plus an HTTP status is the code that closes a connection
 	// that the server refuses: 4401 asks the viewer to sign in, and 4403
 	// tells that they cannot read the document, or no longer can. The viewer
@@ -108,15 +112,17 @@ func (l *liveConn) reportPresence(place presence) {
 }
 
 // listen takes the reports of the viewer until the connection ends. Each
-// kind of report has the budget of its POST route. A report over the budget,
-// or one that is not valid, is dropped. An anonymous reader reports nothing.
+// kind of report has the budget and the size limit of its POST route. A
+// report over either one, or one that is not valid, is dropped. An anonymous
+// reader reports nothing.
 func (l *liveConn) listen(presenceLimit, cursorLimit *activityLimit, key string) {
 	for {
-		var in liveReport
-		if err := wsjson.Read(l.ctx, l.conn, &in); err != nil {
+		_, message, err := l.conn.Read(l.ctx)
+		if err != nil {
 			return
 		}
-		if l.session == "" {
+		var in liveReport
+		if l.session == "" || len(message) > liveReadLimit || json.Unmarshal(message, &in) != nil {
 			continue
 		}
 		switch in.Type {
@@ -187,7 +193,7 @@ func (h handlers) documentLive(presenceLimit, cursorLimit *activityLimit) gin.Ha
 		if err != nil {
 			return
 		}
-		conn.SetReadLimit(liveReadLimit)
+		conn.SetReadLimit(liveMessageLimit)
 		live := &liveConn{ctx: c.Request.Context(), conn: conn, h: h, docID: stream.documentID, session: stream.session, viewer: stream.principal}
 		stream.sink = live
 		key := activityKey(c)
@@ -219,14 +225,16 @@ func (h handlers) documentLive(presenceLimit, cursorLimit *activityLimit) gin.Ha
 	}
 }
 
-// refusedLive holds back the HTTP answer that refuses a live connection.
+// refusedLive holds back the HTTP answer that refuses a live connection. A
+// fault of the server is not a refusal: its answer goes out, the handshake
+// fails, and the viewer connects again later.
 type refusedLive struct {
 	gin.ResponseWriter
 	status int
 }
 
 func (w *refusedLive) WriteHeader(status int) {
-	if status < http.StatusBadRequest {
+	if status < http.StatusBadRequest || status >= http.StatusInternalServerError {
 		w.ResponseWriter.WriteHeader(status)
 		return
 	}

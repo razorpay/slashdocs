@@ -165,8 +165,10 @@ func TestDocumentLiveCarriesEventsAndReports(t *testing.T) {
 		t.Fatalf("presence = %#v, want the editor's stored place", got)
 	}
 
-	// The server drops a report that is not valid, as the POST route refuses it.
+	// The server drops a report that is not valid, or one over the size limit
+	// of the POST route, as that route refuses it. The connection stays.
 	sendLive(ctx, t, editor, `{"type":"cursor","version":"live","points":[{"t":1,"x":1.5}]}`)
+	sendLive(ctx, t, editor, `{"type":"cursor","version":"live","points":[{"t":1,"path":"`+strings.Repeat("0.", 4<<10)+`0","x":0.5,"y":0.5}]}`)
 	sendLive(ctx, t, editor, `{"type":"cursor","version":"live","points":[{"t":2,"path":"0.1","x":0.5,"y":0.5}]}`)
 	got = readLive(ctx, t, viewer)
 	want := `{"session":"editor-session","version":"live","points":[{"t":2,"path":"0.1","x":0.5,"y":0.5}]}`

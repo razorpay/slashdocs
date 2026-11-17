@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/gin-gonic/gin"
 
 	"github.com/razorpay/slashdocs/api/internal/repo"
 )
@@ -57,5 +58,41 @@ func TestLiveStreamEndsForAViewerWhoDoesNotRead(t *testing.T) {
 		case <-ctx.Done():
 			t.Fatal("the stream waits on a viewer who does not read")
 		}
+	}
+}
+
+// A refusal closes the connection with a code that tells the viewer to stop.
+// A fault of the server fails the handshake, and the viewer connects again.
+func TestRefuseOverWebSocketRefusesOnlyRefusals(t *testing.T) {
+	for _, tc := range []struct {
+		status    int
+		wantClose websocket.StatusCode
+	}{
+		{http.StatusForbidden, 4403},
+		{http.StatusInternalServerError, -1},
+		{http.StatusServiceUnavailable, -1},
+	} {
+		t.Run(http.StatusText(tc.status), func(t *testing.T) {
+			r := gin.New()
+			r.GET("/live", refuseOverWebSocket, func(c *gin.Context) { c.AbortWithStatus(tc.status) })
+			ts := httptest.NewServer(r)
+			defer ts.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			conn, res, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(ts.URL, "http")+"/live", nil) //nolint:bodyclose // The connection owns the body of the handshake response.
+			if tc.wantClose == -1 {
+				if err == nil || res == nil || res.StatusCode != tc.status {
+					t.Fatalf("dial = %v, want a failed handshake with %d", err, tc.status)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("dial: %v", err)
+			}
+			defer func() { _ = conn.CloseNow() }()
+			if _, _, err := conn.Read(ctx); websocket.CloseStatus(err) != tc.wantClose {
+				t.Fatalf("read = %v, want close %d", err, tc.wantClose)
+			}
+		})
 	}
 }
