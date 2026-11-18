@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/razorpay/slashdocs/api/internal/auth"
 	"github.com/razorpay/slashdocs/api/internal/repo"
 	"github.com/razorpay/slashdocs/internal/textedit"
 )
@@ -24,30 +25,28 @@ const anchorContext = 32
 // before a read of them. The change is saved, so a failure is only logged:
 // the next change or read moves them.
 func (h handlers) follow(c *gin.Context, docID string) {
-	h.followNow(context.WithoutCancel(c.Request.Context()), docID)
+	h.followNow(context.WithoutCancel(c.Request.Context()), docID, *current(c))
 }
 
 // followLater moves the text comments of the document after a change, off
-// the request, so that typing does not wait for it. The pages get each
-// thread whose text changed: a page that has the thread from before the
-// change has an anchor that its frame no longer finds.
+// the request, so that typing does not wait for it.
 func (h handlers) followLater(c *gin.Context, docID string) {
 	ctx, by := context.WithoutCancel(c.Request.Context()), *current(c)
-	h.deps.anchorFollows.start(docID, func() {
-		for _, threadID := range h.followNow(ctx, docID) {
-			h.announceThreadOf(ctx, docID, threadID, by)
-		}
-	})
+	h.deps.anchorFollows.start(docID, func() { h.followNow(ctx, docID, by) })
 }
 
-// followNow moves the anchors, and returns the threads whose text changed.
-func (h handlers) followNow(ctx context.Context, docID string) []string {
+// followNow moves the anchors, and gives the pages each thread whose text
+// changed: a page that has the thread from before the change has an anchor
+// that its frame no longer finds.
+func (h handlers) followNow(ctx context.Context, docID string, by auth.Principal) {
 	moved, err := h.followAnchors(ctx, docID)
 	if err != nil {
 		slog.WarnContext(ctx, "comment anchors did not follow the document", slog.String("document_id", docID), slog.Any("error", err))
-		return nil
+		return
 	}
-	return moved
+	for _, threadID := range moved {
+		h.announceThreadOf(ctx, docID, threadID, by)
+	}
 }
 
 // followers runs one follow of the anchors of a document at a time. A

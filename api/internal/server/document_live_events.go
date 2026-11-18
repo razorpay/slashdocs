@@ -280,11 +280,12 @@ func (h handlers) announceThreadOf(ctx context.Context, docID, threadID string, 
 	if d, err := h.deps.repository.GetDocument(ctx, docID); err == nil {
 		versionID = d.CurrentVersionID
 	}
-	// The text is ready before the lock that the event takes, so that the
-	// parse of a large document does not hold up the other events.
+	// The parse that the placement of the thread needs runs before the lock
+	// that the event takes, so that a large document does not hold up its
+	// other events. A thread on the current version needs none.
 	doc := h.placementOf(ctx, versionID)
-	if doc != nil {
-		doc.renderedText()
+	if root, err := h.deps.repository.GetComment(ctx, threadID); err == nil {
+		commentPlacement(root, versionID, doc)
 	}
 	err := h.deps.repository.AppendCommentThreadEvent(ctx, docID, threadID, func(thread []repo.Comment) (json.RawMessage, error) {
 		event := commentEvent{ID: threadID}

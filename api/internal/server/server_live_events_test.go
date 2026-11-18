@@ -406,3 +406,33 @@ func TestAccessThatGoesEndsTheStreamsBelowIt(t *testing.T) {
 		})
 	}
 }
+
+// TestMovedAnchorsReachTheViewers makes sure that a thread whose text moves
+// with typing reaches the viewers, also when a read of the comments moves it
+// before the follow after the operation does.
+func TestMovedAnchorsReachTheViewers(t *testing.T) {
+	e := newTestEnv(t)
+	d, err := e.store.GetDocument(context.Background(), e.doc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"version_id":"` + e.ver.ID + `","body":"note","anchor":{"quote":"fixture","dom_path":"body","start_offset":0,"end_offset":7}}`
+	assertStatus(t, do(t, e.h, http.MethodPost, "/v1/documents/"+e.doc.ID+"/comments", body, map[string]string{
+		"Content-Type": "application/json", "X-Test-Principal": principalHeader(fixtureCommenter),
+	}), http.StatusCreated)
+	ts := httptest.NewServer(e.h)
+	defer ts.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	reader, _ := openLiveStream(ctx, t, ts, e.doc.ID, "", fixtureViewer)
+
+	html := "<html><body>fixture</body></html>"
+	typeOp(t, e, e.doc.ID, fixtureEditor, d.Seq, "op_grow", replaceAt(html, "xtu", "xXXtu", 0))
+	listComments(t, e, "")
+	for {
+		got := readLiveEvent(t, reader)
+		if got.name == repo.DocumentEventComments && strings.Contains(string(got.event.Data), `"selected_text":"fixXXture"`) {
+			return
+		}
+	}
+}
