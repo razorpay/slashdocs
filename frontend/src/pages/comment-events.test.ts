@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
-import type { Comment, DocumentKVEvent } from "@/api";
+import type { Comment, DocumentKVEvent, Principal } from "@/api";
 import { withThread } from "./comment-events";
 
 const me = { type: "user" as const, id: "usr_me" };
 const asha = { type: "user" as const, id: "usr_a", name: "Asha" };
 
-const comment = (id: string, author = asha, extra: Partial<Comment> = {}): Comment => ({
+const comment = (
+  id: string,
+  author: Principal = asha,
+  extra: Partial<Comment> = {},
+): Comment => ({
   id,
   body: id,
   status: "open",
