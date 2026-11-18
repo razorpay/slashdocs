@@ -19,7 +19,8 @@ import (
 
 // The state of a local document is in a hidden sidecar file next to it: the
 // state of specs/api.html is in specs/.api.html.slashdocs.json. It keeps the
-// title that overrides the <title> of the HTML, and the comments. All state
+// title that overrides the <title> of the HTML, the expiry time, and the
+// comments. All state
 // stays in the documents folder, so git and other tools see a document and
 // its state together. An agent can read and write the file without the
 // server. The file uses the fields of the slashdocs API, and `slashdocs local`
@@ -133,8 +134,17 @@ type localComment struct {
 }
 
 type localState struct {
-	Title    string          `json:"title,omitzero"`
-	Comments []*localComment `json:"comments"`
+	Title string `json:"title,omitzero"`
+	// ExpiresAt is when the server moves the document to the trash. A
+	// document without it is kept.
+	ExpiresAt time.Time       `json:"expires_at,omitzero"`
+	Comments  []*localComment `json:"comments"`
+}
+
+// empty tells that the state holds nothing, so the document needs no state
+// file.
+func (t *localState) empty() bool {
+	return t.Title == "" && len(t.Comments) == 0 && t.ExpiresAt.IsZero()
 }
 
 // find returns the comment with the ID, and the list that holds it.
@@ -389,7 +399,7 @@ func (s *localDocs) view(comments ...*localComment) []*localComment {
 }
 
 func sidecarPath(doc string) string {
-	return path.Join(path.Dir(doc), "."+path.Base(doc)+".slashdocs.json")
+	return path.Join(path.Dir(doc), "."+path.Base(doc)+sidecarSuffix)
 }
 
 func readLocalState(docs fs.FS, doc string) (localState, error) {
@@ -430,7 +440,13 @@ func (s *localDocs) update(doc string, change func(*localState) error) error {
 	if err := change(&t); err != nil {
 		return err
 	}
-	if t.Title == "" && len(t.Comments) == 0 {
+	return s.saveState(doc, t)
+}
+
+// saveState writes the state file of a document, or removes it when the
+// state holds nothing. The caller holds s.mu.
+func (s *localDocs) saveState(doc string, t localState) error {
+	if t.empty() {
 		if err := s.root.Remove(sidecarPath(doc)); !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}

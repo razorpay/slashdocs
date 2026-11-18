@@ -3,6 +3,7 @@ import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { Button } from "@/components/ui/button";
 import { Avatar, revealOnHover } from "@/components/ui/misc";
 import { RelativeTime } from "@/components/ui/relative-time";
+import { ExpiryMark } from "@/components/expiry-mark";
 import { DeleteDocumentDialog } from "@/components/delete-document-dialog";
 import { docID, docTitle, type FolderEntry, type Principal } from "@/api";
 import { cn } from "@/lib/cn";
@@ -60,6 +61,7 @@ export function UnifiedTable({
               canDelete={samePrincipal(principal, e.document.owner)}
               pinned={pinnedIds?.has(docID(e.document))}
               snippet={e.document.snippet}
+              expiresAt={e.document.expires_at}
             />
           );
         }
@@ -78,6 +80,7 @@ function DraggableEntryRow({
   canDelete,
   pinned,
   snippet,
+  expiresAt,
 }: {
   type: ResourceType;
   id: string;
@@ -87,6 +90,7 @@ function DraggableEntryRow({
   canDelete: boolean;
   pinned?: boolean;
   snippet?: string;
+  expiresAt?: string;
 }) {
   const isFolder = type === "folder";
   const {
@@ -123,6 +127,7 @@ function DraggableEntryRow({
         >
           {pinned && <PinnedMark />}
           {isFolder ? null : <AccessRequestMark documentId={id} />}
+          {isFolder ? null : <ExpiryMark expiresAt={expiresAt} compact />}
         </EntryName>
         {/* Narrow screens hide the owner and time columns and show them here. */}
         <div className="mt-0.5 truncate pl-6 text-xs text-[var(--color-fg-muted)] sm:hidden">

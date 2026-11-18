@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/razorpay/slashdocs/internal/expiry"
 	docrender "github.com/razorpay/slashdocs/internal/render"
 	"github.com/razorpay/slashdocs/internal/textedit"
 )
@@ -33,6 +34,8 @@ type localDocument struct {
 	CurrentVersionID string         `json:"current_version_id"`
 	ParentFolderID   string         `json:"parent_folder_id,omitzero"`
 	UpdatedAt        time.Time      `json:"updated_at"`
+	// ExpiresAt is when the server moves the document to the trash.
+	ExpiresAt time.Time `json:"expires_at,omitzero"`
 }
 
 // localMaxHTML is the limit of the server.
@@ -45,7 +48,7 @@ func (s *localDocs) registerDocuments(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/documents", respond(s.listDocuments))
 	mux.HandleFunc("POST /v1/documents", respond(s.createDocument))
 	mux.HandleFunc("GET "+doc, s.handle(func(_ *http.Request, doc string) (any, error) { return s.document(doc) }))
-	mux.HandleFunc("PATCH "+doc, s.handle(s.rename))
+	mux.HandleFunc("PATCH "+doc, s.handle(s.patchDocument))
 	mux.HandleFunc("DELETE "+doc, s.handle(s.deleteDocument))
 	mux.HandleFunc("POST "+doc+"/versions", s.handle(s.push))
 	mux.HandleFunc("POST "+doc+"/edits", s.handle(s.edit))
@@ -67,7 +70,8 @@ func (s *localDocs) document(doc string) (localDocument, error) {
 	if parent == "." {
 		parent = ""
 	}
-	return localDocument{ID: doc, Title: docTitle(s.root.FS(), doc), Owner: s.me, CurrentVersionID: localVersion(b), ParentFolderID: parent, UpdatedAt: st.ModTime().UTC()}, err
+	title, expiresAt := describeLocal(s.root.FS(), doc)
+	return localDocument{ID: doc, Title: title, Owner: s.me, CurrentVersionID: localVersion(b), ParentFolderID: parent, UpdatedAt: st.ModTime().UTC(), ExpiresAt: expiresAt}, err
 }
 
 // listDocuments returns a page of the documents with the most recent change
@@ -80,18 +84,7 @@ func (s *localDocs) listDocuments(r *http.Request) (any, error) {
 	}
 	words := strings.Fields(strings.ToLower(r.URL.Query().Get("q")))
 	items := []localDocument{}
-	err = fs.WalkDir(s.root.FS(), ".", func(p string, de fs.DirEntry, err error) error {
-		switch {
-		case err != nil:
-			return err
-		case p != "." && strings.HasPrefix(de.Name(), "."):
-			if de.IsDir() {
-				return fs.SkipDir
-			}
-			return nil
-		case de.IsDir() || !isHTML(p):
-			return nil
-		}
+	err = walkLocalDocs(s.root.FS(), func(p string) error {
 		d, err := s.document(p)
 		text := strings.ToLower(d.Title + " " + d.ID)
 		// A file that cannot be read, such as a link out of the folder, is
@@ -105,6 +98,25 @@ func (s *localDocs) listDocuments(r *http.Request) (any, error) {
 	slices.SortStableFunc(items, func(a, b localDocument) int { return b.UpdatedAt.Compare(a.UpdatedAt) })
 	end := min(offset+limit, len(items))
 	return map[string]any{"items": items[min(offset, end):end], "has_more": end < len(items)}, err
+}
+
+// walkLocalDocs calls visit for each document of the folder: each HTML file
+// that is not hidden and not in a hidden folder, such as .git or the trash.
+func walkLocalDocs(docs fs.FS, visit func(doc string) error) error {
+	return fs.WalkDir(docs, ".", func(p string, de fs.DirEntry, err error) error {
+		switch {
+		case err != nil:
+			return err
+		case p != "." && strings.HasPrefix(de.Name(), "."):
+			if de.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		case de.IsDir() || !isHTML(p):
+			return nil
+		}
+		return visit(p)
+	})
 }
 
 // localPage reads the limit and offset parameters with the defaults and the
@@ -144,6 +156,12 @@ func (s *localDocs) createDocument(r *http.Request) (any, error) {
 	if err := s.free(doc); err != nil {
 		return nil, err
 	}
+	// The expiry is read before the file is made: a wrong one would leave a
+	// document that the person wanted to go.
+	expiresAt, expires, err := expiry.Resolve(time.Now(), r.FormValue("expires_in"), r.FormValue("expires_at"))
+	if err != nil {
+		return nil, localError{http.StatusBadRequest, err.Error()}
+	}
 	if err := s.root.MkdirAll(path.Dir(doc), configDirPerm); err != nil {
 		return nil, err
 	}
@@ -152,31 +170,59 @@ func (s *localDocs) createDocument(r *http.Request) (any, error) {
 		return nil, err
 	}
 	_, err = f.Write(b)
-	if err = errors.Join(err, f.Close()); err == nil && r.FormValue("title") != name {
-		err = s.setTitle(doc, r.FormValue("title"))
+	if err = errors.Join(err, f.Close()); err != nil {
+		return nil, err
 	}
-	return map[string]string{"id": doc, "current_version_id": localVersion(b)}, err
+	created := map[string]any{"id": doc, "current_version_id": localVersion(b)}
+	if expires {
+		created["expires_at"] = expiresAt
+	}
+	return created, s.update(doc, func(t *localState) error {
+		if title := r.FormValue("title"); title != name {
+			t.Title = cleanTitle(title)
+		}
+		t.ExpiresAt = expiresAt
+		return nil
+	})
 }
 
-// rename sets the title of a document. An empty title removes the override.
-func (s *localDocs) rename(r *http.Request, doc string) (any, error) {
+// patchDocument sets the title of a document, its expiry, or both, with the
+// body of the server. An empty title removes the override. A null expires_at
+// removes the expiry.
+func (s *localDocs) patchDocument(r *http.Request, doc string) (any, error) {
 	var in struct {
-		Title string `json:"title"`
+		Title     *string     `json:"title"`
+		ExpiresIn string      `json:"expires_in"`
+		ExpiresAt expiry.Text `json:"expires_at"`
 	}
 	if err := decodeLocal(r, &in); err != nil {
 		return nil, err
 	}
-	if err := s.setTitle(doc, in.Title); err != nil {
+	if in.Title == nil && in.ExpiresIn == "" && !in.ExpiresAt.Set {
+		return nil, localError{http.StatusBadRequest, "nothing to update; provide a title, expires_in or expires_at"}
+	}
+	expiresAt, changed, err := expiry.Change(time.Now(), in.ExpiresIn, in.ExpiresAt)
+	if err != nil {
+		return nil, localError{http.StatusBadRequest, err.Error()}
+	}
+	err = s.update(doc, func(t *localState) error {
+		if in.Title != nil {
+			t.Title = cleanTitle(*in.Title)
+		}
+		if changed {
+			t.ExpiresAt = expiresAt
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 	return s.document(doc)
 }
 
-func (s *localDocs) setTitle(doc, title string) error {
-	return s.update(doc, func(t *localState) error {
-		t.Title = strings.Join(strings.Fields(title), " ")
-		return nil
-	})
+// cleanTitle is a title with single spaces.
+func cleanTitle(title string) string {
+	return strings.Join(strings.Fields(title), " ")
 }
 
 // push replaces the document if base_version_id is its current version.

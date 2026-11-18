@@ -32,6 +32,7 @@ Instead of pasting giant reports into chat, give the work a shared home where yo
 - History of versions, with preview and restore. One sitting of typing is one version
 - Approvals: owners ask people or bots to approve, and a changed document asks them again
 - An inbox in the header for approval requests and threads that wait on you
+- [Ephemeral documents](docs/self-hosting.md#ephemeral-documents): the owner gives a document a period, such as `--ttl 7d` or Auto-delete in the web app, and the server deletes the document after it
 - `slashdocs docs wait`, which returns the review feedback to an agent when the reviewer stops writing
 - Search with `title:`, `from:`, `in:`, `label:` and date modifiers, folders with sharing, and labels
 - [Slack or Google Chat notifications, personal mute controls, and comment/heading links](docs/comment-notifications.md)

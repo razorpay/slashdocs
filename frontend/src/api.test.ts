@@ -148,3 +148,71 @@ describe("versionSource", () => {
     },
   );
 });
+
+describe("expiry", () => {
+  const json = (body: object) =>
+    answer(JSON.stringify(body), { "Content-Type": "application/json" });
+  const body = (fetch: ReturnType<typeof answer>) =>
+    JSON.parse(fetch.mock.lastCall![1]!.body as string);
+
+  it("sets the expiry as a period, and gives the document", async () => {
+    const fetch = json({ id: "doc_1", expires_at: "2026-11-25T10:00:00Z" });
+    vi.stubGlobal("fetch", fetch);
+
+    const doc = await api.setDocumentExpiry("doc_1", "7d");
+
+    expect(fetch.mock.lastCall![0]).toBe("/v1/documents/doc_1");
+    expect(fetch.mock.lastCall![1]).toMatchObject({ method: "PATCH" });
+    expect(body(fetch)).toEqual({ expires_in: "7d" });
+    expect(doc.expires_at).toBe("2026-11-25T10:00:00Z");
+  });
+
+  it("removes the expiry with a null time, and wants no expires_at back", async () => {
+    const fetch = json({ id: "doc_1" });
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(api.setDocumentExpiry("doc_1", null)).resolves.toEqual({
+      id: "doc_1",
+    });
+
+    expect(body(fetch)).toEqual({ expires_at: null });
+  });
+
+  it("fails when a server that was asked for an expiry does not set it", async () => {
+    vi.stubGlobal("fetch", json({ id: "doc_1" }));
+
+    await expect(api.setDocumentExpiry("doc_1", "7d")).rejects.toThrow(
+      "The server did not set the expiry.",
+    );
+  });
+
+  it("sends the expiry of a new document in its form, only when there is one", async () => {
+    const fetch = json({
+      id: "doc_1",
+      current_version_id: "v_1",
+      expires_at: "2026-11-25T10:00:00Z",
+    });
+    vi.stubGlobal("fetch", fetch);
+    const file = new File(["<p>x</p>"], "x.html");
+
+    await api.createDocument("Scratch", file, "3d");
+    expect((fetch.mock.lastCall![1]!.body as FormData).get("expires_in")).toBe("3d");
+
+    fetch.mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ id: "doc_2", current_version_id: "v_1" }), {
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+    await api.createDocument("Scratch", file);
+    expect((fetch.mock.lastCall![1]!.body as FormData).has("expires_in")).toBe(false);
+  });
+
+  it("fails when a new document that was to expire has no expiry", async () => {
+    vi.stubGlobal("fetch", json({ id: "doc_1", current_version_id: "v_1" }));
+
+    await expect(
+      api.createDocument("Scratch", new File(["<p>x</p>"], "x.html"), "7d"),
+    ).rejects.toThrow("The server did not set the expiry.");
+  });
+});

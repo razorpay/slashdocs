@@ -23,6 +23,7 @@ import { Page } from "@/components/layout/page";
 import { ENTRY_ROW, EntryName, EntryTable } from "@/components/browse/entry-table";
 import { beat } from "@/lib/enter";
 import { RelativeTime } from "@/components/ui/relative-time";
+import { ExpiryMark } from "@/components/expiry-mark";
 import { useTitle } from "@/lib/use-title";
 
 // slashdocs local: the documents app for a folder of HTML files that
@@ -34,6 +35,8 @@ type Entry = {
   path: string;
   title: string;
   modified: string;
+  // When `slashdocs local` moves the document to its trash, if it does.
+  expires_at?: string;
 };
 
 type Folder = Entry & { type: "folder"; dir: string; entries: Entry[] };
@@ -198,7 +201,9 @@ function Entries({ entries }: { entries: Entry[] }) {
       {entries.map((e) => (
         <tr key={e.path} className={`group border-t transition-colors ${ENTRY_ROW}`}>
           <td className="px-4 py-3">
-            <EntryName to={href(e.path)} folder={e.type === "folder"} title={e.title} />
+            <EntryName to={href(e.path)} folder={e.type === "folder"} title={e.title}>
+              <ExpiryMark expiresAt={e.expires_at} compact />
+            </EntryName>
           </td>
           <td className="px-4 py-3 text-[var(--color-fg-muted)]">
             <RelativeTime iso={e.modified} />

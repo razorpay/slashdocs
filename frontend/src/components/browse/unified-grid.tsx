@@ -5,6 +5,7 @@ import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { Button } from "@/components/ui/button";
 import { revealOnHover } from "@/components/ui/misc";
 import { RelativeTime } from "@/components/ui/relative-time";
+import { ExpiryMark } from "@/components/expiry-mark";
 import { DeleteDocumentDialog } from "@/components/delete-document-dialog";
 import { api, docID, docTitle, type FolderEntry, type Principal } from "@/api";
 import { cn } from "@/lib/cn";
@@ -57,6 +58,7 @@ export function UnifiedGrid({
               canDelete={samePrincipal(me.data?.principal, e.document.owner)}
               pinned={pinnedIds?.has(docID(e.document))}
               snippet={e.document.snippet}
+              expiresAt={e.document.expires_at}
             />
           );
         }
@@ -75,6 +77,7 @@ function DraggableEntryCard({
   canDelete,
   pinned,
   snippet,
+  expiresAt,
 }: {
   type: ResourceType;
   id: string;
@@ -84,6 +87,7 @@ function DraggableEntryCard({
   canDelete: boolean;
   pinned?: boolean;
   snippet?: string;
+  expiresAt?: string;
 }) {
   const isFolder = type === "folder";
   const {
@@ -126,6 +130,7 @@ function DraggableEntryCard({
           </span>
           {pinned && <PinnedMark />}
           {isFolder ? null : <AccessRequestMark documentId={id} />}
+          {isFolder ? null : <ExpiryMark expiresAt={expiresAt} compact />}
         </span>
         <div className="mt-auto min-w-0 pt-3">
           <span className="line-clamp-2 font-heading text-[15px] font-medium leading-snug">

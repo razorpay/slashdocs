@@ -97,6 +97,8 @@ type localEntry struct {
 	Entries  []localEntry `json:"entries,omitzero"`
 	Raw      string       `json:"raw,omitzero"`
 	Version  string       `json:"version,omitzero"`
+	// ExpiresAt is when the server moves a document to the trash.
+	ExpiresAt time.Time `json:"expires_at,omitzero"`
 }
 
 // localOptions are the flags of `slashdocs local` and its commands.
@@ -381,11 +383,13 @@ func serveLocal(ctx context.Context, dir string, port int) error {
 	port, _ = strconv.Atoi(p)
 	info := localInfo{URL: localURL(port), Port: port, Dir: abs, PID: os.Getpid(), Version: Version}
 	app, _ := fs.Sub(localApp, "local_dist")
-	srv := &http.Server{Handler: localHandler(root, app, info, currentLocalPrincipal()), ReadHeaderTimeout: 10 * time.Second}
+	store := &localDocs{root: root, me: currentLocalPrincipal(), url: info.URL}
+	srv := &http.Server{Handler: localSite(store, app, info), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
 		_ = srv.Shutdown(context.WithoutCancel(ctx))
 	}()
+	go store.sweepExpired(ctx)
 	fmt.Fprintf(os.Stderr, "slashdocs local: serving %s at %s\n", abs, info.URL)
 	if err := srv.Serve(l); !errors.Is(err, http.ErrServerClosed) {
 		return err
@@ -441,11 +445,12 @@ func (l loopbackListener) Accept() (net.Conn, error) {
 	}
 }
 
-// localHandler serves the app on localHost and documents on the loopback
+// localSite serves the app on localHost and documents on the loopback
 // address. The two origins keep document scripts away from the app and its
 // API, as the separate render origin of the server does. app holds the built
 // web app, with local.html at its root.
-func localHandler(root *os.Root, app fs.FS, info localInfo, me localPrincipal) http.Handler {
+func localSite(store *localDocs, app fs.FS, info localInfo) http.Handler {
+	root, me := store.root, store.me
 	docs := root.FS()
 	renderOrigin, _ := url.Parse(httpOrigin("127.0.0.1", info.Port))
 	key := make([]byte, 32)
@@ -498,7 +503,6 @@ func localHandler(root *os.Root, app fs.FS, info localInfo, me localPrincipal) h
 		u.RawQuery = url.Values{"v": {r.PathValue("version")}, "token": {token(doc)}}.Encode()
 		writeLocalJSON(w, map[string]string{"token": token(doc), "url": u.String()})
 	})
-	store := &localDocs{root: root, me: me, url: info.URL}
 	store.registerDocuments(site)
 	store.registerComments(site)
 	for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE"} {
@@ -621,7 +625,8 @@ func newLocalEntry(docs fs.FS, p string, st fs.FileInfo) localEntry {
 	if st.IsDir() {
 		return localEntry{Type: "folder", Path: p, Title: path.Base(p), Modified: st.ModTime()}
 	}
-	return localEntry{Type: "document", Path: p, Title: docTitle(docs, p), Modified: st.ModTime()}
+	title, expiresAt := describeLocal(docs, p)
+	return localEntry{Type: "document", Path: p, Title: title, Modified: st.ModTime(), ExpiresAt: expiresAt}
 }
 
 // listLocal returns the folders, then the HTML documents of dir, each group
@@ -653,12 +658,27 @@ func listLocal(docs fs.FS, dir string) ([]localEntry, error) {
 
 var titleRE = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
 
-// docTitle returns the title in the state of a document, the <title> from
-// the start of the HTML, or the file name without its extension.
-func docTitle(docs fs.FS, p string) string {
-	if t, _ := readLocalState(docs, p); t.Title != "" {
-		return t.Title
+// describeLocal returns the title of a document and its expiry time, with
+// one read of the state file. The title is the one in the state, the <title>
+// from the start of the HTML, or the file name without its extension. The
+// expiry is the zero time when the document has none or its state file is
+// wrong.
+func describeLocal(docs fs.FS, p string) (title string, expiresAt time.Time) {
+	t, err := readLocalState(docs, p)
+	// A state file that is wrong can hold a part of the state. The sweep
+	// keeps its document, so the document must not show an expiry.
+	if err == nil {
+		expiresAt = t.ExpiresAt
 	}
+	if t.Title != "" {
+		return t.Title, expiresAt
+	}
+	return htmlTitle(docs, p), expiresAt
+}
+
+// htmlTitle is the <title> from the start of the HTML, or the file name
+// without its extension.
+func htmlTitle(docs fs.FS, p string) string {
 	if f, err := docs.Open(p); err == nil {
 		defer func() { _ = f.Close() }()
 		head := make([]byte, 16<<10)

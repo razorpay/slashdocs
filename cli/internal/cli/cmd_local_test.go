@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -16,6 +17,11 @@ const (
 	testApp    = localHost + ":7070"
 	testRender = "127.0.0.1:7070"
 )
+
+// localHandler is the site of a new store on root.
+func localHandler(root *os.Root, app fs.FS, info localInfo, me localPrincipal) http.Handler {
+	return localSite(&localDocs{root: root, me: me, url: info.URL}, app, info)
+}
 
 type testLocal struct {
 	dir string
