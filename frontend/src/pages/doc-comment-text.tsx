@@ -255,8 +255,9 @@ export function MentionTextarea({
           placeholder={placeholder}
           aria-label={label}
           // Two lines that grow with the text to about twelve, and stay in
-          // the popover. The reader can also drag its height.
-          className="block max-h-[min(35vh,256px)] min-h-14 min-w-0 resize-y py-1.5 text-sm [field-sizing:content]"
+          // the popover. A drag sets a fixed height that stops the growth,
+          // so only a browser without field-sizing gets the drag handle.
+          className="block max-h-[min(35vh,256px)] min-h-14 min-w-0 resize-y py-1.5 text-sm [field-sizing:content] supports-[field-sizing:content]:resize-none"
         />
         {action}
       </div>
