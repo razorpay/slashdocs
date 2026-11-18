@@ -1370,8 +1370,16 @@ func (s *Store) ListComments(ctx context.Context, documentID, status, versionID 
 		return nil, err
 	}
 	defer rollback(ctx, tx)
-	q := s.q.WithTx(tx)
-	rows, err := q.ListComments(ctx, dbsqlc.ListCommentsParams{DocumentID: documentID, Status: status, VersionID: versionID})
+	out, err := listComments(ctx, s.q.WithTx(tx), dbsqlc.ListCommentsParams{DocumentID: documentID, Status: status, VersionID: versionID})
+	if err != nil {
+		return nil, err
+	}
+	return out, tx.Commit(ctx)
+}
+
+// listComments reads the comments with their mentions and reactions.
+func listComments(ctx context.Context, q *dbsqlc.Queries, params dbsqlc.ListCommentsParams) ([]repo.Comment, error) {
+	rows, err := q.ListComments(ctx, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1392,9 +1400,6 @@ func (s *Store) ListComments(ctx context.Context, documentID, status, versionID 
 	for i := range out {
 		out[i].Mentions = mentions[out[i].ID]
 		out[i].Reactions = reactions[out[i].ID]
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
 	}
 	return out, nil
 }
@@ -1751,6 +1756,35 @@ func (s *Store) AppendDocumentEvent(ctx context.Context, documentID, kind string
 		}
 	}
 	if err := appendDocumentEvent(ctx, q, documentID, kind, data, actor); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// AppendCommentThreadEvent reads the thread after it locks the revisions of
+// the document. A write that comes before the read gets an earlier revision,
+// so the last event of a thread shows all of its changes.
+func (s *Store) AppendCommentThreadEvent(ctx context.Context, documentID, threadID string, data func(thread []repo.Comment) (json.RawMessage, error), actor auth.Principal) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer rollback(ctx, tx)
+	q := s.q.WithTx(tx)
+	if _, err := q.LockDocumentForKV(ctx, documentID); errors.Is(err, pgx.ErrNoRows) {
+		return repo.ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	thread, err := listComments(ctx, q, dbsqlc.ListCommentsParams{DocumentID: documentID, ThreadID: threadID})
+	if err != nil {
+		return err
+	}
+	raw, err := data(thread)
+	if err != nil {
+		return err
+	}
+	if err := appendDocumentEvent(ctx, q, documentID, repo.DocumentEventComments, raw, actor); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

@@ -96,6 +96,7 @@ type dependencies struct {
 	githubHTTPClient     *http.Client
 	githubAccessChecks   *singleflight.Group
 	anchorFollows        *followers
+	placements           *placementDocs
 	googleGroupsEnabled  bool
 	googleGroupDirectory googlegroups.GoogleGroupDirectory
 	googleGroupResolver  *googlegroups.Resolver
@@ -186,6 +187,7 @@ func New(cfg Config, opts ...Option) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	deps := dependencies{
 		anchorFollows:        &followers{pending: map[string]bool{}},
+		placements:           &placementDocs{docs: map[string]*placementDoc{}},
 		authenticator:        denyAllAuthenticator{},
 		stateStore:           auth.NewStateStore(),
 		oidc:                 cfg.OIDC,
