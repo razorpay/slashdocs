@@ -108,6 +108,11 @@ definitions:
         type: boolean
       current_version_id:
         type: string
+      expires_at:
+        description: |-
+          ExpiresAt is when the server deletes the document, as an RFC 3339 time
+          in UTC. A document without it is kept.
+        type: string
       id:
         type: string
       labels:
@@ -595,6 +600,11 @@ definitions:
         type: string
       deployment:
         type: string
+      document_expiry_enabled:
+        description: |-
+          DocumentExpiryEnabled is false when the server deletes no expired
+          document. It then refuses a new expiry.
+        type: boolean
       everyone_label:
         type: string
       google_groups_enabled:
@@ -640,6 +650,11 @@ definitions:
         type: string
       default_grant:
         $ref: '#/definitions/server.defaultGrant'
+      expires_at:
+        description: |-
+          ExpiresAt is when the server deletes the document. A document without
+          it is kept.
+        type: string
       folder_id:
         type: string
       id:
@@ -1059,6 +1074,22 @@ definitions:
       status:
         type: string
     type: object
+  server.patchDocumentRequest:
+    properties:
+      expires_at:
+        description: |-
+          ExpiresAt deletes the document after this RFC 3339 time. A null
+          removes the expiry, and the document is kept.
+        type: string
+        x-nullable: true
+      expires_in:
+        description: |-
+          ExpiresIn deletes the document after this period from now: a whole
+          number and min, h, d, w or mo.
+        type: string
+      title:
+        type: string
+    type: object
   server.permissionWarning:
     properties:
       kind:
@@ -1460,6 +1491,15 @@ paths:
         in: formData
         name: default_permission
         type: string
+      - description: 'Delete the document after this period from now: a whole number
+          and min, h, d, w or mo, as in 7d. From 1 minute to 3650 days. Not with expires_at.'
+        in: formData
+        name: expires_in
+        type: string
+      - description: Delete the document after this RFC 3339 time. Not with expires_in.
+        in: formData
+        name: expires_at
+        type: string
       produces:
       - application/json
       responses:
@@ -1509,12 +1549,22 @@ paths:
       tags:
       - documents
     patch:
+      consumes:
+      - application/json
+      description: Changes the title, the expiry, or both. Only the owner can. A document
+        with an expiry is deleted after it.
       parameters:
       - description: Document ID
         in: path
         name: id
         required: true
         type: string
+      - description: The fields to change. Give expires_in or expires_at, not both.
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/server.patchDocumentRequest'
       responses:
         "200":
           description: OK

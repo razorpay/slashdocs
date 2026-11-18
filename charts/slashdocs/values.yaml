@@ -218,6 +218,20 @@ kvEvents:
   existingSecret: ""
   listenerDatabaseURLKey: SLASHDOCS_KV_EVENTS_LISTENER_DATABASE_URL
 
+# Ephemeral documents (see docs/self-hosting.md, "Ephemeral documents"). A
+# document can have an expiry time, and the server deletes it after that
+# time. Both values are Go durations and render env vars only when set.
+documentExpiry:
+  # SLASHDOCS_DOCUMENT_EXPIRY_SWEEP_INTERVAL: how often each server looks for
+  # expired documents, such as "30s" or "5m". Empty uses the server default
+  # (1m). "0" turns the feature off: the server deletes no expired document,
+  # removes no blob, and refuses a new expiry.
+  sweepInterval: ""
+  # SLASHDOCS_DELETED_BLOB_RETENTION: how long the HTML of a deleted document
+  # stays in blob storage, such as "168h". Empty uses the server default
+  # (168h, 7 days). "0" removes it in the next sweep.
+  blobRetention: ""
+
 # Optional webhook that receives approval events (see docs/self-hosting.md,
 # "Approval events"). Off unless url or existingSecret is set. The URL can
 # hold a credential, so both values are stored in the chart-managed Secret; or

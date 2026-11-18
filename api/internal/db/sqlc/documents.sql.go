@@ -23,11 +23,23 @@ func (q *Queries) DeleteDocument(ctx context.Context, id string) (int64, error) 
 	return result.RowsAffected(), nil
 }
 
+const documentExists = `-- name: DocumentExists :one
+SELECT EXISTS(SELECT 1 FROM documents WHERE id = $1)
+`
+
+func (q *Queries) DocumentExists(ctx context.Context, id string) (bool, error) {
+	row := q.db.QueryRow(ctx, documentExists, id)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const getDocument = `-- name: GetDocument :one
 SELECT d.id,d.title,d.current_version_id,d.seq,d.owner_type,d.owner_id,
        COALESCE(u.email,'') AS owner_email,
        COALESCE(u.name,sa.name,'') AS owner_name,
-       COALESCE(d.parent_folder_id,'') AS parent_folder_id
+       COALESCE(d.parent_folder_id,'') AS parent_folder_id,
+       d.expires_at
 FROM documents d
 LEFT JOIN users u ON d.owner_type='user' AND u.id=d.owner_id
 LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
@@ -46,6 +58,7 @@ type GetDocumentRow struct {
 	OwnerEmail       string
 	OwnerName        string
 	ParentFolderID   string
+	ExpiresAt        pgtype.Timestamptz
 }
 
 // nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
@@ -62,6 +75,7 @@ func (q *Queries) GetDocument(ctx context.Context, id string) (GetDocumentRow, e
 		&i.OwnerEmail,
 		&i.OwnerName,
 		&i.ParentFolderID,
+		&i.ExpiresAt,
 	)
 	return i, err
 }
@@ -102,8 +116,8 @@ func (q *Queries) IndexDocuments(ctx context.Context, rowLimit int32) (int64, er
 }
 
 const insertDocument = `-- name: InsertDocument :exec
-INSERT INTO documents(id,title,owner_type,owner_id,parent_folder_id,seq)
-VALUES($1,$2,$3,$4,NULLIF($5::text,''),1)
+INSERT INTO documents(id,title,owner_type,owner_id,parent_folder_id,seq,expires_at)
+VALUES($1,$2,$3,$4,NULLIF($5::text,''),1,$6)
 `
 
 type InsertDocumentParams struct {
@@ -112,6 +126,7 @@ type InsertDocumentParams struct {
 	OwnerType      string
 	OwnerID        string
 	ParentFolderID string
+	ExpiresAt      pgtype.Timestamptz
 }
 
 // The first version of a document is its seq 1.
@@ -122,6 +137,7 @@ func (q *Queries) InsertDocument(ctx context.Context, arg InsertDocumentParams) 
 		arg.OwnerType,
 		arg.OwnerID,
 		arg.ParentFolderID,
+		arg.ExpiresAt,
 	)
 	return err
 }
@@ -130,7 +146,8 @@ const listDocuments = `-- name: ListDocuments :many
 SELECT d.id,d.title,d.current_version_id,d.owner_type,d.owner_id,
        COALESCE(u.email,'') AS owner_email,
        COALESCE(u.name,sa.name,'') AS owner_name,
-       d.updated_at
+       d.updated_at,
+       d.expires_at
 FROM documents d
 LEFT JOIN users u ON d.owner_type='user' AND u.id=d.owner_id
 LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
@@ -183,6 +200,7 @@ type ListDocumentsRow struct {
 	OwnerEmail       string
 	OwnerName        string
 	UpdatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
 }
 
 // A document appears in a principal's workspace when they:
@@ -221,6 +239,7 @@ func (q *Queries) ListDocuments(ctx context.Context, arg ListDocumentsParams) ([
 			&i.OwnerEmail,
 			&i.OwnerName,
 			&i.UpdatedAt,
+			&i.ExpiresAt,
 		); err != nil {
 			return nil, err
 		}
@@ -238,7 +257,8 @@ SELECT d.id, d.title, d.owner_type, d.owner_id,
        COALESCE(d.parent_folder_id,'') AS parent_folder_id,
        COALESCE(u.name,sa.name,'') AS owner_name,
        COALESCE(u.email,'') AS owner_email,
-       d.updated_at
+       d.updated_at,
+       d.expires_at
 FROM documents d
 LEFT JOIN users u ON d.owner_type='user' AND d.owner_id=u.id
 LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
@@ -257,6 +277,7 @@ type ListFolderDocumentsRow struct {
 	OwnerName        string
 	OwnerEmail       string
 	UpdatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
 }
 
 // nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
@@ -279,6 +300,7 @@ func (q *Queries) ListFolderDocuments(ctx context.Context, folderID string) ([]L
 			&i.OwnerName,
 			&i.OwnerEmail,
 			&i.UpdatedAt,
+			&i.ExpiresAt,
 		); err != nil {
 			return nil, err
 		}
@@ -288,6 +310,51 @@ func (q *Queries) ListFolderDocuments(ctx context.Context, folderID string) ([]L
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockDocumentForDelete = `-- name: LockDocumentForDelete :one
+SELECT id FROM documents WHERE id = $1 FOR UPDATE
+`
+
+// A delete waits for the writes to the document, which hold this row.
+func (q *Queries) LockDocumentForDelete(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, lockDocumentForDelete, id)
+	var id_2 string
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
+const lockExpiredDocument = `-- name: LockExpiredDocument :one
+SELECT id, expires_at, owner_type, owner_id FROM documents
+WHERE expires_at <= now() AND id <> ALL(COALESCE($1::text[], '{}'))
+ORDER BY expires_at, id
+LIMIT 1
+FOR UPDATE SKIP LOCKED
+`
+
+type LockExpiredDocumentRow struct {
+	ID        string
+	ExpiresAt pgtype.Timestamptz
+	OwnerType string
+	OwnerID   string
+}
+
+// The oldest document whose expiry time passed, and that no other
+// transaction holds. SKIP LOCKED passes over a document that another server
+// deletes or that a write holds, and a later round takes it. The condition
+// is read under the lock, so an expiry that the owner changed counts.
+// skipped holds the documents whose delete failed in this round, so that
+// one such document does not hide the others.
+func (q *Queries) LockExpiredDocument(ctx context.Context, skipped []string) (LockExpiredDocumentRow, error) {
+	row := q.db.QueryRow(ctx, lockExpiredDocument, skipped)
+	var i LockExpiredDocumentRow
+	err := row.Scan(
+		&i.ID,
+		&i.ExpiresAt,
+		&i.OwnerType,
+		&i.OwnerID,
+	)
+	return i, err
 }
 
 const moveDocumentToFolder = `-- name: MoveDocumentToFolder :one
@@ -460,6 +527,7 @@ SELECT d.id, d.title, d.current_version_id, d.owner_type, d.owner_id,
        COALESCE(pf.id,'') AS parent_folder_id,
        COALESCE(pf.title,'') AS parent_folder_title,
        d.updated_at,
+       d.expires_at,
        -- The snippet shows the words of the text, so title terms are not in it.
        CASE WHEN numnode(search.snippet) > 0 AND cv.search_vector @@ search.snippet
          THEN ts_headline('english', cv.search_text, search.snippet,
@@ -506,6 +574,7 @@ type SearchDocumentsRow struct {
 	ParentFolderID    string
 	ParentFolderTitle string
 	UpdatedAt         pgtype.Timestamptz
+	ExpiresAt         pgtype.Timestamptz
 	Snippet           string
 }
 
@@ -570,6 +639,7 @@ func (q *Queries) SearchDocuments(ctx context.Context, arg SearchDocumentsParams
 			&i.ParentFolderID,
 			&i.ParentFolderTitle,
 			&i.UpdatedAt,
+			&i.ExpiresAt,
 			&i.Snippet,
 		); err != nil {
 			return nil, err
@@ -580,6 +650,22 @@ func (q *Queries) SearchDocuments(ctx context.Context, arg SearchDocumentsParams
 		return nil, err
 	}
 	return items, nil
+}
+
+const setDocumentExpiry = `-- name: SetDocumentExpiry :exec
+UPDATE documents SET expires_at = $1 WHERE id = $2
+`
+
+type SetDocumentExpiryParams struct {
+	ExpiresAt pgtype.Timestamptz
+	ID        string
+}
+
+// A null removes the expiry. updated_at stays: the lists sort by it, and the
+// content did not change.
+func (q *Queries) SetDocumentExpiry(ctx context.Context, arg SetDocumentExpiryParams) error {
+	_, err := q.db.Exec(ctx, setDocumentExpiry, arg.ExpiresAt, arg.ID)
+	return err
 }
 
 const updateDocumentCurrentVersion = `-- name: UpdateDocumentCurrentVersion :exec

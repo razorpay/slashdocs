@@ -174,6 +174,9 @@ type Document struct {
 	CanMove   bool     `json:"can_move,omitempty"`
 	UpdatedAt string   `json:"updated_at,omitempty"`
 	Labels    []string `json:"labels,omitempty"`
+	// ExpiresAt is when the server deletes the document, as an RFC 3339 time
+	// in UTC. A document without it is kept.
+	ExpiresAt string `json:"expires_at,omitempty"`
 	// Snippet is set in search results when the text matches. U+0002 and
 	// U+0003 surround each match.
 	Snippet string `json:"snippet,omitempty"`
@@ -181,6 +184,29 @@ type Document struct {
 	// ParentFolder) and only present when the document has assigned approvers.
 	ApprovalStatus  string           `json:"approval_status,omitempty"`
 	ApprovalSummary *ApprovalSummary `json:"approval_summary,omitempty"`
+}
+
+// DocumentOptions holds the optional properties of a new document.
+type DocumentOptions struct {
+	// ExpiresAt is when the server deletes the document. With the zero time,
+	// the document is kept.
+	ExpiresAt time.Time
+}
+
+// DocumentOption sets an optional property of a new document.
+type DocumentOption func(*DocumentOptions)
+
+// WithExpiry makes the server delete the new document after at.
+func WithExpiry(at time.Time) DocumentOption {
+	return func(o *DocumentOptions) { o.ExpiresAt = at }
+}
+
+// DocumentChange is a change of the title or the expiry of a document. A
+// field that is nil stays as it is.
+type DocumentChange struct {
+	Title *string
+	// ExpiresAt is the new expiry time. The zero time removes the expiry.
+	ExpiresAt *time.Time
 }
 
 // ApprovalRequest names a principal the document owner wants a decision from.
@@ -726,7 +752,7 @@ type Repository interface {
 	FolderAccessChain(ctx context.Context, principal auth.Principal, folderID string) ([]FolderAccess, error)
 	// CreateDocument puts the document in the folder, or at the root when
 	// folderID is empty. It returns ErrNotFound when the folder does not exist.
-	CreateDocument(ctx context.Context, owner auth.Principal, title, folderID string, html []byte) (Document, Version, error)
+	CreateDocument(ctx context.Context, owner auth.Principal, title, folderID string, html []byte, opts ...DocumentOption) (Document, Version, error)
 	// ListDocuments and SearchDocuments return one page of documents, and
 	// whether more documents follow it.
 	ListDocuments(ctx context.Context, principal auth.Principal, page Page, includeLabels bool) ([]Document, bool, error)
@@ -736,7 +762,10 @@ type Repository interface {
 	// first open. Idempotent.
 	RecordDocumentOpened(ctx context.Context, documentID string, principal auth.Principal) error
 	GetDocument(ctx context.Context, id string) (Document, error)
-	UpdateDocument(ctx context.Context, id, title string) (Document, error)
+	// ChangeDocument changes the title, the expiry, or both, in one
+	// transaction, and returns the document. It returns ErrNotFound when the
+	// document does not exist.
+	ChangeDocument(ctx context.Context, id string, change DocumentChange) (Document, error)
 	DeleteDocument(ctx context.Context, id string) error
 	ListDocumentsByLabel(ctx context.Context, principal auth.Principal, label string) ([]Document, error)
 	ListDocumentLabels(ctx context.Context, documentID string) ([]string, error)

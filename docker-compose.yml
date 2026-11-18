@@ -97,6 +97,11 @@ services:
       SLASHDOCS_APPROVAL_WEBHOOK_URL: ${SLASHDOCS_APPROVAL_WEBHOOK_URL:-}
       SLASHDOCS_APPROVAL_WEBHOOK_SECRET: ${SLASHDOCS_APPROVAL_WEBHOOK_SECRET:-}
       SLASHDOCS_LABELS_ENABLED: ${SLASHDOCS_LABELS_ENABLED:-}
+      # Ephemeral documents: how often the server looks for expired
+      # documents, and how long the HTML of a deleted document stays in the
+      # bucket. Empty uses the defaults (1m and 168h).
+      SLASHDOCS_DOCUMENT_EXPIRY_SWEEP_INTERVAL: ${SLASHDOCS_DOCUMENT_EXPIRY_SWEEP_INTERVAL:-}
+      SLASHDOCS_DELETED_BLOB_RETENTION: ${SLASHDOCS_DELETED_BLOB_RETENTION:-}
 
       SLASHDOCS_APP_ORIGIN: http://localhost:8080
       # Distinct browser origin, same listener: the server only serves /v/…

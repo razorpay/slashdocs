@@ -52,6 +52,29 @@ slashdocs docs edit doc_123 --all --old "Cache design" --new "Cache plan"
 slashdocs docs comments resolve doc_123 cmt_1 cmt_2
 ```
 
+## Ephemeral documents
+
+The server keeps a document until its owner deletes it. With `--ttl`, the
+server deletes the document after that period, with its history and comments.
+Use it for a document that is needed for a short time, when the person asks
+for one. The delete cannot be undone.
+
+```bash
+slashdocs docs create notes.html --title "Scratch" --ttl 7d
+slashdocs docs update doc_123 --ttl 3mo     # 3 months from now
+slashdocs docs update doc_123 --ttl never   # keep the document
+slashdocs docs show doc_123                 # prints expires_at
+```
+
+A period is a whole number and a unit: `min`, `h`, `d`, `w` or `mo`. A month
+is 30 days. There is no `m`: `3m` reads as three months and as three minutes,
+so the CLI refuses it. Only the owner of a document can set its expiry.
+
+The command prints the time of the delete and how long that is from now, so
+a wrong unit shows at once. Before it changes something, it asks the server
+whether it sets an expiry. When the server is older than the CLI, or its
+operator turned the expiry off, the command fails and changes nothing.
+
 ## Local documents
 
 `slashdocs local` lets you try slashdocs on one computer, without a server, account, or login. It serves a folder of HTML documents with the slashdocs viewer and comments. To share documents with your team, and to get version history, full-text search, labels, and notifications, use a slashdocs server.

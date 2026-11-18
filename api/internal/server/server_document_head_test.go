@@ -162,7 +162,8 @@ func TestDocumentPageKeepsTheGenericShellForAnInvalidBearerToken(t *testing.T) {
 
 func TestDocumentPageHeadEscapesTheTitle(t *testing.T) {
 	e := newShellTestEnv(t, server.Config{Environment: "test"})
-	if _, err := e.store.UpdateDocument(context.Background(), e.doc.ID, `Q3 "plan" <b>&`); err != nil {
+	title := `Q3 "plan" <b>&`
+	if _, err := e.store.ChangeDocument(context.Background(), e.doc.ID, repo.DocumentChange{Title: &title}); err != nil {
 		t.Fatal(err)
 	}
 	body := getPage(t, e.h, "/app/d/"+e.doc.ID, &fixtureOwner).Body.String()

@@ -3,6 +3,7 @@ package blob_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/razorpay/slashdocs/api/internal/blob"
@@ -55,6 +56,24 @@ func testStoreContract(t *testing.T, s blob.Store) {
 	}
 	if _, _, err := s.Get(ctx, "k"); !errors.Is(err, blob.ErrNotFound) {
 		t.Fatalf("Get after delete err = %v, want ErrNotFound", err)
+	}
+
+	// List returns the keys that start with the prefix, in order, and no
+	// other key. docs/a1/ is not under docs/a/.
+	for _, key := range []string{"docs/a/2.html", "docs/a/1.html", "docs/a1/1.html", "docs/b/1.html", "other"} {
+		if err := s.Put(ctx, key, "text/html", []byte(key)); err != nil {
+			t.Fatalf("Put(%q): %v", key, err)
+		}
+	}
+	keys, err := s.List(ctx, "docs/a/")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if want := []string{"docs/a/1.html", "docs/a/2.html"}; !slices.Equal(keys, want) {
+		t.Fatalf("List(docs/a/) = %q, want %q", keys, want)
+	}
+	if keys, err := s.List(ctx, "docs/none/"); err != nil || len(keys) != 0 {
+		t.Fatalf("List(docs/none/) = %q, %v, want no key", keys, err)
 	}
 }
 

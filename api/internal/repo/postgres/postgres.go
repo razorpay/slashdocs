@@ -331,7 +331,12 @@ func principalHasGrant(p auth.Principal, principalType, principalID string) bool
 	return false
 }
 
-func (s *Store) CreateDocument(ctx context.Context, owner auth.Principal, title, folderID string, html []byte) (repo.Document, repo.Version, error) {
+func (s *Store) CreateDocument(ctx context.Context, owner auth.Principal, title, folderID string, html []byte, opts ...repo.DocumentOption) (repo.Document, repo.Version, error) {
+	var options repo.DocumentOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
+	expiresAt := expiryParam(options.ExpiresAt)
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return repo.Document{}, repo.Version{}, err
@@ -355,7 +360,7 @@ func (s *Store) CreateDocument(ctx context.Context, owner auth.Principal, title,
 			_ = s.blobs.Delete(context.WithoutCancel(ctx), blobKey)
 		}
 	}()
-	if err := q.InsertDocument(ctx, dbsqlc.InsertDocumentParams{ID: docID, Title: title, OwnerType: string(owner.Type), OwnerID: owner.ID, ParentFolderID: folderID}); err != nil {
+	if err := q.InsertDocument(ctx, dbsqlc.InsertDocumentParams{ID: docID, Title: title, OwnerType: string(owner.Type), OwnerID: owner.ID, ParentFolderID: folderID, ExpiresAt: expiresAt}); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23503" { // the folder does not exist
 			return repo.Document{}, repo.Version{}, repo.ErrNotFound
@@ -374,7 +379,7 @@ func (s *Store) CreateDocument(ctx context.Context, owner auth.Principal, title,
 	}
 	committed = true
 	s.states.put(docID, newLiveState(verID, 1, html))
-	return repo.Document{ID: docID, Title: title, Owner: owner, CurrentVersionID: verID, Seq: 1, ParentFolderID: folderID}, repo.Version{ID: verID, Number: 1, DocumentID: docID, CreatedBy: owner, SHA256: sum, CreatedAt: pgTimeRFC3339(createdAt), Authors: []auth.Principal{owner}, Seq: 1}, nil
+	return repo.Document{ID: docID, Title: title, Owner: owner, CurrentVersionID: verID, Seq: 1, ParentFolderID: folderID, ExpiresAt: pgTimeRFC3339(expiresAt)}, repo.Version{ID: verID, Number: 1, DocumentID: docID, CreatedBy: owner, SHA256: sum, CreatedAt: pgTimeRFC3339(createdAt), Authors: []auth.Principal{owner}, Seq: 1}, nil
 }
 func (s *Store) GetDocument(ctx context.Context, id string) (repo.Document, error) {
 	r, err := s.q.GetDocument(ctx, id)
@@ -899,34 +904,6 @@ func (s *Store) RecordDocumentOpened(ctx context.Context, documentID string, p a
 		PrincipalID:   p.ID,
 	})
 }
-func (s *Store) UpdateDocument(ctx context.Context, id, title string) (repo.Document, error) {
-	if title != "" {
-		if err := s.q.UpdateDocumentTitle(ctx, dbsqlc.UpdateDocumentTitleParams{Title: title, ID: id}); err != nil {
-			return repo.Document{}, err
-		}
-	}
-	return s.GetDocument(ctx, id)
-}
-func (s *Store) DeleteDocument(ctx context.Context, id string) error {
-	tx, err := s.db.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer rollback(ctx, tx)
-	q := s.q.WithTx(tx)
-	deleted, err := q.DeleteDocument(ctx, id)
-	if err != nil {
-		return err
-	}
-	if deleted > 0 {
-		// The event rows cascade with the document, so the notification tells
-		// brokers to fetch, observe ErrNotFound, and close active subscribers.
-		if err := q.NotifyDocumentKVEvent(ctx, id); err != nil {
-			return err
-		}
-	}
-	return tx.Commit(ctx)
-}
 
 func (s *Store) ListDocumentsByLabel(ctx context.Context, p auth.Principal, label string) ([]repo.Document, error) {
 	rows, err := s.q.ListAccessibleDocumentsByLabel(ctx, dbsqlc.ListAccessibleDocumentsByLabelParams{
@@ -937,7 +914,7 @@ func (s *Store) ListDocumentsByLabel(ctx context.Context, p auth.Principal, labe
 	}
 	out := make([]repo.Document, 0, len(rows))
 	for _, r := range rows {
-		d := repo.Document{ID: r.ID, Title: r.Title, CurrentVersionID: r.CurrentVersionID.String, Owner: auth.Principal{Type: auth.PrincipalType(r.OwnerType), ID: r.OwnerID, Email: r.OwnerEmail, Name: r.OwnerName}}
+		d := repo.Document{ID: r.ID, Title: r.Title, CurrentVersionID: r.CurrentVersionID.String, Owner: auth.Principal{Type: auth.PrincipalType(r.OwnerType), ID: r.OwnerID, Email: r.OwnerEmail, Name: r.OwnerName}, ExpiresAt: pgTimeRFC3339(r.ExpiresAt)}
 		if r.UpdatedAt.Valid {
 			d.UpdatedAt = r.UpdatedAt.Time.UTC().Format(time.RFC3339Nano)
 		}
@@ -1836,17 +1813,17 @@ func (s *Store) DeclineOwnershipTransfer(ctx context.Context, id string, user au
 }
 
 func docFromGet(r dbsqlc.GetDocumentRow) repo.Document {
-	return repo.Document{ID: r.ID, Title: r.Title, CurrentVersionID: r.CurrentVersionID.String, Seq: r.Seq, Owner: auth.Principal{Type: auth.PrincipalType(r.OwnerType), ID: r.OwnerID, Email: r.OwnerEmail, Name: r.OwnerName}, ParentFolderID: r.ParentFolderID}
+	return repo.Document{ID: r.ID, Title: r.Title, CurrentVersionID: r.CurrentVersionID.String, Seq: r.Seq, Owner: auth.Principal{Type: auth.PrincipalType(r.OwnerType), ID: r.OwnerID, Email: r.OwnerEmail, Name: r.OwnerName}, ParentFolderID: r.ParentFolderID, ExpiresAt: pgTimeRFC3339(r.ExpiresAt)}
 }
 func docFromList(r dbsqlc.ListDocumentsRow) repo.Document {
-	d := repo.Document{ID: r.ID, Title: r.Title, CurrentVersionID: r.CurrentVersionID.String, Owner: auth.Principal{Type: auth.PrincipalType(r.OwnerType), ID: r.OwnerID, Email: r.OwnerEmail, Name: r.OwnerName}}
+	d := repo.Document{ID: r.ID, Title: r.Title, CurrentVersionID: r.CurrentVersionID.String, Owner: auth.Principal{Type: auth.PrincipalType(r.OwnerType), ID: r.OwnerID, Email: r.OwnerEmail, Name: r.OwnerName}, ExpiresAt: pgTimeRFC3339(r.ExpiresAt)}
 	if r.UpdatedAt.Valid {
 		d.UpdatedAt = r.UpdatedAt.Time.Format(time.RFC3339)
 	}
 	return d
 }
 func docFromSearch(r dbsqlc.SearchDocumentsRow) repo.Document {
-	d := repo.Document{ID: r.ID, Title: r.Title, CurrentVersionID: r.CurrentVersionID.String, Owner: auth.Principal{Type: auth.PrincipalType(r.OwnerType), ID: r.OwnerID, Email: r.OwnerEmail, Name: r.OwnerName}, ParentFolderID: r.ParentFolderID, Snippet: r.Snippet}
+	d := repo.Document{ID: r.ID, Title: r.Title, CurrentVersionID: r.CurrentVersionID.String, Owner: auth.Principal{Type: auth.PrincipalType(r.OwnerType), ID: r.OwnerID, Email: r.OwnerEmail, Name: r.OwnerName}, ParentFolderID: r.ParentFolderID, Snippet: r.Snippet, ExpiresAt: pgTimeRFC3339(r.ExpiresAt)}
 	if r.ParentFolderID != "" {
 		d.ParentFolder = &repo.FolderBreadcrumb{ID: r.ParentFolderID, Title: r.ParentFolderTitle}
 	}
