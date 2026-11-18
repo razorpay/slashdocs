@@ -195,18 +195,26 @@ test("an edit from a tab that did not see a newer edit is refused, and keeps the
     quote: "Write the notes.",
   });
   const commentURL = `/v1/documents/${document.id}/comments/${comment.id}`;
-  // This tab misses the live update until its own save comes back.
+  // This tab misses the live update until its own save comes back: its
+  // loads give the first comments, and its comments events wait.
   let stale: string | undefined;
+  let saved = false;
   await page.route(`**/v1/documents/${document.id}/comments`, async (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     const response = await route.fetch();
     stale ??= await response.text();
-    await route.fulfill({ response, body: stale });
+    await route.fulfill({ response, body: saved ? undefined : stale });
+  });
+  await page.routeWebSocket(/\/live\b/, (ws) => {
+    const server = ws.connectToServer();
+    server.onMessage((message) => {
+      if (saved || !String(message).includes('"kind":"comments"')) ws.send(message);
+    });
   });
   await page.route(`**${commentURL}`, async (route) => {
     if (route.request().method() !== "PATCH") return route.fallback();
     const response = await route.fetch();
-    await page.unroute(`**/v1/documents/${document.id}/comments`);
+    saved = true;
     await route.fulfill({ response });
   });
   const thread = await openThread(page, document.id, comment.id, "Original");
