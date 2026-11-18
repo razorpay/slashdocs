@@ -16,7 +16,10 @@ async function setup({ own = "own", hidden = false, unsaved = [] as string[] } =
   return { noticeBuild, reload, hide };
 }
 
-beforeEach(() => vi.restoreAllMocks());
+beforeEach(() => {
+  vi.restoreAllMocks();
+  sessionStorage.clear();
+});
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.doUnmock("./persistent-store");
@@ -47,6 +50,28 @@ describe("noticeBuild", () => {
     noticeBuild("new");
 
     expect(reload).not.toHaveBeenCalled();
+  });
+
+  it("waits while a guard of the page would warn on an unload", async () => {
+    const { noticeBuild, reload } = await setup({ hidden: true });
+    const warn = (e: Event) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+
+    noticeBuild("new");
+    window.removeEventListener("beforeunload", warn);
+
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it("loads a page again at most once in ten minutes", async () => {
+    const first = await setup({ hidden: true });
+    first.noticeBuild("new");
+    expect(first.reload).toHaveBeenCalledOnce();
+
+    // The reloaded page gets the other build of a rolling deploy.
+    const second = await setup({ own: "new", hidden: true });
+    second.noticeBuild("own");
+    expect(second.reload).not.toHaveBeenCalled();
   });
 
   it("keeps a page of the same build, of the dev server, or with no build named", async () => {

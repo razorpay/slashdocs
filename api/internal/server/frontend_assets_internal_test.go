@@ -71,7 +71,10 @@ func TestFrontendNamesItsBuildAndReloadsOlderPages(t *testing.T) {
 	index := []byte(`<script>window.__SLASHDOCS_BUILD__ = "__SLASHDOCS_BUILD_VALUE__";</script>`)
 	dist := fstest.MapFS{"index.html": {Data: index}, "assets/index-new.js": {Data: []byte("new")}}
 	r := gin.New()
-	registerFrontendRoutes(r, handlers{deps: dependencies{frontend: dist, frontendBuild: frontendBuild(dist)}})
+	registerFrontendRoutes(r, handlers{deps: dependencies{
+		appOrigin: "https://app.example", renderOrigin: "https://render.example",
+		frontend: dist, frontendBuild: frontendBuild(dist),
+	}})
 	get := func(target string) *httptest.ResponseRecorder {
 		rr := httptest.NewRecorder()
 		r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, target, nil))
@@ -79,7 +82,7 @@ func TestFrontendNamesItsBuildAndReloadsOlderPages(t *testing.T) {
 	}
 
 	build := frontendBuild(dist)
-	if rr := get("/app/documents"); len(build) != 16 || rr.Body.String() != `<script>window.__SLASHDOCS_BUILD__ = "`+build+`";</script>` {
+	if rr := get("https://app.example/app/documents"); len(build) != 16 || rr.Body.String() != `<script>window.__SLASHDOCS_BUILD__ = "`+build+`";</script>` {
 		t.Fatalf("index = %q, want build %q filled in", rr.Body.String(), build)
 	}
 	if rr := get("/assets/index-new.js"); rr.Code != http.StatusOK || rr.Body.String() != "new" {
@@ -93,5 +96,9 @@ func TestFrontendNamesItsBuildAndReloadsOlderPages(t *testing.T) {
 	}
 	if rr := get("/assets/index-old.css"); rr.Code != http.StatusNotFound {
 		t.Fatalf("old style: status = %d, want 404", rr.Code)
+	}
+	// A document on the render host keeps the 404 for a script of its own.
+	if rr := get("https://render.example/assets/dist-old.js"); rr.Code != http.StatusNotFound {
+		t.Fatalf("render host script: status = %d, want 404", rr.Code)
 	}
 }

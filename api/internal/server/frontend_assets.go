@@ -32,7 +32,8 @@ const shellTitle = "<title>slashdocs</title>"
 // Only a page of an older build asks for one, as when it loads a part of its
 // code after a deploy. The page then loads again, and gets the current build.
 // It does so at most once a minute, so that a build that lacks one of its own
-// files does not load again and again.
+// files does not load again and again. A document on the render host keeps
+// the 404 for a script of its own.
 const staleAssetReload = `try {
   const key = "slashdocs:stale-reload";
   if (!(Date.now() - Number(sessionStorage.getItem(key)) < 60000)) {
@@ -75,7 +76,7 @@ func registerFrontendRoutes(r *gin.Engine, h handlers) {
 	assetServer := http.StripPrefix("/assets/", http.FileServer(http.FS(assets)))
 	r.GET("/assets/*filepath", func(c *gin.Context) {
 		name := strings.TrimPrefix(c.Param("filepath"), "/")
-		if path.Ext(name) == ".js" && !fileExists(assets, name) {
+		if path.Ext(name) == ".js" && !fileExists(assets, name) && !h.deps.isRenderHost(c.Request.Host) {
 			c.Header("Cache-Control", "no-store")
 			c.Data(http.StatusOK, "text/javascript; charset=utf-8", []byte(staleAssetReload))
 			return
