@@ -104,6 +104,9 @@ type dependencies struct {
 	slackUnfurler        notifications.Unfurler
 	previousOrigins      []string
 	frontend             fs.FS
+	// frontendBuild names the build of frontend. The pages of another build
+	// load again.
+	frontendBuild string
 }
 
 // Option configures the Server.
@@ -218,6 +221,7 @@ func New(cfg Config, opts ...Option) *Server {
 	for _, opt := range opts {
 		opt(&deps)
 	}
+	deps.frontendBuild = frontendBuild(deps.frontend)
 	// Missing storage is a startup wiring bug, not a recoverable request error.
 	if deps.repository == nil {
 		panic("server.New: repository is required (use server.WithRepository)")

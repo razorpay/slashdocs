@@ -66,3 +66,32 @@ func TestFrontendRoutesRedirectRenderHost(t *testing.T) {
 		t.Fatalf("app hostname unexpectedly redirected to %q", rr.Header().Get("Location"))
 	}
 }
+
+func TestFrontendNamesItsBuildAndReloadsOlderPages(t *testing.T) {
+	index := []byte(`<script>window.__SLASHDOCS_BUILD__ = "__SLASHDOCS_BUILD_VALUE__";</script>`)
+	dist := fstest.MapFS{"index.html": {Data: index}, "assets/index-new.js": {Data: []byte("new")}}
+	r := gin.New()
+	registerFrontendRoutes(r, handlers{deps: dependencies{frontend: dist, frontendBuild: frontendBuild(dist)}})
+	get := func(target string) *httptest.ResponseRecorder {
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, target, nil))
+		return rr
+	}
+
+	build := frontendBuild(dist)
+	if rr := get("/app/documents"); len(build) != 16 || rr.Body.String() != `<script>window.__SLASHDOCS_BUILD__ = "`+build+`";</script>` {
+		t.Fatalf("index = %q, want build %q filled in", rr.Body.String(), build)
+	}
+	if rr := get("/assets/index-new.js"); rr.Code != http.StatusOK || rr.Body.String() != "new" {
+		t.Fatalf("asset: status = %d, body = %q, want the file", rr.Code, rr.Body.String())
+	}
+	// Only a page of an older build asks for a script that this build lacks.
+	rr := get("/assets/dist-old.js")
+	if rr.Code != http.StatusOK || rr.Body.String() != staleAssetReload || rr.Header().Get("Cache-Control") != "no-store" ||
+		rr.Header().Get("Content-Type") != "text/javascript; charset=utf-8" {
+		t.Fatalf("old script: status = %d, headers = %v, want the reload, never cached", rr.Code, rr.Header())
+	}
+	if rr := get("/assets/index-old.css"); rr.Code != http.StatusNotFound {
+		t.Fatalf("old style: status = %d, want 404", rr.Code)
+	}
+}
