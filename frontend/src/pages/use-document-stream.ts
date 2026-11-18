@@ -17,6 +17,7 @@ import { createCursorBatch } from "@/lib/live-cursors";
 import { principalColor, principalLabel, samePrincipal } from "@/lib/principals";
 import type { RemoteCursor } from "../../bridge/cursors";
 import { randomId } from "@/lib/uuid";
+import { noticeBuild } from "@/lib/build";
 import { useInvalidateApprovals } from "./use-invalidate-approvals";
 import { withThread } from "./comment-events";
 
@@ -213,7 +214,10 @@ export function useDocumentStream({
         else q.invalidateQueries({ queryKey: key });
       },
       approvals: invalidateApprovals,
-      document: (event) => onDocumentChange(documentEvent(event)),
+      document: (event) => {
+        noticeBuild((event.data as { build?: string } | undefined)?.build);
+        onDocumentChange(documentEvent(event));
+      },
       presence: (event) => {
         const presence = event.data as DocumentPresence | undefined;
         const viewer = event.updated_by;

@@ -36,6 +36,8 @@ type documentKVStream struct {
 	authenticate func(context.Context) (*auth.Principal, error)
 	principal    auth.Principal
 	documentID   string
+	// build names the build of the frontend, which each position tells.
+	build string
 	// session names the viewer, whom the server lists until the stream ends.
 	session   string
 	lastSent  int64
@@ -131,16 +133,20 @@ func (s *documentKVStream) sendLive(event repo.DocumentKVEvent) error {
 	return nil
 }
 
-// sendPosition tells the viewer where the live document is, with an event
-// that is not stored. A viewer who missed the relayed event of an operation
-// then asks for the changes. A read that fails sends nothing: the next
+// sendPosition tells the viewer where the live document is, and the build of
+// the frontend, with an event that is not stored. A viewer who missed the
+// relayed event of an operation then asks for the changes, and a page of
+// another build loads again. A read that fails sends nothing: the next
 // keep-alive sends the position.
 func (s *documentKVStream) sendPosition() error {
 	d, err := s.repository.GetDocument(s.ctx, s.documentID)
 	if err != nil {
 		return nil
 	}
-	data, err := json.Marshal(repo.DocumentPosition{Seq: d.Seq, VersionID: d.CurrentVersionID})
+	data, err := json.Marshal(struct {
+		repo.DocumentPosition
+		Build string `json:"build,omitempty"`
+	}{repo.DocumentPosition{Seq: d.Seq, VersionID: d.CurrentVersionID}, s.build})
 	if err != nil {
 		return err
 	}
@@ -316,6 +322,7 @@ func (h handlers) openDocumentStream(c *gin.Context) (*documentKVStream, <-chan 
 		},
 		principal:  *current(c),
 		documentID: docID,
+		build:      h.deps.frontendBuild,
 		session:    session,
 		lastSent:   afterRevision,
 		close:      closeStream,
