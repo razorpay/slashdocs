@@ -2,6 +2,8 @@ package blob
 
 import (
 	"context"
+	"slices"
+	"strings"
 	"sync"
 )
 
@@ -37,4 +39,16 @@ func (m *Memory) Delete(ctx context.Context, key string) error {
 	defer m.mu.Unlock()
 	delete(m.objs, key)
 	return nil
+}
+func (m *Memory) List(ctx context.Context, prefix string) ([]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	keys := []string{}
+	for key := range m.objs {
+		if strings.HasPrefix(key, prefix) {
+			keys = append(keys, key)
+		}
+	}
+	slices.Sort(keys)
+	return keys, nil
 }

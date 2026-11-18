@@ -107,6 +107,15 @@ spec:
             - name: SLASHDOCS_FEATURED
               value: {{ .Values.deployment.featured | quote }}
             {{- end }}
+            {{- /* toString, so that a 0 without quotes still turns the feature off. */}}
+            {{- if ne (toString .Values.documentExpiry.sweepInterval) "" }}
+            - name: SLASHDOCS_DOCUMENT_EXPIRY_SWEEP_INTERVAL
+              value: {{ .Values.documentExpiry.sweepInterval | quote }}
+            {{- end }}
+            {{- if ne (toString .Values.documentExpiry.blobRetention) "" }}
+            - name: SLASHDOCS_DELETED_BLOB_RETENTION
+              value: {{ .Values.documentExpiry.blobRetention | quote }}
+            {{- end }}
             {{- if .Values.kvEvents.mode }}
             - name: SLASHDOCS_KV_EVENTS_MODE
               value: {{ .Values.kvEvents.mode | quote }}

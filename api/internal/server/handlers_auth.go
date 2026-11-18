@@ -55,6 +55,9 @@ type configResponse struct {
 	DefaultDocPermission string `json:"default_doc_permission"`
 	GoogleGroupsEnabled  bool   `json:"google_groups_enabled"`
 	LabelsEnabled        bool   `json:"labels_enabled"`
+	// DocumentExpiryEnabled is false when the server deletes no expired
+	// document. It then refuses a new expiry.
+	DocumentExpiryEnabled bool `json:"document_expiry_enabled"`
 }
 
 // meResponse is the payload of GET /v1/me. Exactly one of User and
@@ -528,13 +531,14 @@ func (h handlers) config(c *gin.Context) {
 		deployment = DeploymentPublic
 	}
 	c.JSON(http.StatusOK, configResponse{
-		Deployment:           deployment,
-		OrgName:              h.deps.orgName,
-		EveryoneLabel:        everyoneLabel(deployment, h.deps.orgName),
-		ProviderName:         defaultProviderName(h.deps.oidcProviderName),
-		DefaultDocPermission: defaultDocPermissionLabel(h.deps.defaultDocPermission),
-		GoogleGroupsEnabled:  h.deps.googleGroupsEnabled,
-		LabelsEnabled:        h.deps.labelsEnabled,
+		Deployment:            deployment,
+		OrgName:               h.deps.orgName,
+		EveryoneLabel:         everyoneLabel(deployment, h.deps.orgName),
+		ProviderName:          defaultProviderName(h.deps.oidcProviderName),
+		DefaultDocPermission:  defaultDocPermissionLabel(h.deps.defaultDocPermission),
+		GoogleGroupsEnabled:   h.deps.googleGroupsEnabled,
+		LabelsEnabled:         h.deps.labelsEnabled,
+		DocumentExpiryEnabled: h.deps.documentExpiryEnabled,
 	})
 }
 

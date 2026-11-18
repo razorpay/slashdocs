@@ -252,6 +252,9 @@ func (b *cancelAfterPutBlob) Delete(ctx context.Context, key string) error {
 	b.deletedKey = key
 	return nil
 }
+func (b *cancelAfterPutBlob) List(ctx context.Context, prefix string) ([]string, error) {
+	return nil, nil
+}
 
 func TestPostgresSearchDocumentsViaFolderGrant(t *testing.T) {
 	store := newStore(t)

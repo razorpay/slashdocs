@@ -44,6 +44,22 @@ var (
 		Name: "slashdocs_document_events_total",
 		Help: "Document lifecycle and interaction events.",
 	}, []string{"event", "actor_type"})
+	blobPurgeEventsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "slashdocs_blob_purge_events_total",
+		Help: "Deleted documents whose blobs were removed from the blob store, or were not.",
+	}, []string{"result"})
+	blobPurgePendingDocuments = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "slashdocs_blob_purge_pending_documents",
+		Help: "Deleted documents whose blobs are still in the blob store, as this server last counted them.",
+	})
+	blobPurgeOldestPendingSeconds = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "slashdocs_blob_purge_oldest_pending_seconds",
+		Help: "How long ago the oldest of those documents was deleted.",
+	})
+	documentExpirySweepErrorsTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "slashdocs_document_expiry_sweep_errors_total",
+		Help: "Steps of the sweep of expired documents that failed.",
+	})
 	versionEventsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "slashdocs_version_events_total",
 		Help: "Document version lifecycle and interaction events.",
@@ -124,6 +140,10 @@ func init() {
 		httpResponseSizeBytes,
 		authAttemptsTotal,
 		documentEventsTotal,
+		blobPurgeEventsTotal,
+		blobPurgePendingDocuments,
+		blobPurgeOldestPendingSeconds,
+		documentExpirySweepErrorsTotal,
 		versionEventsTotal,
 		commentEventsTotal,
 		grantEventsTotal,
@@ -189,6 +209,30 @@ func incDocument(event, actor string) {
 	documentEventsTotal.WithLabelValues(event, actor).Inc()
 }
 func incVersion(event, actor string) { versionEventsTotal.WithLabelValues(event, actor).Inc() }
+
+// ObserveDocumentsExpired counts the documents that the sweep deleted
+// because their expiry time passed.
+func ObserveDocumentsExpired(documents int) {
+	documentEventsTotal.WithLabelValues("expired", "system").Add(float64(documents))
+}
+
+// ObserveBlobPurge counts the deleted documents whose blobs the sweep
+// removed from the blob store, and those that have a blob that the store did
+// not delete.
+func ObserveBlobPurge(purged, failed int) {
+	blobPurgeEventsTotal.WithLabelValues("purged").Add(float64(purged))
+	blobPurgeEventsTotal.WithLabelValues("failed").Add(float64(failed))
+}
+
+// ObserveBlobBacklog tells how many deleted documents wait for the removal
+// of their blobs, and for how long the oldest one waits.
+func ObserveBlobBacklog(documents int, oldest time.Duration) {
+	blobPurgePendingDocuments.Set(float64(documents))
+	blobPurgeOldestPendingSeconds.Set(oldest.Seconds())
+}
+
+// ObserveExpirySweepError counts a step of the sweep that failed.
+func ObserveExpirySweepError() { documentExpirySweepErrorsTotal.Inc() }
 func incComment(event, status, actor string) {
 	commentEventsTotal.WithLabelValues(event, status, actor).Inc()
 }

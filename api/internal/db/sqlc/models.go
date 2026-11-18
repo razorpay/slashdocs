@@ -52,6 +52,13 @@ type ApprovalRequest struct {
 	RevokedAt       pgtype.Timestamptz
 }
 
+type BlobDeletion struct {
+	DocumentID  string
+	QueuedAt    pgtype.Timestamptz
+	Attempts    int32
+	AvailableAt pgtype.Timestamptz
+}
+
 type CliCredential struct {
 	ID         string
 	UserID     string
@@ -145,6 +152,7 @@ type Document struct {
 	ParentFolderID   pgtype.Text
 	SearchVector     interface{}
 	Seq              int64
+	ExpiresAt        pgtype.Timestamptz
 }
 
 type DocumentAccessNotificationOutbox struct {

@@ -491,5 +491,6 @@ func docFromFolderListing(r dbsqlc.ListFolderDocumentsRow) repo.Document {
 		ParentFolderID:   r.ParentFolderID,
 		Owner:            auth.Principal{Type: auth.PrincipalType(r.OwnerType), ID: r.OwnerID, Name: r.OwnerName, Email: r.OwnerEmail},
 		UpdatedAt:        r.UpdatedAt.Time.Format(time.RFC3339),
+		ExpiresAt:        pgTimeRFC3339(r.ExpiresAt),
 	}
 }

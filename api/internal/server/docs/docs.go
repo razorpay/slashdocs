@@ -495,6 +495,18 @@ const docTemplate = `{
                         "description": "Default sharing applied at create: viewer, commenter, editor or private. Overrides the server-wide default.",
                         "name": "default_permission",
                         "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Delete the document after this period from now: a whole number and min, h, d, w or mo, as in 7d. From 1 minute to 3650 days. Not with expires_at.",
+                        "name": "expires_in",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Delete the document after this RFC 3339 time. Not with expires_in.",
+                        "name": "expires_at",
+                        "in": "formData"
                     }
                 ],
                 "responses": {
@@ -576,6 +588,10 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
+                "description": "Changes the title, the expiry, or both. Only the owner can. A document with an expiry is deleted after it.",
+                "consumes": [
+                    "application/json"
+                ],
                 "tags": [
                     "documents"
                 ],
@@ -587,6 +603,15 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "description": "The fields to change. Give expires_in or expires_at, not both.",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/server.patchDocumentRequest"
+                        }
                     }
                 ],
                 "responses": {
@@ -3109,6 +3134,10 @@ const docTemplate = `{
                 "current_version_id": {
                     "type": "string"
                 },
+                "expires_at": {
+                    "description": "ExpiresAt is when the server deletes the document, as an RFC 3339 time\nin UTC. A document without it is kept.",
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
                 },
@@ -3797,6 +3826,10 @@ const docTemplate = `{
                 "deployment": {
                     "type": "string"
                 },
+                "document_expiry_enabled": {
+                    "description": "DocumentExpiryEnabled is false when the server deletes no expired\ndocument. It then refuses a new expiry.",
+                    "type": "boolean"
+                },
                 "everyone_label": {
                     "type": "string"
                 },
@@ -3860,6 +3893,10 @@ const docTemplate = `{
                 },
                 "default_grant": {
                     "$ref": "#/definitions/server.defaultGrant"
+                },
+                "expires_at": {
+                    "description": "ExpiresAt is when the server deletes the document. A document without\nit is kept.",
+                    "type": "string"
                 },
                 "folder_id": {
                     "type": "string"
@@ -4482,6 +4519,23 @@ const docTemplate = `{
                     }
                 },
                 "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "server.patchDocumentRequest": {
+            "type": "object",
+            "properties": {
+                "expires_at": {
+                    "description": "ExpiresAt deletes the document after this RFC 3339 time. A null\nremoves the expiry, and the document is kept.",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "expires_in": {
+                    "description": "ExpiresIn deletes the document after this period from now: a whole\nnumber and min, h, d, w or mo.",
+                    "type": "string"
+                },
+                "title": {
                     "type": "string"
                 }
             }

@@ -114,7 +114,8 @@ func TestPostgresSearchDocumentText(t *testing.T) {
 	}
 
 	// A new title and a new version replace the old words.
-	if _, err := store.UpdateDocument(ctx, budget.ID, "Forecast"); err != nil {
+	forecast := "Forecast"
+	if _, err := store.ChangeDocument(ctx, budget.ID, repo.DocumentChange{Title: &forecast}); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := store.SaveVersion(ctx, incident.ID, incident.CurrentVersionID, nil, owner, repo.Upload([]byte("<p>Rollback notes.</p>"), "")); err != nil {

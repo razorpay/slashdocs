@@ -96,8 +96,8 @@ func TestCommentMentionMigrationsSplitTriggerFromLegacyCleanup(t *testing.T) {
 	}
 	assertMentionMigrationObjects(t, database)
 	version, err := goose.GetDBVersion(database)
-	if err != nil || version != 46 {
-		t.Fatalf("migration version = %d, %v; want 46", version, err)
+	if err != nil || version != 49 {
+		t.Fatalf("migration version = %d, %v; want 49", version, err)
 	}
 
 	// The cleanup cannot reconstruct markers, so migration 19's Down is a
@@ -172,6 +172,142 @@ func TestCommentReadsMigration(t *testing.T) {
 	var table sql.NullString
 	if err := database.QueryRow(`SELECT to_regclass('public.comment_reads')::text`).Scan(&table); err != nil || table.Valid {
 		t.Fatalf("comment_reads after Down = %v, %v; want gone", table, err)
+	}
+}
+
+// Migrations 47 to 49 change no row. A document that was there has no
+// expiry, so the server keeps it. Down removes what Up made, and a second
+// Up works.
+func TestDocumentExpiryMigration(t *testing.T) {
+	databaseURL := testdb.New(t)
+	database, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	setMigrationTestFS(t)
+	if err := goose.SetDialect("postgres"); err != nil {
+		t.Fatal(err)
+	}
+	if err := goose.DownTo(database, "migrations", 46); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`INSERT INTO users(id, email, name) VALUES ('usr_migration', 'migration@example.com', 'admin')`,
+		`INSERT INTO documents(id, title, owner_id, owner_type) VALUES ('doc_migration', 'Migration', 'usr_migration', 'user')`,
+	} {
+		if _, err := database.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	made := []string{
+		"public.blob_deletions",
+		"public.blob_deletions_queued_idx",
+		"public.documents_expires_at_idx",
+		"public.idx_versions_parent",
+		"public.idx_comments_created_on_version",
+		"public.idx_comments_root",
+		"public.idx_comment_placements_version",
+		"public.idx_documents_current_version",
+		"public.idx_approval_requests_document",
+		"public.idx_approvals_document",
+		"public.idx_document_notification_mutes_document",
+	}
+	count := func(query string) int {
+		t.Helper()
+		var n int
+		if err := database.QueryRow(query).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	present := func() (names []string) {
+		t.Helper()
+		for _, name := range made {
+			var found sql.NullString
+			if err := database.QueryRow(`SELECT to_regclass($1)::text`, name).Scan(&found); err != nil {
+				t.Fatal(err)
+			}
+			if found.Valid {
+				names = append(names, name)
+			}
+		}
+		return names
+	}
+	hasColumn := `SELECT count(*) FROM information_schema.columns WHERE table_name = 'documents' AND column_name = 'expires_at'`
+	if got := present(); len(got) != 0 || count(hasColumn) != 0 {
+		t.Fatalf("at version 46 the database has %q and %d expiry columns", got, count(hasColumn))
+	}
+	for range 2 {
+		if err := aidb.Migrate(databaseURL); err != nil {
+			t.Fatalf("migrate to 49 on a document that exists: %v", err)
+		}
+		if got := present(); len(got) != len(made) {
+			t.Fatalf("after Up the database has %q, want %q", got, made)
+		}
+		if n := count(`SELECT count(*) FROM documents WHERE id = 'doc_migration' AND expires_at IS NULL`); n != 1 {
+			t.Fatal("the document that was there has an expiry")
+		}
+		// A row of the list outlives its document.
+		if _, err := database.Exec(`INSERT INTO blob_deletions(document_id) VALUES ('doc_gone')`); err != nil {
+			t.Fatal(err)
+		}
+		setMigrationTestFS(t)
+		if err := goose.DownTo(database, "migrations", 46); err != nil {
+			t.Fatalf("down migrations 49 to 47: %v", err)
+		}
+		if got := present(); len(got) != 0 || count(hasColumn) != 0 {
+			t.Fatalf("after Down the database has %q and %d expiry columns", got, count(hasColumn))
+		}
+	}
+}
+
+// A rolling update starts several servers at the same time. One of them
+// migrates, and the others wait for its advisory lock. A server that waits
+// holds a snapshot, so a migration must not wait for the snapshots of other
+// sessions, as CREATE INDEX CONCURRENTLY does: PostgreSQL then finds a
+// deadlock and stops a server.
+func TestServersThatStartAtTheSameTimeAllMigrate(t *testing.T) {
+	databaseURL := testdb.New(t)
+	database, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	setMigrationTestFS(t)
+	if err := goose.SetDialect("postgres"); err != nil {
+		t.Fatal(err)
+	}
+	if err := goose.DownTo(database, "migrations", 46); err != nil {
+		t.Fatal(err)
+	}
+	// Migrate sets the embedded migrations again. It does so before it runs
+	// them, so the first call is alone, and the calls in parallel then read
+	// what it set.
+	if err := aidb.Migrate(databaseURL); err != nil {
+		t.Fatal(err)
+	}
+	setMigrationTestFS(t)
+	if err := goose.DownTo(database, "migrations", 46); err != nil {
+		t.Fatal(err)
+	}
+	const servers = 4
+	failures := make(chan error, servers)
+	for range servers {
+		go func() { failures <- aidb.Migrate(databaseURL) }()
+	}
+	for range servers {
+		if err := <-failures; err != nil {
+			t.Errorf("a server that started with the others did not migrate: %v", err)
+		}
+	}
+	version, err := goose.GetDBVersion(database)
+	if err != nil || version != 49 {
+		t.Fatalf("migration version = %d, %v; want 49", version, err)
+	}
+	var invalid int
+	if err := database.QueryRow(`SELECT count(*) FROM pg_index WHERE NOT indisvalid`).Scan(&invalid); err != nil || invalid != 0 {
+		t.Fatalf("%d indexes are not valid after the migration, %v", invalid, err)
 	}
 }
 

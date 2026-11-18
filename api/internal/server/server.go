@@ -55,6 +55,10 @@ type Config struct {
 	// programmatic users of server.New retain the existing feature set unless
 	// the application entrypoint explicitly disables labels.
 	DisableLabels bool
+	// DisableDocumentExpiry tells that this deployment deletes no expired
+	// document: its sweep is off. The server then refuses a new expiry. The
+	// zero value keeps the feature on for programmatic users of server.New.
+	DisableDocumentExpiry bool
 }
 
 // Server wraps the gin engine.
@@ -100,10 +104,13 @@ type dependencies struct {
 	googleGroupDirectory googlegroups.GoogleGroupDirectory
 	googleGroupResolver  *googlegroups.Resolver
 	labelsEnabled        bool
-	slackSigningSecret   string
-	slackUnfurler        notifications.Unfurler
-	previousOrigins      []string
-	frontend             fs.FS
+	// documentExpiryEnabled is false when the sweep of expired documents is
+	// off.
+	documentExpiryEnabled bool
+	slackSigningSecret    string
+	slackUnfurler         notifications.Unfurler
+	previousOrigins       []string
+	frontend              fs.FS
 }
 
 // Option configures the Server.
@@ -185,26 +192,27 @@ func (denyAllAuthenticator) Authenticate(_ *http.Request) (*auth.Principal, erro
 func New(cfg Config, opts ...Option) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	deps := dependencies{
-		anchorFollows:        &followers{pending: map[string]bool{}},
-		authenticator:        denyAllAuthenticator{},
-		stateStore:           auth.NewStateStore(),
-		oidc:                 cfg.OIDC,
-		previousOIDCIssuers:  cfg.PreviousOIDCIssuers,
-		oidcProviderName:     cfg.OIDCProviderName,
-		sessionSecret:        cfg.SessionSecret,
-		appOrigin:            cfg.AppOrigin,
-		renderOrigin:         cfg.RenderOrigin,
-		allowedOAuthDomains:  cfg.AllowedOAuthDomains,
-		deployment:           cfg.Deployment,
-		orgName:              cfg.OrgName,
-		defaultDocPermission: cfg.DefaultDocPermission,
-		featured:             cfg.Featured,
-		githubHTTPClient:     http.DefaultClient,
-		githubAccessChecks:   new(singleflight.Group),
-		googleGroupsEnabled:  cfg.GoogleGroupsEnabled,
-		labelsEnabled:        !cfg.DisableLabels,
-		previousOrigins:      cfg.PreviousOrigins,
-		frontend:             embeddedFrontend(),
+		anchorFollows:         &followers{pending: map[string]bool{}},
+		authenticator:         denyAllAuthenticator{},
+		stateStore:            auth.NewStateStore(),
+		oidc:                  cfg.OIDC,
+		previousOIDCIssuers:   cfg.PreviousOIDCIssuers,
+		oidcProviderName:      cfg.OIDCProviderName,
+		sessionSecret:         cfg.SessionSecret,
+		appOrigin:             cfg.AppOrigin,
+		renderOrigin:          cfg.RenderOrigin,
+		allowedOAuthDomains:   cfg.AllowedOAuthDomains,
+		deployment:            cfg.Deployment,
+		orgName:               cfg.OrgName,
+		defaultDocPermission:  cfg.DefaultDocPermission,
+		featured:              cfg.Featured,
+		githubHTTPClient:      http.DefaultClient,
+		githubAccessChecks:    new(singleflight.Group),
+		googleGroupsEnabled:   cfg.GoogleGroupsEnabled,
+		labelsEnabled:         !cfg.DisableLabels,
+		previousOrigins:       cfg.PreviousOrigins,
+		documentExpiryEnabled: !cfg.DisableDocumentExpiry,
+		frontend:              embeddedFrontend(),
 	}
 	if cfg.GitHubClientID != "" && cfg.GitHubClientSecret != "" && cfg.AppOrigin != "" {
 		deps.githubOAuth = &oauth2.Config{

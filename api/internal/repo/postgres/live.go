@@ -599,7 +599,7 @@ func (s *Store) sealOf(ctx context.Context, q *dbsqlc.Queries, doc live, state l
 	// Each seal has its own blob. Two writes can make the seal of one
 	// version at the same time, and the one that does not apply its seal
 	// deletes its blob.
-	return s.content(ctx, fmt.Sprintf("docs/%s/%s.%s.html", doc.id, doc.version.ID, newID("seal")), state.source, summary)
+	return s.content(ctx, fmt.Sprintf("%s%s.%s.html", documentBlobPrefix(doc.id), doc.version.ID, newID("seal")), state.source, summary)
 }
 
 // content writes html, the content of a version, to the blob key, and makes
@@ -804,7 +804,7 @@ func (s *Store) forget(ctx context.Context, seals ...sealing) {
 // logged: the one before still serves.
 func (s *Store) snapshot(ctx context.Context, doc live, source []byte) {
 	ctx = context.WithoutCancel(ctx)
-	key := fmt.Sprintf("docs/%s/%s.%d.html", doc.id, doc.version.ID, doc.seq)
+	key := fmt.Sprintf("%s%s.%d.html", documentBlobPrefix(doc.id), doc.version.ID, doc.seq)
 	replaced, err := s.moveSnapshot(ctx, doc, key, source)
 	if err != nil {
 		slog.WarnContext(ctx, "version snapshot failed", slog.String("document_id", doc.id), slog.String("version_id", doc.version.ID), slog.Any("error", err))
@@ -855,7 +855,15 @@ func announce(ctx context.Context, q *dbsqlc.Queries, doc *live, actor auth.Prin
 }
 
 func versionBlobKey(documentID, versionID string) string {
-	return fmt.Sprintf("docs/%s/%s.html", documentID, versionID)
+	return documentBlobPrefix(documentID) + versionID + ".html"
+}
+
+// documentBlobPrefix starts the key of every blob of a document: the content
+// of a version, the seal of an open version, and a snapshot. The purge of a
+// deleted document removes all keys with it, so a new kind of blob of a
+// document must use it too.
+func documentBlobPrefix(documentID string) string {
+	return "docs/" + documentID + "/"
 }
 
 func (s *Store) AppendOperation(ctx context.Context, documentID string, op repo.Operation, author auth.Principal) (repo.OperationResult, error) {

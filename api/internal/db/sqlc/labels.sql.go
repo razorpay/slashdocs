@@ -46,7 +46,8 @@ const listAccessibleDocumentsByLabel = `-- name: ListAccessibleDocumentsByLabel 
 SELECT DISTINCT d.id,d.title,d.current_version_id,d.owner_type,d.owner_id,
        COALESCE(u.email,'') AS owner_email,
        COALESCE(u.name,sa.name,'') AS owner_name,
-       d.updated_at
+       d.updated_at,
+       d.expires_at
 FROM documents d
 JOIN document_labels dl ON dl.document_id=d.id AND dl.label=$1::text
 LEFT JOIN users u ON d.owner_type='user' AND u.id=d.owner_id
@@ -82,6 +83,7 @@ type ListAccessibleDocumentsByLabelRow struct {
 	OwnerEmail       string
 	OwnerName        string
 	UpdatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
 }
 
 func (q *Queries) ListAccessibleDocumentsByLabel(ctx context.Context, arg ListAccessibleDocumentsByLabelParams) ([]ListAccessibleDocumentsByLabelRow, error) {
@@ -107,6 +109,7 @@ func (q *Queries) ListAccessibleDocumentsByLabel(ctx context.Context, arg ListAc
 			&i.OwnerEmail,
 			&i.OwnerName,
 			&i.UpdatedAt,
+			&i.ExpiresAt,
 		); err != nil {
 			return nil, err
 		}
