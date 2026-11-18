@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   type Anchor,
+  type Comment,
   type CursorPoint,
   type CursorSpot,
   type DocumentCursor,
@@ -17,6 +18,7 @@ import { principalColor, principalLabel, samePrincipal } from "@/lib/principals"
 import type { RemoteCursor } from "../../bridge/cursors";
 import { randomId } from "@/lib/uuid";
 import { useInvalidateApprovals } from "./use-invalidate-approvals";
+import { withThread } from "./comment-events";
 
 // The version of the cursor of a viewer who follows the newest version.
 // Such viewers are a version apart for a moment at each change, and their
@@ -133,9 +135,10 @@ export function useDocumentEvents(
 }
 
 // useDocumentStream is the document page's view of the event stream. It
-// passes KV changes to subscribers, refreshes comments and approvals when
-// they change, tells the page of each change to the document, and reports
-// and tracks who is viewing and where they point.
+// passes KV changes to subscribers, puts each changed comment thread into
+// the comments, refreshes approvals when they change, tells the page of each
+// change to the document, and reports and tracks who is viewing and where
+// they point.
 export function useDocumentStream({
   docId,
   enabled,
@@ -196,7 +199,19 @@ export function useDocumentStream({
       // The page asks for the document again, and shows why it cannot.
       closed: () => onDocumentChange(),
       kv: (event) => kvListeners.current.forEach((listener) => listener(event)),
-      comments: () => q.invalidateQueries({ queryKey: queryKeys.comments(docId) }),
+      // A comments event has the thread that changed. The comments load
+      // again only when the event cannot change them: they did not load
+      // yet, a load is under way, or the event has no thread.
+      comments: (event) => {
+        const key = queryKeys.comments(docId);
+        const data = q.getQueryData<{ items: Comment[] }>(key);
+        const items =
+          data && !q.isFetching({ queryKey: key })
+            ? withThread(data.items, event, principal)
+            : undefined;
+        if (items) q.setQueryData(key, { ...data, items });
+        else q.invalidateQueries({ queryKey: key });
+      },
       approvals: invalidateApprovals,
       document: (event) => onDocumentChange(documentEvent(event)),
       presence: (event) => {

@@ -334,8 +334,9 @@ func (h handlers) start(stream *documentKVStream) error {
 }
 
 // streamDocumentKVEvents streams the document's live event log over SSE: KV
-// changes, document and comment change notices, and viewer presence. A
-// session parameter marks the viewer as gone when the stream ends.
+// changes, document change notices, the comment threads that change, and
+// viewer presence. A session parameter marks the viewer as gone when the
+// stream ends.
 func (h handlers) streamDocumentKVEvents(c *gin.Context) {
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {

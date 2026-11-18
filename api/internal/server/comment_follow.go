@@ -28,29 +28,26 @@ func (h handlers) follow(c *gin.Context, docID string) {
 }
 
 // followLater moves the text comments of the document after a change, off
-// the request, so that typing does not wait for it. When the text of a
-// comment changed, the pages read the comments again: a page that loaded
-// them before the change has an anchor that its frame no longer finds.
+// the request, so that typing does not wait for it. The pages get each
+// thread whose text changed: a page that has the thread from before the
+// change has an anchor that its frame no longer finds.
 func (h handlers) followLater(c *gin.Context, docID string) {
-	ctx, by := context.WithoutCancel(c.Request.Context()), current(c)
+	ctx, by := context.WithoutCancel(c.Request.Context()), *current(c)
 	h.deps.anchorFollows.start(docID, func() {
-		if !h.followNow(ctx, docID) {
-			return
-		}
-		event := repo.DocumentKVEvent{DocumentID: docID, Kind: repo.DocumentEventComments, UpdatedBy: by}
-		if err := h.deps.documentKVEvents.Relay(ctx, event); err != nil {
-			slog.WarnContext(ctx, "comment anchor relay failed", slog.String("document_id", docID), slog.Any("error", err))
+		for _, threadID := range h.followNow(ctx, docID) {
+			h.announceThreadOf(ctx, docID, threadID, by)
 		}
 	})
 }
 
-// followNow moves the anchors, and reports whether the text of one changed.
-func (h handlers) followNow(ctx context.Context, docID string) bool {
+// followNow moves the anchors, and returns the threads whose text changed.
+func (h handlers) followNow(ctx context.Context, docID string) []string {
 	moved, err := h.followAnchors(ctx, docID)
 	if err != nil {
 		slog.WarnContext(ctx, "comment anchors did not follow the document", slog.String("document_id", docID), slog.Any("error", err))
+		return nil
 	}
-	return moved && err == nil
+	return moved
 }
 
 // followers runs one follow of the anchors of a document at a time. A
@@ -92,19 +89,19 @@ func (f *followers) start(docID string, follow func()) {
 // the log no longer holds, keeps its quote. Two calls at one time cannot
 // move an anchor twice: a move applies only while the anchor is on the seq
 // that the move started from.
-func (h handlers) followAnchors(ctx context.Context, docID string) (moved bool, err error) {
+func (h handlers) followAnchors(ctx context.Context, docID string) (moved []string, err error) {
 	r := h.deps.repository
 	behind, err := r.AnchorsBehind(ctx, docID)
 	if err != nil || len(behind) == 0 {
-		return false, err
+		return nil, err
 	}
 	d, err := r.GetDocument(ctx, docID)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	live, seq, err := r.GetVersionHTMLAt(ctx, d.CurrentVersionID, repo.LiveSeq)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	now := renderedBodyText(string(live))
 	texts := map[int64]*renderedText{}
@@ -113,7 +110,7 @@ func (h handlers) followAnchors(ctx context.Context, docID string) (moved bool, 
 		if !ok {
 			before, _, err := r.GetVersionHTMLAt(ctx, d.CurrentVersionID, f.Seq)
 			if err != nil && !errors.Is(err, repo.ErrStale) {
-				return false, err
+				return nil, err
 			}
 			if before != nil {
 				t := renderedBodyText(string(before))
@@ -123,13 +120,15 @@ func (h handlers) followAnchors(ctx context.Context, docID string) (moved bool, 
 		}
 		if text != nil {
 			behind[i].Anchor = followText(f.Anchor, *text, now)
-			moved = moved || behind[i].Anchor.Quote != f.Anchor.Quote
+			if behind[i].Anchor.Quote != f.Anchor.Quote {
+				moved = append(moved, f.CommentID)
+			}
 		}
 	}
 	// A write that made another version the current one during the reads
 	// can make a seq of the anchors look gone. The next follow moves them.
 	if again, err := r.GetDocument(ctx, docID); err != nil || again.CurrentVersionID != d.CurrentVersionID {
-		return false, err
+		return nil, err
 	}
 	return moved, r.MoveAnchors(ctx, behind, seq)
 }
