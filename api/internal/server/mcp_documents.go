@@ -7,11 +7,13 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
+	"github.com/razorpay/slashdocs/internal/expiry"
 	"github.com/razorpay/slashdocs/internal/textedit"
 )
 
@@ -33,6 +35,7 @@ func mcpCommentID() mcp.ToolOption {
 
 func registerMCPDocumentTools(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 	registerMCPDocumentCRUDTools(server, api)
+	registerMCPDocumentExpiryTool(server, api)
 	registerMCPDocumentMoveTool(server, api)
 	registerMCPDocumentLabelTools(server, api)
 	registerMCPVersionTools(server, api)
@@ -78,10 +81,11 @@ func registerMCPDocumentCRUDTools(server *mcpserver.MCPServer, api mcpAPIAdapter
 	})
 
 	server.AddTool(mcp.NewTool("create_document", mutationOptions(false, false,
-		mcp.WithDescription("Create a slashdocs document from complete self-contained HTML. Returns its document and initial version IDs. The server applies its configured default sharing at create; when a default grant was applied, the result carries default_grant (grant_id, principal, role) plus a warning describing who can access the document and how to revoke the grant. With folder_id, the document is in that folder from the start, and permission_warning tells when the folder is shared."),
+		mcp.WithDescription("Create a slashdocs document from complete self-contained HTML. Returns its document and initial version IDs. The server applies its configured default sharing at create; when a default grant was applied, the result carries default_grant (grant_id, principal, role) plus a warning describing who can access the document and how to revoke the grant. With folder_id, the document is in that folder from the start, and permission_warning tells when the folder is shared. A document is kept unless expires_in is set: the result then carries expires_at and expiry_warning."),
 		mcp.WithString("title", mcp.Required(), mcp.Description("Human-readable document title.")),
 		mcp.WithString("html", mcp.Required(), mcp.Description("Complete self-contained HTML, up to 50 MiB.")),
 		mcp.WithString("folder_id", mcp.Description("Optional folder ID (fld_…) for the document. Requires editor on the folder. The default is the workspace root.")),
+		mcp.WithString("expires_in", mcp.Description(expiresInDescription+" Leave it out to keep the document, which is the default. Set it only when the user asks for a document that goes away by itself.")),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		title, invalid := mcpRequired(request, "title")
 		if invalid != nil {
@@ -92,6 +96,13 @@ func registerMCPDocumentCRUDTools(server *mcpserver.MCPServer, api mcpAPIAdapter
 			return invalid, nil
 		}
 		fields := map[string]string{"title": title, "folder_id": request.GetString("folder_id", "")}
+		period, invalid := mcpPeriod(request.GetString("expires_in", ""))
+		if invalid != nil {
+			return invalid, nil
+		}
+		if period != "" {
+			fields["expires_in"] = period
+		}
 		response, err := api.multipartResponse(ctx, "/v1/documents", fields, html, nil, api.handlers.createDocument)
 		if err != nil || response.status != http.StatusCreated {
 			return api.result(response, err, false)
@@ -128,6 +139,43 @@ func registerMCPDocumentCRUDTools(server *mcpserver.MCPServer, api mcpAPIAdapter
 
 }
 
+// registerMCPDocumentExpiryTool adds the tool that sets or removes the
+// expiry of a document.
+func registerMCPDocumentExpiryTool(server *mcpserver.MCPServer, api mcpAPIAdapter) {
+	server.AddTool(mcp.NewTool("set_document_expiry", mutationOptions(true, false,
+		mcp.WithDescription("Set or remove the time after which the server deletes a document for good, with its history and comments. Only the owner of the document can. A document without an expiry is kept. Call this only when the user asks for it, and tell the user the date in expires_at: the delete cannot be undone."),
+		mcpDocumentID(),
+		mcp.WithString("expires_in", mcp.Required(), mcp.Description(expiresInDescription+" "+mcpNever+" removes the expiry, and the document is kept.")),
+	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		id, invalid := mcpRequired(request, "document_id")
+		if invalid != nil {
+			return invalid, nil
+		}
+		asked, invalid := mcpRequired(request, "expires_in")
+		if invalid != nil {
+			return invalid, nil
+		}
+		period, invalid := mcpPeriod(asked)
+		if invalid != nil {
+			return invalid, nil
+		}
+		body := map[string]any{"expires_in": period}
+		if period == "" {
+			body = map[string]any{"expires_at": nil}
+		}
+		response, err := api.jsonResponse(ctx, http.MethodPatch, "/v1/documents/"+id, body, mcpParams("id", id), api.handlers.patchDocument)
+		if err != nil || response.status != http.StatusOK {
+			return api.result(response, err, false)
+		}
+		var payload map[string]any
+		if json.Unmarshal(response.body, &payload) != nil || payload == nil {
+			return api.result(response, nil, false)
+		}
+		warnOfExpiry(payload)
+		return mcp.NewToolResultJSON(payload)
+	})
+}
+
 // finishDocumentCreate annotates a successful create with a warning derived
 // from the server-applied default grant, so MCP callers surface the exposure
 // to their users. The server's createDocument owns the granting; this only
@@ -137,6 +185,7 @@ func (a mcpAPIAdapter) finishDocumentCreate(response mcpAPIResponse) (*mcp.CallT
 	if json.Unmarshal(response.body, &payload) != nil || payload == nil {
 		return a.result(response, nil, false)
 	}
+	warnOfExpiry(payload)
 	grant, _ := payload["default_grant"].(map[string]any)
 	if grant == nil {
 		return mcp.NewToolResultJSON(payload)
@@ -159,6 +208,48 @@ func (a mcpAPIAdapter) finishDocumentCreate(response mcpAPIResponse) (*mcp.CallT
 		payload["warning"] = fmt.Sprintf("This document is shared org-wide by default: anyone at %s can %s. Make sure your user knows this document is shared org-wide. %s", org, defaultGrantVerb(role), revoke)
 	}
 	return mcp.NewToolResultJSON(payload)
+}
+
+// expiresInDescription tells an agent what a period is. A bare m is no unit,
+// because 3m reads as three months and as three minutes.
+const expiresInDescription = "The period from now after which the server deletes the document for good: a whole number and h, d, w or mo, as in 12h, 7d or 3mo. The shortest period here is 1h."
+
+// mcpMinTTL is the shortest period that an agent can give. An agent that
+// means a month and writes 30min would delete a document in half an hour,
+// and its user would not see that in time. The web app and the CLI take a
+// shorter period.
+const mcpMinTTL = time.Hour
+
+// mcpNever is the period that asks for no expiry.
+const mcpNever = "never"
+
+// mcpPeriod checks the period of a tool call. It returns no period for
+// never and for no value: the document is kept.
+func mcpPeriod(asked string) (string, *mcp.CallToolResult) {
+	if asked == "" || asked == mcpNever {
+		return "", nil
+	}
+	ttl, err := expiry.ParseTTL(asked)
+	if err != nil {
+		return "", mcp.NewToolResultError("expires_in: " + err.Error())
+	}
+	if ttl < mcpMinTTL {
+		return "", mcp.NewToolResultError("expires_in: the shortest period of this tool is 1h, so that a wrong unit does not delete a document at once. The owner can set a shorter one in the web app or with the slashdocs CLI.")
+	}
+	return asked, nil
+}
+
+// warnOfExpiry adds a warning to the result of a tool when the document in
+// payload has an expiry, so that the agent tells its user when the document
+// goes. An agent does not know the time, so the warning also tells how long
+// that is from now.
+func warnOfExpiry(payload map[string]any) {
+	text, _ := payload["expires_at"].(string)
+	at, err := time.Parse(time.RFC3339, text)
+	if err != nil {
+		return
+	}
+	payload["expiry_warning"] = fmt.Sprintf("The server deletes this document, with its history and comments, after %s, which is in %s. This cannot be undone. Tell your user when the document goes. To keep the document, call set_document_expiry with expires_in never.", text, expiry.In(time.Until(at)))
 }
 
 // defaultGrantVerb spells out what an "anyone" grant of the given role lets

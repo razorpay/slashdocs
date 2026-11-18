@@ -136,7 +136,7 @@ for. Then tell the user the date, and that the delete cannot be undone.
 Before you set or shorten the expiry of a document that already exists, ask
 the user to confirm the period. `slashdocs docs show <doc_id>` prints
 `expires_at` for a document that has one. A push or an edit does not move the
-expiry.
+expiry. The MCP tools take no period under 1 hour.
 
 ### Approvals
 

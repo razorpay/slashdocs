@@ -850,9 +850,9 @@ document needs images, embed them as data URLs:
 
 ## Ephemeral documents
 
-The owner of a document can give it an expiry time, with
-`slashdocs docs create --ttl 7d` and `slashdocs docs update --ttl 7d`, or
-through the API. After
+The owner of a document can give it an expiry time: with Auto-delete in the
+More menu of the web app, with `slashdocs docs create --ttl 7d` and
+`slashdocs docs update --ttl 7d`, or through the API and the MCP tools. After
 that time the server deletes the document, as a delete by hand does. Its
 versions, comments, approvals and operations go with it. A document without
 an expiry time is kept.
@@ -871,8 +871,8 @@ delete, its owner can change or remove the expiry.
 removes no blob, as before this feature, and it refuses a new expiry with the
 error `feature_disabled`. Documents keep the expiry time that they have, and
 the first round after you turn the feature on again deletes those that are
-due. The owner of such a document can still keep it, with
-`slashdocs docs update --ttl never`.
+due. So the web app still shows the mark of such a document, and its owner
+can still keep it.
 
 The setting is read at the start of a server. During a rolling update, the
 servers that still run with the old value keep their behaviour.

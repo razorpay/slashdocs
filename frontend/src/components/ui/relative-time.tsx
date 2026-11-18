@@ -23,10 +23,17 @@ function subscribe(listener: () => void) {
 }
 const getNow = () => now;
 
+// The time of the shared clock, which changes once a minute. A label that
+// shows a time left or gone reads it, so that it draws again when the text
+// can change.
+export function useMinuteClock(): number {
+  return useSyncExternalStore(subscribe, getNow, getNow);
+}
+
 // RelativeTime shows when something happened in words ("2 hours ago"), with
 // the exact date and time on hover and for assistive tech.
 export function RelativeTime({ iso, prefix }: { iso?: string; prefix?: string }) {
-  const clock = useSyncExternalStore(subscribe, getNow, getNow);
+  const clock = useMinuteClock();
   const relative = formatRelative(iso, Math.max(clock, Date.now()));
   if (!relative) return null;
   const exact = formatTimestamp(iso);

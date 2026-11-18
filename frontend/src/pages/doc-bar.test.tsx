@@ -74,6 +74,10 @@ const mockDocContext: DocContextValue = {
 
 const OWNER = { type: "user" as const, id: "usr_owner" };
 
+// What the server adds to its config, beyond the labels.
+let serverConfig: Record<string, unknown> = {};
+afterEach(() => (serverConfig = {}));
+
 function renderDocBar(
   labelsEnabled = true,
   viewers: Viewer[] = [],
@@ -98,6 +102,7 @@ function renderDocBar(
           JSON.stringify({
             deployment: "org",
             labels_enabled: labelsEnabled,
+            ...serverConfig,
           }),
           { headers: { "Content-Type": "application/json" } },
         );
@@ -668,5 +673,182 @@ describe("DocBar More menu and small-screen reachable dialogs", () => {
     act(() => void window.dispatchEvent(new Event("offline")));
     expect(status).toHaveTextContent(/^Offline$/);
     online.mockRestore();
+  });
+});
+
+describe("DocBar auto-delete", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+  const soon = () => new Date(Date.now() + 3 * 24 * 3_600_000 + 60_000).toISOString();
+
+  it("opens the auto-delete dialog from the More menu, for the owner", async () => {
+    const user = userEvent.setup();
+    serverConfig = { document_expiry_enabled: true };
+    renderDocBar();
+    await user.click(screen.getByRole("button", { name: "More" }));
+    // It comes right after Rename and Upload version.
+    const items = (await screen.findAllByRole("menuitem")).map((i) =>
+      i.textContent?.trim(),
+    );
+    const at = items.findIndex((name) => name?.startsWith("Auto-delete"));
+    expect(at).toBeGreaterThan(0);
+    expect(items[at - 1]).toMatch(/Replace with an HTML file/);
+    await user.click(screen.getByRole("menuitem", { name: "Auto-delete…" }));
+    expect(await screen.findByRole("heading", { name: "Auto-delete" })).toBeVisible();
+    // The dialog gives the focus back to the menu button.
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "More" })).toHaveFocus(),
+    );
+  });
+
+  it("does not offer it to an editor who is not the owner", async () => {
+    const user = userEvent.setup();
+    serverConfig = { document_expiry_enabled: true };
+    mockDocContext.canEdit = true;
+    renderDocBar(true, [], [], "editor");
+    await user.click(screen.getByRole("button", { name: "More" }));
+    await screen.findByRole("menuitem", { name: /^History$/ });
+    expect(screen.queryByRole("menuitem", { name: /Auto-delete/ })).toBeNull();
+    mockDocContext.canEdit = false;
+  });
+
+  it.each([
+    ["off", { document_expiry_enabled: false }],
+    ["not named", {}],
+  ])(
+    "still shows the mark of a document that has an expiry when the server has the feature %s",
+    async (_, config) => {
+      const user = userEvent.setup();
+      serverConfig = config;
+      renderDocBar(true, [], [], "editor", { expiresAt: soon() });
+      expect(
+        await screen.findAllByRole("img", { name: /Deletes in 3 days/ }),
+      ).toHaveLength(2);
+      await user.click(screen.getByRole("button", { name: "More" }));
+      await screen.findByRole("menuitem", { name: /^History$/ });
+      // The phone note stays too.
+      expect(screen.getByRole("menuitem", { name: /Deletes in 3 days/ })).toBeVisible();
+    },
+  );
+
+  it.each([
+    ["off", { document_expiry_enabled: false }],
+    ["not named", {}],
+  ])(
+    "gives the owner of a document with an expiry the way to remove it when the server has the feature %s",
+    async (_, config) => {
+      const user = userEvent.setup();
+      serverConfig = config;
+      renderDocBar(true, [], [], "owner", { expiresAt: soon() });
+      await user.click(screen.getByRole("button", { name: "More" }));
+      await user.click(await screen.findByRole("menuitem", { name: /^Auto-delete…/ }));
+      const dialog = await screen.findByRole("dialog", { name: "Auto-delete" });
+      expect(within(dialog).queryByRole("radiogroup")).toBeNull();
+      expect(
+        within(dialog).getByRole("button", { name: "Keep document" }),
+      ).toBeVisible();
+    },
+  );
+
+  it.each([
+    ["off", { document_expiry_enabled: false }],
+    ["not named", {}],
+  ])(
+    "shows no mark and no control for a document with no expiry when the server has the feature %s",
+    async (_, config) => {
+      const user = userEvent.setup();
+      serverConfig = config;
+      renderDocBar();
+      await user.click(screen.getByRole("button", { name: "More" }));
+      await screen.findByRole("menuitem", { name: /^History$/ });
+      expect(screen.queryByRole("menuitem", { name: /Auto-delete/ })).toBeNull();
+      expect(screen.queryAllByRole("img", { name: /Deletes/ })).toHaveLength(0);
+    },
+  );
+
+  it("does not offer the dialog to a reader who is not the owner, with an expiry or not", async () => {
+    const user = userEvent.setup();
+    serverConfig = { document_expiry_enabled: false };
+    renderDocBar(true, [], [], "editor", { expiresAt: soon() });
+    await user.click(screen.getByRole("button", { name: "More" }));
+    await screen.findByRole("menuitem", { name: /^History$/ });
+    expect(screen.queryByRole("menuitem", { name: "Auto-delete…" })).toBeNull();
+  });
+
+  it("shows the mark to a reader who cannot change it", async () => {
+    serverConfig = { document_expiry_enabled: true };
+    renderDocBar(true, [], [], "editor", { expiresAt: soon() });
+    const marks = await screen.findAllByRole("img", { name: /Deletes in 3 days/ });
+    expect(marks[0]).toHaveTextContent("Deletes in 3 days");
+    // It is no button for them.
+    expect(screen.queryByRole("button", { name: /Deletes in/ })).toBeNull();
+  });
+
+  it("shows no mark for a document with no expiry", async () => {
+    serverConfig = { document_expiry_enabled: true };
+    renderDocBar();
+    await screen.findByRole("button", { name: "More" });
+    expect(screen.queryByText(/Deletes/)).toBeNull();
+  });
+
+  it("makes the mark a button that opens the dialog, for the owner", async () => {
+    const user = userEvent.setup();
+    serverConfig = { document_expiry_enabled: true };
+    renderDocBar(true, [], [], "owner", { expiresAt: soon() });
+    const [mark] = await screen.findAllByRole("button", { name: /Deletes in 3 days/ });
+    await user.click(mark);
+    const dialog = await screen.findByRole("dialog", { name: "Auto-delete" });
+    expect(within(dialog).getByText(/^This document is deleted on /)).toBeVisible();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(mark).toHaveFocus());
+  });
+
+  it("follows the mark when the expiry changes", async () => {
+    serverConfig = { document_expiry_enabled: true };
+    const { update } = renderDocBar(true, [], [], "editor", { expiresAt: soon() });
+    await screen.findAllByRole("img", { name: /Deletes in 3 days/ });
+    update({ expiresAt: undefined });
+    expect(screen.queryAllByRole("img", { name: /Deletes/ })).toHaveLength(0);
+  });
+
+  it("has a full mark for a wide bar and an icon for a phone bar", async () => {
+    serverConfig = { document_expiry_enabled: true };
+    renderDocBar(true, [], [], "editor", { expiresAt: soon() });
+    const marks = await screen.findAllByRole("img", { name: /Deletes in 3 days/ });
+    expect(marks).toHaveLength(2);
+    const [full, icon] = marks;
+    expect(full).toHaveTextContent("Deletes in 3 days");
+    expect(full.className).toContain("max-sm:hidden");
+    expect(icon).toHaveTextContent("");
+    expect(icon.className).toContain("sm:hidden");
+    expect(icon.className).not.toContain("max-sm:hidden");
+    // Both name the exact time.
+    expect(icon.getAttribute("aria-label")).toBe(full.getAttribute("aria-label"));
+  });
+
+  it("makes both forms of the mark buttons for the owner, and the icon opens the dialog", async () => {
+    const user = userEvent.setup();
+    serverConfig = { document_expiry_enabled: true };
+    renderDocBar(true, [], [], "owner", { expiresAt: soon() });
+    const buttons = await screen.findAllByRole("button", { name: /Deletes in 3 days/ });
+    expect(buttons).toHaveLength(2);
+    expect(buttons[1].className).toContain("sm:hidden");
+    expect(buttons[1]).toHaveTextContent("");
+    await user.click(buttons[1]);
+    expect(await screen.findByRole("dialog", { name: "Auto-delete" })).toBeVisible();
+  });
+
+  it("tells a reader on a phone, in More, because the bar has no room", async () => {
+    const user = userEvent.setup();
+    serverConfig = { document_expiry_enabled: true };
+    renderDocBar(true, [], [], "editor", { expiresAt: soon() });
+    await screen.findAllByRole("img", { name: /Deletes in 3 days/ });
+    await user.click(screen.getByRole("button", { name: "More" }));
+    const note = await screen.findByRole("menuitem", { name: /Deletes in 3 days/ });
+    expect(note).toHaveAttribute("data-disabled");
+    expect(note.closest('[role="group"]')?.className).toContain("sm:hidden");
   });
 });
