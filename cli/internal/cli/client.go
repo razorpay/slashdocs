@@ -15,6 +15,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -93,6 +94,55 @@ type Client struct {
 	// saved is true when Base comes from the saved config, which the client
 	// updates when the server moves.
 	saved bool
+
+	featuresMu   sync.Mutex
+	featuresBase string
+	features     *serverFeatures
+}
+
+// serverFeatures is the part of the discovery document the CLI acts on.
+type serverFeatures struct {
+	Auth struct {
+		CLIParams []string `json:"cli_params"`
+	} `json:"auth"`
+}
+
+// serverFeatures fetches the discovery document once per base URL, so a
+// client that follows a server move asks the new server. A server that does
+// not serve it, or serves something else, counts as having no features, so
+// such servers get requests exactly as older CLIs sent them.
+func (c *Client) serverFeatures() serverFeatures {
+	c.featuresMu.Lock()
+	defer c.featuresMu.Unlock()
+	if c.features == nil || c.featuresBase != c.Base {
+		c.features = &serverFeatures{}
+		c.featuresBase = c.Base
+		c.fetchFeatures(c.features)
+	}
+	return *c.features
+}
+
+func (c *Client) fetchFeatures(into *serverFeatures) {
+	req, err := http.NewRequest(http.MethodGet, c.Base+"/.well-known/slashdocs.json", nil)
+	if err != nil {
+		return
+	}
+	res, err := c.HTTP.Do(req)
+	if err != nil {
+		return
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode != http.StatusOK {
+		return
+	}
+	var f serverFeatures
+	if json.NewDecoder(io.LimitReader(res.Body, 64<<10)).Decode(&f) == nil {
+		*into = f
+	}
+}
+
+func (c *Client) acceptsCLIPort() bool {
+	return slices.Contains(c.serverFeatures().Auth.CLIParams, "cli_port")
 }
 
 // client builds a Client from flags, environment, and the active config context.

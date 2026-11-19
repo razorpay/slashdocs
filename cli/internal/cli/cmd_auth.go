@@ -46,6 +46,17 @@ func loginCallbackHandler(state string, resultCh chan<- callbackResult) http.Han
 	return mux
 }
 
+// cliLoginURL builds the browser login link. With usePort the link carries only
+// the callback port, so proxies that scan query strings see no embedded URL;
+// otherwise it carries the full loopback URL that older servers expect.
+func cliLoginURL(srv, state, challenge, listenAddr string, usePort bool) string {
+	base := srv + "/v1/auth/google/start?mode=cli&state=" + url.QueryEscape(state)
+	if _, port, err := net.SplitHostPort(listenAddr); usePort && err == nil {
+		return base + "&cli_port=" + url.QueryEscape(port) + "&code_challenge=" + url.QueryEscape(challenge)
+	}
+	return base + "&cli_redirect=" + url.QueryEscape("http://"+listenAddr+"/callback") + "&code_challenge=" + url.QueryEscape(challenge)
+}
+
 const loginDoneDetail = "You can close this tab and return to your terminal."
 
 // loginCallback reads the OAuth result from a callback query. detail is the
@@ -152,7 +163,6 @@ func loginCmd(g *globals, out io.Writer) *cobra.Command {
 			return err
 		}
 		resultCh := make(chan callbackResult, 1)
-		redirect := "http://" + ln.Addr().String() + "/callback"
 		srvHTTP, serveErrCh := startLoginCallbackServer(ln, state, resultCh)
 		// Shut down gracefully so the browser finishes loading the success page
 		// before the listener closes (an abrupt Close races the final response).
@@ -161,7 +171,8 @@ func loginCmd(g *globals, out io.Writer) *cobra.Command {
 			defer sdCancel()
 			_ = srvHTTP.Shutdown(sdCtx)
 		}()
-		loginURL := srv + "/v1/auth/google/start?mode=cli&state=" + url.QueryEscape(state) + "&cli_redirect=" + url.QueryEscape(redirect) + "&code_challenge=" + url.QueryEscape(challenge)
+		cl := &Client{Base: srv, HTTP: apiHTTPClient}
+		loginURL := cliLoginURL(srv, state, challenge, ln.Addr().String(), cl.acceptsCLIPort())
 		// The URL is progress, not the result, so it goes to stderr.
 		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Log in at "+loginURL+"\nIf the browser runs on another machine, paste here the http://127.0.0.1 URL that it fails to open.")
 		if !noBrowser {
@@ -174,7 +185,6 @@ func loginCmd(g *globals, out io.Writer) *cobra.Command {
 			return err
 		}
 
-		cl := &Client{Base: srv, HTTP: apiHTTPClient}
 		b, err := cl.doJSON("POST", "/v1/auth/cli/exchange", map[string]any{"code": code, "code_verifier": verifier, "name": first(name, ctxName(srv))})
 		if err != nil {
 			return err

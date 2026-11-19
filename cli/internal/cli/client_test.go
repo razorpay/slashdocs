@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -73,5 +74,52 @@ func TestClientKeepsServerFromEnvironmentOnMove(t *testing.T) {
 	}
 	if cfg, _ := loadConfig(); len(cfg.Contexts) != 0 || c.Base != old.URL {
 		t.Fatalf("a server set by the environment must not be saved: base=%s config=%+v", c.Base, cfg)
+	}
+}
+
+func TestCLILoginURLUsesPortOnlyWhenAdvertised(t *testing.T) {
+	const addr = "127.0.0.1:43111"
+	withPort := cliLoginURL("https://docs.example", "st", "ch", addr, true)
+	if !strings.Contains(withPort, "cli_port=43111") || strings.Contains(withPort, "cli_redirect") ||
+		strings.Contains(strings.TrimPrefix(withPort, "https://docs.example"), "http") {
+		t.Fatalf("port login URL = %s", withPort)
+	}
+	legacy := cliLoginURL("https://docs.example", "st", "ch", addr, false)
+	if !strings.Contains(legacy, "cli_redirect=http%3A%2F%2F127.0.0.1%3A43111%2Fcallback") || strings.Contains(legacy, "cli_port") {
+		t.Fatalf("legacy login URL = %s", legacy)
+	}
+}
+
+func TestClientAcceptsCLIPortOnlyWhenDiscoveryListsIt(t *testing.T) {
+	cases := map[string]struct {
+		status int
+		body   string
+		want   bool
+	}{
+		"listed":       {http.StatusOK, `{"auth":{"modes":["web","cli"],"cli_params":["cli_redirect","cli_port"]}}`, true},
+		"not listed":   {http.StatusOK, `{"auth":{"modes":["web","cli"]}}`, false},
+		"no discovery": {http.StatusNotFound, `not found`, false},
+		"not json":     {http.StatusOK, `<html></html>`, false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			var hits atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/.well-known/slashdocs.json" {
+					t.Errorf("unexpected request to %s", r.URL.Path)
+				}
+				hits.Add(1)
+				w.WriteHeader(tc.status)
+				writeTestString(t, w, tc.body)
+			}))
+			t.Cleanup(srv.Close)
+			c := &Client{Base: srv.URL, HTTP: apiHTTPClient}
+			if a, b := c.acceptsCLIPort(), c.acceptsCLIPort(); a != tc.want || b != tc.want {
+				t.Fatalf("acceptsCLIPort = %v, %v; want %v", a, b, tc.want)
+			}
+			if n := hits.Load(); n != 1 {
+				t.Fatalf("discovery hits = %d, want 1", n)
+			}
+		})
 	}
 }

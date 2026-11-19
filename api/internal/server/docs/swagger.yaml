@@ -722,6 +722,13 @@ definitions:
     type: object
   server.discoveryAuth:
     properties:
+      cli_params:
+        description: |-
+          CLIParams lists the query parameters the CLI login start route accepts to
+          name the loopback callback.
+        items:
+          type: string
+        type: array
       modes:
         items:
           type: string
@@ -1317,6 +1324,11 @@ paths:
         in: query
         name: cli_redirect
         type: string
+      - description: CLI loopback port; the server builds the callback URL. Not combinable
+          with cli_redirect
+        in: query
+        name: cli_port
+        type: string
       - description: PKCE challenge
         in: query
         name: code_challenge
@@ -1373,6 +1385,11 @@ paths:
       - description: CLI loopback redirect
         in: query
         name: cli_redirect
+        type: string
+      - description: CLI loopback port; the server builds the callback URL. Not combinable
+          with cli_redirect
+        in: query
+        name: cli_port
         type: string
       - description: PKCE challenge
         in: query

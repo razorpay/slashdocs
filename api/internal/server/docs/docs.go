@@ -267,6 +267,12 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
+                        "description": "CLI loopback port; the server builds the callback URL. Not combinable with cli_redirect",
+                        "name": "cli_port",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "description": "PKCE challenge",
                         "name": "code_challenge",
                         "in": "query"
@@ -351,6 +357,12 @@ const docTemplate = `{
                         "type": "string",
                         "description": "CLI loopback redirect",
                         "name": "cli_redirect",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "CLI loopback port; the server builds the callback URL. Not combinable with cli_redirect",
+                        "name": "cli_port",
                         "in": "query"
                     },
                     {
@@ -3977,6 +3989,13 @@ const docTemplate = `{
         "server.discoveryAuth": {
             "type": "object",
             "properties": {
+                "cli_params": {
+                    "description": "CLIParams lists the query parameters the CLI login start route accepts to\nname the loopback callback.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "modes": {
                     "type": "array",
                     "items": {

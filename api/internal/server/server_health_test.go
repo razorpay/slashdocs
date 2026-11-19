@@ -57,7 +57,7 @@ func TestDiscovery(t *testing.T) {
 		assertJSON(t, rr.Body.Bytes(), `{
 		  "name": "slashdocs",
 		  "api_version": "v1",
-		  "auth": { "modes": ["web", "cli", "mcp"] }
+		  "auth": { "modes": ["web", "cli", "mcp"], "cli_params": ["cli_redirect", "cli_port"] }
 		}`)
 	}
 }
