@@ -409,16 +409,172 @@ export class APIError extends Error {
   }
 }
 
-// send makes a request and throws an APIError for a response that is not ok.
-async function send(path: string, init: RequestInit = {}): Promise<Response> {
-  const res = await fetch(path, {
+// Web application firewalls with standard rule sets flag document HTML as an
+// attack. A deployment that opts in asks for gzip bodies through discovery, so
+// it can switch them on or off without a client release. The local viewer's
+// server does not decode gzip.
+const DISCOVERY_TTL_MS = 5 * 60 * 1000;
+// A failed discovery request is not repeated by every send.
+const DISCOVERY_RETRY_MS = 30 * 1000;
+// A send waits no longer than this for discovery; then it goes uncompressed.
+const DISCOVERY_TIMEOUT_MS = 3000;
+let compressionAsk: { until: number; asks: Promise<boolean> } | undefined;
+
+function serverAsksForGzip(): Promise<boolean> {
+  const now = Date.now();
+  if (!compressionAsk || now > compressionAsk.until) {
+    const entry = { until: now + DISCOVERY_TTL_MS, asks: Promise.resolve(false) };
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), DISCOVERY_TIMEOUT_MS);
+    entry.asks = fetch("/.well-known/slashdocs.json", { signal: abort.signal })
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error("discovery"))))
+      .then(
+        (doc: { compress_requests?: boolean; request_encodings?: string[] }) =>
+          doc?.compress_requests === true && !!doc.request_encodings?.includes("gzip"),
+      )
+      .catch(() => {
+        entry.until = Date.now() + DISCOVERY_RETRY_MS;
+        return false;
+      })
+      .finally(() => clearTimeout(timer));
+    compressionAsk = entry;
+  }
+  return compressionAsk.asks;
+}
+
+async function refusesEncoding(res: Response): Promise<boolean> {
+  try {
+    const payload = (await res.clone().json()) as { error?: { code?: string } };
+    return payload.error?.code === "unsupported_encoding";
+  } catch {
+    return false;
+  }
+}
+
+// The server switched compression off after this page asked.
+function stopCompressing() {
+  compressionAsk = {
+    until: Date.now() + DISCOVERY_TTL_MS,
+    asks: Promise.resolve(false),
+  };
+}
+
+function compressible(body: BodyInit | null | undefined): boolean {
+  return (
+    import.meta.env.MODE !== "cli" &&
+    typeof CompressionStream !== "undefined" &&
+    (typeof body === "string" || body instanceof FormData)
+  );
+}
+
+// gzip stores a short body with little repetition without compressing it.
+// Escaped as Go's JSON encoder escapes them, these characters keep markup in
+// such a body unreadable on the wire. They occur only inside JSON strings, so
+// the server decodes the same value.
+const escapeMarkup = (json: string) =>
+  json.replace(/[<>&]/g, (c) => `\\u00${c.charCodeAt(0).toString(16)}`);
+
+type Zipped = { body: BodyInit; contentType?: string };
+
+async function gzipBody(init: RequestInit): Promise<Zipped | undefined> {
+  if (!(await serverAsksForGzip())) return undefined;
+  let body = init.body as string | FormData;
+  if (
+    typeof body === "string" &&
+    /json/i.test(contentTypeOf(init) ?? "application/json")
+  ) {
+    body = escapeMarkup(body);
+  }
+  // A Response serializes FormData into multipart bytes and picks the boundary.
+  const source = new Response(body);
+  const contentType =
+    body instanceof FormData
+      ? (source.headers.get("content-type") ?? undefined)
+      : undefined;
+  if (!source.body) return undefined;
+  const zipped = source.body.pipeThrough(new CompressionStream("gzip"));
+  return {
+    body: new Uint8Array(await new Response(zipped).arrayBuffer()),
+    contentType,
+  };
+}
+
+function contentTypeOf(init: RequestInit): string | undefined {
+  return new Headers(init.headers).get("content-type") ?? undefined;
+}
+
+function withBody(init: RequestInit, zipped?: Zipped): RequestInit {
+  const isForm = init.body instanceof FormData;
+  return {
     credentials: "include",
     ...init,
+    ...(zipped && { body: zipped.body }),
     headers: {
-      ...(init.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+      ...(isForm && !zipped
+        ? {}
+        : { "Content-Type": zipped?.contentType ?? "application/json" }),
+      ...(zipped ? { "Content-Encoding": "gzip" } : {}),
       ...(init.headers || {}),
     },
+  };
+}
+
+// A request that starts while the page goes must start in the same task: the
+// page can end before the discovery answer or the compressor gives the body
+// back, and the request would never leave. So such a request goes
+// uncompressed, and the page that goes also sends at once, uncompressed, every
+// request that still waits for discovery or the compressor. The text these
+// requests carry was kept in storage when the page was hidden, so a firewall
+// that refuses one costs a later send, not the text. This listener is
+// registered when the module loads, so it runs before the listeners that
+// start those requests.
+let pageGoing = false;
+const waiting = new Set<() => void>();
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", () => {
+    pageGoing = true;
+    for (const sendPlain of [...waiting]) sendPlain();
   });
+  // The browser kept the page and shows it again.
+  window.addEventListener("pageshow", () => (pageGoing = false));
+}
+
+// start fetches path, with the body compressed when the server asks for it.
+function start(
+  path: string,
+  init: RequestInit,
+): Promise<{ res: Response; zipped: boolean }> {
+  const plain = () =>
+    fetch(path, withBody(init)).then((res) => ({ res, zipped: false }));
+  if (pageGoing || !compressible(init.body)) return plain();
+  return new Promise((resolve, reject) => {
+    let started = false;
+    const go = (zipped?: Zipped) => {
+      if (started) return;
+      started = true;
+      waiting.delete(sendPlain);
+      fetch(path, withBody(init, zipped)).then(
+        (res) => resolve({ res, zipped: !!zipped }),
+        reject,
+      );
+    };
+    const sendPlain = () => go();
+    waiting.add(sendPlain);
+    gzipBody(init).then(go, sendPlain);
+  });
+}
+
+// send makes a request and throws an APIError for a response that is not ok.
+async function send(path: string, init: RequestInit = {}): Promise<Response> {
+  const sent = await start(path, init);
+  let res = sent.res;
+  // The server switched compression off after this page asked: the body
+  // goes again, uncompressed. A 415 for a wrong Content-Type is not about
+  // compression.
+  if (sent.zipped && res.status === 415 && (await refusesEncoding(res))) {
+    stopCompressing();
+    res = await fetch(path, withBody(init));
+  }
   if (!res.ok) {
     let msg = res.statusText;
     let code = "http_error";

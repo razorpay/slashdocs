@@ -12,6 +12,9 @@ import (
 func TestGoogleGroupGrantFlagsPayloadAndOutput(t *testing.T) {
 	var requests []map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if declineDiscovery(w, r) {
+			return
+		}
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)

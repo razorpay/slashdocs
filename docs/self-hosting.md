@@ -515,6 +515,7 @@ Sealed Secrets, etc.).
 | `session.secret`                                                           | At least 32 random bytes.                                                                                                       |
 | `deployment.{mode,orgDomains,orgName,defaultDocPermission}`                | `public` (default) or `org`; org mode gates login to `orgDomains` and may set a sharing default for new documents.              |
 | `allowedOAuthDomains`                                                      | Comma-separated email domain allowlist (public mode); empty = no gate.                                                          |
+| `requestGzip`                                                              | Accept gzip request bodies and ask clients to send them. See [Request compression](#request-compression).                       |
 | `kvEvents.{mode,listenerDatabaseURL,existingSecret}`                       | Realtime KV events: `SLASHDOCS_KV_EVENTS_MODE` and the dedicated LISTEN connection URL (secret-backed). Rendered only when set. |
 | `approvalWebhook.{url,secret,existingSecret}`                              | Webhook for [approval events](#approval-events) (secret-backed). Rendered only when set.                                        |
 | `commitSha`                                                                | Optional revision surfaced at `/commit.txt`.                                                                                    |
@@ -627,6 +628,7 @@ a secret store. The server needs outbound HTTPS to `chat.googleapis.com` or
 | `SLASHDOCS_DEFAULT_DOC_PERMISSION`          | `private`   | Server-wide default sharing applied when a document is created: `viewer`, `commenter`, `editor`, or `private` (no grant). Non-private values require `SLASHDOCS_DEPLOYMENT=org`; requests may override per document via the `default_permission` form field.                                        |
 | `SLASHDOCS_FEATURED`                        | unset       | JSON object of sections that the Documents page shows above each user's own items. See [Featured sections](#featured-sections).                                                                                                                                                                     |
 | `SLASHDOCS_LABELS_ENABLED`                  | `false`     | Set `true` to turn on document labels: the labels API, `label:` in search, and labels in the UI.                                                                                                                                                                                                    |
+| `SLASHDOCS_REQUEST_GZIP`                    | `false`     | Set `true` to accept gzip request bodies and ask the web app and the CLI to send them. See [Request compression](#request-compression).                                                                                                                                                             |
 | `SLASHDOCS_KV_EVENTS_MODE`                  | `auto`      | `auto`, `notify`, or `poll`; controls how document KV streams discover persisted events.                                                                                                                                                                                                            |
 | `SLASHDOCS_KV_EVENTS_LISTENER_DATABASE_URL` | unset       | Direct or session-pooled URL to the same database for the dedicated LISTEN connection. Never use a transaction-pooling endpoint.                                                                                                                                                                    |
 | `SLASHDOCS_APPROVAL_WEBHOOK_URL`            | unset       | Webhook that receives [approval events](#approval-events). Unset turns them off.                                                                                                                                                                                                                    |
@@ -778,6 +780,41 @@ GET /livez                     Liveness JSON: {"status":"ok"}
 GET /readyz                    Readiness JSON with dependency checks
 GET /.well-known/slashdocs.json   Deployment discovery
 ```
+
+## Request compression
+
+Web application firewalls with standard rule sets (for example the OWASP Core
+Rule Set) read document HTML as an attack. Uploads, new versions, live typing
+and comments that quote code can then get a `403` from the firewall. slashdocs
+does not rely on a firewall to filter this HTML: documents are untrusted by
+design and render in a sandboxed frame on the render origin.
+
+Set `SLASHDOCS_REQUEST_GZIP=true` (chart value `requestGzip: true`) to have the
+web app and the CLI send gzip request bodies. With the setting on:
+
+- The server accepts `Content-Encoding: gzip` on every route. The size limits
+  apply to the decoded bytes, so a small compressed body cannot expand past
+  them, and a body is decoded only when the route's own handler reads it.
+- Discovery (`GET /.well-known/slashdocs.json`) asks clients to compress:
+
+  ```json
+  { "request_encodings": ["gzip"], "compress_requests": true }
+  ```
+
+- Most firewalls do not inspect compressed bodies, so the firewall no longer
+  scans these bodies. That is the same result as a firewall exclusion for
+  these routes, in one setting. Compression usually makes the text unreadable
+  on the wire, but not always: a short body with little repetition can be sent
+  as a stored block.
+
+With the setting off (the default), the server answers `415` to a request body
+with any `Content-Encoding` other than `identity`.
+
+Turn the setting on only after every replica runs a release that has it. A
+replica without it cannot decode a compressed body. The web app reads the
+setting again every five minutes and the CLI on each run; when you turn the
+setting off, a client that still compresses gets `415` and sends the request
+again uncompressed.
 
 ## How the frontend gets its public URL
 

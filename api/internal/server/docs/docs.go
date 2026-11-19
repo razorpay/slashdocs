@@ -3994,8 +3994,19 @@ const docTemplate = `{
                 "auth": {
                     "$ref": "#/definitions/server.discoveryAuth"
                 },
+                "compress_requests": {
+                    "description": "CompressRequests asks clients to send request bodies in one of\nRequestEncodings.",
+                    "type": "boolean"
+                },
                 "name": {
                     "type": "string"
+                },
+                "request_encodings": {
+                    "description": "RequestEncodings lists the Content-Encoding values accepted on request\nbodies besides identity. Clients check it so that a future encoding can\nbe added without older clients sending it.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
