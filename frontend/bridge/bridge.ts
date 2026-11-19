@@ -2403,9 +2403,19 @@ type Theme = "dark" | "light";
     return Array.from(range.getClientRects());
   }
 
+  // A srcdoc frame holds an empty about:blank document until its srcdoc
+  // document loads. Setting that one up reports ready for a document that is
+  // about to be replaced: the app sends the fragment of its URL once, at that
+  // ready, and a document that routes on the fragment in its own script is not
+  // there yet to receive it. The srcdoc document's URL is about:srcdoc.
+  function isInitialDocument(d: Document): boolean {
+    return frame.hasAttribute("srcdoc") && d.URL === "about:blank";
+  }
+
   function setupFrame(): void {
     const d = doc();
-    if (!d || !d.documentElement || !d.body || setupDoc === d) return;
+    if (!d || !d.documentElement || !d.body || setupDoc === d || isInitialDocument(d))
+      return;
     setupDoc = d;
     pendingText = null;
     textVisibilityObserver?.disconnect();
