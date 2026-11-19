@@ -113,6 +113,18 @@ func linkEvent(channel, source string, urls ...string) string {
 	return string(b)
 }
 
+// externalEvent marks the event as one from a conversation with another org.
+func externalEvent(t *testing.T, body string) string {
+	t.Helper()
+	var event map[string]any
+	if err := json.Unmarshal([]byte(body), &event); err != nil {
+		t.Fatal(err)
+	}
+	event["is_ext_shared_channel"] = true
+	b, _ := json.Marshal(event)
+	return string(b)
+}
+
 func cardText(t *testing.T, card any) string {
 	t.Helper()
 	var b strings.Builder
@@ -273,9 +285,10 @@ func TestSlackEventsGiveLiveCardsOnlyToOrgWideDocs(t *testing.T) {
 func TestSlackEventsUseNeutralCardsWhenOutsidersMightSee(t *testing.T) {
 	cases := []struct {
 		name, deployment, channel, source string
-		external, wantInfo                bool
+		external, sharedEvent, wantInfo   bool
 	}{
 		{name: "shared with another org", deployment: server.DeploymentOrg, channel: "C1", source: "conversations_history", external: true, wantInfo: true},
+		{name: "direct message with another org", deployment: server.DeploymentOrg, channel: "D1", source: "conversations_history", sharedEvent: true},
 		{name: "preview while typing", deployment: server.DeploymentOrg, channel: "COMPOSER", source: "composer"},
 		{name: "public deployment", deployment: server.DeploymentPublic, channel: "C1", source: "conversations_history"},
 	}
@@ -285,7 +298,11 @@ func TestSlackEventsUseNeutralCardsWhenOutsidersMightSee(t *testing.T) {
 			e := slackEnv(t, tc.deployment, u)
 			doc, _, _ := orgDoc(t, e)
 			link := "https://docs.example/app/d/" + doc.ID
-			assertStatus(t, postSlack(t, e.h, linkEvent(tc.channel, tc.source, link), time.Now(), nil), http.StatusOK)
+			body := linkEvent(tc.channel, tc.source, link)
+			if tc.sharedEvent {
+				body = externalEvent(t, body)
+			}
+			assertStatus(t, postSlack(t, e.h, body, time.Now(), nil), http.StatusOK)
 			text := cardText(t, u.next(t).unfurls[link])
 			if strings.Contains(text, "Org plan") || !strings.Contains(text, "slashdocs document") {
 				t.Fatalf("card must be neutral: %s", text)
@@ -296,6 +313,24 @@ func TestSlackEventsUseNeutralCardsWhenOutsidersMightSee(t *testing.T) {
 				t.Fatalf("conversations.info calls = %d, want any = %v", u.infoCalls, tc.wantInfo)
 			}
 		})
+	}
+}
+
+// The bot cannot read a direct message between people, so the event tells
+// whether another org is in it.
+func TestSlackEventsGiveLiveCardsInDirectMessagesInsideTheOrg(t *testing.T) {
+	u := newFakeUnfurler(true)
+	e := slackEnv(t, server.DeploymentOrg, u)
+	doc, _, _ := orgDoc(t, e)
+	link := "https://docs.example/app/d/" + doc.ID
+	assertStatus(t, postSlack(t, e.h, linkEvent("D1", "conversations_history", link), time.Now(), nil), http.StatusOK)
+	if text := cardText(t, u.next(t).unfurls[link]); !strings.Contains(text, "Org plan") {
+		t.Fatalf("card must be live: %s", text)
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.infoCalls != 0 {
+		t.Fatalf("conversations.info calls = %d, want 0", u.infoCalls)
 	}
 }
 
