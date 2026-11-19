@@ -2383,6 +2383,10 @@ type Theme = "dark" | "light";
   // The content is the boxes of the body's blocks, as a centered column, in
   // the page.
   function roomFor(d: Document, covered: number): number | null {
+    // With no panel, nothing is covered, whatever overflows the window: a
+    // body child wider than the window, or a sub-pixel frame width that the
+    // whole-pixel innerWidth rounds down.
+    if (covered <= 0) return 0;
     const view = d.defaultView!;
     let left = Infinity;
     let right = -Infinity;

@@ -300,6 +300,38 @@ test.describe("at 1440x900", () => {
     await expect.poll(async () => (await frame.boundingBox())!.width).toBe(width - 392);
     expect((await frame.boundingBox())!.x).toBe(0);
   });
+
+  test("a document wider than the window keeps the full width while the comments list is closed", async ({
+    page,
+    slashdocs,
+  }) => {
+    const plainTitle = uniqueName("Plain");
+    const plain = await slashdocs.createDocument(
+      plainTitle,
+      columnHTML(plainTitle, "none"),
+    );
+    await page.goto(`/app/d/${plain.id}`);
+    const frame = page.locator('iframe[title="Rendered document"]');
+    await expect(renderedDocument(page).locator("#text")).toBeVisible();
+    const width = (await frame.boundingBox())!.width;
+
+    // A full-width header leaves no left margin to move into, and a block
+    // wider than the window ends past its right edge.
+    const title = uniqueName("Wide");
+    const wide = await slashdocs.createDocument(
+      title,
+      `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>
+<style>body{margin:0;font:16px/1.5 sans-serif}</style></head>
+<body><header style="padding:8px">${title}</header>
+<div id="text" style="width:calc(100vw + 40px)">${"Words of the page. ".repeat(40)}</div></body></html>`,
+    );
+    await page.goto(`/app/d/${wide.id}`);
+    await expect(renderedDocument(page).locator("#text")).toBeVisible();
+    // The page makes room only after the frame answers, so wait for that
+    // answer before checking that none came.
+    await page.waitForTimeout(600);
+    expect((await frame.boundingBox())!.width).toBe(width);
+  });
 });
 
 test("the document stays still while the comment composer opens", async ({
