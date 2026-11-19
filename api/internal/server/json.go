@@ -87,9 +87,7 @@ type commentReactionResponse struct {
 	Reactors []principalResponse `json:"reactors"`
 }
 
-func commentsJSON(items []repo.Comment, placementVersionID string, placementHTML []byte, viewer auth.Principal) []commentResponse {
-	// Read the version body once for all placement checks below.
-	doc := newPlacementDoc(placementHTML)
+func commentsJSON(items []repo.Comment, placementVersionID string, doc *placementDoc, viewer auth.Principal) []commentResponse {
 	roots := make([]repo.Comment, 0, len(items))
 	byID := map[string]int{}
 	for _, cm := range items {

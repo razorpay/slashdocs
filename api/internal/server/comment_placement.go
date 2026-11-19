@@ -2,8 +2,11 @@ package server
 
 import (
 	"cmp"
+	"context"
+	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"unicode/utf16"
 
 	"golang.org/x/net/html"
@@ -19,14 +22,13 @@ import (
 const minContextScoreForAmbiguousQuote = 0.65
 
 // placementDoc is the version that comments are placed on. Its rendered text
-// is extracted at most once, and only for a comment that needs it.
+// and its targets are extracted at most once, and only for a comment that
+// needs them. The requests that use one doc at one time share the work.
 type placementDoc struct {
-	html     string
-	text     renderedText
-	textDone bool
-	// targets holds the data-slashdocs-target values and ids of the
+	renderedText func() renderedText
+	// targets gives the data-slashdocs-target values and ids of the
 	// version's elements, for point comments.
-	targets map[string]bool
+	targets func() map[string]bool
 }
 
 // renderedText is a version's body text as the viewer anchors against it
@@ -44,22 +46,54 @@ func newPlacementDoc(placementHTML []byte) *placementDoc {
 	if len(placementHTML) == 0 {
 		return nil
 	}
-	return &placementDoc{html: string(placementHTML)}
+	doc := string(placementHTML)
+	return &placementDoc{
+		renderedText: sync.OnceValue(func() renderedText { return renderedBodyText(doc) }),
+		targets:      sync.OnceValue(func() map[string]bool { return elementTargets(doc) }),
+	}
 }
 
-func (d *placementDoc) renderedText() renderedText {
-	if !d.textDone {
-		d.textDone = true
-		d.text = renderedBodyText(d.html)
-	}
-	return d.text
+func (d *placementDoc) hasTarget(target string) bool { return d.targets()[target] }
+
+// placementCacheSize is the number of version states whose placement docs
+// stay in memory. The doc of a large document holds tens of MB.
+const placementCacheSize = 4
+
+// placementDocs keeps the placement docs of the newest version states. All
+// the comment reads of one state then parse its HTML once, not once each.
+type placementDocs struct {
+	mu   sync.Mutex
+	keys []string
+	docs map[string]*placementDoc
 }
 
-func (d *placementDoc) hasTarget(target string) bool {
-	if d.targets == nil {
-		d.targets = elementTargets(d.html)
+func (p *placementDocs) get(key string, placementHTML []byte) *placementDoc {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if doc, ok := p.docs[key]; ok {
+		return doc
 	}
-	return d.targets[target]
+	if len(p.keys) == placementCacheSize {
+		delete(p.docs, p.keys[0])
+		p.keys = p.keys[1:]
+	}
+	doc := newPlacementDoc(placementHTML)
+	p.keys = append(p.keys, key)
+	p.docs[key] = doc
+	return doc
+}
+
+// placementOf gives the placement doc of the version as it is now. It is nil
+// when the version is unknown or has no content: comments are then attached.
+func (h handlers) placementOf(ctx context.Context, versionID string) *placementDoc {
+	if versionID == "" {
+		return nil
+	}
+	placementHTML, seq, err := h.deps.repository.GetVersionHTMLAt(ctx, versionID, repo.LiveSeq)
+	if err != nil {
+		return nil
+	}
+	return h.deps.placements.get(fmt.Sprintf("%s@%d", versionID, seq), placementHTML)
 }
 
 // elementTargets returns the data-slashdocs-target values and ids of the

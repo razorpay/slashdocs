@@ -96,6 +96,7 @@ type dependencies struct {
 	githubHTTPClient     *http.Client
 	githubAccessChecks   *singleflight.Group
 	anchorFollows        *followers
+	placements           *placementDocs
 	googleGroupsEnabled  bool
 	googleGroupDirectory googlegroups.GoogleGroupDirectory
 	googleGroupResolver  *googlegroups.Resolver
@@ -104,6 +105,9 @@ type dependencies struct {
 	slackUnfurler        notifications.Unfurler
 	previousOrigins      []string
 	frontend             fs.FS
+	// frontendBuild names the build of frontend. The pages of another build
+	// load again.
+	frontendBuild string
 }
 
 // Option configures the Server.
@@ -186,6 +190,7 @@ func New(cfg Config, opts ...Option) *Server {
 	gin.SetMode(gin.ReleaseMode)
 	deps := dependencies{
 		anchorFollows:        &followers{pending: map[string]bool{}},
+		placements:           &placementDocs{docs: map[string]*placementDoc{}},
 		authenticator:        denyAllAuthenticator{},
 		stateStore:           auth.NewStateStore(),
 		oidc:                 cfg.OIDC,
@@ -218,6 +223,7 @@ func New(cfg Config, opts ...Option) *Server {
 	for _, opt := range opts {
 		opt(&deps)
 	}
+	deps.frontendBuild = frontendBuild(deps.frontend)
 	// Missing storage is a startup wiring bug, not a recoverable request error.
 	if deps.repository == nil {
 		panic("server.New: repository is required (use server.WithRepository)")

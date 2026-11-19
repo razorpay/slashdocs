@@ -73,7 +73,14 @@ function setup(following = true) {
       ),
     },
   );
-  return { result, unmount, invalidate, onDocumentChange, source: FakeWebSocket.last };
+  return {
+    client,
+    result,
+    unmount,
+    invalidate,
+    onDocumentChange,
+    source: FakeWebSocket.last,
+  };
 }
 
 describe("useDocumentStream", () => {
@@ -180,6 +187,30 @@ describe("useDocumentStream", () => {
     expect(source.sent).toEqual([{ type: "presence", version: "ver_1" }]);
     expect(source.url.pathname).toBe("/v1/documents/doc_1/live");
     expect(source.url.protocol).toBe("ws:");
+  });
+
+  it("puts the thread of a comments event into the comments, with no load", () => {
+    const { client, invalidate, source } = setup();
+    const thread = { id: "cm_1", body: "Fix this", status: "open", author: asha };
+    client.setQueryData(queryKeys.comments("doc_1"), { items: [] });
+    source.open();
+
+    source.receive("comments", { data: { id: "cm_1", thread } }, 3);
+
+    expect(client.getQueryData(queryKeys.comments("doc_1"))).toEqual({
+      items: [{ ...thread, unread: true }],
+    });
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it("loads the comments again on a comments event with no thread data", () => {
+    const { client, invalidate, source } = setup();
+    client.setQueryData(queryKeys.comments("doc_1"), { items: [] });
+    source.open();
+
+    source.receive("comments", {}, 3);
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.comments("doc_1") });
   });
 
   it("connects again after a wait, from the last stored event", () => {

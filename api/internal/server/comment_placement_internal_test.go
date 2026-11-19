@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"math"
 	"testing"
 	"unicode/utf16"
@@ -247,5 +248,19 @@ func TestFollowText(t *testing.T) {
 				t.Fatalf("the new anchor %+v is not placed on %q", got, tc.html)
 			}
 		})
+	}
+}
+
+func TestPlacementDocsKeepTheNewestStates(t *testing.T) {
+	docs := &placementDocs{docs: map[string]*placementDoc{}}
+	first := docs.get("ver_1@1", []byte("<p>a</p>"))
+	if docs.get("ver_1@1", []byte("<p>other</p>")) != first {
+		t.Fatal("a state got a second doc, want the first one again")
+	}
+	for i := range placementCacheSize {
+		docs.get(fmt.Sprintf("ver_2@%d", i), []byte("<p>b</p>"))
+	}
+	if docs.get("ver_1@1", []byte("<p>a</p>")) == first || len(docs.docs) != placementCacheSize {
+		t.Fatalf("docs = %d, want the oldest state gone and %d kept", len(docs.docs), placementCacheSize)
 	}
 }

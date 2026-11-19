@@ -113,6 +113,71 @@ func TestDocumentLiveStreamStartsAtLiveEdgeAndAnnouncesComments(t *testing.T) {
 	}
 }
 
+// TestCommentEventsCarryTheThread makes sure that each comment write gives
+// the viewers the thread as it is after the write, so that they do not read
+// the comments again.
+func TestCommentEventsCarryTheThread(t *testing.T) {
+	e := newTestEnv(t)
+	ts := httptest.NewServer(e.h)
+	defer ts.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	reader, _ := openLiveStream(ctx, t, ts, e.doc.ID, "", fixtureViewer)
+	as := func(p auth.Principal) map[string]string {
+		return map[string]string{"Content-Type": "application/json", "X-Test-Principal": principalHeader(p)}
+	}
+	type message struct {
+		ID        string `json:"id"`
+		Body      string `json:"body"`
+		Reactions []struct {
+			Reacted  bool             `json:"reacted"`
+			Reactors []auth.Principal `json:"reactors"`
+		} `json:"reactions"`
+		CurrentPlacement *struct{}  `json:"current_placement"`
+		Replies          *[]message `json:"replies"`
+	}
+	thread := func() (data struct {
+		ID     string   `json:"id"`
+		Thread *message `json:"thread"`
+	}) {
+		t.Helper()
+		got := readLiveEvent(t, reader)
+		if err := json.Unmarshal(got.event.Data, &data); got.name != repo.DocumentEventComments || err != nil {
+			t.Fatalf("event = %#v (%v), want a comments event", got, err)
+		}
+		return data
+	}
+
+	rr := do(t, e.h, http.MethodPost, "/v1/documents/"+e.doc.ID+"/comments",
+		`{"version_id":"`+e.ver.ID+`","body":"live","anchor":{"quote":"fixture"}}`, as(fixtureCommenter))
+	assertStatus(t, rr, http.StatusCreated)
+	var created message
+	if err := json.Unmarshal(rr.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if got := thread(); got.ID != created.ID || got.Thread == nil || got.Thread.Body != "live" ||
+		got.Thread.CurrentPlacement == nil || got.Thread.Replies == nil || len(*got.Thread.Replies) != 0 {
+		t.Fatalf("created = %#v, want the new thread with its placement", got)
+	}
+
+	assertStatus(t, do(t, e.h, http.MethodPost, "/v1/documents/"+e.doc.ID+"/comments/"+created.ID+"/replies",
+		`{"body":"reply"}`, as(fixtureEditor)), http.StatusCreated)
+	if got := thread(); got.ID != created.ID || len(*got.Thread.Replies) != 1 || (*got.Thread.Replies)[0].Body != "reply" {
+		t.Fatalf("replied = %#v, want the thread with its reply", got)
+	}
+
+	assertStatus(t, do(t, e.h, http.MethodPut, reactionPath(e.doc.ID, created.ID, "heart"), "", as(fixtureEditor)), http.StatusNoContent)
+	reactions := thread().Thread.Reactions
+	if len(reactions) != 1 || reactions[0].Reacted || len(reactions[0].Reactors) != 1 || reactions[0].Reactors[0].ID != fixtureEditor.ID {
+		t.Fatalf("reactions = %#v, want the editor's heart, with no reader's state", reactions)
+	}
+
+	assertStatus(t, do(t, e.h, http.MethodDelete, "/v1/documents/"+e.doc.ID+"/comments/"+created.ID, "", as(fixtureCommenter)), http.StatusNoContent)
+	if got := thread(); got.ID != created.ID || got.Thread != nil {
+		t.Fatalf("deleted = %#v, want the thread gone", got)
+	}
+}
+
 func TestDocumentPresenceSnapshotLiveUpdatesAndLeave(t *testing.T) {
 	e := newTestEnv(t)
 	ts := httptest.NewServer(e.h)
@@ -339,5 +404,35 @@ func TestAccessThatGoesEndsTheStreamsBelowIt(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestMovedAnchorsReachTheViewers makes sure that a thread whose text moves
+// with typing reaches the viewers, also when a read of the comments moves it
+// before the follow after the operation does.
+func TestMovedAnchorsReachTheViewers(t *testing.T) {
+	e := newTestEnv(t)
+	d, err := e.store.GetDocument(context.Background(), e.doc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"version_id":"` + e.ver.ID + `","body":"note","anchor":{"quote":"fixture","dom_path":"body","start_offset":0,"end_offset":7}}`
+	assertStatus(t, do(t, e.h, http.MethodPost, "/v1/documents/"+e.doc.ID+"/comments", body, map[string]string{
+		"Content-Type": "application/json", "X-Test-Principal": principalHeader(fixtureCommenter),
+	}), http.StatusCreated)
+	ts := httptest.NewServer(e.h)
+	defer ts.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	reader, _ := openLiveStream(ctx, t, ts, e.doc.ID, "", fixtureViewer)
+
+	html := "<html><body>fixture</body></html>"
+	typeOp(t, e, e.doc.ID, fixtureEditor, d.Seq, "op_grow", replaceAt(html, "xtu", "xXXtu", 0))
+	listComments(t, e, "")
+	for {
+		got := readLiveEvent(t, reader)
+		if got.name == repo.DocumentEventComments && strings.Contains(string(got.event.Data), `"selected_text":"fixXXture"`) {
+			return
+		}
 	}
 }
