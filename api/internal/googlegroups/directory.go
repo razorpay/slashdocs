@@ -20,6 +20,9 @@ const (
 	defaultEndpoint = "https://cloudidentity.googleapis.com/v1"
 )
 
+// managedLabels are the labels of Google-managed groups that may be shared to.
+var managedLabels = []string{discussionLabel, securityLabel}
+
 type GoogleGroup struct {
 	ID         string
 	CustomerID string
@@ -113,35 +116,47 @@ func (d *HTTPDirectory) SearchGroups(ctx context.Context, query string, limit in
 	if limit <= 0 || limit > 20 {
 		limit = 20
 	}
-	cel := fmt.Sprintf(
-		"parent == '%s' && ('%s' in labels || '%s' in labels) && (group_key.contains('%s') || display_name.contains('%s'))",
-		celEscape("customers/"+d.customerID), discussionLabel, securityLabel, celEscape(query), celEscape(query),
-	)
-	values := url.Values{"query": {cel}, "view": {"BASIC"}, "pageSize": {fmt.Sprint(limit)}}
 	groups := make([]GoogleGroup, 0, limit)
-	for {
-		var response struct {
-			Groups        []apiGroup `json:"groups"`
-			NextPageToken string     `json:"nextPageToken"`
-		}
-		if err := d.getJSON(ctx, "search", "/groups:search", values, &response); err != nil {
-			return nil, err
-		}
-		for _, raw := range response.Groups {
-			group, err := d.mapGroup(raw)
-			if err != nil {
-				continue
+	seen := map[string]bool{}
+	// Cloud Identity rejects an OR between label conditions, so search one
+	// managed label at a time and merge.
+	for _, label := range managedLabels {
+		cel := fmt.Sprintf(
+			"parent == '%s' && '%s' in labels && (group_key.contains('%s') || display_name.contains('%s'))",
+			celEscape("customers/"+d.customerID), label, celEscape(query), celEscape(query),
+		)
+		// BASIC omits labels, which mapGroup checks.
+		values := url.Values{"query": {cel}, "view": {"FULL"}, "pageSize": {fmt.Sprint(limit)}}
+		for {
+			var response struct {
+				Groups        []apiGroup `json:"groups"`
+				NextPageToken string     `json:"nextPageToken"`
 			}
-			groups = append(groups, group)
-			if len(groups) == limit {
-				sortGroups(groups)
-				return groups, nil
+			if err := d.getJSON(ctx, "search", "/groups:search", values, &response); err != nil {
+				return nil, err
 			}
+			for _, raw := range response.Groups {
+				// Search results carry no parent; the query already limits
+				// them to this customer.
+				if raw.Parent == "" {
+					raw.Parent = "customers/" + d.customerID
+				}
+				group, err := d.mapGroup(raw)
+				if err != nil || seen[group.ID] {
+					continue
+				}
+				seen[group.ID] = true
+				groups = append(groups, group)
+				if len(groups) == limit {
+					sortGroups(groups)
+					return groups, nil
+				}
+			}
+			if response.NextPageToken == "" {
+				break
+			}
+			values.Set("pageToken", response.NextPageToken)
 		}
-		if response.NextPageToken == "" {
-			break
-		}
-		values.Set("pageToken", response.NextPageToken)
 	}
 	sortGroups(groups)
 	return groups, nil
@@ -177,33 +192,37 @@ func (d *HTTPDirectory) TransitiveGroupsForMember(ctx context.Context, userEmail
 	if userEmail == "" || !strings.Contains(userEmail, "@") {
 		return nil, &directoryError{operation: "memberships", code: "invalid_member"}
 	}
-	cel := fmt.Sprintf(
-		"member_key_id == '%s' && ('%s' in labels || '%s' in labels) && parent == '%s'",
-		celEscape(userEmail), discussionLabel, securityLabel, celEscape("customers/"+d.customerID),
-	)
-	values := url.Values{"query": {cel}, "pageSize": {"1000"}}
 	groupsByID := map[string]GoogleGroup{}
-	for {
-		var response struct {
-			Memberships   []groupRelation `json:"memberships"`
-			NextPageToken string          `json:"nextPageToken"`
-		}
-		if err := d.getJSON(ctx, "memberships", "/groups/-/memberships:searchTransitiveGroups", values, &response); err != nil {
-			return nil, err
-		}
-		for _, raw := range response.Memberships {
-			if !validResourceName(raw.Group) || !managedGroup(raw.Labels) || strings.TrimSpace(raw.GroupKey.ID) == "" {
-				continue
+	// Cloud Identity rejects an OR between label conditions, so query one
+	// managed label at a time and merge.
+	for _, label := range managedLabels {
+		cel := fmt.Sprintf(
+			"member_key_id == '%s' && '%s' in labels && parent == '%s'",
+			celEscape(userEmail), label, celEscape("customers/"+d.customerID),
+		)
+		values := url.Values{"query": {cel}, "pageSize": {"1000"}}
+		for {
+			var response struct {
+				Memberships   []groupRelation `json:"memberships"`
+				NextPageToken string          `json:"nextPageToken"`
 			}
-			groupsByID[raw.Group] = GoogleGroup{
-				ID: raw.Group, CustomerID: d.customerID,
-				Email: strings.ToLower(strings.TrimSpace(raw.GroupKey.ID)), Name: raw.DisplayName,
+			if err := d.getJSON(ctx, "memberships", "/groups/-/memberships:searchTransitiveGroups", values, &response); err != nil {
+				return nil, err
 			}
+			for _, raw := range response.Memberships {
+				if !validResourceName(raw.Group) || !managedGroup(raw.Labels) || strings.TrimSpace(raw.GroupKey.ID) == "" {
+					continue
+				}
+				groupsByID[raw.Group] = GoogleGroup{
+					ID: raw.Group, CustomerID: d.customerID,
+					Email: strings.ToLower(strings.TrimSpace(raw.GroupKey.ID)), Name: raw.DisplayName,
+				}
+			}
+			if response.NextPageToken == "" {
+				break
+			}
+			values.Set("pageToken", response.NextPageToken)
 		}
-		if response.NextPageToken == "" {
-			break
-		}
-		values.Set("pageToken", response.NextPageToken)
 	}
 	groups := make([]GoogleGroup, 0, len(groupsByID))
 	for _, group := range groupsByID {
