@@ -145,6 +145,7 @@ type Document struct {
 	ParentFolderID   pgtype.Text
 	SearchVector     interface{}
 	Seq              int64
+	KvRevision       int64
 }
 
 type DocumentAccessNotificationOutbox struct {

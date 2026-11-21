@@ -10,13 +10,17 @@ FROM document_kv
 WHERE document_id=$1 AND deleted_at IS NULL
 ORDER BY key;
 
+
 -- name: GetDocumentKVRevision :one
--- Live events share the KV revision sequence, so the high-water mark spans
--- both the KV rows and the event log.
-SELECT GREATEST(
-  (SELECT COALESCE(MAX(kv.revision), 0) FROM document_kv kv WHERE kv.document_id=sqlc.arg(document_id)),
-  (SELECT COALESCE(MAX(e.revision), 0) FROM document_kv_events e WHERE e.document_id=sqlc.arg(document_id))
-)::bigint;
+SELECT kv_revision
+FROM documents
+WHERE id = $1;
+
+-- name: IncrementDocumentKVRevision :one
+UPDATE documents
+SET kv_revision = kv_revision + 1
+WHERE id = $1
+RETURNING kv_revision;
 
 -- name: InsertDocumentKVEvent :exec
 INSERT INTO document_kv_events(document_id,revision,kind,changes,data,updated_by_type,updated_by_id,updated_by_email,updated_by_name)

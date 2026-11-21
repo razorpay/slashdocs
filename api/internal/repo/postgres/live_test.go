@@ -436,3 +436,65 @@ func TestSearchTextOfAVersionIsWrittenWhenItIsSealed(t *testing.T) {
 		t.Fatalf("search after the seal: apricot %v, blueberry %v; want both", found("apricot"), found("blueberry"))
 	}
 }
+
+func TestPresencePruningPreservesDocumentEventRevision(t *testing.T) {
+	ctx := context.Background()
+	store := newStore(t)
+
+	doc, _, err := store.CreateDocument(
+		ctx, liveOwner, "Presence revision", "", []byte("<p>test</p>"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Build up a revision history using presence events only.
+	for i := 0; i < 3; i++ {
+		if err := store.AppendDocumentEvent(
+			ctx, doc.ID, repo.DocumentEventPresence,
+			json.RawMessage(`{}`), liveOther,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	before, err := store.CurrentDocumentKVRevision(ctx, doc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate the 10-minute retention period expiring.
+	exec(t, store, `
+        UPDATE document_kv_events
+        SET updated_at = now() - interval '11 minutes'
+        WHERE document_id = '`+doc.ID+`'
+          AND kind = 'presence'
+    `)
+
+	// The next heartbeat triggers stale-event pruning.
+	if err := store.AppendDocumentEvent(
+		ctx, doc.ID, repo.DocumentEventPresence,
+		json.RawMessage(`{}`), liveOther,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	after, err := store.CurrentDocumentKVRevision(ctx, doc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if after != before+1 {
+		t.Fatalf("revision after pruning = %d, want %d", after, before+1)
+	}
+
+	// A reconnecting client at the previous revision must see the new event.
+	events, err := store.ListDocumentKVEvents(ctx, doc.ID, before, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Revision != before+1 {
+		t.Fatalf("events after revision %d = %+v, want one event at revision %d",
+			before, events, before+1)
+	}
+}
