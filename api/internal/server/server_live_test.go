@@ -2,11 +2,13 @@ package server_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/coder/websocket"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/razorpay/slashdocs/api/internal/auth"
 	"github.com/razorpay/slashdocs/api/internal/repo"
+	"github.com/razorpay/slashdocs/api/internal/server"
 )
 
 type liveMessage struct {
@@ -271,5 +274,34 @@ func TestDocumentLiveClosesWhenTheServerStops(t *testing.T) {
 	var m liveMessage
 	if err := wsjson.Read(ctx, conn, &m); websocket.CloseStatus(err) != websocket.StatusGoingAway {
 		t.Fatalf("read = %#v %v, want close 1001", m, err)
+	}
+}
+
+// TestDocumentLiveTellsTheBuild makes sure that the position of the document
+// names the build of the frontend, so that a page of another build loads again.
+func TestDocumentLiveTellsTheBuild(t *testing.T) {
+	e := newConfiguredTestEnv(t, server.Config{Environment: "test"},
+		server.WithFrontend(fstest.MapFS{"index.html": {Data: []byte("<html></html>")}}))
+	ts := httptest.NewServer(e.h)
+	defer ts.Close()
+	ctx := liveCtx(t)
+	conn, _, err := dialWS(ctx, liveURL(ts, e.doc.ID, ""), liveHeaders(fixtureViewer))
+	if err != nil {
+		t.Fatalf("dial live: %v", err)
+	}
+	defer func() { _ = conn.CloseNow() }()
+	for {
+		m := readLive(ctx, t, conn)
+		if m.Event.Kind != repo.DocumentEventDocument {
+			continue
+		}
+		var position struct {
+			Seq   int64  `json:"seq"`
+			Build string `json:"build"`
+		}
+		if err := json.Unmarshal(m.Event.Data, &position); err != nil || position.Seq == 0 || len(position.Build) != 16 {
+			t.Fatalf("position = %s (%v), want the seq and the build", m.Event.Data, err)
+		}
+		return
 	}
 }

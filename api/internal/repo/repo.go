@@ -890,6 +890,10 @@ type Repository interface {
 	// AppendDocumentEvent appends a non-KV live event (document, comments, or
 	// presence) to the document's event log and wakes its subscribers.
 	AppendDocumentEvent(ctx context.Context, documentID, kind string, data json.RawMessage, actor auth.Principal) error
+	// AppendCommentThreadEvent appends a comments event whose data tells
+	// the thread as it is at the revision of the event: data gets its
+	// comments, or none when the thread is gone.
+	AppendCommentThreadEvent(ctx context.Context, documentID, threadID string, data func(thread []Comment) (json.RawMessage, error), actor auth.Principal) error
 	// ListDocumentPresence returns the presence events newer than maxAge.
 	ListDocumentPresence(ctx context.Context, documentID string, maxAge time.Duration) ([]DocumentKVEvent, error)
 	CreateFolder(ctx context.Context, owner auth.Principal, title, parentFolderID string) (Folder, error)
