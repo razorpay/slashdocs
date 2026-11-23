@@ -89,6 +89,15 @@ UPDATE documents SET title=$1,updated_at=now() WHERE id=$2;
 -- content did not change.
 UPDATE documents SET expires_at = sqlc.narg('expires_at') WHERE id = @id;
 
+-- name: MoveDocumentExpiryLater :execrows
+-- The change of a principal who cannot delete the document: a later time, or
+-- a null for no expiry, on a document that has an expiry. The check is in the
+-- statement, so that a change of the owner at the same moment cannot make
+-- this one a sooner time.
+UPDATE documents SET expires_at = sqlc.narg('expires_at')
+WHERE id = @id AND expires_at IS NOT NULL
+  AND (sqlc.narg('expires_at')::timestamptz IS NULL OR sqlc.narg('expires_at')::timestamptz > expires_at);
+
 -- name: SearchDocuments :many
 -- @match_query, @words_query, @exclude_query, and @rank_query are tsquery
 -- text. A document matches when its title or current text matches

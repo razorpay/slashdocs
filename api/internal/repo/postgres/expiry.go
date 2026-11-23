@@ -34,7 +34,23 @@ func (s *Store) ChangeDocument(ctx context.Context, id string, change repo.Docum
 			return repo.Document{}, err
 		}
 	}
-	if change.ExpiresAt != nil {
+	switch {
+	case change.ExpiresAt == nil:
+	case change.OnlyLater:
+		moved, err := q.MoveDocumentExpiryLater(ctx, dbsqlc.MoveDocumentExpiryLaterParams{ExpiresAt: expiryParam(*change.ExpiresAt), ID: id})
+		if err != nil {
+			return repo.Document{}, err
+		}
+		if moved == 0 {
+			// The rollback takes back a new title.
+			if _, err := q.GetDocument(ctx, id); errors.Is(err, pgx.ErrNoRows) {
+				return repo.Document{}, repo.ErrNotFound
+			} else if err != nil {
+				return repo.Document{}, err
+			}
+			return repo.Document{}, repo.ErrExpiryNotLater
+		}
+	default:
 		if err := q.SetDocumentExpiry(ctx, dbsqlc.SetDocumentExpiryParams{ExpiresAt: expiryParam(*change.ExpiresAt), ID: id}); err != nil {
 			return repo.Document{}, err
 		}

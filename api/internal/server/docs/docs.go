@@ -588,7 +588,7 @@ const docTemplate = `{
                         "cookieAuth": []
                     }
                 ],
-                "description": "Changes the title, the expiry, or both. Only the owner can. A document with an expiry is deleted after it.",
+                "description": "Changes the title, the expiry, or both. A document with an expiry is deleted after it. Only the owner renames the document, gives it an expiry, or makes the expiry sooner. An editor can move an expiry later or remove it.",
                 "consumes": [
                     "application/json"
                 ],

@@ -865,7 +865,9 @@ and deletes up to 100 of them in a round. The servers need no leader: each
 one takes a document with a row lock, so a document is deleted once. A
 document can live up to one interval after its expiry time, and longer when
 many expire at the same time, or while a person writes to it. Until the
-delete, its owner can change or remove the expiry.
+delete, its owner can change or remove the expiry. An editor of the document
+can move the expiry later or remove it, and cannot make it sooner: an editor
+cannot delete the document, and a sooner expiry is a delete.
 
 `0` turns the feature off. The server then deletes no expired document and
 removes no blob, as before this feature, and it refuses a new expiry with the

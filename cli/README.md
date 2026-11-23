@@ -68,7 +68,8 @@ slashdocs docs show doc_123                 # prints expires_at
 
 A period is a whole number and a unit: `min`, `h`, `d`, `w` or `mo`. A month
 is 30 days. There is no `m`: `3m` reads as three months and as three minutes,
-so the CLI refuses it. Only the owner of a document can set its expiry.
+so the CLI refuses it. Only the owner of a document can give it an expiry or
+make the expiry sooner. An editor can move an expiry later or remove it.
 
 The command prints the time of the delete and how long that is from now, so
 a wrong unit shows at once. Before it changes something, it asks the server
