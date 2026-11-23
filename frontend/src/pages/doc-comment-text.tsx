@@ -254,8 +254,10 @@ export function MentionTextarea({
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
           aria-label={label}
-          // One line that grows with the text.
-          className="block max-h-40 min-h-9 min-w-0 resize-none py-1.5 text-sm [field-sizing:content]"
+          // Two lines that grow with the text to about twelve, and stay in
+          // the popover. A drag sets a fixed height that stops the growth,
+          // so only a browser without field-sizing gets the drag handle.
+          className="block max-h-[min(35vh,256px)] min-h-14 min-w-0 resize-y py-1.5 text-sm [field-sizing:content] supports-[field-sizing:content]:resize-none"
         />
         {action}
       </div>

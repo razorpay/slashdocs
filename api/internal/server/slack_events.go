@@ -70,10 +70,11 @@ func rejectSlackRequest(c *gin.Context) {
 }
 
 type slackEnvelope struct {
-	Type           string         `json:"type"`
-	Challenge      string         `json:"challenge"`
-	Event          slackLinkEvent `json:"event"`
-	Authorizations []struct {
+	Type               string         `json:"type"`
+	Challenge          string         `json:"challenge"`
+	Event              slackLinkEvent `json:"event"`
+	IsExtSharedChannel bool           `json:"is_ext_shared_channel"`
+	Authorizations     []struct {
 		UserID string `json:"user_id"`
 		IsBot  bool   `json:"is_bot"`
 	} `json:"authorizations"`
@@ -119,7 +120,7 @@ func (h handlers) slackEvents(c *gin.Context) {
 				slog.ErrorContext(ctx, "slack unfurl panicked", slog.Any("panic", r))
 			}
 		}()
-		h.unfurlLinks(ctx, event)
+		h.unfurlLinks(ctx, event, env.IsExtSharedChannel)
 	}()
 }
 
@@ -133,12 +134,16 @@ func postedByThisBot(env slackEnvelope) bool {
 	return false
 }
 
-func (h handlers) unfurlLinks(ctx context.Context, event slackLinkEvent) {
+func (h handlers) unfurlLinks(ctx context.Context, event slackLinkEvent, extShared bool) {
 	target := notifications.UnfurlTarget{Channel: event.Channel, TS: event.MessageTS, UnfurlID: event.UnfurlID, Source: event.Source}
 	// Composer previews and failed lookups count as external.
 	isExternal := sync.OnceValue(func() bool {
 		if target.IsComposer() {
 			return true
+		}
+		// The bot cannot read a direct message between people, so the event tells.
+		if strings.HasPrefix(target.Channel, "D") {
+			return extShared
 		}
 		external, err := h.deps.slackUnfurler.IsExternalChannel(ctx, target.Channel)
 		if err != nil {

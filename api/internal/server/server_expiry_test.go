@@ -207,7 +207,7 @@ func TestAPatchWithAWrongExpiryKeepsTheTitle(t *testing.T) {
 
 // An expiry is a delete at a later time, so it needs the role that a delete
 // needs.
-func TestOnlyTheOwnerChangesTheExpiry(t *testing.T) {
+func TestOnlyTheOwnerGivesADocumentAnExpiry(t *testing.T) {
 	e := newTestEnv(t)
 	for _, p := range []auth.Principal{fixtureEditor, fixtureCommenter, fixtureViewer, fixtureStranger} {
 		rr := patchDoc(e, e.doc.ID, `{"expires_in":"1d"}`, p)
@@ -218,14 +218,55 @@ func TestOnlyTheOwnerChangesTheExpiry(t *testing.T) {
 	if got := getDocument(e, e.doc.ID).ExpiresAt; got != "" {
 		t.Fatalf("a principal who is not the owner gave the document the expiry %q", got)
 	}
-	assertStatus(t, patchDoc(e, e.doc.ID, `{"expires_in":"1d"}`, fixtureOwner), http.StatusOK)
-	for _, p := range []auth.Principal{fixtureEditor, fixtureStranger} {
-		if rr := patchDoc(e, e.doc.ID, `{"expires_at":null}`, p); rr.Code != http.StatusForbidden {
-			t.Errorf("%s removed the expiry: %d %s", p.Name, rr.Code, rr.Body)
+}
+
+// An editor cannot delete a document. A sooner expiry is a delete, so an
+// editor moves the expiry only to a later time, or removes it.
+func TestAnEditorMovesTheExpiryLaterAndNeverSooner(t *testing.T) {
+	e := newTestEnv(t)
+	assertStatus(t, patchDoc(e, e.doc.ID, `{"expires_in":"7d"}`, fixtureOwner), http.StatusOK)
+	week := getDocument(e, e.doc.ID).ExpiresAt
+
+	rr := patchDoc(e, e.doc.ID, `{"expires_in":"1d"}`, fixtureEditor)
+	assertStatus(t, rr, http.StatusForbidden)
+	if !strings.Contains(rr.Body.String(), "Only the owner") {
+		t.Errorf("the refusal does not tell who can: %s", rr.Body)
+	}
+	if got := getDocument(e, e.doc.ID).ExpiresAt; got != week {
+		t.Fatalf("an editor moved the expiry sooner, from %s to %s", week, got)
+	}
+
+	assertStatus(t, patchDoc(e, e.doc.ID, `{"expires_in":"30d"}`, fixtureEditor), http.StatusOK)
+	month := getDocument(e, e.doc.ID).ExpiresAt
+	if month <= week {
+		t.Fatalf("an editor asked for 30 days, and the expiry is %s, after %s", month, week)
+	}
+
+	// A rename stays with the owner, also in a body that moves the expiry later.
+	assertStatus(t, patchDoc(e, e.doc.ID, `{"title":"Mine","expires_in":"90d"}`, fixtureEditor), http.StatusForbidden)
+	if got := getDocument(e, e.doc.ID); got.ExpiresAt != month || got.Title == "Mine" {
+		t.Fatalf("an editor changed the title or the expiry with a rename: %q, %s", got.Title, got.ExpiresAt)
+	}
+
+	assertStatus(t, patchDoc(e, e.doc.ID, `{"expires_at":null}`, fixtureEditor), http.StatusOK)
+	if got := getDocument(e, e.doc.ID).ExpiresAt; got != "" {
+		t.Fatalf("an editor kept the document, and it has the expiry %s", got)
+	}
+}
+
+func TestACommenterDoesNotChangeTheExpiry(t *testing.T) {
+	e := newTestEnv(t)
+	assertStatus(t, patchDoc(e, e.doc.ID, `{"expires_in":"7d"}`, fixtureOwner), http.StatusOK)
+	week := getDocument(e, e.doc.ID).ExpiresAt
+	for _, p := range []auth.Principal{fixtureCommenter, fixtureViewer, fixtureStranger} {
+		for _, body := range []string{`{"expires_in":"30d"}`, `{"expires_at":null}`} {
+			if rr := patchDoc(e, e.doc.ID, body, p); rr.Code != http.StatusForbidden {
+				t.Errorf("%s sent %s: %d %s", p.Name, body, rr.Code, rr.Body)
+			}
 		}
 	}
-	if got := getDocument(e, e.doc.ID).ExpiresAt; got == "" {
-		t.Fatal("a principal who is not the owner removed the expiry")
+	if got := getDocument(e, e.doc.ID).ExpiresAt; got != week {
+		t.Fatalf("a principal with less than editor changed the expiry from %s to %s", week, got)
 	}
 }
 

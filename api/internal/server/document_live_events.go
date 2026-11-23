@@ -241,8 +241,8 @@ func (h handlers) leavePresence(c *gin.Context, docID, session string) {
 	}
 }
 
-// announce tells open viewers that a write changed the title, the comments
-// or the approvals of the document. The write already succeeded, so a failure
+// announce tells open viewers that a write changed the title or the
+// approvals of the document. The write already succeeded, so a failure
 // here is only logged. The repository stores the events of versions itself,
 // in the transactions that open and seal them.
 func (h handlers) announce(c *gin.Context, kind string) {
@@ -253,6 +253,51 @@ func (h handlers) announce(c *gin.Context, kind string) {
 		slog.WarnContext(ctx, "document event announcement failed",
 			slog.String("document_id", docID),
 			slog.String("kind", kind),
+			slog.Any("error", err))
+	}
+}
+
+// commentEvent is the data of a comments event: the thread that changed, as
+// it is at the revision of the event, placed on the current version. It has
+// no read state, which is the reader's own. A thread that is gone has none.
+type commentEvent struct {
+	ID     string           `json:"id"`
+	Thread *commentResponse `json:"thread,omitempty"`
+}
+
+// announceThread tells open viewers that a write changed a comment thread,
+// and gives them the thread, so that they do not read the comments again.
+func (h handlers) announceThread(c *gin.Context, threadID string) {
+	h.announceThreadOf(c.Request.Context(), c.Param("id"), threadID, *current(c))
+}
+
+// announceThreadOf is announceThread off a request. The write already
+// succeeded, so a failure here is only logged.
+func (h handlers) announceThreadOf(ctx context.Context, docID, threadID string, actor auth.Principal) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), liveEventWriteTimeout)
+	defer cancel()
+	var versionID string
+	if d, err := h.deps.repository.GetDocument(ctx, docID); err == nil {
+		versionID = d.CurrentVersionID
+	}
+	// The parse that the placement of the thread needs runs before the lock
+	// that the event takes, so that a large document does not hold up its
+	// other events. A thread on the current version needs none.
+	doc := h.placementOf(ctx, versionID)
+	if root, err := h.deps.repository.GetComment(ctx, threadID); err == nil {
+		commentPlacement(root, versionID, doc)
+	}
+	err := h.deps.repository.AppendCommentThreadEvent(ctx, docID, threadID, func(thread []repo.Comment) (json.RawMessage, error) {
+		event := commentEvent{ID: threadID}
+		if threads := commentsJSON(thread, versionID, doc, auth.Principal{}); len(threads) > 0 {
+			event.Thread = &threads[0]
+		}
+		return json.Marshal(event)
+	}, actor)
+	if err != nil {
+		slog.WarnContext(ctx, "comment thread announcement failed",
+			slog.String("document_id", docID),
+			slog.String("thread_id", threadID),
 			slog.Any("error", err))
 	}
 }

@@ -357,6 +357,29 @@ func (q *Queries) LockExpiredDocument(ctx context.Context, skipped []string) (Lo
 	return i, err
 }
 
+const moveDocumentExpiryLater = `-- name: MoveDocumentExpiryLater :execrows
+UPDATE documents SET expires_at = $1
+WHERE id = $2 AND expires_at IS NOT NULL
+  AND ($1::timestamptz IS NULL OR $1::timestamptz > expires_at)
+`
+
+type MoveDocumentExpiryLaterParams struct {
+	ExpiresAt pgtype.Timestamptz
+	ID        string
+}
+
+// The change of a principal who cannot delete the document: a later time, or
+// a null for no expiry, on a document that has an expiry. The check is in the
+// statement, so that a change of the owner at the same moment cannot make
+// this one a sooner time.
+func (q *Queries) MoveDocumentExpiryLater(ctx context.Context, arg MoveDocumentExpiryLaterParams) (int64, error) {
+	result, err := q.db.Exec(ctx, moveDocumentExpiryLater, arg.ExpiresAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const moveDocumentToFolder = `-- name: MoveDocumentToFolder :one
 UPDATE documents SET parent_folder_id= $1::text, updated_at=now() WHERE id= $2
 RETURNING owner_type, owner_id

@@ -37,6 +37,11 @@ func MaxRole(a, b Role) Role {
 var ErrNotFound = fmt.Errorf("not found: %w", auth.ErrNotFound)
 var ErrConflict = errors.New("conflict")
 var ErrForbidden = errors.New("forbidden")
+
+// ErrExpiryNotLater tells that a change of an expiry that was for a later
+// time only asked for a sooner time, or for an expiry on a document that has
+// none.
+var ErrExpiryNotLater = errors.New("the expiry is not later")
 var ErrInvalidCommentBody = errors.New("invalid comment body")
 var ErrInvalidCommentMention = errors.New("invalid comment mention")
 
@@ -207,6 +212,11 @@ type DocumentChange struct {
 	Title *string
 	// ExpiresAt is the new expiry time. The zero time removes the expiry.
 	ExpiresAt *time.Time
+	// OnlyLater makes the change of the expiry one that cannot delete the
+	// document sooner: the document must have an expiry, and the new time is
+	// after it, or is no expiry. Another change returns ErrExpiryNotLater.
+	// It is the change of an editor, who cannot delete the document.
+	OnlyLater bool
 }
 
 // ApprovalRequest names a principal the document owner wants a decision from.
@@ -890,6 +900,10 @@ type Repository interface {
 	// AppendDocumentEvent appends a non-KV live event (document, comments, or
 	// presence) to the document's event log and wakes its subscribers.
 	AppendDocumentEvent(ctx context.Context, documentID, kind string, data json.RawMessage, actor auth.Principal) error
+	// AppendCommentThreadEvent appends a comments event whose data tells
+	// the thread as it is at the revision of the event: data gets its
+	// comments, or none when the thread is gone.
+	AppendCommentThreadEvent(ctx context.Context, documentID, threadID string, data func(thread []Comment) (json.RawMessage, error), actor auth.Principal) error
 	// ListDocumentPresence returns the presence events newer than maxAge.
 	ListDocumentPresence(ctx context.Context, documentID string, maxAge time.Duration) ([]DocumentKVEvent, error)
 	CreateFolder(ctx context.Context, owner auth.Principal, title, parentFolderID string) (Folder, error)

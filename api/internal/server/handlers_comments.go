@@ -193,7 +193,7 @@ func (h handlers) createComment(c *gin.Context) {
 		h.follow(c, cm.DocumentID)
 	}
 	incComment("created", cm.Status, actorType(c))
-	h.announce(c, repo.DocumentEventComments)
+	h.announceThread(c, cm.ID)
 	c.JSON(http.StatusCreated, commentJSON(cm, cm.VersionID, nil, *p))
 }
 
@@ -233,11 +233,7 @@ func (h handlers) listComments(c *gin.Context) {
 			placementVersionID = d.CurrentVersionID
 		}
 	}
-	var placementHTML []byte
-	if placementVersionID != "" {
-		placementHTML, _ = h.deps.repository.GetVersionHTML(c.Request.Context(), placementVersionID)
-	}
-	threads := commentsJSON(items, placementVersionID, placementHTML, *current(c))
+	threads := commentsJSON(items, placementVersionID, h.placementOf(c.Request.Context(), placementVersionID), *current(c))
 	if !h.markUnread(c, threads) {
 		return
 	}
@@ -331,7 +327,7 @@ func (h handlers) createCommentReply(c *gin.Context) {
 		return
 	}
 	incComment("created", cm.Status, actorType(c))
-	h.announce(c, repo.DocumentEventComments)
+	h.announceThread(c, cm.RootCommentID)
 	c.JSON(http.StatusCreated, commentJSON(cm, "", nil, *current(c)))
 }
 
@@ -392,7 +388,7 @@ func (h handlers) patchComment(c *gin.Context) {
 		event = "reopened"
 	}
 	incComment(event, cm.Status, actorType(c))
-	h.announce(c, repo.DocumentEventComments)
+	h.announceThread(c, cm.RootCommentID)
 	c.JSON(http.StatusOK, commentJSON(cm, cm.VersionID, nil, *current(c)))
 }
 
@@ -494,15 +490,16 @@ func commentWriteError(c *gin.Context, err error) {
 // @Success 204
 // @Router /v1/documents/{id}/comments/{comment_id} [delete]
 func (h handlers) deleteComment(c *gin.Context) {
-	if !h.canDeleteComment(c, c.Param("id"), c.Param("comment_id")) {
+	cm, ok := h.canDeleteComment(c, c.Param("id"), c.Param("comment_id"))
+	if !ok {
 		return
 	}
-	if err := h.deps.repository.DeleteComment(c.Request.Context(), c.Param("comment_id")); err != nil {
+	if err := h.deps.repository.DeleteComment(c.Request.Context(), cm.ID); err != nil {
 		internalErr(c, err)
 		return
 	}
 	incComment("deleted", labelUnknown, actorType(c))
-	h.announce(c, repo.DocumentEventComments)
+	h.announceThread(c, cm.RootCommentID)
 	c.Status(http.StatusNoContent)
 }
 
@@ -523,17 +520,17 @@ var allowedCommentReactions = map[string]bool{
 // must check the document role first; a missing comment and a comment in
 // another document deliberately share one 404 so the response cannot be used
 // to probe for comment IDs outside the document the caller named.
-func (h handlers) commentInDocument(c *gin.Context, docID, commentID string) bool {
+func (h handlers) commentInDocument(c *gin.Context, docID, commentID string) (repo.Comment, bool) {
 	cm, err := h.deps.repository.GetComment(c.Request.Context(), commentID)
 	if err != nil && !errors.Is(err, repo.ErrNotFound) {
 		internalErr(c, err)
-		return false
+		return repo.Comment{}, false
 	}
 	if err != nil || cm.DocumentID != docID {
 		c.JSON(http.StatusNotFound, errorResponse("not_found", "comment not found in document", nil))
-		return false
+		return repo.Comment{}, false
 	}
-	return true
+	return cm, true
 }
 
 // PutCommentReaction godoc
@@ -586,14 +583,15 @@ func (h handlers) writeCommentReaction(c *gin.Context, write reactionWrite) {
 	if !h.needDocRole(c, docID, repo.RoleCommenter) {
 		return
 	}
-	if !h.commentInDocument(c, docID, commentID) {
+	cm, ok := h.commentInDocument(c, docID, commentID)
+	if !ok {
 		return
 	}
 	if err := write(c.Request.Context(), commentID, *current(c), emoji); err != nil {
 		internalErr(c, err)
 		return
 	}
-	h.announce(c, repo.DocumentEventComments)
+	h.announceThread(c, cm.RootCommentID)
 	c.Status(http.StatusNoContent)
 }
 
@@ -628,16 +626,16 @@ func authoredBy(cm repo.Comment, p auth.Principal) bool {
 	return cm.Author.Type == p.Type && cm.Author.ID == p.ID
 }
 
-func (h handlers) canDeleteComment(c *gin.Context, docID, commentID string) bool {
+func (h handlers) canDeleteComment(c *gin.Context, docID, commentID string) (repo.Comment, bool) {
 	cm, ok := h.loadCommentInDocument(c, docID, commentID)
 	if !ok || !h.needDocRole(c, docID, repo.RoleCommenter) {
-		return false
+		return repo.Comment{}, false
 	}
 	if authoredBy(cm, *current(c)) {
-		return true
+		return cm, true
 	}
 	forbidden(c, "only the comment author can delete this comment")
-	return false
+	return repo.Comment{}, false
 }
 
 func (h handlers) canMutateComment(c *gin.Context, docID, commentID string) bool {

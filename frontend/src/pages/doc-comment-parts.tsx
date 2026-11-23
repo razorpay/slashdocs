@@ -508,7 +508,7 @@ export function SendingMessage({ text, who }: { text: MentionDraft; who?: Princi
   );
 }
 
-// ComposeField is the field for a reply or a new pin's comment: one line that
+// ComposeField is the field for a reply or a new pin's comment: a field that
 // grows with the text, and a send button. Enter sends, Shift+Enter starts a
 // new line. When another tab changed the same draft, it tells, and offers
 // both texts. When the words came back from an earlier visit, it says so,

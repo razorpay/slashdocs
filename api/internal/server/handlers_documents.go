@@ -337,7 +337,7 @@ type patchDocumentRequest struct {
 
 // PatchDocument godoc
 // @Summary Update document
-// @Description Changes the title, the expiry, or both. Only the owner can. A document with an expiry is deleted after it.
+// @Description Changes the title, the expiry, or both. A document with an expiry is deleted after it. Only the owner renames the document, gives it an expiry, or makes the expiry sooner. An editor can move an expiry later or remove it.
 // @Tags documents
 // @Security bearerAuth
 // @Security cookieAuth
@@ -347,9 +347,15 @@ type patchDocumentRequest struct {
 // @Success 200 {object} repo.Document
 // @Router /v1/documents/{id} [patch]
 func (h handlers) patchDocument(c *gin.Context) {
-	if !h.needDocRole(c, c.Param("id"), repo.RoleOwner) {
+	if !h.needDocRole(c, c.Param("id"), repo.RoleEditor) {
 		return
 	}
+	role, err := h.deps.repository.RoleForDocument(c.Request.Context(), *current(c), c.Param("id"))
+	if err != nil {
+		internalErr(c, err)
+		return
+	}
+	owner := atLeast(role, repo.RoleOwner)
 	var in patchDocumentRequest
 	if !requireJSON(c) {
 		return
@@ -362,9 +368,22 @@ func (h handlers) patchDocument(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// An editor cannot delete the document, and a sooner expiry is a delete.
+	// So an editor moves an expiry later or removes it, and nothing else.
+	if !owner {
+		if change.Title != nil {
+			denyDocRole(c, repo.RoleOwner)
+			return
+		}
+		change.OnlyLater = true
+	}
 	d, err := h.deps.repository.ChangeDocument(c.Request.Context(), c.Param("id"), change)
 	if errors.Is(err, repo.ErrNotFound) { // The document was deleted after the role check.
 		notFound(c)
+		return
+	}
+	if errors.Is(err, repo.ErrExpiryNotLater) {
+		forbidden(c, expiryOwnerOnly)
 		return
 	}
 	if err != nil {
@@ -426,6 +445,9 @@ func (h handlers) requestedExpiry(c *gin.Context, expiresIn, expiresAt string) (
 }
 
 const expiryDisabled = "Document expiry is turned off on this server"
+
+// expiryOwnerOnly answers an editor who asked for a sooner delete.
+const expiryOwnerOnly = "Only the owner can give this document an expiry or make it sooner. An editor can move the expiry later or remove it"
 
 // expiryErr answers a request whose expiry the expiry package refused. An
 // *expiry.Error has a text for the caller.
