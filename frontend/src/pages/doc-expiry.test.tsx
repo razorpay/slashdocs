@@ -18,7 +18,7 @@ afterEach(() => {
 const DAY = 24 * 3_600_000;
 const inDays = (n: number) => new Date(Date.now() + n * DAY).toISOString();
 
-function open(expiresAt?: string, enabled = true) {
+function open(expiresAt?: string, enabled = true, owner = true) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const invalidate = vi.spyOn(client, "invalidateQueries");
   const onOpenChange = vi.fn();
@@ -28,6 +28,7 @@ function open(expiresAt?: string, enabled = true) {
         docId="doc_1"
         expiresAt={expiresAt}
         enabled={enabled}
+        owner={owner}
         open
         onOpenChange={onOpenChange}
       />
@@ -214,5 +215,34 @@ describe("ExpiryDialog", () => {
       expect(onOpenChange).toHaveBeenCalledWith(false);
       expect(set).not.toHaveBeenCalled();
     });
+  });
+
+  it("gives an editor the later periods and Keep, and saves a later one", async () => {
+    const user = userEvent.setup();
+    const set = vi
+      .spyOn(api, "setDocumentExpiry")
+      .mockResolvedValue({ id: "doc_1", expires_at: inDays(30) } as Document);
+    open(inDays(3), true, false);
+    expect(screen.getByText(/Only the owner can make it sooner/)).toBeVisible();
+    expect(screen.getByRole("radio", { name: "1 day" })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: "3 days" })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: "Keep" })).toBeEnabled();
+    await user.click(screen.getByRole("radio", { name: "1 month" }));
+    await user.click(save());
+    await waitFor(() => expect(set).toHaveBeenCalledWith("doc_1", "30d"));
+  });
+
+  it("moves the keys of an editor past the periods that are sooner", async () => {
+    const user = userEvent.setup();
+    open(inDays(3), true, false);
+    screen.getByRole("radio", { name: "Keep" }).focus();
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getByRole("radio", { name: "7 days" })).toBeChecked();
+  });
+
+  it("gives the owner every period", () => {
+    open(inDays(3));
+    for (const name of ["Keep", "1 day", "3 days", "7 days", "1 month", "3 months"])
+      expect(screen.getByRole("radio", { name })).toBeEnabled();
   });
 });

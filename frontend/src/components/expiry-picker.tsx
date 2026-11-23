@@ -18,12 +18,16 @@ export function ExpiryPicker({
   value,
   onChange,
   disabled,
+  allowed = () => true,
   labelledBy,
   className,
 }: {
   value: string | null;
   onChange: (value: string) => void;
   disabled?: boolean;
+  // Tells whether the person can pick a period. An editor cannot pick one
+  // that deletes the document sooner. The keys pass over the others.
+  allowed?: (value: string) => boolean;
   // The id of a visible label. Without one the group is named "Auto-delete".
   labelledBy?: string;
   className?: string;
@@ -37,7 +41,13 @@ export function ExpiryPicker({
       ...event.currentTarget.querySelectorAll<HTMLElement>('[role="radio"]'),
     ];
     const at = radios.indexOf(event.target as HTMLElement);
-    const next = step(at >= 0 ? at : Math.max(picked, 0), radios.length);
+    let next = step(at >= 0 ? at : Math.max(picked, 0), radios.length);
+    // Home and End stop at the edge, so a walk from there goes inward.
+    const inward =
+      next === 0 ? 1 : next === radios.length - 1 ? -1 : next > at ? 1 : -1;
+    for (let i = 0; i < radios.length && !allowed(EXPIRY_PRESETS[next].value); i++)
+      next = (next + inward + radios.length) % radios.length;
+    if (!allowed(EXPIRY_PRESETS[next].value)) return;
     onChange(EXPIRY_PRESETS[next].value);
     radios[next]?.focus();
   };
@@ -58,7 +68,7 @@ export function ExpiryPicker({
           role="radio"
           aria-checked={i === picked}
           tabIndex={i === Math.max(picked, 0) ? 0 : -1}
-          disabled={disabled}
+          disabled={disabled || !allowed(preset.value)}
           onClick={() => onChange(preset.value)}
           className="flex h-8 flex-1 items-center justify-center whitespace-nowrap rounded-[6px] px-3 text-sm font-medium text-[var(--color-fg-muted)] transition-[color,background-color,box-shadow,transform] duration-150 ease-out hover:text-[var(--color-fg)] active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50 aria-checked:bg-[var(--color-surface)] aria-checked:text-[var(--color-fg)] aria-checked:shadow-[var(--shadow-border)] touch:h-10"
         >

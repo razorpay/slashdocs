@@ -25,3 +25,9 @@ export function useExpiryEnabled(): boolean {
   });
   return config.data?.document_expiry_enabled === true;
 }
+
+// The time at which a period from now ends. The periods of EXPIRY_PRESETS
+// are whole days.
+export function periodEnd(period: string, now = Date.now()): number {
+  return now + parseInt(period, 10) * 24 * 3_600_000;
+}

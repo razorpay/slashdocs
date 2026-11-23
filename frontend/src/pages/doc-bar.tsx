@@ -232,10 +232,11 @@ export function DocBar({
   const expiryEnabled = config.data?.document_expiry_enabled === true;
   const expiryShown = !!expiresAt;
   // The owner changes the expiry where the server has the feature, and
-  // removes one that is there. The dialog says which, so it waits for the
-  // config.
+  // removes one that is there. An editor moves an expiry that is there later,
+  // or removes it. The dialog says which, so it waits for the config.
   const expiryControls =
-    canManage && config.data !== undefined && (expiryEnabled || !!expiresAt);
+    config.data !== undefined &&
+    ((canManage && expiryEnabled) || ((canManage || canEdit) && !!expiresAt));
   const viewerActions = {
     onFollow: onFollowViewer,
     onUnfollow: onUnfollowViewer,
@@ -516,7 +517,17 @@ export function DocBar({
               </DropdownItem>
             </>
           ) : null}
-          {expiryShown && !canManage ? (
+          {expiryControls && !canManage ? (
+            <DropdownGroup>
+              <DropdownSeparator />
+              <DropdownItem onSelect={() => setExpiryOpen(true)}>
+                <Timer className="size-4" /> Auto-delete…
+                <span className="ml-auto pl-4 text-xs tabular-nums text-[var(--color-fg-muted)]">
+                  {formatUntilShort(expiresAt)}
+                </span>
+              </DropdownItem>
+            </DropdownGroup>
+          ) : expiryShown && !canManage ? (
             <DropdownGroup className="sm:hidden">
               <DropdownSeparator />
               <DropdownItem disabled>
@@ -568,6 +579,7 @@ export function DocBar({
           docId={docId}
           expiresAt={expiresAt}
           enabled={expiryEnabled}
+          owner={canManage}
         />
       ) : null}
       {canMove ? (
