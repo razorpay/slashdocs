@@ -655,7 +655,9 @@ route for queries and notification sends.
 The same per-document stream also carries document, comment, and presence
 events. Open viewers refresh comments, hear about new versions, and see who
 else is viewing, whichever replica served each request. Presence rows expire
-after ten minutes, so the event table does not grow with viewing time.
+after ten minutes, so the event table does not grow with viewing time. Each
+document stores its KV revision high-water mark separately from retained
+events, so pruning presence rows does not reuse event revisions.
 
 Live cursors use the same stream but are never stored. Each cursor also
 carries the center of its viewer's view, so another viewer can follow them, and
