@@ -182,8 +182,8 @@ func TestChangeDocumentSetsAndRemovesTheExpiry(t *testing.T) {
 }
 
 // A change that is only for a later time is the change of an editor, who
-// cannot delete the document: it never makes the expiry sooner, and gives no
-// expiry to a document that has none.
+// cannot delete the document: it never makes the expiry sooner, gives no
+// expiry to a document that has none, and removes none.
 func TestAChangeForLaterOnlyNeverMovesTheExpirySooner(t *testing.T) {
 	store := newStore(t)
 	ctx := context.Background()
@@ -216,8 +216,11 @@ func TestAChangeForLaterOnlyNeverMovesTheExpirySooner(t *testing.T) {
 	if got, err := later(month); err != nil || got.ExpiresAt != month.Format(time.RFC3339) {
 		t.Fatalf("a later expiry = %q, %v", got.ExpiresAt, err)
 	}
-	if got, err := later(never); err != nil || got.ExpiresAt != "" {
-		t.Fatalf("no expiry = %q, %v", got.ExpiresAt, err)
+	if _, err := later(never); !errors.Is(err, repo.ErrExpiryNotLater) {
+		t.Fatalf("a removal of the expiry: %v, want ErrExpiryNotLater", err)
+	}
+	if got, err := store.GetDocument(ctx, doc.ID); err != nil || got.ExpiresAt != month.Format(time.RFC3339) {
+		t.Fatalf("after the refused removal the expiry is %q, %v", got.ExpiresAt, err)
 	}
 	if _, err := store.ChangeDocument(ctx, "doc_none", repo.DocumentChange{ExpiresAt: &month, OnlyLater: true}); !errors.Is(err, repo.ErrNotFound) {
 		t.Fatalf("a change of no document: %v, want ErrNotFound", err)

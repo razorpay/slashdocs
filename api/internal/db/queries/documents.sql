@@ -92,13 +92,14 @@ UPDATE documents SET title=$1,updated_at=now() WHERE id=$2;
 UPDATE documents SET expires_at = sqlc.narg('expires_at'), expiry_editor_changes = 0 WHERE id = @id;
 
 -- name: MoveDocumentExpiryLater :execrows
--- The change of an editor, who cannot delete the document: a later time, or
--- a null for no expiry, on a document that has an expiry, and @max_changes
--- times at most. The checks are in the statement, so that a change at the
--- same moment cannot make this one a sooner time or one change too many.
-UPDATE documents SET expires_at = sqlc.narg('expires_at'), expiry_editor_changes = expiry_editor_changes + 1
+-- The change of an editor, who cannot delete the document and does not decide
+-- that it stays: a later time on a document that has an expiry, and
+-- @max_changes times at most. A null is no later time, so an editor removes
+-- no expiry. The checks are in the statement, so that a change at the same
+-- moment cannot make this one a sooner time or one change too many.
+UPDATE documents SET expires_at = @expires_at, expiry_editor_changes = expiry_editor_changes + 1
 WHERE id = @id AND expires_at IS NOT NULL AND expiry_editor_changes < @max_changes::int
-  AND (sqlc.narg('expires_at')::timestamptz IS NULL OR sqlc.narg('expires_at')::timestamptz > expires_at);
+  AND @expires_at::timestamptz > expires_at;
 
 -- name: SearchDocuments :many
 -- @match_query, @words_query, @exclude_query, and @rank_query are tsquery

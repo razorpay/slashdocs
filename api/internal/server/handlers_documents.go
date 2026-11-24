@@ -337,7 +337,7 @@ type patchDocumentRequest struct {
 
 // PatchDocument godoc
 // @Summary Update document
-// @Description Changes the title, the expiry, or both. A document with an expiry is deleted after it. Only the owner renames the document, gives it an expiry, or makes the expiry sooner. An editor can move an expiry later or remove it, 3 times for a document after its owner set it; expiry_editor_changes_left tells how many are left.
+// @Description Changes the title, the expiry, or both. A document with an expiry is deleted after it. Only the owner renames the document, gives it an expiry, makes the expiry sooner, or removes it. An editor can move an expiry to a later time, 3 times for a document after its owner set it; expiry_editor_changes_left tells how many are left.
 // @Tags documents
 // @Security bearerAuth
 // @Security cookieAuth
@@ -369,7 +369,8 @@ func (h handlers) patchDocument(c *gin.Context) {
 		return
 	}
 	// An editor cannot delete the document, and a sooner expiry is a delete.
-	// So an editor moves an expiry later or removes it, and nothing else.
+	// The owner decided that the document goes, so an editor does not remove
+	// the expiry either. An editor moves an expiry later, and nothing else.
 	if !owner {
 		if change.Title != nil {
 			denyDocRole(c, repo.RoleOwner)
@@ -454,7 +455,7 @@ const expiryDisabled = "Document expiry is turned off on this server"
 var expiryChangesUsed = fmt.Sprintf("Editors changed the expiry of this document %d times, which is the most that they can. Ask the owner to change it", repo.MaxExpiryEditorChanges)
 
 // expiryOwnerOnly answers an editor who asked for a sooner delete.
-const expiryOwnerOnly = "Only the owner can give this document an expiry or make it sooner. An editor can move the expiry later or remove it"
+const expiryOwnerOnly = "Only the owner can give this document an expiry, make it sooner, or remove it. An editor can move the expiry later"
 
 // expiryErr answers a request whose expiry the expiry package refused. An
 // *expiry.Error has a text for the caller.

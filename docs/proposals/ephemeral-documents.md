@@ -67,11 +67,11 @@ them.
 
 - R1: A document has an optional expiry time. Without one, the server keeps it.
 - R2: Only the owner gives a document an expiry time or makes it sooner: the
-  role that `DELETE` needs. An editor can move an expiry later or remove it,
-  because those changes delete nothing. The editors of a document can do that
-  3 times, so that they cannot keep for ever a document that its owner wants
-  gone. A change of the owner gives them 3 changes again. Everyone who can read the document
-  sees its expiry.
+  role that `DELETE` needs. Only the owner removes it: the owner decided that
+  the document goes. An editor can move an expiry to a later time, up to the
+  longest period, because that deletes nothing. The editors of a document can
+  do that 3 times. A change of the owner gives them 3 changes again. Everyone
+  who can read the document sees its expiry.
 - R3: A request gives the time as a period from now (`expires_in`) or as a
   time (`expires_at`), not both.
 - R4: Every response that holds a document holds its `expires_at`, when set.

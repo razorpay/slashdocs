@@ -866,9 +866,10 @@ one takes a document with a row lock, so a document is deleted once. A
 document can live up to one interval after its expiry time, and longer when
 many expire at the same time, or while a person writes to it. Until the
 delete, its owner can change or remove the expiry. An editor of the document
-can move the expiry later or remove it, and cannot make it sooner: an editor
-cannot delete the document, and a sooner expiry is a delete. The editors of
-a document can change its expiry 3 times. After that only the owner can, and
+can move the expiry to a later time. An editor cannot make it sooner, because
+an editor cannot delete the document and a sooner expiry is a delete. An
+editor cannot remove it either: the owner decided that the document goes. The
+editors of a document can change its expiry 3 times. After that only the owner can, and
 a change of the owner gives the editors their 3 changes again.
 
 `0` turns the feature off. The server then deletes no expired document and

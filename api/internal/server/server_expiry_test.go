@@ -249,10 +249,14 @@ func TestAnEditorMovesTheExpiryLaterAndNeverSooner(t *testing.T) {
 		t.Fatalf("an editor changed the title or the expiry with a rename: %q, %s", got.Title, got.ExpiresAt)
 	}
 
-	assertStatus(t, patchDoc(e, e.doc.ID, `{"expires_at":null}`, fixtureEditor), http.StatusOK)
-	if got := getDocument(e, e.doc.ID).ExpiresAt; got != "" {
-		t.Fatalf("an editor kept the document, and it has the expiry %s", got)
+	// An editor does not remove the expiry: the owner decided that the
+	// document goes, and an editor can only put that off.
+	assertStatus(t, patchDoc(e, e.doc.ID, `{"expires_at":null}`, fixtureEditor), http.StatusForbidden)
+	if got := getDocument(e, e.doc.ID).ExpiresAt; got != month {
+		t.Fatalf("an editor removed the expiry: it is %q, want %s", got, month)
 	}
+	// A far time is not a removal.
+	assertStatus(t, patchDoc(e, e.doc.ID, `{"expires_in":"3650d"}`, fixtureEditor), http.StatusOK)
 }
 
 // An editor changes the expiry of a document three times. More changes would
@@ -291,7 +295,7 @@ func TestEditorsChangeTheExpiryThreeTimes(t *testing.T) {
 	for _, period := range []string{"70d", "80d", "90d", "100d"} {
 		assertStatus(t, patchDoc(e, e.doc.ID, `{"expires_in":"`+period+`"}`, fixtureOwner), http.StatusOK)
 	}
-	assertStatus(t, patchDoc(e, e.doc.ID, `{"expires_at":null}`, fixtureEditor), http.StatusOK)
+	assertStatus(t, patchDoc(e, e.doc.ID, `{"expires_at":null}`, fixtureOwner), http.StatusOK)
 	if left := getDocument(e, e.doc.ID).ExpiryEditorChangesLeft; left != nil {
 		t.Fatalf("a document without an expiry tells %d changes left", *left)
 	}
