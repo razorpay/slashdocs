@@ -34,6 +34,9 @@ export type Document = {
   updated_at?: string;
   // When the server deletes the document. Absent when it keeps it.
   expires_at?: string;
+  // How many times editors can still change the expiry. A read of one
+  // document that has an expiry carries it.
+  expiry_editor_changes_left?: number;
   labels?: string[];
   // Search results only: the matching text. U+0002 and U+0003 surround each match.
   snippet?: string;

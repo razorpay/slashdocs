@@ -18,7 +18,7 @@ afterEach(() => {
 const DAY = 24 * 3_600_000;
 const inDays = (n: number) => new Date(Date.now() + n * DAY).toISOString();
 
-function open(expiresAt?: string, enabled = true, owner = true) {
+function open(expiresAt?: string, enabled = true, owner = true, changesLeft?: number) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const invalidate = vi.spyOn(client, "invalidateQueries");
   const onOpenChange = vi.fn();
@@ -29,6 +29,7 @@ function open(expiresAt?: string, enabled = true, owner = true) {
         expiresAt={expiresAt}
         enabled={enabled}
         owner={owner}
+        changesLeft={changesLeft}
         open
         onOpenChange={onOpenChange}
       />
@@ -244,5 +245,25 @@ describe("ExpiryDialog", () => {
     open(inDays(3));
     for (const name of ["Keep", "1 day", "3 days", "7 days", "1 month", "3 months"])
       expect(screen.getByRole("radio", { name })).toBeEnabled();
+  });
+
+  it("tells an editor how many changes the editors have left", () => {
+    open(inDays(3), true, false, 2);
+    expect(screen.getByText(/Editors can change this 2 more times/)).toBeVisible();
+    expect(screen.getByRole("radio", { name: "7 days" })).toBeEnabled();
+  });
+
+  it("offers an editor nothing when the editors used their changes", () => {
+    open(inDays(3), true, false, 0);
+    expect(screen.getByText(/Ask the owner to change it/)).toBeVisible();
+    for (const name of ["Keep", "1 day", "7 days", "3 months"])
+      expect(screen.getByRole("radio", { name })).toBeDisabled();
+    expect(save()).toBeDisabled();
+  });
+
+  it("does not count for the owner", () => {
+    open(inDays(3), true, true, 0);
+    expect(screen.queryByText(/Editors/)).toBeNull();
+    expect(screen.getByRole("radio", { name: "1 day" })).toBeEnabled();
   });
 });

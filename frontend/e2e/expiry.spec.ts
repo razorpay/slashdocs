@@ -85,6 +85,7 @@ test("an editor sees the expiry and moves it later, and cannot make it sooner", 
   await mark.click();
   const dialog = reviewer.getByRole("dialog", { name: "Auto-delete" });
   await expect(dialog.getByRole("radio", { name: "1 day" })).toBeDisabled();
+  await expect(dialog.getByText("Editors can change this 3 more times.")).toBeVisible();
   await dialog.getByRole("radio", { name: "1 month" }).click();
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
   await expect(dialog).toBeHidden();

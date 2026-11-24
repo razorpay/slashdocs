@@ -26,6 +26,7 @@ export function ExpiryDialog({
   expiresAt,
   enabled,
   owner,
+  changesLeft,
   open,
   onOpenChange,
 }: {
@@ -34,6 +35,8 @@ export function ExpiryDialog({
   // The viewer owns the document. An editor who does not gets the later
   // periods only.
   owner: boolean;
+  // How many times editors can still change the expiry. The server counts.
+  changesLeft?: number;
   // The server deletes documents now. Without it, a document keeps the
   // expiry that it has, and the owner can only remove it.
   enabled: boolean;
@@ -58,6 +61,7 @@ export function ExpiryDialog({
           expiresAt={expiresAt}
           enabled={enabled}
           owner={owner}
+          changesLeft={changesLeft}
           onClose={() => onOpenChange(false)}
         />
       </DialogContent>
@@ -73,12 +77,14 @@ function ExpiryForm({
   expiresAt,
   enabled,
   owner,
+  changesLeft,
   onClose,
 }: {
   docId: string;
   expiresAt?: string;
   enabled: boolean;
   owner: boolean;
+  changesLeft?: number;
   onClose: () => void;
 }) {
   const qc = useQueryClient();
@@ -102,8 +108,12 @@ function ExpiryForm({
   // The server refuses a sooner time from an editor, so the dialog offers
   // none. A minute of margin keeps a period that ends at the expiry out.
   const current = expiresAt ? Date.parse(expiresAt) : 0;
+  // Editors change the expiry a few times, and then only the owner does.
+  const used = !owner && changesLeft === 0;
   const allowed = (period: string) =>
-    owner || period === "" || (current > 0 && periodEnd(period) > current + 60_000);
+    owner ||
+    (!used && period === "") ||
+    (!used && current > 0 && periodEnd(period) > current + 60_000);
   const changed = choice !== null && (choice !== "" || !!expiresAt);
   if (!enabled)
     return (
@@ -113,11 +123,12 @@ function ExpiryForm({
           it is turned on again, the server deletes this document, with its history and
           all comments. Keep the document to stop that.
         </p>
+        {owner ? null : <EditorChanges left={changesLeft} />}
         <DialogFooter>
           <Button type="button" variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={() => save.mutate("")} busy={save.isPending}>
+          <Button onClick={() => save.mutate("")} busy={save.isPending} disabled={used}>
             Keep document
           </Button>
         </DialogFooter>
@@ -138,6 +149,7 @@ function ExpiryForm({
           ? null
           : " As an editor you can move the delete later or keep the document. Only the owner can make it sooner."}
       </p>
+      {owner ? null : <EditorChanges left={changesLeft} />}
       <DialogFooter>
         <Button type="button" variant="ghost" onClick={onClose}>
           Cancel
@@ -151,5 +163,18 @@ function ExpiryForm({
         </Button>
       </DialogFooter>
     </>
+  );
+}
+
+// EditorChanges tells an editor how many changes of the expiry the editors
+// of the document have left.
+function EditorChanges({ left }: { left?: number }) {
+  if (left === undefined) return null;
+  return (
+    <p className="mt-2 text-pretty text-sm text-[var(--color-fg-muted)]">
+      {left === 0
+        ? "Editors changed the auto-delete of this document 3 times, which is the most that they can. Ask the owner to change it."
+        : `Editors can change this ${left} more ${left === 1 ? "time" : "times"}. The owner can always change it.`}
+    </p>
   );
 }

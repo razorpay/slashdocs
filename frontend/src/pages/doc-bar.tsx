@@ -105,6 +105,7 @@ export function DocBar({
   accessUnknown,
   labels,
   expiresAt,
+  expiryChangesLeft,
   onSelectVersion,
   viewers,
   onFollowViewer,
@@ -141,6 +142,8 @@ export function DocBar({
   labels: string[];
   // When the server deletes the document, if it does.
   expiresAt?: string;
+  // How many times editors can still change the expiry.
+  expiryChangesLeft?: number;
   onSelectVersion: (versionID: string) => void;
   viewers: Viewer[];
   // Goes to a viewer once, or follows them continuously.
@@ -580,6 +583,7 @@ export function DocBar({
           expiresAt={expiresAt}
           enabled={expiryEnabled}
           owner={canManage}
+          changesLeft={expiryChangesLeft}
         />
       ) : null}
       {canMove ? (
