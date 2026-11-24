@@ -39,8 +39,8 @@ var ErrConflict = errors.New("conflict")
 var ErrForbidden = errors.New("forbidden")
 
 // ErrExpiryNotLater tells that a change of an expiry that was for a later
-// time only asked for a sooner time, or for an expiry on a document that has
-// none.
+// time only asked for a sooner time, for no expiry, or for an expiry on a
+// document that has none.
 var ErrExpiryNotLater = errors.New("the expiry is not later")
 
 // MaxExpiryEditorChanges is how many times editors can change the expiry of
@@ -225,9 +225,9 @@ type DocumentChange struct {
 	Title *string
 	// ExpiresAt is the new expiry time. The zero time removes the expiry.
 	ExpiresAt *time.Time
-	// OnlyLater makes the change of the expiry one that cannot delete the
-	// document sooner: the document must have an expiry, and the new time is
-	// after it, or is no expiry. Another change returns ErrExpiryNotLater, and
+	// OnlyLater makes the change of the expiry one that only puts the delete
+	// off: the document must have an expiry, and the new time is after it. A
+	// sooner time, and no expiry, return ErrExpiryNotLater, and
 	// a change after MaxExpiryEditorChanges of them ErrExpiryChangesUsed.
 	// It is the change of an editor, who cannot delete the document.
 	OnlyLater bool

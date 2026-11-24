@@ -363,7 +363,7 @@ func (q *Queries) LockExpiredDocument(ctx context.Context, skipped []string) (Lo
 const moveDocumentExpiryLater = `-- name: MoveDocumentExpiryLater :execrows
 UPDATE documents SET expires_at = $1, expiry_editor_changes = expiry_editor_changes + 1
 WHERE id = $2 AND expires_at IS NOT NULL AND expiry_editor_changes < $3::int
-  AND ($1::timestamptz IS NULL OR $1::timestamptz > expires_at)
+  AND $1::timestamptz > expires_at
 `
 
 type MoveDocumentExpiryLaterParams struct {
@@ -372,10 +372,11 @@ type MoveDocumentExpiryLaterParams struct {
 	MaxChanges int32
 }
 
-// The change of an editor, who cannot delete the document: a later time, or
-// a null for no expiry, on a document that has an expiry, and @max_changes
-// times at most. The checks are in the statement, so that a change at the
-// same moment cannot make this one a sooner time or one change too many.
+// The change of an editor, who cannot delete the document and does not decide
+// that it stays: a later time on a document that has an expiry, and
+// @max_changes times at most. A null is no later time, so an editor removes
+// no expiry. The checks are in the statement, so that a change at the same
+// moment cannot make this one a sooner time or one change too many.
 func (q *Queries) MoveDocumentExpiryLater(ctx context.Context, arg MoveDocumentExpiryLaterParams) (int64, error) {
 	result, err := q.db.Exec(ctx, moveDocumentExpiryLater, arg.ExpiresAt, arg.ID, arg.MaxChanges)
 	if err != nil {
