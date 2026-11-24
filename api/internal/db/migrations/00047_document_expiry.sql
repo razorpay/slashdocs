@@ -11,6 +11,11 @@ SET LOCAL lock_timeout = '10s';
 -- table.
 ALTER TABLE documents ADD COLUMN expires_at TIMESTAMPTZ;
 
+-- How many times editors changed the expiry since the owner set it. An editor
+-- changes it a few times only, and the owner without a limit. A default that
+-- is a constant does not rewrite the table either.
+ALTER TABLE documents ADD COLUMN expiry_editor_changes SMALLINT NOT NULL DEFAULT 0;
+
 -- The deleted documents whose blobs are still in the blob store. A row
 -- outlives its document, so it has no foreign key. A server takes a row with
 -- a lease: it moves available_at forward and counts the attempt.
@@ -27,4 +32,5 @@ CREATE INDEX blob_deletions_queued_idx ON blob_deletions(queued_at, document_id)
 
 -- +goose Down
 DROP TABLE IF EXISTS blob_deletions;
+ALTER TABLE documents DROP COLUMN IF EXISTS expiry_editor_changes;
 ALTER TABLE documents DROP COLUMN IF EXISTS expires_at;

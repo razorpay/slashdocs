@@ -35,9 +35,10 @@ func patchDoc(e *testEnv, docID, body string, p auth.Principal) *httptest.Respon
 
 // document is the part of a document response that the expiry tests read.
 type document struct {
-	ID        string `json:"id"`
-	Title     string `json:"title"`
-	ExpiresAt string `json:"expires_at"`
+	ID                      string `json:"id"`
+	Title                   string `json:"title"`
+	ExpiresAt               string `json:"expires_at"`
+	ExpiryEditorChangesLeft *int   `json:"expiry_editor_changes_left"`
 }
 
 func decodeDocument(t *testing.T, rr *httptest.ResponseRecorder) document {
@@ -251,6 +252,48 @@ func TestAnEditorMovesTheExpiryLaterAndNeverSooner(t *testing.T) {
 	assertStatus(t, patchDoc(e, e.doc.ID, `{"expires_at":null}`, fixtureEditor), http.StatusOK)
 	if got := getDocument(e, e.doc.ID).ExpiresAt; got != "" {
 		t.Fatalf("an editor kept the document, and it has the expiry %s", got)
+	}
+}
+
+// An editor changes the expiry of a document three times. More changes would
+// keep a document that its owner wants gone for as long as an editor likes.
+// The owner changes it without a limit, and a change of the owner gives the
+// editors their three changes again.
+func TestEditorsChangeTheExpiryThreeTimes(t *testing.T) {
+	e := newTestEnv(t)
+	assertStatus(t, patchDoc(e, e.doc.ID, `{"expires_in":"1d"}`, fixtureOwner), http.StatusOK)
+	if left := getDocument(e, e.doc.ID).ExpiryEditorChangesLeft; left == nil || *left != 3 {
+		t.Fatalf("a document with a new expiry tells %v changes for editors, want 3", left)
+	}
+	for i, period := range []string{"2d", "3d", "4d"} {
+		assertStatus(t, patchDoc(e, e.doc.ID, `{"expires_in":"`+period+`"}`, fixtureEditor), http.StatusOK)
+		if left := getDocument(e, e.doc.ID).ExpiryEditorChangesLeft; left == nil || *left != 2-i {
+			t.Fatalf("after %d changes of an editor the document tells %v left, want %d", i+1, left, 2-i)
+		}
+	}
+	at := getDocument(e, e.doc.ID).ExpiresAt
+	for _, body := range []string{`{"expires_in":"30d"}`, `{"expires_at":null}`} {
+		rr := patchDoc(e, e.doc.ID, body, fixtureEditor)
+		assertStatus(t, rr, http.StatusForbidden)
+		if !strings.Contains(rr.Body.String(), "3 times") {
+			t.Errorf("the refusal does not tell the limit: %s", rr.Body)
+		}
+	}
+	if got := getDocument(e, e.doc.ID).ExpiresAt; got != at {
+		t.Fatalf("a fourth change of an editor moved the expiry from %s to %s", at, got)
+	}
+	// A change that the server refuses for its time uses none.
+	assertStatus(t, patchDoc(e, e.doc.ID, `{"expires_in":"60d"}`, fixtureOwner), http.StatusOK)
+	assertStatus(t, patchDoc(e, e.doc.ID, `{"expires_in":"1d"}`, fixtureEditor), http.StatusForbidden)
+	if left := getDocument(e, e.doc.ID).ExpiryEditorChangesLeft; left == nil || *left != 3 {
+		t.Fatalf("after a change of the owner and a refused change the document tells %v left, want 3", left)
+	}
+	for _, period := range []string{"70d", "80d", "90d", "100d"} {
+		assertStatus(t, patchDoc(e, e.doc.ID, `{"expires_in":"`+period+`"}`, fixtureOwner), http.StatusOK)
+	}
+	assertStatus(t, patchDoc(e, e.doc.ID, `{"expires_at":null}`, fixtureEditor), http.StatusOK)
+	if left := getDocument(e, e.doc.ID).ExpiryEditorChangesLeft; left != nil {
+		t.Fatalf("a document without an expiry tells %d changes left", *left)
 	}
 }
 

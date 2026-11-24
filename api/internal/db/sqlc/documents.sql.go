@@ -39,7 +39,8 @@ SELECT d.id,d.title,d.current_version_id,d.seq,d.owner_type,d.owner_id,
        COALESCE(u.email,'') AS owner_email,
        COALESCE(u.name,sa.name,'') AS owner_name,
        COALESCE(d.parent_folder_id,'') AS parent_folder_id,
-       d.expires_at
+       d.expires_at,
+       d.expiry_editor_changes
 FROM documents d
 LEFT JOIN users u ON d.owner_type='user' AND u.id=d.owner_id
 LEFT JOIN service_accounts sa -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
@@ -49,16 +50,17 @@ WHERE d.id=$1
 `
 
 type GetDocumentRow struct {
-	ID               string
-	Title            string
-	CurrentVersionID pgtype.Text
-	Seq              int64
-	OwnerType        string
-	OwnerID          string
-	OwnerEmail       string
-	OwnerName        string
-	ParentFolderID   string
-	ExpiresAt        pgtype.Timestamptz
+	ID                  string
+	Title               string
+	CurrentVersionID    pgtype.Text
+	Seq                 int64
+	OwnerType           string
+	OwnerID             string
+	OwnerEmail          string
+	OwnerName           string
+	ParentFolderID      string
+	ExpiresAt           pgtype.Timestamptz
+	ExpiryEditorChanges int16
 }
 
 // nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
@@ -76,6 +78,7 @@ func (q *Queries) GetDocument(ctx context.Context, id string) (GetDocumentRow, e
 		&i.OwnerName,
 		&i.ParentFolderID,
 		&i.ExpiresAt,
+		&i.ExpiryEditorChanges,
 	)
 	return i, err
 }
@@ -358,22 +361,23 @@ func (q *Queries) LockExpiredDocument(ctx context.Context, skipped []string) (Lo
 }
 
 const moveDocumentExpiryLater = `-- name: MoveDocumentExpiryLater :execrows
-UPDATE documents SET expires_at = $1
-WHERE id = $2 AND expires_at IS NOT NULL
+UPDATE documents SET expires_at = $1, expiry_editor_changes = expiry_editor_changes + 1
+WHERE id = $2 AND expires_at IS NOT NULL AND expiry_editor_changes < $3::int
   AND ($1::timestamptz IS NULL OR $1::timestamptz > expires_at)
 `
 
 type MoveDocumentExpiryLaterParams struct {
-	ExpiresAt pgtype.Timestamptz
-	ID        string
+	ExpiresAt  pgtype.Timestamptz
+	ID         string
+	MaxChanges int32
 }
 
-// The change of a principal who cannot delete the document: a later time, or
-// a null for no expiry, on a document that has an expiry. The check is in the
-// statement, so that a change of the owner at the same moment cannot make
-// this one a sooner time.
+// The change of an editor, who cannot delete the document: a later time, or
+// a null for no expiry, on a document that has an expiry, and @max_changes
+// times at most. The checks are in the statement, so that a change at the
+// same moment cannot make this one a sooner time or one change too many.
 func (q *Queries) MoveDocumentExpiryLater(ctx context.Context, arg MoveDocumentExpiryLaterParams) (int64, error) {
-	result, err := q.db.Exec(ctx, moveDocumentExpiryLater, arg.ExpiresAt, arg.ID)
+	result, err := q.db.Exec(ctx, moveDocumentExpiryLater, arg.ExpiresAt, arg.ID, arg.MaxChanges)
 	if err != nil {
 		return 0, err
 	}
@@ -676,7 +680,7 @@ func (q *Queries) SearchDocuments(ctx context.Context, arg SearchDocumentsParams
 }
 
 const setDocumentExpiry = `-- name: SetDocumentExpiry :exec
-UPDATE documents SET expires_at = $1 WHERE id = $2
+UPDATE documents SET expires_at = $1, expiry_editor_changes = 0 WHERE id = $2
 `
 
 type SetDocumentExpiryParams struct {
@@ -684,8 +688,9 @@ type SetDocumentExpiryParams struct {
 	ID        string
 }
 
-// A null removes the expiry. updated_at stays: the lists sort by it, and the
-// content did not change.
+// The change of the owner. A null removes the expiry. updated_at stays: the
+// lists sort by it, and the content did not change. The editors get their
+// changes again.
 func (q *Queries) SetDocumentExpiry(ctx context.Context, arg SetDocumentExpiryParams) error {
 	_, err := q.db.Exec(ctx, setDocumentExpiry, arg.ExpiresAt, arg.ID)
 	return err

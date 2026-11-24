@@ -116,7 +116,7 @@ document is approved, or when the person tells you to stop.
 The server keeps a document until its owner deletes it. Only the owner can
 give a document an expiry or make it sooner: the server then deletes it after
 that time, with its history and comments, and nobody can undo that. An editor
-can move an expiry later or remove it.
+can move an expiry later or remove it, 3 times for a document.
 
 Set an expiry only when the user asks for one, for example "a scratch doc for
 this week" or "delete it after the review". Do not decide by yourself that a

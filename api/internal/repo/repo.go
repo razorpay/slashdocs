@@ -42,6 +42,15 @@ var ErrForbidden = errors.New("forbidden")
 // time only asked for a sooner time, or for an expiry on a document that has
 // none.
 var ErrExpiryNotLater = errors.New("the expiry is not later")
+
+// MaxExpiryEditorChanges is how many times editors can change the expiry of
+// a document after its owner set it. Without a limit, an editor could keep a
+// document that its owner wants gone for as long as they like.
+const MaxExpiryEditorChanges = 3
+
+// ErrExpiryChangesUsed tells that the editors of a document changed its
+// expiry MaxExpiryEditorChanges times, so only the owner changes it now.
+var ErrExpiryChangesUsed = errors.New("the editors changed the expiry as often as they can")
 var ErrInvalidCommentBody = errors.New("invalid comment body")
 var ErrInvalidCommentMention = errors.New("invalid comment mention")
 
@@ -182,6 +191,10 @@ type Document struct {
 	// ExpiresAt is when the server deletes the document, as an RFC 3339 time
 	// in UTC. A document without it is kept.
 	ExpiresAt string `json:"expires_at,omitempty"`
+	// ExpiryEditorChangesLeft is how many times editors can still change the
+	// expiry: MaxExpiryEditorChanges after a change of the owner. Only a read
+	// of one document that has an expiry carries it.
+	ExpiryEditorChangesLeft *int `json:"expiry_editor_changes_left,omitempty"`
 	// Snippet is set in search results when the text matches. U+0002 and
 	// U+0003 surround each match.
 	Snippet string `json:"snippet,omitempty"`
@@ -214,7 +227,8 @@ type DocumentChange struct {
 	ExpiresAt *time.Time
 	// OnlyLater makes the change of the expiry one that cannot delete the
 	// document sooner: the document must have an expiry, and the new time is
-	// after it, or is no expiry. Another change returns ErrExpiryNotLater.
+	// after it, or is no expiry. Another change returns ErrExpiryNotLater, and
+	// a change after MaxExpiryEditorChanges of them ErrExpiryChangesUsed.
 	// It is the change of an editor, who cannot delete the document.
 	OnlyLater bool
 }

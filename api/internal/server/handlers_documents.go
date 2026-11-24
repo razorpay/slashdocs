@@ -337,7 +337,7 @@ type patchDocumentRequest struct {
 
 // PatchDocument godoc
 // @Summary Update document
-// @Description Changes the title, the expiry, or both. A document with an expiry is deleted after it. Only the owner renames the document, gives it an expiry, or makes the expiry sooner. An editor can move an expiry later or remove it.
+// @Description Changes the title, the expiry, or both. A document with an expiry is deleted after it. Only the owner renames the document, gives it an expiry, or makes the expiry sooner. An editor can move an expiry later or remove it, 3 times for a document after its owner set it; expiry_editor_changes_left tells how many are left.
 // @Tags documents
 // @Security bearerAuth
 // @Security cookieAuth
@@ -384,6 +384,10 @@ func (h handlers) patchDocument(c *gin.Context) {
 	}
 	if errors.Is(err, repo.ErrExpiryNotLater) {
 		forbidden(c, expiryOwnerOnly)
+		return
+	}
+	if errors.Is(err, repo.ErrExpiryChangesUsed) {
+		forbidden(c, expiryChangesUsed)
 		return
 	}
 	if err != nil {
@@ -445,6 +449,9 @@ func (h handlers) requestedExpiry(c *gin.Context, expiresIn, expiresAt string) (
 }
 
 const expiryDisabled = "Document expiry is turned off on this server"
+
+// expiryChangesUsed answers an editor after the changes of the editors.
+var expiryChangesUsed = fmt.Sprintf("Editors changed the expiry of this document %d times, which is the most that they can. Ask the owner to change it", repo.MaxExpiryEditorChanges)
 
 // expiryOwnerOnly answers an editor who asked for a sooner delete.
 const expiryOwnerOnly = "Only the owner can give this document an expiry or make it sooner. An editor can move the expiry later or remove it"

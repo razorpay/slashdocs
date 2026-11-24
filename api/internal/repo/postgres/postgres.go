@@ -1847,7 +1847,12 @@ func (s *Store) DeclineOwnershipTransfer(ctx context.Context, id string, user au
 }
 
 func docFromGet(r dbsqlc.GetDocumentRow) repo.Document {
-	return repo.Document{ID: r.ID, Title: r.Title, CurrentVersionID: r.CurrentVersionID.String, Seq: r.Seq, Owner: auth.Principal{Type: auth.PrincipalType(r.OwnerType), ID: r.OwnerID, Email: r.OwnerEmail, Name: r.OwnerName}, ParentFolderID: r.ParentFolderID, ExpiresAt: pgTimeRFC3339(r.ExpiresAt)}
+	d := repo.Document{ID: r.ID, Title: r.Title, CurrentVersionID: r.CurrentVersionID.String, Seq: r.Seq, Owner: auth.Principal{Type: auth.PrincipalType(r.OwnerType), ID: r.OwnerID, Email: r.OwnerEmail, Name: r.OwnerName}, ParentFolderID: r.ParentFolderID, ExpiresAt: pgTimeRFC3339(r.ExpiresAt)}
+	if r.ExpiresAt.Valid {
+		left := max(repo.MaxExpiryEditorChanges-int(r.ExpiryEditorChanges), 0)
+		d.ExpiryEditorChangesLeft = &left
+	}
+	return d
 }
 func docFromList(r dbsqlc.ListDocumentsRow) repo.Document {
 	d := repo.Document{ID: r.ID, Title: r.Title, CurrentVersionID: r.CurrentVersionID.String, Owner: auth.Principal{Type: auth.PrincipalType(r.OwnerType), ID: r.OwnerID, Email: r.OwnerEmail, Name: r.OwnerName}, ExpiresAt: pgTimeRFC3339(r.ExpiresAt)}
