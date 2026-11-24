@@ -64,19 +64,30 @@ func (q *Queries) DeleteStaleDocumentPresenceEvents(ctx context.Context, arg Del
 }
 
 const getDocumentKVRevision = `-- name: GetDocumentKVRevision :one
-SELECT GREATEST(
-  (SELECT COALESCE(MAX(kv.revision), 0) FROM document_kv kv WHERE kv.document_id=$1),
-  (SELECT COALESCE(MAX(e.revision), 0) FROM document_kv_events e WHERE e.document_id=$1)
-)::bigint
+SELECT kv_revision
+FROM documents
+WHERE id = $1
 `
 
-// Live events share the KV revision sequence, so the high-water mark spans
-// both the KV rows and the event log.
-func (q *Queries) GetDocumentKVRevision(ctx context.Context, documentID string) (int64, error) {
-	row := q.db.QueryRow(ctx, getDocumentKVRevision, documentID)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
+func (q *Queries) GetDocumentKVRevision(ctx context.Context, id string) (int64, error) {
+	row := q.db.QueryRow(ctx, getDocumentKVRevision, id)
+	var kv_revision int64
+	err := row.Scan(&kv_revision)
+	return kv_revision, err
+}
+
+const incrementDocumentKVRevision = `-- name: IncrementDocumentKVRevision :one
+UPDATE documents
+SET kv_revision = kv_revision + 1
+WHERE id = $1
+RETURNING kv_revision
+`
+
+func (q *Queries) IncrementDocumentKVRevision(ctx context.Context, id string) (int64, error) {
+	row := q.db.QueryRow(ctx, incrementDocumentKVRevision, id)
+	var kv_revision int64
+	err := row.Scan(&kv_revision)
+	return kv_revision, err
 }
 
 const insertDocumentKVEvent = `-- name: InsertDocumentKVEvent :exec

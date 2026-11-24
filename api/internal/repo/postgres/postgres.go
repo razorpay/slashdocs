@@ -1692,17 +1692,17 @@ func (s *Store) PatchDocumentKV(ctx context.Context, documentID string, set map[
 	} else if err != nil {
 		return repo.DocumentKVPatchResult{}, err
 	}
-	currentRev, err := q.GetDocumentKVRevision(ctx, documentID)
+	hasChanges := len(set) > 0 || len(deleteKeys) > 0
+	rev, err := documentKVRevisionForPatch(ctx, q, documentID, hasChanges)
 	if err != nil {
 		return repo.DocumentKVPatchResult{}, err
 	}
-	if len(set) == 0 && len(deleteKeys) == 0 {
+	if !hasChanges {
 		if err := tx.Commit(ctx); err != nil {
 			return repo.DocumentKVPatchResult{}, err
 		}
-		return repo.DocumentKVPatchResult{Revision: currentRev, Changes: []repo.DocumentKVChange{}, UpdatedBy: &actor}, nil
+		return repo.DocumentKVPatchResult{Revision: rev, Changes: []repo.DocumentKVChange{}, UpdatedBy: &actor}, nil
 	}
-	rev := currentRev + 1
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	changes := make([]repo.DocumentKVChange, 0, len(set)+len(deleteKeys))
 	actorType := string(actor.Type)
@@ -1732,6 +1732,13 @@ func (s *Store) PatchDocumentKV(ctx context.Context, documentID string, set map[
 		return repo.DocumentKVPatchResult{}, err
 	}
 	return repo.DocumentKVPatchResult{Revision: rev, Changes: changes, UpdatedBy: &actor}, nil
+}
+
+func documentKVRevisionForPatch(ctx context.Context, q *dbsqlc.Queries, documentID string, hasChanges bool) (int64, error) {
+	if hasChanges {
+		return q.IncrementDocumentKVRevision(ctx, documentID)
+	}
+	return q.GetDocumentKVRevision(ctx, documentID)
 }
 
 // presenceRetention bounds how long presence events stay in the log. Readers
@@ -1793,11 +1800,21 @@ func (s *Store) AppendCommentThreadEvent(ctx context.Context, documentID, thread
 // appendDocumentEvent gives a live event the next revision of the document,
 // whose row the transaction holds locked.
 func appendDocumentEvent(ctx context.Context, q *dbsqlc.Queries, documentID, kind string, data json.RawMessage, actor auth.Principal) error {
-	rev, err := q.GetDocumentKVRevision(ctx, documentID)
+	rev, err := q.IncrementDocumentKVRevision(ctx, documentID)
 	if err != nil {
 		return err
 	}
-	return insertAndNotifyDocumentKVEvent(ctx, q, dbsqlc.InsertDocumentKVEventParams{DocumentID: documentID, Revision: rev + 1, Kind: kind, Changes: []byte("[]"), Data: data, UpdatedByType: string(actor.Type), UpdatedByID: actor.ID, UpdatedByEmail: actor.Email, UpdatedByName: actor.Name})
+	return insertAndNotifyDocumentKVEvent(ctx, q, dbsqlc.InsertDocumentKVEventParams{
+		DocumentID:     documentID,
+		Revision:       rev,
+		Kind:           kind,
+		Changes:        []byte("[]"),
+		Data:           data,
+		UpdatedByType:  string(actor.Type),
+		UpdatedByID:    actor.ID,
+		UpdatedByEmail: actor.Email,
+		UpdatedByName:  actor.Name,
+	})
 }
 
 func insertAndNotifyDocumentKVEvent(ctx context.Context, q *dbsqlc.Queries, event dbsqlc.InsertDocumentKVEventParams) error {
