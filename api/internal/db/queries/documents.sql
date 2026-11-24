@@ -14,7 +14,8 @@ SELECT d.id,d.title,d.current_version_id,d.seq,d.owner_type,d.owner_id,
        COALESCE(u.email,'') AS owner_email,
        COALESCE(u.name,sa.name,'') AS owner_name,
        COALESCE(d.parent_folder_id,'') AS parent_folder_id,
-       d.expires_at
+       d.expires_at,
+       d.expiry_editor_changes
 FROM documents d
 LEFT JOIN users u ON d.owner_type='user' AND u.id=d.owner_id
 -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
@@ -85,17 +86,18 @@ LIMIT $4 OFFSET $5;
 UPDATE documents SET title=$1,updated_at=now() WHERE id=$2;
 
 -- name: SetDocumentExpiry :exec
--- A null removes the expiry. updated_at stays: the lists sort by it, and the
--- content did not change.
-UPDATE documents SET expires_at = sqlc.narg('expires_at') WHERE id = @id;
+-- The change of the owner. A null removes the expiry. updated_at stays: the
+-- lists sort by it, and the content did not change. The editors get their
+-- changes again.
+UPDATE documents SET expires_at = sqlc.narg('expires_at'), expiry_editor_changes = 0 WHERE id = @id;
 
 -- name: MoveDocumentExpiryLater :execrows
--- The change of a principal who cannot delete the document: a later time, or
--- a null for no expiry, on a document that has an expiry. The check is in the
--- statement, so that a change of the owner at the same moment cannot make
--- this one a sooner time.
-UPDATE documents SET expires_at = sqlc.narg('expires_at')
-WHERE id = @id AND expires_at IS NOT NULL
+-- The change of an editor, who cannot delete the document: a later time, or
+-- a null for no expiry, on a document that has an expiry, and @max_changes
+-- times at most. The checks are in the statement, so that a change at the
+-- same moment cannot make this one a sooner time or one change too many.
+UPDATE documents SET expires_at = sqlc.narg('expires_at'), expiry_editor_changes = expiry_editor_changes + 1
+WHERE id = @id AND expires_at IS NOT NULL AND expiry_editor_changes < @max_changes::int
   AND (sqlc.narg('expires_at')::timestamptz IS NULL OR sqlc.narg('expires_at')::timestamptz > expires_at);
 
 -- name: SearchDocuments :many

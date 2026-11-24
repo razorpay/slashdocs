@@ -224,6 +224,41 @@ func TestAChangeForLaterOnlyNeverMovesTheExpirySooner(t *testing.T) {
 	}
 }
 
+func TestEditorsChangeTheExpiryAFewTimesUntilTheOwnerSetsIt(t *testing.T) {
+	store := newStore(t)
+	ctx := context.Background()
+	doc, _, err := store.CreateDocument(ctx, expiryOwner, "Scratch", "", []byte("<p>scratch</p>"), repo.WithExpiry(fromNow(1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	later := func(days int) error {
+		at := fromNow(days)
+		_, err := store.ChangeDocument(ctx, doc.ID, repo.DocumentChange{ExpiresAt: &at, OnlyLater: true})
+		return err
+	}
+	for i := range repo.MaxExpiryEditorChanges {
+		if err := later(2 + i); err != nil {
+			t.Fatalf("change %d of an editor: %v", i+1, err)
+		}
+	}
+	if err := later(30); !errors.Is(err, repo.ErrExpiryChangesUsed) {
+		t.Fatalf("one change too many: %v, want ErrExpiryChangesUsed", err)
+	}
+	if got, err := store.GetDocument(ctx, doc.ID); err != nil || got.ExpiryEditorChangesLeft == nil || *got.ExpiryEditorChangesLeft != 0 {
+		t.Fatalf("the document tells %v changes left, %v, want 0", got.ExpiryEditorChangesLeft, err)
+	}
+	month := fromNow(30)
+	if _, err := store.ChangeDocument(ctx, doc.ID, repo.DocumentChange{ExpiresAt: &month}); err != nil {
+		t.Fatal(err)
+	}
+	if err := later(60); err != nil {
+		t.Fatalf("a change of an editor after one of the owner: %v", err)
+	}
+	if got, _ := store.GetDocument(ctx, doc.ID); got.ExpiryEditorChangesLeft == nil || *got.ExpiryEditorChangesLeft != repo.MaxExpiryEditorChanges-1 {
+		t.Fatalf("the document tells %v changes left, want %d", got.ExpiryEditorChangesLeft, repo.MaxExpiryEditorChanges-1)
+	}
+}
+
 func TestChangeDocumentOfNoDocumentIsNotFound(t *testing.T) {
 	store := newStore(t)
 	week := fromNow(7)

@@ -142,17 +142,18 @@ type CommentRead struct {
 }
 
 type Document struct {
-	ID               string
-	Title            string
-	OwnerID          string
-	CurrentVersionID pgtype.Text
-	CreatedAt        pgtype.Timestamptz
-	UpdatedAt        pgtype.Timestamptz
-	OwnerType        string
-	ParentFolderID   pgtype.Text
-	SearchVector     interface{}
-	Seq              int64
-	ExpiresAt        pgtype.Timestamptz
+	ID                  string
+	Title               string
+	OwnerID             string
+	CurrentVersionID    pgtype.Text
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+	OwnerType           string
+	ParentFolderID      pgtype.Text
+	SearchVector        interface{}
+	Seq                 int64
+	ExpiresAt           pgtype.Timestamptz
+	ExpiryEditorChanges int16
 }
 
 type DocumentAccessNotificationOutbox struct {

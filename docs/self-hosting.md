@@ -867,7 +867,9 @@ document can live up to one interval after its expiry time, and longer when
 many expire at the same time, or while a person writes to it. Until the
 delete, its owner can change or remove the expiry. An editor of the document
 can move the expiry later or remove it, and cannot make it sooner: an editor
-cannot delete the document, and a sooner expiry is a delete.
+cannot delete the document, and a sooner expiry is a delete. The editors of
+a document can change its expiry 3 times. After that only the owner can, and
+a change of the owner gives the editors their 3 changes again.
 
 `0` turns the feature off. The server then deletes no expired document and
 removes no blob, as before this feature, and it refuses a new expiry with the
