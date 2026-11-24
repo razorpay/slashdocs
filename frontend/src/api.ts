@@ -32,6 +32,11 @@ export type Document = {
   approval_status?: ApprovalStatus;
   approval_summary?: ApprovalSummary;
   updated_at?: string;
+  // When the server deletes the document. Absent when it keeps it.
+  expires_at?: string;
+  // How many times editors can still change the expiry. A read of one
+  // document that has an expiry carries it.
+  expiry_editor_changes_left?: number;
   labels?: string[];
   // Search results only: the matching text. U+0002 and U+0003 surround each match.
   snippet?: string;
@@ -43,6 +48,8 @@ export type ServerConfig = {
   provider_name: string;
   google_groups_enabled: boolean;
   labels_enabled: boolean;
+  // Absent on a server of an older release, which has no expiry.
+  document_expiry_enabled?: boolean;
 };
 export type GoogleGroup = { id: string; email: string; name: string };
 export type Version = {
@@ -446,6 +453,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await res.text()) as T;
 }
 
+// A server of an older release ignores a request for an expiry, and answers
+// with a document that has none.
+const NO_EXPIRY = "The server did not set the expiry.";
+
 // A browser refuses a request that outlives its page when the bodies of
 // all such requests on their way are larger than this together. keptAlive
 // is the size of those bodies.
@@ -530,13 +541,17 @@ export const api = {
     request<{ items: UserPrincipal[] }>(`/v1/users?q=${encodeURIComponent(q)}`),
   searchGoogleGroups: (q: string) =>
     request<{ items: GoogleGroup[] }>(`/v1/google-groups?q=${encodeURIComponent(q)}`),
-  createDocument: (title: string, file: File) => {
+  // expiresIn is a period from now, such as "7d", after which the server
+  // deletes the document.
+  createDocument: async (title: string, file: File, expiresIn?: string) => {
     const fd = new FormData();
     fd.set("title", title);
     fd.set("file", file);
-    return request<{
+    if (expiresIn) fd.set("expires_in", expiresIn);
+    const created = await request<{
       id: string;
       current_version_id: string;
+      expires_at?: string;
       // Present when the server applied its configured default sharing
       // grant to the new document.
       default_grant?: { grant_id: string; role: string };
@@ -544,6 +559,8 @@ export const api = {
       method: "POST",
       body: fd,
     });
+    if (expiresIn && !created.expires_at) throw new Error(NO_EXPIRY);
+    return created;
   },
   listVersions: (doc: string) =>
     request<{ items: Version[] }>(`/v1/documents/${doc}/versions`),
@@ -804,6 +821,18 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ title }),
     }),
+  // A period from now, such as "7d", sets the expiry of the document, and
+  // null removes it.
+  setDocumentExpiry: async (id: string, expiresIn: string | null) => {
+    const doc = await request<Document>(`/v1/documents/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(
+        expiresIn ? { expires_in: expiresIn } : { expires_at: null },
+      ),
+    });
+    if (expiresIn && !doc.expires_at) throw new Error(NO_EXPIRY);
+    return doc;
+  },
   deleteDocument: (id: string) =>
     request<void>(`/v1/documents/${id}`, { method: "DELETE" }),
   updateServiceAccount: (id: string, name: string, disabled: boolean) =>

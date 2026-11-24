@@ -70,6 +70,7 @@ var expectedMCPTools = []string{
 	"revoke_folder_grant",
 	"revoke_service_account_key",
 	"search_folders",
+	"set_document_expiry",
 	"set_document_labels",
 	"share_document",
 	"share_folder",
@@ -165,6 +166,7 @@ func TestMCPStreamableHTTPInitializeListAndCall(t *testing.T) {
 		"revoke_document_grant":            true,
 		"revoke_folder_grant":              true,
 		"revoke_service_account_key":       true,
+		"set_document_expiry":              true,
 		"set_document_labels":              true,
 		"update_comment":                   true,
 		"update_document_grant":            true,
@@ -373,6 +375,75 @@ func TestMCPCreateDocumentAboveSDKDefaultBodyLimit(t *testing.T) {
 	assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "create_document", map[string]any{
 		"title": "Large document", "html": html,
 	}), "current_version_id")
+}
+
+// An agent does not know the time, so the tools take a period. They tell
+// the agent when the document goes, so that it can tell the user.
+func TestMCPSetsAndRemovesTheExpiryOfADocument(t *testing.T) {
+	e := newMCPOAuthTestEnv(t)
+	token := auth.NewMCPAccessToken(fixtureUser.ID, e.resource, oauthTestSigningMaterial, time.Minute)
+
+	created := mustMCPObject(t, assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "create_document", map[string]any{
+		"title": "Scratch through MCP", "html": "<html><body>scratch</body></html>", "expires_in": "7d",
+	}), "expires_at"))
+	docID := requiredMCPString(t, created, "id")
+	assertExpiresIn(t, requiredMCPString(t, created, "expires_at"), 7*day)
+	// An agent does not know the time, so the warning tells how long the
+	// time is from now.
+	if warning, _ := created["expiry_warning"].(string); !strings.Contains(warning, "cannot be undone") || !strings.Contains(warning, "which is in 7 days") {
+		t.Fatalf("the create result has the expiry warning %q", warning)
+	}
+
+	kept := mustMCPObject(t, assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "create_document", map[string]any{
+		"title": "Kept through MCP", "html": "<html><body>kept</body></html>",
+	}), "current_version_id"))
+	if _, has := kept["expires_at"]; has {
+		t.Fatalf("a document with no period has an expiry: %#v", kept)
+	}
+	if _, has := kept["expiry_warning"]; has {
+		t.Fatalf("a document with no period has an expiry warning: %#v", kept)
+	}
+
+	changed := mustMCPObject(t, assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "set_document_expiry", map[string]any{
+		"document_id": docID, "expires_in": "3mo",
+	}), "expires_at"))
+	assertExpiresIn(t, requiredMCPString(t, changed, "expires_at"), 90*day)
+
+	removed := mustMCPObject(t, assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "set_document_expiry", map[string]any{
+		"document_id": docID, "expires_in": "never",
+	}), docID))
+	if _, has := removed["expires_at"]; has {
+		t.Fatalf("after never the document has an expiry: %#v", removed)
+	}
+
+	assertMCPToolError(t, callMCPToolHTTP(t, e, token, "set_document_expiry", map[string]any{
+		"document_id": docID, "expires_in": "3m",
+	}), "min for minutes and mo for months")
+	assertMCPToolError(t, callMCPToolHTTP(t, e, token, "create_document", map[string]any{
+		"title": "Wrong", "html": "<html><body>wrong</body></html>", "expires_in": "soon",
+	}), "a period is a whole number and a unit")
+	assertMCPToolError(t, callMCPToolHTTP(t, e, token, "set_document_expiry", map[string]any{"document_id": docID}), "expires_in")
+
+	// An agent that means a month and writes 30min would delete the document
+	// in half an hour. The tools take no period under an hour.
+	assertMCPToolError(t, callMCPToolHTTP(t, e, token, "set_document_expiry", map[string]any{
+		"document_id": docID, "expires_in": "30min",
+	}), "the shortest period of this tool is 1h")
+	assertMCPToolError(t, callMCPToolHTTP(t, e, token, "create_document", map[string]any{
+		"title": "Too short", "html": "<html><body>short</body></html>", "expires_in": "59min",
+	}), "the shortest period of this tool is 1h")
+	hour := mustMCPObject(t, assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "set_document_expiry", map[string]any{
+		"document_id": docID, "expires_in": "1h",
+	}), "expires_at"))
+	assertExpiresIn(t, requiredMCPString(t, hour, "expires_at"), time.Hour)
+
+	// The warning teaches never, so a create takes it too.
+	never := mustMCPObject(t, assertMCPToolOK(t, callMCPToolHTTP(t, e, token, "create_document", map[string]any{
+		"title": "Never through MCP", "html": "<html><body>kept</body></html>", "expires_in": "never",
+	}), "current_version_id"))
+	if _, has := never["expires_at"]; has {
+		t.Fatalf("a create with never has an expiry: %#v", never)
+	}
 }
 
 func TestMCPDocumentAndFolderToolParity(t *testing.T) {

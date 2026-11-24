@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -16,8 +16,10 @@ import {
 } from "@/components/ui/dialog";
 import { HtmlFileInput } from "@/components/ui/upload";
 import { DraftNotice } from "@/components/draft-notice";
+import { ExpiryPicker } from "@/components/expiry-picker";
 import { api } from "@/api";
 import { useEditDraft } from "@/lib/edit-drafts";
+import { useExpiryEnabled } from "@/lib/expiry";
 import { errorMessage } from "@/lib/errors";
 import { queryKeys } from "@/lib/queryKeys";
 
@@ -65,6 +67,10 @@ function UploadBackupForm({ onClose }: { onClose: () => void }) {
   const nav = useNavigate();
   const typed = useEditDraft("upload-title", "");
   const [file, setFile] = useState<File | null>(null);
+  // The period after which the server deletes the document. Keep is empty.
+  const [expiry, setExpiry] = useState("");
+  const expiryEnabled = useExpiryEnabled();
+  const expiryLabel = useId();
   // The title that a file gives itself, once it is read. It shows as the
   // placeholder, so that it never takes the place of typed words, and it
   // counts only for its own file.
@@ -72,7 +78,9 @@ function UploadBackupForm({ onClose }: { onClose: () => void }) {
   const title = typed.value.trim() || (found?.file === file && found.title) || "";
   const m = useMutation({
     mutationFn: ({ title, file }: { title: string; file: File }) =>
-      api.createDocument(title, file),
+      expiryEnabled && expiry
+        ? api.createDocument(title, file, expiry)
+        : api.createDocument(title, file),
     onSuccess: (r, { title }) => {
       typed.sent(title);
       q.invalidateQueries({ queryKey: queryKeys.documents() });
@@ -125,6 +133,17 @@ function UploadBackupForm({ onClose }: { onClose: () => void }) {
         draft={typed}
         cameBack="Your title from earlier came back. Choose the file again."
       />
+      {expiryEnabled ? (
+        <div className="space-y-1">
+          <div
+            id={expiryLabel}
+            className="text-xs font-medium text-[var(--color-fg-muted)]"
+          >
+            Auto-delete
+          </div>
+          <ExpiryPicker value={expiry} onChange={setExpiry} labelledBy={expiryLabel} />
+        </div>
+      ) : null}
       <HtmlFileInput file={file} onFile={pick} />
       <DialogFooter>
         <Button

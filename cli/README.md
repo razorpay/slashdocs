@@ -103,7 +103,7 @@ The server uses port 80, so the URL has no port. If port 80 is in use, it uses p
 
 Documents open in a sandboxed frame on `http://127.0.0.1`, a different origin from the app. A self-update restarts the server, so it runs the new version.
 
-Select text in a document to comment on it. All state is in the documents folder, so you can use git or other tools on it. Each document keeps its state in a hidden file next to it: the state of `specs/api.html` is in `specs/.api.html.slashdocs.json`. The state is the comments, and a title that replaces the `<title>` of the HTML. Move or rename the two files together. The file uses the fields of the slashdocs API.
+Select text in a document to comment on it. All state is in the documents folder, so you can use git or other tools on it. Each document keeps its state in a hidden file next to it: the state of `specs/api.html` is in `specs/.api.html.slashdocs.json`. The state is the comments, a title that replaces the `<title>` of the HTML, and an expiry time. Move or rename the two files together. The file uses the fields of the slashdocs API.
 
 ### Use the local documents from the CLI
 
@@ -122,6 +122,7 @@ The ID of a local document is its path in the documents folder, such as `specs/a
 - `docs list`, `show`, `create`, `push`, `pull`, `delete`, `headings`, `link`, and `comments`.
 - `docs create --title` and `docs update --title`: they keep the title in the state file. Without a title, or with a title that is the file name, the listing shows the `<title>` of the HTML.
 - `docs move`: it moves the document and its comments, so the ID changes.
+- `docs create --ttl` and `docs update --ttl`: they keep the expiry time in the state file, as `expires_at`. Once a minute, and when it starts, the local server moves each document whose expiry time passed to the hidden folder `.slashdocs-trash` in the documents folder. It deletes no document, so empty the trash yourself. The state of the document goes to the trash without the expiry, so a document that you move back from the trash stays. A file that changed after its expiry time stays, and loses its expiry. When you delete a document by hand, the server removes the expiry from the state file that stays, so a new file with that name is kept. To keep a document that you copied or restored with an old state file, remove `expires_at` from the state file.
 
 A document is one HTML file, as the authoring guidelines tell. Images and other files with a relative path in a document do not load in the viewer. A document has only one version, its current content. Use git for older versions. `docs list` finds each word of the query in the title or the path. Commands that need a slashdocs server, such as `grants`, `labels`, `versions`, and `folders`, are not available with `--local`.
 

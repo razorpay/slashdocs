@@ -402,6 +402,8 @@ export function DocumentPage() {
           canChangeContent={role.canEdit}
           accessUnknown={role.failed}
           labels={doc.data.labels || []}
+          expiresAt={doc.data.expires_at}
+          expiryChangesLeft={doc.data.expiry_editor_changes_left}
           onSelectVersion={showVersion}
           viewers={stream.viewers}
           onFollowViewer={followViewer}

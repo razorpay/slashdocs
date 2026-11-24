@@ -22,6 +22,7 @@ import {
   Pencil,
   Share2,
   Tag,
+  Timer,
   Trash2,
   X,
 } from "lucide-react";
@@ -58,6 +59,7 @@ import { DraftNotice } from "@/components/draft-notice";
 import type { RetryQuery } from "@/components/ui/misc";
 import { LoadErrorLine } from "@/components/error-state";
 import { Sheet, SheetTrigger } from "@/components/ui/sheet";
+import { ExpiryMark } from "@/components/expiry-mark";
 import { DeleteDocumentDialog } from "@/components/delete-document-dialog";
 import { MoveDialog } from "@/components/browse/move-dialog";
 import {
@@ -68,6 +70,7 @@ import {
   type Principal,
 } from "@/api";
 import { canManageSharing } from "@/lib/constants";
+import { formatTimestamp, formatUntil, formatUntilShort } from "@/lib/format-date";
 import { useDocumentRole } from "@/lib/hooks";
 import { useEditDraft } from "@/lib/edit-drafts";
 import { queryKeys } from "@/lib/queryKeys";
@@ -83,6 +86,7 @@ import { UploadVersionMenuItem, UploadVersionSheet } from "./doc-upload-version"
 import { useShowSaved } from "./use-show-saved";
 import { ModeButton } from "./doc-mode-button";
 import { HistoryDialog } from "./doc-history";
+import { ExpiryDialog } from "./doc-expiry";
 import type { Viewer } from "./use-document-stream";
 
 export function DocBar({
@@ -100,6 +104,8 @@ export function DocBar({
   canChangeContent,
   accessUnknown,
   labels,
+  expiresAt,
+  expiryChangesLeft,
   onSelectVersion,
   viewers,
   onFollowViewer,
@@ -134,6 +140,10 @@ export function DocBar({
   // The query to retry when what the reader may do did not load.
   accessUnknown?: RetryQuery;
   labels: string[];
+  // When the server deletes the document, if it does.
+  expiresAt?: string;
+  // How many times editors can still change the expiry.
+  expiryChangesLeft?: number;
   onSelectVersion: (versionID: string) => void;
   viewers: Viewer[];
   // Goes to a viewer once, or follows them continuously.
@@ -159,6 +169,7 @@ export function DocBar({
   const [moveOpen, setMoveOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [labelsOpen, setLabelsOpen] = useState(false);
+  const [expiryOpen, setExpiryOpen] = useState(false);
   const [approvalsDialogOpen, setApprovalsDialogOpen] = useState(!!approvalsOpen);
   const backTo = parentFolder ? `/app/folders/${parentFolder.id}` : "/app/documents";
   const config = useQuery({ queryKey: queryKeys.config(), queryFn: api.getConfig });
@@ -219,6 +230,19 @@ export function DocBar({
     onError: (e) => toast.error(errorMessage(e, "Delete failed")),
   });
   const labelsEnabled = config.data?.labels_enabled === true;
+  // The mark shows for every document that has an expiry, also when the
+  // server has the feature off: the delete is then only waiting.
+  const expiryEnabled = config.data?.document_expiry_enabled === true;
+  const expiryShown = !!expiresAt;
+  // The owner changes the expiry where the server has the feature, and
+  // removes one that is there. An editor moves an expiry that is there later,
+  // which the server takes only while it has the feature. The dialog says
+  // which, so it waits for the config.
+  const expiryControls =
+    config.data !== undefined &&
+    (canManage
+      ? expiryEnabled || !!expiresAt
+      : canEdit && expiryEnabled && !!expiresAt);
   const viewerActions = {
     onFollow: onFollowViewer,
     onUnfollow: onUnfollowViewer,
@@ -257,6 +281,23 @@ export function DocBar({
                 Could not check your access
               </span>
             </LoadErrorLine>
+          ) : null}
+          {/* A phone bar has no room for the words: it shows the icon, and More
+              tells the rest. */}
+          {expiryShown ? (
+            <>
+              <ExpiryMark
+                expiresAt={expiresAt}
+                onOpen={expiryControls ? () => setExpiryOpen(true) : undefined}
+                className="max-sm:hidden"
+              />
+              <ExpiryMark
+                expiresAt={expiresAt}
+                iconOnly
+                onOpen={expiryControls ? () => setExpiryOpen(true) : undefined}
+                className="sm:hidden"
+              />
+            </>
           ) : null}
           <AnimatePresence initial={false}>
             {followed ? (
@@ -435,6 +476,16 @@ export function DocBar({
               {canChangeContent ? (
                 <UploadVersionMenuItem onSelect={openUpload} />
               ) : null}
+              {expiryControls ? (
+                <DropdownItem onSelect={() => setExpiryOpen(true)}>
+                  <Timer className="size-4" /> Auto-delete…
+                  {expiresAt ? (
+                    <span className="ml-auto pl-4 text-xs tabular-nums text-[var(--color-fg-muted)] sm:hidden">
+                      {formatUntilShort(expiresAt)}
+                    </span>
+                  ) : null}
+                </DropdownItem>
+              ) : null}
             </>
           ) : canEdit ? (
             // An editor sees why they cannot rename, instead of no Rename.
@@ -472,6 +523,30 @@ export function DocBar({
               </DropdownItem>
             </>
           ) : null}
+          {expiryControls && !canManage ? (
+            <DropdownGroup>
+              <DropdownSeparator />
+              <DropdownItem onSelect={() => setExpiryOpen(true)}>
+                <Timer className="size-4" /> Auto-delete…
+                <span className="ml-auto pl-4 text-xs tabular-nums text-[var(--color-fg-muted)]">
+                  {formatUntilShort(expiresAt)}
+                </span>
+              </DropdownItem>
+            </DropdownGroup>
+          ) : expiryShown && !canManage ? (
+            <DropdownGroup className="sm:hidden">
+              <DropdownSeparator />
+              <DropdownItem disabled>
+                <Timer className="size-4" />
+                <span className="flex flex-col">
+                  Deletes {formatUntil(expiresAt)}
+                  <span className="text-xs">
+                    Deleted on {formatTimestamp(expiresAt)}
+                  </span>
+                </span>
+              </DropdownItem>
+            </DropdownGroup>
+          ) : null}
           {/* A phone bar has no room for the account's own button. */}
           {accountUser ? (
             <DropdownGroup className="sm:hidden">
@@ -501,6 +576,17 @@ export function DocBar({
           docId={docId}
           labels={labels}
           canEdit={canEdit}
+        />
+      ) : null}
+      {expiryControls ? (
+        <ExpiryDialog
+          open={expiryOpen}
+          onOpenChange={setExpiryOpen}
+          docId={docId}
+          expiresAt={expiresAt}
+          enabled={expiryEnabled}
+          owner={canManage}
+          changesLeft={expiryChangesLeft}
         />
       ) : null}
       {canMove ? (
