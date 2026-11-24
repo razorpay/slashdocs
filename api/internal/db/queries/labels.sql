@@ -17,7 +17,8 @@ VALUES($1,$2,$3,$4);
 SELECT DISTINCT d.id,d.title,d.current_version_id,d.owner_type,d.owner_id,
        COALESCE(u.email,'') AS owner_email,
        COALESCE(u.name,sa.name,'') AS owner_name,
-       d.updated_at
+       d.updated_at,
+       d.expires_at
 FROM documents d
 JOIN document_labels dl ON dl.document_id=d.id AND dl.label=sqlc.arg(label)::text
 LEFT JOIN users u ON d.owner_type='user' AND u.id=d.owner_id

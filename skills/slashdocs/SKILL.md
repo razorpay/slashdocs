@@ -49,7 +49,9 @@ format:
 4. Use `slashdocs docs --help` and `slashdocs docs create --help` to confirm current
    syntax.
 5. Publish with the CLI. To put the document in a folder, add
-   `--folder-id fld_123`, so that it is never at the root.
+   `--folder-id fld_123`, so that it is never at the root. Add `--ttl` only
+   when the user asks for a document that deletes itself (see
+   [Ephemeral documents](#ephemeral-documents)).
 6. Return the printed slashdocs document URL.
 7. If the `ai-sessions` skill is installed, use it and follow its guidance to
    link this session to the document.
@@ -108,6 +110,35 @@ rejection at once. Change the document or answer in each thread, reply in each
 thread with what you did, push, and run `wait` again. Each wait gives only
 feedback that is new to you, and never your own replies. Stop when the
 document is approved, or when the person tells you to stop.
+
+### Ephemeral documents
+
+The server keeps a document until its owner deletes it. Only the owner can
+give a document an expiry or make it sooner: the server then deletes it after
+that time, with its history and comments, and nobody can undo that. An editor
+can move an expiry to a later time, 3 times for a document, and cannot
+remove it.
+
+Set an expiry only when the user asks for one, for example "a scratch doc for
+this week" or "delete it after the review". Do not decide by yourself that a
+document is temporary: a wrong guess deletes work that the user wanted.
+
+```bash
+slashdocs docs create notes.html --title "Scratch" --ttl 7d
+slashdocs docs update <doc_id> --ttl 3mo     # from now
+slashdocs docs update <doc_id> --ttl never   # keep the document
+```
+
+A period is a whole number and a unit: `min`, `h`, `d`, `w` or `mo` (30
+days). `m` is refused, because `3m` reads as three months and as three
+minutes. The command prints the date and how long that is from now, such as
+"which is in 7 days": make sure that this is the period that the user asked
+for. Then tell the user the date, and that the delete cannot be undone.
+
+Before you set or shorten the expiry of a document that already exists, ask
+the user to confirm the period. `slashdocs docs show <doc_id>` prints
+`expires_at` for a document that has one. A push or an edit does not move the
+expiry.
 
 ### Approvals
 

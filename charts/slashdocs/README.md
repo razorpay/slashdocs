@@ -171,6 +171,23 @@ kvEvents:
 If your only database route is PgBouncer in transaction-pooling mode, set
 `kvEvents.mode: poll` and leave the listener URL unset.
 
+## Ephemeral documents
+
+A document can have an expiry time, and the server deletes the document after
+that time. Every pod runs the sweep, so it needs no leader and no extra
+workload. The `documentExpiry` block wires the two server env vars. Both are
+Go durations, and both are rendered only when set:
+
+```yaml
+documentExpiry:
+  sweepInterval: "1m" # how often a pod looks for expired documents; "0" turns the feature off
+  blobRetention: "168h" # how long the HTML of a deleted document stays in the bucket; "0" removes it in the next sweep
+```
+
+The retention period counts for a delete by hand too. See
+[`docs/self-hosting.md`](../../docs/self-hosting.md#ephemeral-documents) for
+what the sweep does and how to get the HTML of a deleted document back.
+
 ## Approval events
 
 Set `approvalWebhook` to post approval events (an approver asked, removed,

@@ -58,6 +58,10 @@ api() { curl -sS --fail-with-body "$@"; }
 # Authentication and migration checks require a deterministic database. Only
 # the dedicated E2E project is reset; normal developer compose state is left
 # untouched.
+
+# The server looks for expired documents every 5 seconds here, and not every
+# minute, so that the expiry check at the end waits for the expiry time only.
+export SLASHDOCS_DOCUMENT_EXPIRY_SWEEP_INTERVAL="${SLASHDOCS_DOCUMENT_EXPIRY_SWEEP_INTERVAL:-5s}"
 docker compose down -v --remove-orphans >/dev/null 2>&1 || true
 if [[ -n "${SLASHDOCS_IMAGE:-}" ]]; then
   # CI already built and tagged the image, so never rebuild it. --pull missing
@@ -153,6 +157,15 @@ pass "document pushed via CLI ($DOC)"
 cli docs pull "$DOC" --out "$TMP/pulled.html" >/dev/null
 diff -q "$TMP/report.html" "$TMP/pulled.html" >/dev/null || fail "pulled HTML differs from upload"
 pass "document pulled back and diffed clean"
+
+# An ephemeral document: the server deletes it after its period. The check
+# that it went is at the end, so that the other checks fill the wait.
+SCRATCH="$(cli docs create "$TMP/report.html" --title "E2E Scratch" --ttl 1min)"
+SCRATCH_DOC="$(jsonget id <<<"$SCRATCH")"
+[[ "$SCRATCH_DOC" == doc_* && -n "$(jsonget expires_at <<<"$SCRATCH")" ]] || fail "document create with --ttl ($SCRATCH)"
+[[ -z "$(cli docs show "$DOC" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("expires_at", ""))')" ]] \
+  || fail "a document without --ttl has an expiry"
+pass "ephemeral document created with --ttl 1min ($SCRATCH_DOC)"
 
 V1="$(cli docs show "$DOC" | jsonget current_version_id)"
 # A push sends the base that the pull recorded for the file, so the change
@@ -303,6 +316,17 @@ kill "$SSE_PID" 2>/dev/null || true
 wait "$SSE_PID" 2>/dev/null || true
 SSE_PID=""
 pass "SSE delivered KV event after patch"
+
+# --- Ephemeral documents: the sweep of the server deletes an expired one -----
+
+for i in $(seq 1 60); do
+  SCRATCH_STATUS="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $SA_TOKEN" "$APP/v1/documents/$SCRATCH_DOC")"
+  [[ "$SCRATCH_STATUS" == 404 ]] && break
+  [[ "$i" == 60 ]] && fail "the expired document is still there after 2 minutes (HTTP $SCRATCH_STATUS)"
+  sleep 2
+done
+cli docs show "$DOC" >/dev/null || fail "the sweep deleted a document that has no expiry"
+pass "expired document deleted by the sweep; the document without an expiry is kept"
 
 echo
 echo "All e2e checks passed. Stack is still running: open $APP"

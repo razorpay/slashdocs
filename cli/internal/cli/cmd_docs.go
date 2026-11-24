@@ -14,10 +14,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/spf13/cobra"
 
+	"github.com/razorpay/slashdocs/internal/expiry"
 	"github.com/razorpay/slashdocs/internal/textedit"
 )
 
@@ -216,9 +218,13 @@ func normalizedLabelArgs(args []string) ([]string, error) {
 }
 
 func documentCreateCmd(g *globals, out io.Writer) *cobra.Command {
-	var title, folderID string
-	cmd := &cobra.Command{Use: "create <file>", Short: "Create a document from an HTML file", Long: "Create a document from a single self-contained HTML file.\n\nWith --folder-id, the document is in the folder from the start. Use 'slashdocs docs labels set' to label it.\n\nThe sharing default for new documents is controlled by the server. Set SLASHDOCS_DEFAULT_DOC_PERMISSION to viewer, commenter, editor, or private to override it per-user; private keeps new documents private.\n\nRun 'slashdocs guidelines' for authoring rules (single-file, base64 images, reader theme).", Example: "  slashdocs docs create report.html --title 'Report'\n  slashdocs docs create report.html --title 'Report' --folder-id fld_123", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	var title, folderID, ttl string
+	cmd := &cobra.Command{Use: "create <file>", Short: "Create a document from an HTML file", Long: "Create a document from a single self-contained HTML file.\n\nWith --folder-id, the document is in the folder from the start. Use 'slashdocs docs labels set' to label it.\n\nThe server keeps a document until its owner deletes it. With --ttl, the server deletes the document after that period, with its history and comments, and this cannot be undone. Use it for a document that is needed for a short time. " + ttlHelp + "\n\nThe sharing default for new documents is controlled by the server. Set SLASHDOCS_DEFAULT_DOC_PERMISSION to viewer, commenter, editor, or private to override it per-user; private keeps new documents private.\n\nRun 'slashdocs guidelines' for authoring rules (single-file, base64 images, reader theme).", Example: "  slashdocs docs create report.html --title 'Report'\n  slashdocs docs create report.html --title 'Report' --folder-id fld_123\n  slashdocs docs create notes.html --title 'Scratch' --ttl 7d", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		perm, err := defaultDocPermission()
+		if err != nil {
+			return err
+		}
+		expires, err := createTTL(cmd, ttl)
 		if err != nil {
 			return err
 		}
@@ -233,9 +239,15 @@ func documentCreateCmd(g *globals, out io.Writer) *cobra.Command {
 		if err != nil {
 			return err
 		}
+		if err := requireExpiry(cl, expires); err != nil {
+			return err
+		}
 		fields := map[string]string{"title": title, "folder_id": folderID}
 		if perm != "" {
 			fields["default_permission"] = perm
+		}
+		if expires {
+			fields["expires_in"] = ttl
 		}
 		b, err := cl.multipart("/v1/documents", fields, "file", fn, data)
 		if err != nil {
@@ -244,6 +256,7 @@ func documentCreateCmd(g *globals, out io.Writer) *cobra.Command {
 		var created struct {
 			ID        string `json:"id"`
 			VersionID string `json:"current_version_id"`
+			ExpiresAt string `json:"expires_at"`
 		}
 		if err := json.Unmarshal(b, &created); err != nil {
 			return err
@@ -251,11 +264,94 @@ func documentCreateCmd(g *globals, out io.Writer) *cobra.Command {
 		if err := recordBase(g, args[0], Base{DocumentID: created.ID, VersionID: created.VersionID}); err != nil {
 			return err
 		}
-		return renderCreatedDocument(out, g, cl, title, perm, b)
+		if err := renderCreatedDocument(out, g, cl, title, perm, b); err != nil || !expires {
+			return err
+		}
+		return reportCreatedExpiry(out, g, created.ID, created.ExpiresAt)
 	}}
 	cmd.Flags().StringVar(&title, "title", "", "document title (defaults to the file name)")
 	cmd.Flags().StringVar(&folderID, "folder-id", "", "folder for the document (defaults to the root)")
+	cmd.Flags().StringVar(&ttl, "ttl", "", "delete the document after this period, such as 7d or 3mo (the default keeps it)")
 	return cmd
+}
+
+const (
+	// ttlNever is the --ttl value that asks for no expiry.
+	ttlNever = "never"
+	ttlHelp  = "A period is a whole number and a unit: min, h, d, w or mo, as in 12h, 7d and 3mo. A month is 30 days."
+)
+
+// createTTL tells whether a create asks for an expiry, and makes sure that
+// its --ttl is a period. A new document is kept, so never asks for nothing.
+func createTTL(cmd *cobra.Command, ttl string) (bool, error) {
+	if !cmd.Flags().Changed("ttl") || ttl == ttlNever {
+		return false, nil
+	}
+	return true, checkTTL(ttl)
+}
+
+// checkTTL makes sure that a --ttl value is a period, before a request goes
+// to the server.
+func checkTTL(ttl string) error {
+	if _, err := expiry.ParseTTL(ttl); err != nil {
+		return usageError{fmt.Errorf("invalid --ttl %q: %w", ttl, err)}
+	}
+	return nil
+}
+
+// reportCreatedExpiry tells when the server deletes a new document that was
+// created with a period. The output before it names the document.
+func reportCreatedExpiry(out io.Writer, g *globals, docID, expiresAt string) error {
+	if expiresAt == "" {
+		return errNoExpiry(docID)
+	}
+	if g.json || g.quiet {
+		return nil
+	}
+	_, err := fmt.Fprintf(out, "The server deletes it after %s. This cannot be undone.\n", expiryTime(expiresAt))
+	return err
+}
+
+// requireExpiry makes sure that the server sets an expiry, before a command
+// that asks for one changes something. A server of an older release does not know
+// the field and takes the request without it, and an operator can turn the
+// expiry off. The document would then stay for ever, while the person
+// thinks that it goes. A server that does not tell, as slashdocs local, gets
+// the request, and its answer is checked.
+func requireExpiry(c *Client, asked bool) error {
+	if !asked {
+		return nil
+	}
+	b, err := c.do("GET", "/v1/config", nil, "")
+	if err != nil {
+		return nil
+	}
+	var config struct {
+		DocumentExpiryEnabled bool `json:"document_expiry_enabled"`
+	}
+	if json.Unmarshal(b, &config) != nil || config.DocumentExpiryEnabled {
+		return nil
+	}
+	return errors.New("this server does not set an expiry on documents: it is older than this CLI, or its operator turned the expiry off. The command changed nothing")
+}
+
+// errNoExpiry tells that the server answered a request for an expiry with a
+// document that has none. A server of an older release does not know the
+// field. The person must learn it: the document does not go as they think.
+func errNoExpiry(docID string) error {
+	return fmt.Errorf("the server did not set an expiry, so document %s is kept: the server is probably older than this CLI", docID)
+}
+
+// expiryTime is an expiry time of the server as a person reads it: the time
+// in the time zone of this machine, and how long that is from now. The
+// second part shows a wrong unit at once: 30min for a month reads "in 30
+// minutes".
+func expiryTime(expiresAt string) string {
+	at, err := time.Parse(time.RFC3339, expiresAt)
+	if err != nil {
+		return expiresAt
+	}
+	return at.Local().Format("2 Jan 2006 15:04 MST") + ", which is in " + expiry.In(time.Until(at))
 }
 
 // defaultDocPermission reads the per-user sharing override sent with document
@@ -354,22 +450,83 @@ func renderCreatedDocumentJSON(out io.Writer, g *globals, id, requestedPermissio
 }
 
 func documentUpdateCmd(g *globals, out io.Writer) *cobra.Command {
-	var ut string
-	cmd := &cobra.Command{Use: "update <doc_id>", Short: "Update document metadata", Long: "Rename a document. Sharing is managed separately with 'slashdocs docs grants'.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		if !cmd.Flags().Changed("title") {
-			return usageError{errors.New("nothing to update; pass --title")}
+	var ut, ttl string
+	cmd := &cobra.Command{Use: "update <doc_id>", Short: "Update document metadata", Long: "Rename a document, or set when the server deletes it. Sharing is managed separately with 'slashdocs docs grants'.\n\nWith --ttl, the server deletes the document after that period from now, with its history and comments, and this cannot be undone. --ttl never removes the expiry, and the server keeps the document. Only the owner of a document can give it an expiry, make the expiry sooner, or remove it. An editor can move an expiry to a later time, 3 times for a document. " + ttlHelp, Example: "  slashdocs docs update doc_123 --title 'New title'\n  slashdocs docs update doc_123 --ttl 7d\n  slashdocs docs update doc_123 --ttl never", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		rename, expire := cmd.Flags().Changed("title"), cmd.Flags().Changed("ttl")
+		if !rename && !expire {
+			return usageError{errors.New("nothing to update; pass --title or --ttl")}
 		}
-		return action(g, out, func(c *Client) ([]byte, error) {
-			return c.doJSON("PATCH", apiPath("/v1/documents/%s", args[0]), map[string]any{"title": ut})
-		}, func(map[string]any) string { return "Renamed document " + args[0] + "." }, actionOptions{
-			after: func() error { return printOrgWideViewerNudge(out, g, args[0]) },
-			jsonFields: func() map[string]any {
+		body := map[string]any{}
+		if rename {
+			body["title"] = ut
+		}
+		if expire {
+			if err := addTTL(body, ttl); err != nil {
+				return err
+			}
+		}
+		opts := actionOptions{}
+		if rename {
+			opts.after = func() error { return printOrgWideViewerNudge(out, g, args[0]) }
+			opts.jsonFields = func() map[string]any {
 				return map[string]any{"message": orgWideViewerNudge(g, args[0])}
-			},
-		})
+			}
+		}
+		_, asksForExpiry := body["expires_in"]
+		return action(g, out, func(c *Client) ([]byte, error) {
+			if err := requireExpiry(c, asksForExpiry); err != nil {
+				return nil, err
+			}
+			b, err := c.doJSON("PATCH", apiPath("/v1/documents/%s", args[0]), body)
+			if err != nil {
+				return nil, err
+			}
+			var updated struct {
+				ExpiresAt string `json:"expires_at"`
+			}
+			if asksForExpiry && (json.Unmarshal(b, &updated) != nil || updated.ExpiresAt == "") {
+				return nil, errNoExpiry(args[0])
+			}
+			return b, nil
+		}, func(m map[string]any) string {
+			at, _ := m["expires_at"].(string)
+			return updatedDocumentText(args[0], rename, expire, at)
+		}, opts)
 	}}
 	cmd.Flags().StringVar(&ut, "title", "", "new document title")
+	cmd.Flags().StringVar(&ttl, "ttl", "", "delete the document after this period from now, such as 7d or 3mo; never keeps it")
 	return cmd
+}
+
+// addTTL puts the expiry that --ttl asks for in the body of an update: a
+// period, or a null for never.
+func addTTL(body map[string]any, ttl string) error {
+	if ttl == ttlNever {
+		body["expires_at"] = nil
+		return nil
+	}
+	if err := checkTTL(ttl); err != nil {
+		return err
+	}
+	body["expires_in"] = ttl
+	return nil
+}
+
+// updatedDocumentText tells what an update did: a rename, a change of the
+// expiry, or both. expiresAt is the expiry that the document now has.
+func updatedDocumentText(docID string, renamed, expiryChanged bool, expiresAt string) string {
+	var lines []string
+	if renamed {
+		lines = append(lines, "Renamed document "+docID+".")
+	}
+	switch {
+	case !expiryChanged:
+	case expiresAt != "":
+		lines = append(lines, fmt.Sprintf("The server deletes document %s after %s. This cannot be undone.", docID, expiryTime(expiresAt)))
+	default:
+		lines = append(lines, "Document "+docID+" has no expiry: the server keeps it.")
+	}
+	return strings.Join(lines, "\n")
 }
 
 func documentMoveCmd(g *globals, out io.Writer) *cobra.Command {

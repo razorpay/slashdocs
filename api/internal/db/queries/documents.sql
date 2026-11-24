@@ -3,8 +3,8 @@ SELECT owner_type, owner_id FROM documents WHERE id=$1;
 
 -- name: InsertDocument :exec
 -- The first version of a document is its seq 1.
-INSERT INTO documents(id,title,owner_type,owner_id,parent_folder_id,seq)
-VALUES(@id,@title,@owner_type,@owner_id,NULLIF(@parent_folder_id::text,''),1);
+INSERT INTO documents(id,title,owner_type,owner_id,parent_folder_id,seq,expires_at)
+VALUES(@id,@title,@owner_type,@owner_id,NULLIF(@parent_folder_id::text,''),1,sqlc.narg('expires_at'));
 
 -- name: UpdateDocumentCurrentVersion :exec
 UPDATE documents SET current_version_id=$1, updated_at=now() WHERE id=$2;
@@ -13,7 +13,9 @@ UPDATE documents SET current_version_id=$1, updated_at=now() WHERE id=$2;
 SELECT d.id,d.title,d.current_version_id,d.seq,d.owner_type,d.owner_id,
        COALESCE(u.email,'') AS owner_email,
        COALESCE(u.name,sa.name,'') AS owner_name,
-       COALESCE(d.parent_folder_id,'') AS parent_folder_id
+       COALESCE(d.parent_folder_id,'') AS parent_folder_id,
+       d.expires_at,
+       d.expiry_editor_changes
 FROM documents d
 LEFT JOIN users u ON d.owner_type='user' AND u.id=d.owner_id
 -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
@@ -41,7 +43,8 @@ ON CONFLICT(document_id,principal_type,principal_id) DO NOTHING;
 SELECT d.id,d.title,d.current_version_id,d.owner_type,d.owner_id,
        COALESCE(u.email,'') AS owner_email,
        COALESCE(u.name,sa.name,'') AS owner_name,
-       d.updated_at
+       d.updated_at,
+       d.expires_at
 FROM documents d
 LEFT JOIN users u ON d.owner_type='user' AND u.id=d.owner_id
 -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.
@@ -81,6 +84,22 @@ LIMIT $4 OFFSET $5;
 
 -- name: UpdateDocumentTitle :exec
 UPDATE documents SET title=$1,updated_at=now() WHERE id=$2;
+
+-- name: SetDocumentExpiry :exec
+-- The change of the owner. A null removes the expiry. updated_at stays: the
+-- lists sort by it, and the content did not change. The editors get their
+-- changes again.
+UPDATE documents SET expires_at = sqlc.narg('expires_at'), expiry_editor_changes = 0 WHERE id = @id;
+
+-- name: MoveDocumentExpiryLater :execrows
+-- The change of an editor, who cannot delete the document and does not decide
+-- that it stays: a later time on a document that has an expiry, and
+-- @max_changes times at most. A null is no later time, so an editor removes
+-- no expiry. The checks are in the statement, so that a change at the same
+-- moment cannot make this one a sooner time or one change too many.
+UPDATE documents SET expires_at = @expires_at, expiry_editor_changes = expiry_editor_changes + 1
+WHERE id = @id AND expires_at IS NOT NULL AND expiry_editor_changes < @max_changes::int
+  AND @expires_at::timestamptz > expires_at;
 
 -- name: SearchDocuments :many
 -- @match_query, @words_query, @exclude_query, and @rank_query are tsquery
@@ -221,6 +240,7 @@ SELECT d.id, d.title, d.current_version_id, d.owner_type, d.owner_id,
        COALESCE(pf.id,'') AS parent_folder_id,
        COALESCE(pf.title,'') AS parent_folder_title,
        d.updated_at,
+       d.expires_at,
        -- The snippet shows the words of the text, so title terms are not in it.
        CASE WHEN numnode(search.snippet) > 0 AND cv.search_vector @@ search.snippet
          THEN ts_headline('english', cv.search_text, search.snippet,
@@ -249,6 +269,26 @@ WHERE id IN (
 -- name: DeleteDocument :execrows
 DELETE FROM documents WHERE id=$1;
 
+-- name: LockDocumentForDelete :one
+-- A delete waits for the writes to the document, which hold this row.
+SELECT id FROM documents WHERE id = $1 FOR UPDATE;
+
+-- name: LockExpiredDocument :one
+-- The oldest document whose expiry time passed, and that no other
+-- transaction holds. SKIP LOCKED passes over a document that another server
+-- deletes or that a write holds, and a later round takes it. The condition
+-- is read under the lock, so an expiry that the owner changed counts.
+-- skipped holds the documents whose delete failed in this round, so that
+-- one such document does not hide the others.
+SELECT id, expires_at, owner_type, owner_id FROM documents
+WHERE expires_at <= now() AND id <> ALL(COALESCE(@skipped::text[], '{}'))
+ORDER BY expires_at, id
+LIMIT 1
+FOR UPDATE SKIP LOCKED;
+
+-- name: DocumentExists :one
+SELECT EXISTS(SELECT 1 FROM documents WHERE id = $1);
+
 -- name: MoveDocumentToFolder :one
 UPDATE documents SET parent_folder_id= @folder_id::text, updated_at=now() WHERE id= @document_id
 RETURNING owner_type, owner_id;
@@ -262,7 +302,8 @@ SELECT d.id, d.title, d.owner_type, d.owner_id,
        COALESCE(d.parent_folder_id,'') AS parent_folder_id,
        COALESCE(u.name,sa.name,'') AS owner_name,
        COALESCE(u.email,'') AS owner_email,
-       d.updated_at
+       d.updated_at,
+       d.expires_at
 FROM documents d
 LEFT JOIN users u ON d.owner_type='user' AND d.owner_id=u.id
 -- nosemgrep: detected-google-gcm-service-account - slashdocs-native principal type/table, not a Google credential.

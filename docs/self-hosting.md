@@ -516,6 +516,7 @@ Sealed Secrets, etc.).
 | `deployment.{mode,orgDomains,orgName,defaultDocPermission}`                | `public` (default) or `org`; org mode gates login to `orgDomains` and may set a sharing default for new documents.              |
 | `allowedOAuthDomains`                                                      | Comma-separated email domain allowlist (public mode); empty = no gate.                                                          |
 | `kvEvents.{mode,listenerDatabaseURL,existingSecret}`                       | Realtime KV events: `SLASHDOCS_KV_EVENTS_MODE` and the dedicated LISTEN connection URL (secret-backed). Rendered only when set. |
+| `documentExpiry.{sweepInterval,blobRetention}`                             | [Ephemeral documents](#ephemeral-documents): the sweep interval (`"0"` is off) and the retention of deleted HTML.               |
 | `approvalWebhook.{url,secret,existingSecret}`                              | Webhook for [approval events](#approval-events) (secret-backed). Rendered only when set.                                        |
 | `commitSha`                                                                | Optional revision surfaced at `/commit.txt`.                                                                                    |
 | `ingress`                                                                  | Standard ingress block; supports multiple hosts.                                                                                |
@@ -627,6 +628,8 @@ a secret store. The server needs outbound HTTPS to `chat.googleapis.com` or
 | `SLASHDOCS_DEFAULT_DOC_PERMISSION`          | `private`   | Server-wide default sharing applied when a document is created: `viewer`, `commenter`, `editor`, or `private` (no grant). Non-private values require `SLASHDOCS_DEPLOYMENT=org`; requests may override per document via the `default_permission` form field.                                        |
 | `SLASHDOCS_FEATURED`                        | unset       | JSON object of sections that the Documents page shows above each user's own items. See [Featured sections](#featured-sections).                                                                                                                                                                     |
 | `SLASHDOCS_LABELS_ENABLED`                  | `false`     | Set `true` to turn on document labels: the labels API, `label:` in search, and labels in the UI.                                                                                                                                                                                                    |
+| `SLASHDOCS_DOCUMENT_EXPIRY_SWEEP_INTERVAL`  | `1m`        | How often each server looks for [expired documents](#ephemeral-documents), as a Go duration. `0` turns the feature off: the server deletes no expired document, removes no blob, and refuses a new expiry.                                                                                          |
+| `SLASHDOCS_DELETED_BLOB_RETENTION`          | `168h`      | How long the HTML of a deleted document stays in blob storage, as a Go duration. It counts for a delete by hand and for an expiry. `0` removes it in the next sweep.                                                                                                                                |
 | `SLASHDOCS_KV_EVENTS_MODE`                  | `auto`      | `auto`, `notify`, or `poll`; controls how document KV streams discover persisted events.                                                                                                                                                                                                            |
 | `SLASHDOCS_KV_EVENTS_LISTENER_DATABASE_URL` | unset       | Direct or session-pooled URL to the same database for the dedicated LISTEN connection. Never use a transaction-pooling endpoint.                                                                                                                                                                    |
 | `SLASHDOCS_APPROVAL_WEBHOOK_URL`            | unset       | Webhook that receives [approval events](#approval-events). Unset turns them off.                                                                                                                                                                                                                    |
@@ -845,6 +848,140 @@ document needs images, embed them as data URLs:
 <img src="data:image/png;base64,..." alt="diagram" />
 ```
 
+## Ephemeral documents
+
+The owner of a document can give it an expiry time, with
+`slashdocs docs create --ttl 7d` and `slashdocs docs update --ttl 7d`, or
+through the API. After
+that time the server deletes the document, as a delete by hand does. Its
+versions, comments, approvals and operations go with it. A document without
+an expiry time is kept.
+
+### The sweep
+
+Every server looks for expired documents once in each
+`SLASHDOCS_DOCUMENT_EXPIRY_SWEEP_INTERVAL` (default `1m`, and `1s` at least),
+and deletes up to 100 of them in a round. The servers need no leader: each
+one takes a document with a row lock, so a document is deleted once. A
+document can live up to one interval after its expiry time, and longer when
+many expire at the same time, or while a person writes to it. Until the
+delete, its owner can change or remove the expiry. An editor of the document
+can move the expiry to a later time. An editor cannot make it sooner, because
+an editor cannot delete the document and a sooner expiry is a delete. An
+editor cannot remove it either: the owner decided that the document goes. The
+editors of a document can change its expiry 3 times. After that only the owner can, and
+a change of the owner gives the editors their 3 changes again.
+
+`0` turns the feature off. The server then deletes no expired document and
+removes no blob, as before this feature, and it refuses a new expiry with the
+error `feature_disabled`. Documents keep the expiry time that they have, and
+the first round after you turn the feature on again deletes those that are
+due. The owner of such a document can still keep it, with
+`slashdocs docs update --ttl never`.
+
+The setting is read at the start of a server. During a rolling update, the
+servers that still run with the old value keep their behaviour.
+
+### The HTML of a deleted document
+
+A delete, by hand or by expiry, removes the rows of the document from
+Postgres at once. The HTML of its versions stays in the bucket, under
+`docs/<document id>/`, for `SLASHDOCS_DELETED_BLOB_RETENTION` (default `168h`,
+7 days). Then the sweep lists the keys with that prefix and deletes each
+object. `0` removes them in the next round.
+
+Until the retention period ends, you can get the HTML back. You need the ID
+of the document: it is in the address of the document, in the table
+`blob_deletions`, and in the log lines `document expired` and `document
+expiry changed`, which also hold the ID of the owner.
+
+```bash
+aws s3 ls "s3://$BLOB_BUCKET/docs/doc_abc123/"
+aws s3 cp "s3://$BLOB_BUCKET/docs/doc_abc123/ver_def456.html" restored.html
+slashdocs docs create restored.html --title "Restored"
+```
+
+Take the object with the newest modification time. An object named
+`<version id>.html` is a version, and one with a second part in its name is
+the state of a version that people typed in. Text that a person typed in the
+last minutes before the delete was only in Postgres, and does not come back.
+The new document has a new ID, and the comments and the history do not come
+back.
+
+### What stays after a delete
+
+- The HTML, until the retention period ends. For ever, when the sweep is off.
+- Earlier versions of the objects, on a bucket with versioning, and your
+  backups of the database and of the bucket. The server does not erase data
+  in a way that the storage cannot undo. If you need that, use lifecycle
+  rules, or encrypt the bucket with a key that you can destroy.
+- The rows of the grants and the pins of the document. They hold IDs and
+  roles, and no content.
+- An approval event of the document that the webhook did not get yet.
+- Link previews that Slack already showed, and the log lines of the server.
+
+### Before you turn it on
+
+Before this release, a deleted document left its HTML in the bucket for ever.
+Now the server removes it, so these rules count:
+
+- Use one bucket for one database. A copy of the database, such as a staging
+  system that you made from production, or a restore drill, must not use the
+  bucket of the original. When a document expires or is deleted in the copy,
+  the copy removes the HTML that the original still serves.
+- After a restore of a Postgres backup, start the server with
+  `SLASHDOCS_DOCUMENT_EXPIRY_SWEEP_INTERVAL=0`. The restored documents have
+  the expiry times of the backup: an expiry that a person removed after the
+  backup is there again, and the first round would delete the document. Look
+  at the documents that are due, with
+  `SELECT id, title, expires_at FROM documents WHERE expires_at <= now()`,
+  correct them, and then turn the sweep on.
+- A restore also brings back the rows of documents that were deleted after
+  the backup. Their HTML is there only while the retention period lasts. If
+  you restore backups that are older than that, set a longer retention, or
+  turn on versioning for the bucket.
+- The credentials of the server need permission to list the bucket
+  (`s3:ListBucket`) and to delete objects (`s3:DeleteObject`). When the blob
+  store refuses, the document stays in `blob_deletions`. The sweep tries it
+  again later, and waits longer after each attempt, up to 6 hours. Only
+  `slashdocs_blob_purge_events_total{result="failed"}` and the two gauges
+  below show this.
+- With a retention of `0`, a blob that a write makes at the moment of the
+  delete can come after the removal, and then stays. A retention of some
+  minutes prevents this.
+
+To stop the removal of blobs at once, without a restart:
+`UPDATE blob_deletions SET available_at = now() + interval '30 days'`.
+
+### Upgrade
+
+Migrations 47 to 49 add a column to `documents`, the table `blob_deletions`,
+and nine indexes. The indexes make the delete of a document fast: before, each
+delete read several tables in full. While an index is built, writes to its
+table wait. That is some seconds on a table with a million rows.
+
+The migration waits at most 10 seconds for a lock. A long transaction on
+these tables, such as a backup, makes it give up: the new server stops, the
+old servers go on, and the next start tries again and keeps the indexes that
+are done. With `SLASHDOCS_MIGRATE=false`, apply the migrations before you
+start the new server: it reads the new column.
+
+### Metrics
+
+| Metric                                                                 | Meaning                                                                                                       |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `slashdocs_document_events_total{event="expired",actor_type="system"}` | Documents that the sweep deleted.                                                                             |
+| `slashdocs_document_events_total{event="expiry_set"}`                  | Requests that set an expiry. `expiry_removed` counts those that remove it.                                    |
+| `slashdocs_blob_purge_events_total{result="purged"}`                   | Deleted documents whose HTML left the bucket. `failed` counts those whose HTML the blob store did not delete. |
+| `slashdocs_blob_purge_pending_documents`                               | Deleted documents whose HTML is still in the bucket.                                                          |
+| `slashdocs_blob_purge_oldest_pending_seconds`                          | How long ago the oldest of them was deleted.                                                                  |
+| `slashdocs_document_expiry_sweep_errors_total`                         | Steps of the sweep that failed.                                                                               |
+
+`slashdocs_blob_purge_oldest_pending_seconds` stays near the retention period
+while the removal works. A value that keeps growing past it tells that the
+blob store refuses the deletes. Each server sets the two gauges from the
+database, so read them with `max`, not with `sum`.
+
 ## Upgrading
 
 Postgres migrations are applied automatically at startup unless
@@ -895,6 +1032,9 @@ after its last edit, so apply it when nobody edited for that time.
 - [ ] If notifications are on: each provider's secret in a secret manager, and
       outbound HTTPS to each configured provider allowed.
 - [ ] Blob storage versioning / lifecycle rules configured.
+- [ ] `SLASHDOCS_DELETED_BLOB_RETENTION` at least as long as the age of the
+      oldest Postgres backup that you restore, or versioning on the bucket
+      (see [Ephemeral documents](#ephemeral-documents)).
 - [ ] `SLASHDOCS_COMMIT_SHA` baked into your image so `/commit.txt`
       reports the running build.
 - [ ] Monitoring scraping `/metrics` on the metrics port (`SLASHDOCS_METRICS_PORT`,

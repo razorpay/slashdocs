@@ -111,7 +111,11 @@ func run() error {
 		slog.String("requested_mode", string(kvEvents.RequestedMode())),
 		slog.String("active_mode", string(kvEvents.ActiveMode())))
 
-	srv, err := newApplicationServer(ctx, store, blobs, kvEvents)
+	expiry, err := loadExpirySettings()
+	if err != nil {
+		return err
+	}
+	srv, err := newApplicationServer(ctx, store, blobs, kvEvents, expiry)
 	if err != nil {
 		return err
 	}
@@ -124,6 +128,14 @@ func run() error {
 		indexSearch(workerCtx, "documents", store.IndexDocuments)
 	})
 	workers.Go(func() { tendVersions(workerCtx, store) })
+	if expiry.interval > 0 {
+		slog.Info("the sweep of expired documents is on",
+			slog.Duration("interval", expiry.interval),
+			slog.Duration("deleted_blob_retention", expiry.blobRetention))
+		workers.Go(func() { sweepExpiredDocuments(workerCtx, store, expiry) })
+	} else {
+		slog.Info("the sweep of expired documents is off: the server deletes no expired document and removes no blob", slog.String("setting", expirySweepIntervalEnv))
+	}
 	defer func() { cancelWorkers(); workers.Wait() }()
 	return serve(ctx, srv.Handler(), srv.CloseStreams, ":"+envOrDefault("SLASHDOCS_PORT", "8080"), ":"+envOrDefault("SLASHDOCS_METRICS_PORT", "9090"))
 }
@@ -298,7 +310,7 @@ func loadOIDC(ctx context.Context, appOrigin string) (auth.OIDC, string, error) 
 	return provider, settings.ProviderName, err
 }
 
-func newApplicationServer(ctx context.Context, store *pgrepo.Store, blobs blob.Store, kvEvents kvevents.Subscriber) (*server.Server, error) {
+func newApplicationServer(ctx context.Context, store *pgrepo.Store, blobs blob.Store, kvEvents kvevents.Subscriber, expiry expirySettings) (*server.Server, error) {
 	origins, err := loadOriginSettings()
 	if err != nil {
 		return nil, err
@@ -376,6 +388,8 @@ func newApplicationServer(ctx context.Context, store *pgrepo.Store, blobs blob.S
 		GoogleGroupsEnabled:       googleGroups.enabled,
 		GoogleGroupsMembershipTTL: googleGroups.membershipTTL,
 		DisableLabels:             !labelsEnabled,
+		// A server that deletes no expired document refuses a new expiry.
+		DisableDocumentExpiry: expiry.interval == 0,
 	}, options...), nil
 }
 
@@ -563,11 +577,7 @@ func loadGoogleGroupsConfig(ctx context.Context, deployment string) (googleGroup
 }
 
 func positiveDurationEnv(name string, fallback time.Duration) (time.Duration, error) {
-	raw := os.Getenv(name)
-	if raw == "" {
-		return fallback, nil
-	}
-	duration, err := time.ParseDuration(raw)
+	duration, err := durationEnv(name, fallback)
 	if err != nil || duration <= 0 {
 		return 0, fmt.Errorf("%s must be a positive Go duration", name)
 	}

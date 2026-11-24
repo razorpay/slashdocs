@@ -93,6 +93,19 @@ CLI writes the merged version into the file. When they changed the same text,
 the push is refused and their text stays: pull again, and make your change
 again.
 
+Give a document an expiry, only when the user asks for one:
+  slashdocs docs create notes.html --title 'Scratch' --ttl 7d
+  slashdocs docs update <doc_id> --ttl 3mo
+  slashdocs docs update <doc_id> --ttl never
+
+The server keeps a document until its owner deletes it. With --ttl, the
+server deletes the document after that period, with its history and comments,
+and nobody can undo that. A period is a whole number and a unit: min, h, d, w
+or mo (30 days). The command prints the date and how long that is from now:
+make sure that it is the period that the user asked for, and tell the user
+the date. Ask the user to confirm before you set or shorten the expiry of a
+document that already exists. A push or an edit does not move the expiry.
+
 Publishing model:
   - Creating a document stores the uploaded HTML as version 1.
   - Pushing HTML, or editing its text, creates a new immutable version.
