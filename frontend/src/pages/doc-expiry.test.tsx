@@ -218,7 +218,7 @@ describe("ExpiryDialog", () => {
     });
   });
 
-  it("gives an editor the later periods and Keep, and saves a later one", async () => {
+  it("gives an editor the later periods and not Keep, and saves a later one", async () => {
     const user = userEvent.setup();
     const set = vi
       .spyOn(api, "setDocumentExpiry")
@@ -227,7 +227,8 @@ describe("ExpiryDialog", () => {
     expect(screen.getByText(/Only the owner can make it sooner/)).toBeVisible();
     expect(screen.getByRole("radio", { name: "1 day" })).toBeDisabled();
     expect(screen.getByRole("radio", { name: "3 days" })).toBeDisabled();
-    expect(screen.getByRole("radio", { name: "Keep" })).toBeEnabled();
+    expect(screen.getByRole("radio", { name: "Keep" })).toBeDisabled();
+    expect(screen.getByText(/Only the owner can make it sooner or keep/)).toBeVisible();
     await user.click(screen.getByRole("radio", { name: "1 month" }));
     await user.click(save());
     await waitFor(() => expect(set).toHaveBeenCalledWith("doc_1", "30d"));
@@ -236,9 +237,16 @@ describe("ExpiryDialog", () => {
   it("moves the keys of an editor past the periods that are sooner", async () => {
     const user = userEvent.setup();
     open(inDays(3), true, false);
-    screen.getByRole("radio", { name: "Keep" }).focus();
-    await user.keyboard("{ArrowRight}");
+    // The tab stop is the first period that an editor can pick.
+    expect(screen.getByRole("radio", { name: "7 days" })).toHaveAttribute(
+      "tabindex",
+      "0",
+    );
+    screen.getByRole("radio", { name: "1 month" }).focus();
+    await user.keyboard("{Home}");
     expect(screen.getByRole("radio", { name: "7 days" })).toBeChecked();
+    await user.keyboard("{ArrowLeft}");
+    expect(screen.getByRole("radio", { name: "3 months" })).toBeChecked();
   });
 
   it("gives the owner every period", () => {

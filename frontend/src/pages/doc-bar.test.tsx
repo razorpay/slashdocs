@@ -795,9 +795,9 @@ describe("DocBar auto-delete", () => {
     await user.click(mark);
     const dialog = await screen.findByRole("dialog", { name: "Auto-delete" });
     expect(within(dialog).getByText(/Only the owner can make it sooner/)).toBeVisible();
-    for (const sooner of ["1 day", "3 days"])
-      expect(within(dialog).getByRole("radio", { name: sooner })).toBeDisabled();
-    for (const later of ["Keep", "7 days", "1 month", "3 months"])
+    for (const off of ["Keep", "1 day", "3 days"])
+      expect(within(dialog).getByRole("radio", { name: off })).toBeDisabled();
+    for (const later of ["7 days", "1 month", "3 months"])
       expect(within(dialog).getByRole("radio", { name: later })).toBeEnabled();
   });
 
@@ -809,6 +809,13 @@ describe("DocBar auto-delete", () => {
     await user.click(screen.getByRole("button", { name: "More" }));
     await user.click(await screen.findByRole("menuitem", { name: /^Auto-delete…/ }));
     expect(await screen.findByRole("dialog", { name: "Auto-delete" })).toBeVisible();
+  });
+
+  it("gives an editor no dialog when the server has the feature off", async () => {
+    serverConfig = { document_expiry_enabled: false };
+    renderDocBar(true, [], [], "editor", { expiresAt: soon() });
+    await screen.findAllByRole("img", { name: /Deletes in 3 days/ });
+    expect(screen.queryByRole("button", { name: /Deletes in/ })).toBeNull();
   });
 
   it("shows no mark for a document with no expiry", async () => {

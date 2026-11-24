@@ -33,6 +33,15 @@ export function ExpiryPicker({
   className?: string;
 }) {
   const picked = EXPIRY_PRESETS.findIndex((p) => p.value === value);
+  // The one tab stop is the picked radio, or the first that the person can
+  // pick: a radio that is off takes no focus.
+  const stop =
+    picked >= 0
+      ? picked
+      : Math.max(
+          EXPIRY_PRESETS.findIndex((p) => allowed(p.value)),
+          0,
+        );
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const step = KEYS[event.key];
     if (!step || disabled) return;
@@ -67,7 +76,7 @@ export function ExpiryPicker({
           type="button"
           role="radio"
           aria-checked={i === picked}
-          tabIndex={i === Math.max(picked, 0) ? 0 : -1}
+          tabIndex={i === stop ? 0 : -1}
           disabled={disabled || !allowed(preset.value)}
           onClick={() => onChange(preset.value)}
           className="flex h-8 flex-1 items-center justify-center whitespace-nowrap rounded-[6px] px-3 text-sm font-medium text-[var(--color-fg-muted)] transition-[color,background-color,box-shadow,transform] duration-150 ease-out hover:text-[var(--color-fg)] active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50 aria-checked:bg-[var(--color-surface)] aria-checked:text-[var(--color-fg)] aria-checked:shadow-[var(--shadow-border)] touch:h-10"

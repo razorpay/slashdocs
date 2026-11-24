@@ -236,10 +236,13 @@ export function DocBar({
   const expiryShown = !!expiresAt;
   // The owner changes the expiry where the server has the feature, and
   // removes one that is there. An editor moves an expiry that is there later,
-  // or removes it. The dialog says which, so it waits for the config.
+  // which the server takes only while it has the feature. The dialog says
+  // which, so it waits for the config.
   const expiryControls =
     config.data !== undefined &&
-    ((canManage && expiryEnabled) || ((canManage || canEdit) && !!expiresAt));
+    (canManage
+      ? expiryEnabled || !!expiresAt
+      : canEdit && expiryEnabled && !!expiresAt);
   const viewerActions = {
     onFollow: onFollowViewer,
     onUnfollow: onUnfollowViewer,

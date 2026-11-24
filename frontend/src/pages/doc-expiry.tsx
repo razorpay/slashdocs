@@ -18,8 +18,8 @@ import { formatTimestamp, formatUntil } from "@/lib/format-date";
 import { queryKeys } from "@/lib/queryKeys";
 
 // The dialog in which the owner sets, changes or removes the expiry of a
-// document. An editor cannot delete the document, so an editor moves an
-// expiry later or removes it, and picks no period that ends sooner. The page
+// document. An editor only puts the delete off: they pick a period that ends
+// later, and not one that ends sooner, and not Keep. The page
 // renders the dialog outside the menu that opens it.
 export function ExpiryDialog({
   docId,
@@ -110,10 +110,11 @@ function ExpiryForm({
   const current = expiresAt ? Date.parse(expiresAt) : 0;
   // Editors change the expiry a few times, and then only the owner does.
   const used = !owner && changesLeft === 0;
+  // An editor puts the delete off, and does not remove it: Keep is for the
+  // owner.
   const allowed = (period: string) =>
     owner ||
-    (!used && period === "") ||
-    (!used && current > 0 && periodEnd(period) > current + 60_000);
+    (!used && period !== "" && current > 0 && periodEnd(period) > current + 60_000);
   const changed = choice !== null && (choice !== "" || !!expiresAt);
   if (!enabled)
     return (
@@ -147,7 +148,7 @@ function ExpiryForm({
         undone.
         {owner
           ? null
-          : " As an editor you can move the delete later or keep the document. Only the owner can make it sooner."}
+          : " As an editor you can move the delete later. Only the owner can make it sooner or keep the document."}
       </p>
       {owner ? null : <EditorChanges left={changesLeft} />}
       <DialogFooter>

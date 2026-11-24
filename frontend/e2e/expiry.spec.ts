@@ -52,7 +52,7 @@ test("the owner sets auto-delete from the More menu, and removes it", async ({
 });
 
 // An editor cannot delete the document. They see when it goes, and they can
-// move that later or keep the document, and cannot make it sooner.
+// move that later. They cannot make it sooner, and cannot remove it.
 test("an editor sees the expiry and moves it later, and cannot make it sooner", async ({
   page,
   browser,
@@ -81,10 +81,17 @@ test("an editor sees the expiry and moves it later, and cannot make it sooner", 
     headers: { Origin: APP_ORIGIN },
   });
   expect(sooner.status()).toBe(403);
+  // An editor does not remove the expiry either.
+  const removed = await reviewer.request.patch(`/v1/documents/${document.id}`, {
+    data: { expires_at: null },
+    headers: { Origin: APP_ORIGIN },
+  });
+  expect(removed.status()).toBe(403);
 
   await mark.click();
   const dialog = reviewer.getByRole("dialog", { name: "Auto-delete" });
   await expect(dialog.getByRole("radio", { name: "1 day" })).toBeDisabled();
+  await expect(dialog.getByRole("radio", { name: "Keep" })).toBeDisabled();
   await expect(dialog.getByText("Editors can change this 3 more times.")).toBeVisible();
   await dialog.getByRole("radio", { name: "1 month" }).click();
   await dialog.getByRole("button", { name: "Save", exact: true }).click();

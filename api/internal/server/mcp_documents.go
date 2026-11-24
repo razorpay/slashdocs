@@ -143,7 +143,7 @@ func registerMCPDocumentCRUDTools(server *mcpserver.MCPServer, api mcpAPIAdapter
 // expiry of a document.
 func registerMCPDocumentExpiryTool(server *mcpserver.MCPServer, api mcpAPIAdapter) {
 	server.AddTool(mcp.NewTool("set_document_expiry", mutationOptions(true, false,
-		mcp.WithDescription("Set or remove the time after which the server deletes a document for good, with its history and comments. Only the owner of the document can give it an expiry or make the expiry sooner; an editor can move an expiry later or remove it, 3 times for a document. A document without an expiry is kept. Call this only when the user asks for it, and tell the user the date in expires_at: the delete cannot be undone."),
+		mcp.WithDescription("Set or remove the time after which the server deletes a document for good, with its history and comments. Only the owner of the document can give it an expiry or make the expiry sooner; an editor can only move an expiry to a later time, 3 times for a document, and cannot remove it. A document without an expiry is kept. Call this only when the user asks for it, and tell the user the date in expires_at: the delete cannot be undone."),
 		mcpDocumentID(),
 		mcp.WithString("expires_in", mcp.Required(), mcp.Description(expiresInDescription+" "+mcpNever+" removes the expiry, and the document is kept.")),
 	)...), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
