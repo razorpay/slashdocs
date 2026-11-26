@@ -5,6 +5,11 @@
 // disposable container started via testcontainers. A template database is
 // migrated once per schema version, and every call to New clones it, so each
 // test gets a private database in a few milliseconds.
+//
+// Every package that calls New must run its tests through Main, so the
+// container is removed when the test binary exits:
+//
+//	func TestMain(m *testing.M) { testdb.Main(m) }
 package testdb
 
 import (
@@ -19,6 +24,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
 	"github.com/razorpay/slashdocs/api/internal/db"
@@ -32,10 +38,43 @@ const EnvURL = "SLASHDOCS_TEST_DATABASE_URL"
 const containerImage = "postgres:17-alpine"
 
 var setup struct {
-	once     sync.Once
-	adminURL string // connection string to the server's maintenance database
-	template string // name of the migrated template database
-	err      error
+	once      sync.Once
+	adminURL  string                   // connection string to the server's maintenance database
+	template  string                   // name of the migrated template database
+	container testcontainers.Container // the container this binary started, if any
+	err       error
+}
+
+// Main runs the package's tests, then removes the PostgreSQL container that
+// New started, if any, and exits. Call it from TestMain in every package that
+// uses New. Without it, the container is only removed by testcontainers'
+// reaper (Ryuk), which does not run when TESTCONTAINERS_RYUK_DISABLED is set
+// or when the container runtime cannot start it, as is common with Podman;
+// every test binary then leaves a running container behind.
+func Main(m *testing.M) {
+	code := m.Run()
+	if err := terminateContainer(); err != nil {
+		fmt.Fprintf(os.Stderr, "testdb: %v\n", err)
+		if code == 0 {
+			code = 1
+		}
+	}
+	os.Exit(code)
+}
+
+// terminateContainer removes the container started by New, if any. It does
+// nothing when the tests used SLASHDOCS_TEST_DATABASE_URL or never asked for a
+// database.
+func terminateContainer() error {
+	if setup.container == nil {
+		return nil
+	}
+	ctr := setup.container
+	setup.container = nil
+	if err := testcontainers.TerminateContainer(ctr); err != nil {
+		return fmt.Errorf("terminate %s container %s: %w", containerImage, ctr.GetContainerID(), err)
+	}
+	return nil
 }
 
 // closeConn is used on cleanup paths where the operation has already
@@ -97,7 +136,7 @@ func initServer() {
 }
 
 // startContainer launches a disposable PostgreSQL container that lives for the
-// rest of the test binary; testcontainers' reaper removes it afterwards.
+// rest of the test binary; Main removes it when the tests finish.
 func startContainer() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -107,6 +146,11 @@ func startContainer() (string, error) {
 		tcpostgres.WithPassword("postgres"),
 		tcpostgres.BasicWaitStrategies(),
 	)
+	if ctr != nil {
+		// Run can return a container together with an error, for example when
+		// it started but never became ready; it must still be removed.
+		setup.container = ctr
+	}
 	if err != nil {
 		return "", err
 	}
