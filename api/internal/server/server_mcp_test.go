@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"maps"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -268,6 +269,16 @@ func TestMCPHTTPTransportSecurityAndMalformedInput(t *testing.T) {
 	t.Run("configured Origin is accepted", func(t *testing.T) {
 		rr := rawMCPRequest(t, e, http.MethodPost, token, mcpTestOrigin, initializeBody, "application/json", true)
 		assertStatus(t, rr, http.StatusOK)
+	})
+
+	t.Run("app host forwarded over loopback by a same-host proxy is accepted", func(t *testing.T) {
+		rr := loopbackMCPRequest(t, e, "app.example", token, initializeBody)
+		assertStatus(t, rr, http.StatusOK)
+	})
+
+	t.Run("foreign host over loopback is rejected as DNS rebinding", func(t *testing.T) {
+		rr := loopbackMCPRequest(t, e, "attacker.example", token, initializeBody)
+		assertStatus(t, rr, http.StatusForbidden)
 	})
 
 	t.Run("invalid JSON returns JSON-RPC parse error", func(t *testing.T) {
@@ -777,7 +788,25 @@ func rawMCPRequestWithProtocol(t *testing.T, e *mcpOAuthTestEnv, method, token, 
 	if protocolVersion != "" {
 		headers["Mcp-Protocol-Version"] = protocolVersion
 	}
-	return do(t, e.h, method, "/mcp", body, headers)
+	// Real clients address the app origin; the transport only accepts its host.
+	return do(t, e.h, method, mcpTestOrigin+"/mcp", body, headers)
+}
+
+// loopbackMCPRequest sends an MCP request the way a reverse proxy in the same
+// container does: over a loopback connection, keeping the client's Host header.
+func loopbackMCPRequest(t *testing.T, e *mcpOAuthTestEnv, host, token, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
+	req.Host = host
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Mcp-Protocol-Version", mcp.LATEST_LEGACY_PROTOCOL_VERSION)
+	loopback := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 3000}
+	req = req.WithContext(context.WithValue(req.Context(), http.LocalAddrContextKey, net.Addr(loopback)))
+	rr := httptest.NewRecorder()
+	e.h.ServeHTTP(rr, req)
+	return rr
 }
 
 func marshalMCP(t *testing.T, value any) string {
@@ -804,7 +833,7 @@ func statelessMCPRequest(t *testing.T, e *mcpOAuthTestEnv, token, method, versio
 		mcp.MetaKeyProtocolVersion:    version,
 		mcp.MetaKeyClientCapabilities: map[string]any{},
 	}}
-	return do(t, e.h, http.MethodPost, "/mcp", marshalMCP(t, map[string]any{
+	return do(t, e.h, http.MethodPost, mcpTestOrigin+"/mcp", marshalMCP(t, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": method, "params": params,
 	}), map[string]string{
 		"Authorization":        "Bearer " + token,

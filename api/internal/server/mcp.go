@@ -12,6 +12,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"time"
 
@@ -63,6 +64,16 @@ func authenticateMCPRequest(w http.ResponseWriter, r *http.Request, authenticato
 	return principal
 }
 
+// mcpAllowedHosts returns the Host header values the MCP transport accepts
+// besides loopback: the host of the configured app origin, if any.
+func mcpAllowedHosts(appOrigin string) []string {
+	u, err := url.Parse(strings.TrimSpace(appOrigin))
+	if err != nil || u.Host == "" {
+		return nil
+	}
+	return []string{u.Host}
+}
+
 // mcpInstructions tells agents that links and names from before the rename
 // refer to this server, so a pasted aidocs link resolves here.
 const mcpInstructions = "slashdocs was formerly named aidocs. Treat an aidocs URL, document, or command as a slashdocs one. " +
@@ -88,6 +99,10 @@ func newMCPHTTPHandler(deps dependencies) http.Handler {
 		mcpserver.WithDisableStreaming(true),
 		// mcp-go caps bodies at 4 MiB by default; documents may be up to the HTML limit.
 		mcpserver.WithMaxRequestBodyBytes(maxMCPRequestBytes),
+		// A reverse proxy in the same container (e.g. Laravel Cloud) forwards
+		// over loopback with the public Host header, which mcp-go's DNS rebinding
+		// guard otherwise rejects. Allowing only the app's own host keeps the guard.
+		mcpserver.WithAllowedHosts(mcpAllowedHosts(deps.appOrigin)...),
 	)
 	authenticator := auth.MCPAuthenticator{
 		Users:         deps.repository,
