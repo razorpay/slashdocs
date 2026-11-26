@@ -118,6 +118,8 @@ func registerFrontendRoutes(r *gin.Engine, h handlers) {
 				index = bytes.Replace(index, []byte(shellTitle), head, 1)
 			}
 		}
+		// After the document head, which replaces the generic title first.
+		index = h.deps.brand.applyToShell(index)
 		c.Data(http.StatusOK, "text/html; charset=utf-8", index)
 	})
 }

@@ -638,6 +638,11 @@ a secret store. The server needs outbound HTTPS to `chat.googleapis.com` or
 | `SLASHDOCS_DEPLOYMENT`                      | `public`    | `public` or `org`. An org deployment gates login to `SLASHDOCS_ORG_DOMAINS`.                                                                                                                                                                                                                        |
 | `SLASHDOCS_ORG_DOMAINS`                     | unset       | Comma-separated org domains. Required when `SLASHDOCS_DEPLOYMENT=org`; also the login gate.                                                                                                                                                                                                         |
 | `SLASHDOCS_ORG_NAME`                        | unset       | Org display name used in share UI copy (e.g. "Anyone in Razorpay").                                                                                                                                                                                                                                 |
+| `SLASHDOCS_BRAND_NAME`                      | unset       | Product name shown instead of "slashdocs": page title, link previews, MCP server name and the MCP install buttons.                                                                                                                                                                                  |
+| `SLASHDOCS_BRAND_LOGO_FILE`                 | unset       | Path to an SVG (at most 256 KiB, no DOCTYPE) that replaces the header wordmark, and the favicon unless one is set. Served sandboxed from `/brand/logo.svg`.                                                                                                                                         |
+| `SLASHDOCS_BRAND_LOGO_DARK_FILE`            | unset       | Path to an SVG logo for the dark theme. Needs `SLASHDOCS_BRAND_LOGO_FILE`.                                                                                                                                                                                                                          |
+| `SLASHDOCS_BRAND_FAVICON_FILE`              | unset       | Path to an SVG favicon. Without it, the brand logo is the favicon.                                                                                                                                                                                                                                  |
+| `SLASHDOCS_BRAND_ACCENT_COLOR`              | unset       | `#rrggbb` accent for buttons, links and focus rings in both themes. Pick one with at least 4.5:1 contrast against white.                                                                                                                                                                            |
 | `SLASHDOCS_SLACK_LINK_PREVIEWS`             | `false`     | Set `true` to unfurl document links in Slack. Requires `SLASHDOCS_SLACK_BOT_TOKEN` and `SLASHDOCS_SLACK_SIGNING_SECRET`; startup fails without them. See [Slack link previews](comment-notifications.md#slack-link-previews).                                                                       |
 | `SLASHDOCS_SLACK_SIGNING_SECRET`            | unset       | Slack app signing secret, used to verify `/v1/slack/events` requests. Keep it in your secret store.                                                                                                                                                                                                 |
 | `BLOB_REGION`                               | `us-east-1` | AWS region for the S3 client.                                                                                                                                                                                                                                                                       |
@@ -699,14 +704,14 @@ a review task for each approver. Each change writes one event in the database
 transaction of the change. A worker posts the event as JSON and deletes it when
 the webhook answers with a 2xx status.
 
-| `type`                     | When                                                                                                         |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `approval.requested`       | The owner asks someone to approve                                                                            |
-| `approval.removed`         | The owner removes an approver, or an approver loses read access                                              |
-| `approval.approved`        | An approver approves                                                                                         |
-| `approval.rejected`        | An approver rejects                                                                                          |
-| `approval.revoked`         | An approver revokes their decision                                                                           |
-| `approval.version_created` | The current version of a document that has approvers changes (see below)                                     |
+| `type`                     | When                                                                     |
+| -------------------------- | ------------------------------------------------------------------------ |
+| `approval.requested`       | The owner asks someone to approve                                        |
+| `approval.removed`         | The owner removes an approver, or an approver loses read access          |
+| `approval.approved`        | An approver approves                                                     |
+| `approval.rejected`        | An approver rejects                                                      |
+| `approval.revoked`         | An approver revokes their decision                                       |
+| `approval.version_created` | The current version of a document that has approvers changes (see below) |
 
 ```json
 {

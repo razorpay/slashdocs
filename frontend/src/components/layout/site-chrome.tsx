@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { Logo } from "./logo";
+import { productName } from "@/lib/brand";
 
 export const REPO_URL = "https://github.com/razorpay/slashdocs";
 export const SELF_HOSTING_URL = `${REPO_URL}/blob/master/docs/self-hosting.md`;
@@ -11,7 +12,7 @@ export const siteLink =
 export function SiteHeader({ children }: { children?: React.ReactNode }) {
   return (
     <header className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-6">
-      <Link to="/" aria-label="slashdocs home">
+      <Link to="/" aria-label={`${productName()} home`}>
         <Logo className="h-4 w-auto sm:h-5" />
       </Link>
       <nav className="-mr-3 flex items-center gap-1">

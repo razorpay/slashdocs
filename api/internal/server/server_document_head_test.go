@@ -256,3 +256,16 @@ func TestDocumentPageServesTheGenericShellWhenTheDatabaseIsSlow(t *testing.T) {
 	}
 	assertGenericShell(t, rr)
 }
+
+func TestDocumentPageHeadUsesTheBrandName(t *testing.T) {
+	brand, err := server.ParseBrand(server.BrandSettings{Name: "Acme Artifacts"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := newShellTestEnv(t, server.Config{Environment: "test", Brand: brand})
+	assertContains(t, getPage(t, e.h, "/app/d/"+e.doc.ID, &fixtureViewer).Body.String(),
+		"<title>fixture · Acme Artifacts</title>",
+		`<meta property="og:site_name" content="Acme Artifacts" />`,
+	)
+	assertContains(t, getPage(t, e.h, "/", nil).Body.String(), "<title>Acme Artifacts</title>")
+}

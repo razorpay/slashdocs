@@ -976,3 +976,16 @@ func TestMCPGuidelinesProgressiveDisclosure(t *testing.T) {
 		"section": "no such section",
 	}), "unknown guidelines section")
 }
+
+func TestMCPServerInfoUsesTheBrandName(t *testing.T) {
+	brand, err := server.ParseBrand(server.BrandSettings{Name: "Acme Artifacts"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := newMCPOAuthTestEnvConfig(t, func(cfg *server.Config) { cfg.Brand = brand })
+	token := auth.NewMCPAccessToken(fixtureUser.ID, e.resource, oauthTestSigningMaterial, time.Minute)
+	_, initialized := connectMCPClient(t, e, token, mcp.ProtocolVersion20260728)
+	if initialized.ServerInfo.Name != "Acme Artifacts" || !strings.HasPrefix(initialized.Instructions, "Acme Artifacts is this organization's name") {
+		t.Fatalf("serverInfo = %+v, instructions = %q", initialized.ServerInfo, initialized.Instructions)
+	}
+}

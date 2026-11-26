@@ -68,16 +68,25 @@ func authenticateMCPRequest(w http.ResponseWriter, r *http.Request, authenticato
 const mcpInstructions = "slashdocs was formerly named aidocs. Treat an aidocs URL, document, or command as a slashdocs one. " +
 	"A document link ends in its ID (doc_...), which is the same on both names. Call get_authoring_guidelines before you create or update a document."
 
+// mcpServerInstructions adds the deployment's brand name to mcpInstructions,
+// so an agent that people ask for the brand finds this server.
+func mcpServerInstructions(brand Brand) string {
+	if brand.ProductName() == DefaultProductName {
+		return mcpInstructions
+	}
+	return brand.ProductName() + " is this organization's name for its slashdocs server; treat both names as this server. " + mcpInstructions
+}
+
 func newMCPHTTPHandler(deps dependencies) http.Handler {
 	metrics := newMCPMetricRecorder()
 	protocol := mcpserver.NewMCPServer(
-		"slashdocs",
+		deps.brand.ProductName(),
 		BuildVersion,
 		mcpserver.WithToolCapabilities(false),
 		mcpserver.WithToolHandlerMiddleware(metrics.toolMiddleware),
 		mcpserver.WithRecovery(),
 		mcpserver.WithHooks(metrics.hooks()),
-		mcpserver.WithInstructions(mcpInstructions),
+		mcpserver.WithInstructions(mcpServerInstructions(deps.brand)),
 	)
 	api := mcpAPIAdapter{handlers: handlers{deps: deps}}
 	registerMCPTools(protocol, api)

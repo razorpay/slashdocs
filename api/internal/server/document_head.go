@@ -17,9 +17,9 @@ import (
 
 // documentHeadTemplate replaces the generic <title> of the web app shell on
 // a document page. html/template escapes each value for its context.
-var documentHeadTemplate = template.Must(template.New("document head").Parse(`<title>{{.Title}} · slashdocs</title>
+var documentHeadTemplate = template.Must(template.New("document head").Parse(`<title>{{.Title}} · {{.SiteName}}</title>
     <meta name="description" content="{{.Description}}" />
-    <meta property="og:site_name" content="slashdocs" />
+    <meta property="og:site_name" content="{{.SiteName}}" />
     <meta property="og:type" content="article" />
     <meta property="og:title" content="{{.Title}}" />
     <meta property="og:description" content="{{.Description}}" />
@@ -28,7 +28,7 @@ var documentHeadTemplate = template.Must(template.New("document head").Parse(`<t
 {{- end}}
     <meta name="twitter:card" content="summary" />`))
 
-type documentHeadData struct{ Title, Description, URL string }
+type documentHeadData struct{ Title, Description, URL, SiteName string }
 
 // documentHeadTimeout bounds the lookups behind the head of a document page,
 // so that a slow database or group directory delays the page by at most this
@@ -91,7 +91,7 @@ func (h handlers) documentHeadData(r *http.Request, documentID string) (*documen
 	if err != nil {
 		return nil, err
 	}
-	data := &documentHeadData{Title: d.Title, Description: documentDescription(d, preview)}
+	data := &documentHeadData{Title: d.Title, Description: documentDescription(d, preview), SiteName: h.deps.brand.ProductName()}
 	if h.deps.appOrigin != "" {
 		data.URL = notifications.DocumentURL(h.deps.appOrigin, d.ID)
 	}
