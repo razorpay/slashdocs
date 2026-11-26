@@ -248,6 +248,7 @@ func New(cfg Config, opts ...Option) *Server {
 	r.Use(recoveryMiddleware())
 	r.Use(requestBodyMiddleware())
 	r.Use(prometheusMiddleware())
+	r.Use(noStoreByDefaultMiddleware())
 	if len(cfg.PreviousOrigins) > 0 && cfg.AppOrigin != "" {
 		r.Use(movedOriginMiddleware(cfg.AppOrigin, cfg.PreviousOrigins))
 	}
