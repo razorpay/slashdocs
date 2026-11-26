@@ -5,6 +5,7 @@ import { Logo } from "./logo";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
+import { productName } from "@/lib/brand";
 
 // The open threads of a document, and whether the reader did not read one.
 export type ThreadCount = { open: number; unread: boolean };
@@ -34,7 +35,7 @@ export function DocBarFrame({
       <Tooltip label="All documents">
         <Link
           to={home}
-          aria-label="slashdocs home"
+          aria-label={`${productName()} home`}
           title="All documents"
           className="hidden h-10 shrink-0 items-center rounded-[6px] px-2 hover:bg-[var(--color-highlight)] sm:flex"
         >

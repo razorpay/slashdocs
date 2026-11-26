@@ -405,7 +405,7 @@ func mcpRedirectTarget(raw string) string {
 
 var mcpConsentTemplate = template.Must(template.New("mcp-consent").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Connect {{.ClientName}} to slashdocs</title>
+<title>Connect {{.ClientName}} to {{.ProductName}}</title>
 <style>body{font:16px/1.5 system-ui,sans-serif;max-width:36rem;margin:10vh auto;padding:0 1.5rem;color:#171717}section{border:1px solid #ddd;border-radius:12px;padding:1.5rem}h1{font-size:1.4rem}p{color:#525252}.actions{display:flex;gap:.75rem;margin-top:1.5rem}button{padding:.65rem 1rem;border-radius:8px;border:1px solid #bbb;background:#fff;font:inherit}button[value=approve]{background:#171717;color:#fff;border-color:#171717}</style></head>
 <body><section><h1>Connect {{.ClientName}}?</h1><p>Access goes to <strong>{{.RedirectTarget}}</strong>.</p><p>The client name is self-reported and is not verified.</p><p>This gives the client access to slashdocs as <strong>{{.User}}</strong>. It can read and change the same documents, comments, folders, sharing settings, and service accounts that you can.</p>
 <form method="post" action="/oauth/authorize">{{range $k,$v := .Fields}}<input type="hidden" name="{{$k}}" value="{{$v}}">{{end}}<div class="actions"><button type="submit" name="decision" value="deny">Cancel</button><button type="submit" name="decision" value="approve">Connect</button></div></form></section></body></html>`))
@@ -443,7 +443,7 @@ func (h handlers) mcpAuthorize(c *gin.Context) {
 		// Keep same-origin form submissions compatible with the application's
 		// cookie CSRF check without leaking authorization parameters off-origin.
 		c.Header("Referrer-Policy", "same-origin")
-		if err := mcpConsentTemplate.Execute(c.Writer, map[string]any{"ClientName": client.Name, "RedirectTarget": mcpRedirectTarget(in.RedirectURI), "User": user, "Fields": fields}); err != nil {
+		if err := mcpConsentTemplate.Execute(c.Writer, map[string]any{"ClientName": client.Name, "ProductName": h.deps.brand.ProductName(), "RedirectTarget": mcpRedirectTarget(in.RedirectURI), "User": user, "Fields": fields}); err != nil {
 			internalErr(c, err)
 		}
 		return

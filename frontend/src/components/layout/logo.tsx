@@ -1,7 +1,35 @@
-// Logo is the "SlashDocs by Razorpay" wordmark, traced from the brand PNGs.
-// The wordmark is navy in light mode and white in dark mode. The upper part of
-// the Razorpay mark stays brand blue in both modes.
+import { brandLogo, productName } from "@/lib/brand";
+import { cn } from "@/lib/cn";
+
+// Logo is the deployment's logo when the operator sets one, and the slashdocs
+// wordmark otherwise. A brand logo with a dark variant swaps with the theme.
 export function Logo({ className }: { className?: string }) {
+  const logo = brandLogo();
+  if (!logo) {
+    return <SlashdocsWordmark className={className} />;
+  }
+  return (
+    <>
+      <img
+        src={logo.light}
+        alt={productName()}
+        className={cn(className, logo.dark && "dark:hidden")}
+      />
+      {logo.dark && (
+        <img
+          src={logo.dark}
+          alt={productName()}
+          className={cn(className, "hidden dark:inline")}
+        />
+      )}
+    </>
+  );
+}
+
+// SlashdocsWordmark is the "SlashDocs by Razorpay" wordmark, traced from the
+// brand PNGs. The wordmark is navy in light mode and white in dark mode. The
+// upper part of the Razorpay mark stays brand blue in both modes.
+function SlashdocsWordmark({ className }: { className?: string }) {
   return (
     <svg
       viewBox="0 0 1535 160"

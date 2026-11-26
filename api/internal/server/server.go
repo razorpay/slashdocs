@@ -41,6 +41,9 @@ type Config struct {
 	// Deployment is "public" or "org". OrgName labels the org in UI copy.
 	Deployment string
 	OrgName    string
+	// Brand names and styles the deployment. The zero Brand keeps the
+	// slashdocs look.
+	Brand Brand
 	// DefaultDocPermission is the role granted to the "anyone" principal on
 	// newly created documents when the request does not override it via the
 	// default_permission form field. repo.RoleNone means private: no grant.
@@ -85,6 +88,7 @@ type dependencies struct {
 	allowedOAuthDomains  []string
 	deployment           string
 	orgName              string
+	brand                Brand
 	defaultDocPermission repo.Role
 	featured             []FeaturedSection
 	readinessChecks      []readinessCheck
@@ -202,6 +206,7 @@ func New(cfg Config, opts ...Option) *Server {
 		allowedOAuthDomains:  cfg.AllowedOAuthDomains,
 		deployment:           cfg.Deployment,
 		orgName:              cfg.OrgName,
+		brand:                cfg.Brand,
 		defaultDocPermission: cfg.DefaultDocPermission,
 		featured:             cfg.Featured,
 		githubHTTPClient:     http.DefaultClient,
@@ -310,6 +315,7 @@ func (s *Server) routes(deps dependencies) {
 	mcpOAuth.GET("/authorize", h.mcpAuthorize)
 	mcpOAuth.POST("/authorize", h.mcpAuthorize)
 	registerMCPRoutes(s.engine, deps)
+	s.engine.GET("/brand/*file", deps.brand.serveBrandAsset)
 	s.engine.GET("/commit.txt", h.commitTXT)
 	s.engine.GET("/version.json", h.versionJSON)
 	s.engine.GET("/install.sh", h.installScript)

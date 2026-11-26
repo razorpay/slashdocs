@@ -257,6 +257,39 @@ func loadDeploymentSettings() (deploymentSettings, error) {
 	}, nil
 }
 
+// loadBrand reads the optional brand settings. A logo, dark logo or favicon is
+// a path to an SVG file; a file that is missing or not a valid SVG stops the
+// server at boot.
+func loadBrand(getenv func(string) string, readFile func(string) ([]byte, error)) (server.Brand, error) {
+	settings := server.BrandSettings{
+		Name:        getenv("SLASHDOCS_BRAND_NAME"),
+		AccentColor: getenv("SLASHDOCS_BRAND_ACCENT_COLOR"),
+	}
+	for _, file := range []struct {
+		env    string
+		target *[]byte
+	}{
+		{"SLASHDOCS_BRAND_LOGO_FILE", &settings.Logo},
+		{"SLASHDOCS_BRAND_LOGO_DARK_FILE", &settings.LogoDark},
+		{"SLASHDOCS_BRAND_FAVICON_FILE", &settings.Favicon},
+	} {
+		path := getenv(file.env)
+		if path == "" {
+			continue
+		}
+		body, err := readFile(path)
+		if err != nil {
+			return server.Brand{}, fmt.Errorf("%s: %w", file.env, err)
+		}
+		*file.target = body
+	}
+	brand, err := server.ParseBrand(settings)
+	if err != nil {
+		return server.Brand{}, fmt.Errorf("SLASHDOCS_BRAND_*: %w", err)
+	}
+	return brand, nil
+}
+
 // loadDefaultDocPermission parses SLASHDOCS_DEFAULT_DOC_PERMISSION, the
 // server-wide default sharing applied at document create. Unset means
 // private. Non-private defaults are only meaningful behind an org login
@@ -304,6 +337,10 @@ func newApplicationServer(ctx context.Context, store *pgrepo.Store, blobs blob.S
 		return nil, err
 	}
 	deployment, err := loadDeploymentSettings()
+	if err != nil {
+		return nil, err
+	}
+	brand, err := loadBrand(os.Getenv, os.ReadFile)
 	if err != nil {
 		return nil, err
 	}
@@ -369,6 +406,7 @@ func newApplicationServer(ctx context.Context, store *pgrepo.Store, blobs blob.S
 		AllowedOAuthDomains:       deployment.allowedOAuthDomains,
 		Deployment:                deployment.name,
 		OrgName:                   deployment.orgName,
+		Brand:                     brand,
 		DefaultDocPermission:      deployment.defaultDocPermission,
 		Featured:                  featured,
 		GitHubClientID:            os.Getenv("SLASHDOCS_GITHUB_CLIENT_ID"),

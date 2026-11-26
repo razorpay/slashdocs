@@ -32,6 +32,7 @@ import { useTheme } from "@/lib/theme";
 import { principalColor, principalLabel } from "@/lib/principals";
 import type { Principal } from "@/api";
 import { cn } from "@/lib/cn";
+import { productName } from "@/lib/brand";
 
 // The app bar sits on the page, as the landing header does, so the
 // RazorSense wash runs behind it. The negative margin starts the page under it.
@@ -45,7 +46,7 @@ export function TopBar({
 }) {
   return (
     <header className="relative z-30 -mb-14 flex h-14 items-center justify-between px-4 md:px-6">
-      <Link to={home} aria-label="slashdocs home">
+      <Link to={home} aria-label={`${productName()} home`}>
         <Logo className="h-[18px] w-auto" />
       </Link>
       <div className="flex items-center gap-2">{children}</div>
